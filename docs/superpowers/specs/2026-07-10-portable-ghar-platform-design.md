@@ -146,6 +146,10 @@ Capacity is expressed as resource units, not a count of pre-registered runners.
 - Host pressure can reduce available capacity but cannot silently raise it above configured limits.
 - Zero idle runner containers is the default.
 
+Acquisition policy is persisted as `{mode, eligibleScaleSets, maxCapacity, epoch}`. Every effective mode, eligibility, or capacity change uses one compare-and-set barrier: increment the epoch, cancel and join every older poller, invalidate its broker leases, and wait for zero acquisition critical sections before returning. Poll, acquire, and JIT calls have explicit deadlines. If any old operation ignores cancellation past the bounded shutdown deadline, the controller persists `fatal` with zero capacity and terminates its process; lifecycle tooling treats that transition as failed and proves process/runner quiescence before any fence handoff or restart.
+
+Every nonzero poll, acquire, or JIT operation acquires a current `portable` fleet guard, enters an epoch-bound acquisition critical section, then immediately revalidates the current mode, exact eligible scale set, effective capacity, live lease, and epoch before the external effect. `canary-only` permits exactly one persisted canary scale set and one capacity unit. Watchdog stops, failed probes, host-pressure reductions, operator mode changes, and lifecycle suspend all use this same barrier; none may flip a weaker side flag.
+
 ### 6.3 Controller job state
 
 Each assignment has a persisted state machine:
@@ -168,16 +172,18 @@ Any error before `LISTENER_RELEASED` destroys the runner without accepting work.
 
 An upgrade proceeds through:
 
-1. route configured repositories to hosted runners;
+1. enable the authenticated Worker-owned hosted hold and read back every configured repository on hosted runners;
 2. stop new acquisition;
 3. drain or cancel assigned jobs according to explicit policy;
 4. prove zero listeners and helper containers;
 5. replace the pinned controller binary and images;
 6. run compatibility and host-profile probes;
-7. run a secretless scale-set canary; and
-8. restore self-hosted routing only after the external failover state machine confirms the canary.
+7. start the replacement disabled, then permit canary-only acquisition;
+8. release the hosted hold into a new recovery epoch;
+9. run a secretless scale-set canary; and
+10. restore self-hosted routing only after the external failover state machine confirms that current-epoch canary.
 
-An upstream compatibility failure leaves acquisition disabled and hosted routing unchanged.
+Host lifecycle changes use a durable operation journal with an idempotent operation ID and phase. A rerun resumes or compensates forward. Fence generations never decrement and raw fence snapshots are never restored. An upstream compatibility failure leaves acquisition disabled and hosted routing unchanged.
 
 ## 7. Per-job isolation
 
@@ -239,12 +245,16 @@ The local watchdog may:
 - report local health; and
 - stop acquisition when host prerequisites fail.
 
+When `legacy` owns the host-local fence, the watchdog may restart Portable GHAR only as a force-disabled observer with verified zero capacity. Any nonzero advertisement, poll, JIT generation, or acquisition requires a current `portable` guard.
+
 It may not:
 
 - change repository routing;
 - mint or store failover GitHub App credentials;
 - mark the external state healthy independently of controller reconciliation; or
 - run as a Docker container on a host whose Docker daemon it is expected to recover.
+
+The host-local fence uses one stable, never-renamed advisory-lock inode, a separate monotonically replaced generation header, and one renewal record per `{generation,fleet,owner,pid,boot}` holder. Same-fleet controller/watchdog guards may coexist; an exclusive handoff waits for every old-fleet guard to close before incrementing the generation. A holder whose renewal cannot be persisted terminates only its own child.
 
 ### 8.2 Host adapters
 
@@ -267,10 +277,10 @@ A process on the Docker host cannot detect total host, storage, Docker-daemon, p
 
 The Durable Object owns the fleet epoch. The host does not persist or choose it.
 
-1. A controller instance requests a one-time challenge for a configured fleet identifier.
-2. The Worker returns a random, expiring, single-use challenge.
-3. The controller creates a random boot/session identifier and returns an HMAC over the fleet identifier, session identifier, and challenge.
-4. The Durable Object atomically validates and consumes the challenge, increments the server-owned epoch, invalidates the prior session, and returns the new epoch/session contract.
+1. A controller instance creates a random enrollment-request nonce and sends a timestamped, HMAC-authenticated challenge request for a configured fleet identifier.
+2. The Worker enforces a bounded timestamp window, stores a digest of the request nonce, and rejects nonce reuse before issuing a random, expiring, single-use challenge.
+3. The controller creates a random boot/session identifier and returns a timestamped HMAC over the exact completion body, including the fleet identifier, session identifier, initiating request nonce, and challenge.
+4. The Durable Object atomically verifies that the unconsumed challenge digest is bound to that initiating request-nonce digest, consumes it once, increments the server-owned epoch, invalidates the prior session, and returns the new epoch/session contract.
 5. Heartbeat sequence begins at one within that session.
 
 Local controller-state loss causes a new authenticated enrollment rather than a permanent lockout. Old session traffic is rejected after a newer epoch is active.
@@ -301,37 +311,46 @@ SQLite stores:
 - last accepted sequence and receipt time;
 - per-repository route state;
 - consecutive health observations;
-- current transition epoch and lock;
+- current transition epoch, lock, and hosted-hold state;
+- monotonic deployment-configuration revision and persisted canary identity;
 - a GitHub mutation outbox;
 - canary dispatch and result identity;
 - notification delivery state; and
 - bounded audit events.
 
-Local transition intent and outbox records are committed before external GitHub mutations. A crash or ambiguous API result triggers GitHub read-back and idempotent reconciliation. No external routing write occurs from unpersisted intent.
+Local transition intent and outbox records are committed before external GitHub mutations. Each due row is transactionally claimed with an expiring claim ID before external I/O; outcome commits require the same live claim. A crash or ambiguous API result triggers claim recovery, GitHub read-back, and idempotent reconciliation. No external routing write occurs from unpersisted intent.
+
+Cron reconciles the private configuration revision, evaluates health, and starts bounded due work. Each fleet object also owns one alarm. Before committing any SQL state that creates or moves due work, a transactional `getAlarm`/`setAlarm` helper arms only an absent or earlier deadline and never pushes an existing alarm later; a crash before the SQL commit can therefore create only a harmless spurious wake-up, never an unarmed due row. The alarm catches downstream outages and arms again before committing retries, so no pending safety action depends on a future request or cron tick after eviction/crash.
+
+Repository additions are accepted only while the hosted hold is active and the private configuration revision increments exactly once with a matching canonical digest. The Durable Object inserts each new repository unconfirmed-hosted, queues and reads back its Worker-owned hosted mutation, and persists its canary workflow/expected revision before the hold can release. Routine expansion never relies on direct variable writes; identity mutation, revision skip/rollback/digest mismatch, and removal require separate retirement handling.
 
 ### 9.5 Failover state machine
 
 ```text
 BOOTSTRAP
-  -> HEALTHY_SELF_HOSTED
-  -> SUSPECT
-  -> FAILOVER_PENDING
   -> HOSTED_CONFIRMED
   -> RECOVERY_OBSERVED
   -> CANARY_PENDING
   -> CANARY_PASSED
   -> SELF_HOSTED_CONFIRMED
+  -> HEALTHY_SELF_HOSTED
+  -> SUSPECT
+  -> FAILOVER_PENDING
+  -> HOSTED_CONFIRMED
 ```
 
 Default policy:
 
 - one-minute evaluation cadence;
+- initial and ambiguous routing remains hosted until GitHub read-back confirms it;
 - configurable stale threshold with a six-minute default;
 - at least two consecutive unhealthy evaluations before failover;
 - immediate failover eligibility for authenticated fatal controller states;
 - sustained healthy observations before recovery canary;
 - failback only after a canary tied to the active transition epoch and expected revision succeeds; and
 - late or superseded canary results ignored.
+
+An authenticated, disabled-by-default administrative hosted hold can enter from any state. Enabling it persists hosted transition intent and blocks recovery until every repository reads back hosted. Releasing it creates a new recovery epoch and leaves routing hosted until a current-epoch canary succeeds. Direct repository-variable writes are limited to initial bootstrap, the one-time all-candidate hosted transition, or emergency/legacy recovery; they are never a durable maintenance hold or a routine expansion mechanism.
 
 If the canary cannot pass, hosted routing remains the safe state. A documented operator recovery procedure may start a new recovery epoch; there is no automatic bypass of a failed canary.
 
@@ -369,7 +388,9 @@ It never includes secrets, heartbeat signatures, request bodies, JIT data, priva
 
 ### 10.2 Secondary webhook
 
-The optional secondary adapter sends the same sanitized event model to a configured HTTPS endpoint with an HMAC signature, timestamp, event ID, and bounded retry policy. A private deployment may bridge this webhook to Signal or another notification system. The public repository does not name a private bridge or include a real destination.
+The optional secondary adapter sends the same sanitized event model to a configured HTTPS endpoint with an HMAC signature, bounded timestamp, event ID, and bounded retry policy. The receiver must enforce timestamp freshness and event-ID deduplication.
+
+The approved private deployment bridges this adapter to Signal on a failure domain separate from the runner host. Completion requires an observed Signal delivery, not merely an HTTP success from the webhook endpoint. After destination acknowledgment, the bridge emits a separate-key HMAC-signed receipt containing the event ID, delivered-at time, destination-ack digest, failure-domain class, and `runnerHost=false`; private tooling verifies and correlates that receipt without publishing destination identity. The receipt key is absent from the Worker and QTS host and is distinct from the webhook-delivery key; loss, compromise, or ambiguous rotation invalidates Signal evidence and restarts the soak but cannot affect routing. The bridge does not create an inbound route to the runner host. The public repository does not name the private bridge or include a real destination.
 
 ### 10.3 Delivery semantics
 
@@ -404,8 +425,9 @@ GitHub App private keys and heartbeat HMAC keys are Cloudflare Worker secrets. I
 
 - Enrollment and heartbeat endpoints require valid HMAC protocols.
 - Challenges are random, single-use, short-lived, and stored transactionally.
-- Administrative status or recovery endpoints are disabled by default or protected by a separate service credential.
-- Public responses are generic and do not reveal fleet existence, repository inventory, or health state.
+- Administrative status, hosted-hold, and recovery endpoints are disabled by default or protected by a separate service credential plus bounded timestamp and single-use nonce verification.
+- Administrative status returns only bounded typed health, route, epoch, hold, canary, repository-confirmation, and outbox booleans/counters. It never returns credentials, request bodies, repository coordinates, notification destinations, or raw logs.
+- Unauthenticated and non-administrative error responses are generic and do not reveal fleet existence, repository inventory, or health state.
 - Request bodies and authentication headers are excluded from logs.
 
 ## 12. Configuration model
@@ -458,6 +480,8 @@ The overlay is outside the repository, ignored by broad patterns, and mode restr
 - Tokens, private keys, HMAC keys, webhook endpoints, notification destinations, JIT configuration, or credentials.
 - Raw operational logs, request bodies, crash dumps, backups, or production state.
 - Generated deployment overlays or secret-manager exports.
+
+The repository's own canonical public module path and valid public CODEOWNER are required source metadata, not deployment configuration. Sanitization permits only their exact, context-bound occurrences; it does not create a general username, owner, or repository allowlist.
 
 ### 13.2 Automated controls
 
@@ -653,17 +677,18 @@ Structural inspection alone is not sufficient.
 
 ### 18.1 Private preparation
 
-Before changing a deployment, capture its live controller/supervisor scripts, images, digests, configuration, watchdog/cron state, external watcher state, and credentials into a private backup. Never use a stale public or local reference as the rollback source.
+Before changing a deployment, capture its live controller/supervisor scripts, images, digests, configuration, watchdog/cron state, external watcher state, and credentials into a private backup. Never use a stale public or local reference as the rollback source. At an idle point, positively match the target, initialize the stable fence with `legacy` active, and restart every legacy launcher/watchdog only through a captured fixed-command wrapper before installing the new dark observer.
 
 ### 18.2 Canary order
 
 1. Build and test Portable GHAR without accepting assignments.
-2. Register scale sets with acquisition disabled.
-3. Add a new transition-routing variable that legacy writers do not modify.
-4. Route one read-only, secretless consumer workflow through a unique new scale-set label.
-5. Prove job lifecycle, isolation, failure recovery, hosted fallback, email, and secondary webhook.
-6. Expand by repository and job risk without renaming required checks.
-7. Keep secret-bearing, release, deployment-write, and unsupported browser/container jobs hosted unless separately reviewed.
+2. While `legacy` owns the fence, register scale sets and run only a force-disabled observer.
+3. Add a transition-routing variable that legacy writers do not modify and read back every candidate workflow hosted.
+4. Under the Worker hosted hold, suspend the legacy fleet to `none`, then hand `none` to `portable` and start canary-only acquisition.
+5. Add one read-only, secretless repository under a new Worker configuration revision and target its unique scale-set name as one GitHub.com runner label.
+6. Release the hold into a new epoch; prove job lifecycle, isolation, failure recovery, hosted fallback, email, secondary webhook, and signed end-to-end Signal receipt.
+7. For each later repository, reacquire the hold, reconcile it hosted under a new configuration/canary revision, and repeat the epoch canary without renaming required checks.
+8. Keep secret-bearing, release, deployment-write, and unsupported browser/container jobs hosted unless separately reviewed.
 
 ### 18.3 External watcher cutover
 
@@ -674,21 +699,22 @@ The legacy external watcher is retired only after positive observation of:
 - fatal-controller-state failover;
 - partial GitHub mutation recovery;
 - primary email delivery;
-- secondary webhook delivery;
+- secondary webhook delivery and end-to-end Signal receipt;
 - simulated controller, Docker, host, and uplink failures;
 - canary-gated failback; and
 - the complete rollback rehearsal.
 
 ### 18.4 Mutually exclusive rollback barrier
 
-1. Set transition routing to GitHub-hosted runners and read it back.
+1. Enable the Worker-owned hosted hold and read back every configured repository on GitHub-hosted runners.
 2. Stop new Portable GHAR acquisition.
 3. Drain or cancel assigned new jobs according to policy.
 4. Stop the new controller.
 5. Prove zero new listeners, runner/helper containers, and pending acquisition.
-6. Restore and verify the captured legacy gateway, scripts, writers, and runners while workflows still target hosted runners.
-7. Verify complete legacy egress policy, advancing health, and successful secretless canary.
-8. Remove the transition variable so new jobs route to the legacy labels.
+6. Change the host-local fleet-generation fence from `portable` through `none` to the captured `legacy` generation and prove both watchdog paths honor the same exclusive fence.
+7. Restore and verify the captured legacy gateway, scripts, writers, and runners while workflows still target hosted runners.
+8. Verify complete legacy egress policy, advancing health, and successful secretless canary.
+9. Remove the transition variable so new jobs route to the legacy labels.
 
 Starting the legacy fleet before proving the new fleet stopped is prohibited.
 
@@ -696,7 +722,8 @@ Starting the legacy fleet before proving the new fleet stopped is prohibited.
 
 Preserve legacy rollback artifacts through a defined soak. After the soak and a successful rollback rehearsal:
 
-- revoke obsolete credentials;
+- run retirement only through a positively matched target-side QTS adapter with fixed typed actions and post-action process/container/registration/fence read-back;
+- revoke obsolete credentials not required by the retained recovery procedure;
 - remove legacy writers and watcher jobs;
 - remove legacy containers and images only after retained backups are verified;
 - retain encrypted rollback material for the documented retention period; and
@@ -722,6 +749,8 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 
 - Duplicate messages and controller restarts do not duplicate job execution.
 - Fleet-wide capacity cannot exceed the configured ceiling.
+- Every acquisition-policy CAS returns only after old pollers/leases/critical sections are invalidated; an unjoinable upstream call makes the controller fatal and process-terminating rather than hanging or returning success.
+- Canary narrowing, watchdog/probe stops, host-pressure reductions, suspend, and observer startup all traverse that same barrier; no stale or ineligible poll can advertise, acquire, or generate JIT afterward.
 - Upstream compatibility failure prevents acquisition.
 - JIT and App credentials do not appear in logs or exported diagnostics.
 
@@ -729,8 +758,12 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 
 - Durable Object state survives Worker rescheduling.
 - Controller state loss safely re-enrolls into a new server-owned epoch.
+- Replayed challenge and administrative requests fail timestamp and single-use nonce checks.
+- Hosted hold enters safely from every state, survives Worker rescheduling, blocks recovery until hosted read-back, and releases only into a new recovery epoch.
 - Stale/fatal health routes affected repositories hosted and reads back confirmation.
 - Ambiguous GitHub responses reconcile idempotently.
+- Cron plus Durable Object alarms recover every persisted due mutation/canary/notification row after eviction or crash.
+- Repository expansion is reconciled hosted under a monotonic configuration revision before its canary or self-hosted mutation.
 - Recovery requires a current-epoch canary; obsolete results cannot fail back.
 - Hosted routing remains safe when the canary cannot pass.
 
@@ -738,6 +771,7 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 
 - Email and webhook deliver independently with the same sanitized event ID.
 - Failure of either or both channels is recorded and retried without blocking failover.
+- Signal completion requires a separately keyed, event-correlated delivery receipt from a non-runner-host failure domain.
 - Notification content passes the public-safety/redaction test corpus.
 
 ### Migration
@@ -746,6 +780,9 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 - Hosted rollback is available throughout canary and soak.
 - The external legacy watcher is not retired before failover and rollback rehearsals pass.
 - New and legacy fleets cannot acquire work concurrently during rollback.
+- Both generations and their watchdogs honor one exclusive host-local fleet-generation fence during cutover and rollback.
+- Same-fleet guards use independent renewal records under one stable lock inode; dark deployment while `legacy` is active is observer-only and zero-capacity.
+- QTS lifecycle and retirement operations are journaled/target-matched, resume forward after crashes, and never decrement the fence generation.
 
 ## 20. Residual risks and explicit non-claims
 
@@ -756,6 +793,7 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 | GitHub API outage during local failure | Persist desired route and retry; never claim unconfirmed failover. Immediate fallback cannot be guaranteed. |
 | Deployment identifier disclosure | Generic and private scans plus human review; no claim of perfect detection. |
 | Both notification channels unavailable | Persist delivery failures and retry; routing safety does not depend on notification success. |
+| Signal receipt-key compromise | Separate key and failure domain, key-ID/rotation evidence, no Worker/QTS access; compromise invalidates notification evidence and restarts the soak but cannot change routing. |
 | Vendor-specific QTS behavior | Reference adapter plus mandatory live host conformance; unsupported versions fail closed. |
 | JIT credentials visible within their one-job trust domain | One-job scope, no reusable App key, ephemeral destruction, no cross-job reuse. |
 | Hosted-runner cost during failover | Accepted safety cost; tracked as an operational metric. |
@@ -789,3 +827,20 @@ Material changes integrated from review:
 - explicit shared-kernel and GitHub-API residual risks.
 
 The remaining strongest concern is the shared-kernel container boundary. That concern is accepted only within the explicit non-VM design and is not represented as stronger isolation than it provides.
+
+The implementation-plan adversarial review added twelve load-bearing clarifications before code generation:
+
+- safe first boot remains hosted and follows the same current-epoch canary path as recovery;
+- enrollment and administrative HMAC requests add timestamp and single-use nonce replay resistance, with completion bound to its initiating nonce/challenge pair;
+- GitHub.com scale-set workflows target the scale-set name as one runner label;
+- the private secondary notification is complete only after a separately signed end-to-end Signal receipt from a separate failure domain;
+- a stable-inode, per-holder fleet-generation fence makes new/legacy mutual exclusion continuously enforceable against watchdog races;
+- a Worker-owned hosted hold prevents automatic failback from racing maintenance, upgrade, or retirement;
+- every local acquisition-policy change uses a bounded epoch barrier; stale pollers are joined, while an uninterruptible upstream call forces fatal process termination and disabled restart;
+- Durable Object alarms guarantee persisted GitHub, canary, and notification due work after eviction/crash;
+- repository additions reconcile hosted under a monotonic configuration revision before canary;
+- dark deployment uses a zero-capacity observer while the legacy fleet owns the fence;
+- QTS lifecycle operations journal and recover forward without rolling fence generations back; and
+- retirement runs only through a positively matched, fixed-action target adapter with post-action read-back.
+
+The final cross-family convergence cycle identified that the acquisition barrier still needed to cover canary narrowing, watchdog/probe stops, pressure reductions, and cancellation-resistant upstream calls. The revised plan applies one bounded policy CAS to every such transition, makes an unjoinable call fatal and process-terminating, preserves the earliest Durable Object alarm transactionally, and gives intermediate phases explicit fail-closed port/provider wiring. A focused full-artifact confirmation by independent Google- and xAI-family reviewers reported no remaining load-bearing objection and rated the plan implementation-ready; the residual risks in Section 20 remain acceptance-gated rather than eliminated.
