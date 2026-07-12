@@ -130,8 +130,10 @@ Execute the host-runtime, image, adapter, watchdog, integration, and chaos porti
 **Required barrier:**
 
 ```text
-assignment -> reserve -> create held runner -> join only its network namespace
--> install IPv4 and IPv6 policy -> helper exits -> capless verifier succeeds
+assignment -> reserve -> create capless per-job network anchor
+-> install IPv4 and IPv6 policy in anchor -> apply helper exits
+-> capless verifier succeeds -> create held runner joined to exact anchor
+-> read-only audit helper proves no attach mutation and exits
 -> one-use readiness token appears in runner-private tmpfs -> listener starts
 ```
 
@@ -144,7 +146,7 @@ PGHAR_INTEGRATION_DOCKER=1 PGHAR_CHAOS_DOCKER=1 ./scripts/test-controller-runtim
 scripts/ci/check-images.sh
 ```
 
-Expected: all commands exit 0; an actual runner namespace proves public egress succeeds and every prohibited IPv4/IPv6 class fails; inspection proves no socket, host mount, device, extra capability, controller secret, or reusable workspace.
+Expected: all commands exit 0; backend-parity tests prove nftables and iptables-legacy implement the same normalized policy contract; an actual runner namespace on each supported host profile proves public egress succeeds and every prohibited IPv4/IPv6 class fails; inspection proves no socket, host mount, device, extra capability, controller secret, or reusable workspace. The QTS reference host explicitly selects the iptables-legacy backend because its verified kernel lacks `nf_tables`; this is a supported profile, not a runtime fallback.
 
 ## Program Task 5: Build and Prove the External Routing Authority
 

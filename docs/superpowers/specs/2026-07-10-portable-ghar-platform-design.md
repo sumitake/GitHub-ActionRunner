@@ -209,25 +209,44 @@ A capability-less root profile may exist only as a named degraded profile when a
 
 ### 7.2 Network setup barrier
 
-The runner starts in a held entrypoint that cannot launch the listener until the controller writes a one-use readiness token into runner-private tmpfs.
+The runner starts in a held entrypoint that cannot launch the listener until the controller writes a one-use readiness token into runner-private tmpfs. The network namespace is owned by a dedicated per-job anchor, so Docker does not perform a second network setup when the runner joins it.
 
-1. Docker creates the runner and its unique network namespace.
-2. A pinned helper container joins only that network namespace.
+1. Docker creates a unique per-job network-anchor container with cap-drop ALL, read-only root, a no-network/no-filesystem pause process, and no runner, JIT, or job data.
+2. A pinned apply-helper container joins only the anchor namespace.
 3. The helper receives `NET_ADMIN` and no other capability. It has no Docker socket, host PID/mount/user namespace, host mount, device, runner filesystem, or job input.
-4. The helper installs output policy that blocks private, link-local, carrier-grade NAT, metadata, multicast, Docker-host, and locally detected host networks. IPv6 is denied by default.
-5. The helper exits.
-6. The controller proves the helper is gone.
-7. A separate capability-less verifier enters the runner network namespace and runs positive and negative probes against the effective policy.
-8. Only after successful verification does the controller create the readiness token.
-9. The held entrypoint consumes the token, removes it, and starts the upstream runner listener.
+4. The helper installs output policy that blocks private, link-local, carrier-grade NAT, metadata, multicast, Docker-host, and locally detected host networks. IPv6 follows the declared deny posture.
+5. The helper exits, and the controller proves it is gone.
+6. A separate capability-less verifier enters the anchor namespace, runs positive and negative probes, and exits.
+7. Docker creates the held runner with exact network mode `container:<anchor-id>`; this operation must not create or alter interfaces, routes, or rules in the configured namespace.
+8. A pinned NET_ADMIN-only audit helper enters the still-held namespace, performs no mutation, revalidates namespace identity plus the complete base-chain policy/linkage and dedicated policy digest, and exits.
+9. The controller proves the audit helper is gone, the runner still points at the exact anchor, and the namespace identity still matches.
+10. Only after successful verification does the controller create the readiness token.
+11. The held entrypoint consumes the token, removes it, and starts the upstream runner listener.
 
-The helper and untrusted listener never execute concurrently. A missing helper exit, failed probe, unexpected route, or policy mismatch destroys the runner.
+The apply/audit helpers and untrusted listener never execute concurrently during startup. A missing helper exit, failed probe, unexpected route, anchor mismatch, or policy mismatch destroys both runner and anchor. During an active job the controller periodically launches the same input-free audit image in read-only audit mode, compares only typed digest/namespace output, and destroys the job plus safe-stops acquisition on drift. Target-host soak must prove ordinary Docker/QTS daemons do not mutate a live anchor namespace; a hostile root or host daemon remains outside container-grade isolation.
+
+Network policy is compiled into one backend-neutral intermediate policy and applied by an explicitly selected, host-profile-pinned backend. A host profile may select:
+
+- `nftables-v1` on verified standard Linux hosts; or
+- `iptables-legacy-v1` on a verified QTS/Linux host whose kernel exposes legacy xtables but not `nf_tables`.
+
+There is no runtime auto-fallback between backends. Selection is configuration, and the host conformance probe must positively match the selected backend before acquisition can become nonzero. Both backends must implement the same blocked-address classes, default-drop semantics, canonical policy digest, isolated-network-namespace target, cleanup contract, and independent positive/negative verification report.
+
+The QTS legacy backend does not trust the host's old `iptables` userspace. Its pinned one-shot helper image contains reviewed `iptables-legacy`/`ip6tables-legacy` userspace, verifies the selected binary reports the legacy backend, and applies complete generated rulesets with `iptables-restore`/`ip6tables-restore` inside the runner's otherwise-empty network namespace. Required xtables modules must already be present and pass the host-profile conformance probe; the helper has no `CAP_SYS_MODULE` and never broadens host kernel state. Exact helper-userspace/kernel compatibility is acceptance-tested on the target profile and after every QTS update.
+
+IPv4 and IPv6 restore operations cannot be one cross-family kernel transaction. This creates no untrusted escape window because the runner listener remains held, the trusted helper is the only executing process in the namespace, and the helper performs no application network calls. The controller destroys the namespace rather than rolling back if either family fails. A host profile must select exactly one IPv6 posture: `deny-via-ip6tables`, which requires successful restore/read-back; or `kernel-disabled`, which requires positive proof of no IPv6 address, route, or enabled namespace stack. There is no automatic fallback between them.
+
+The helper receives `NET_ADMIN` only, exits before listener release, and returns no rule text or route details. Its read-back parser accepts only the exact grammar emitted by the pinned helper for the complete generated filter table: `OUTPUT` must have exact default policy `DROP`, contain the exact first jump to the dedicated Portable GHAR chain, and contain no earlier accept/bypass; the dedicated chain must match the expected normalized graph. The parser is not a general `iptables-save` parser. The verifier is capability-less and independently exercises positive and negative DNS/TCP plus unprivileged UDP-echo behavior. The final audit helper repeats the full base/delegation/dedicated-chain read-back after behavioral probes and immediately before release. Failure to restore, read back, match the digest, prove the declared IPv6 posture, or block a prohibited probe destroys the runner before listener start.
+
+Docker NAT consumes host-global conntrack resources regardless of which policy backend is selected. Every manifest therefore carries a maximum concurrent tracked-flow ceiling plus bounded NEW-connection rate and burst derived from host `nf_conntrack_max`, configured maximum runner capacity, relevant conntrack timeouts, and an explicit host reserve. The compiler permits established public flows but rejects new flows above the per-namespace ceiling and rate-limits remaining new flows before accept; over-limit traffic reaches default drop. Each backend's exact ceiling mechanism is selected and proven by the host profile rather than inferred at runtime. The QTS profile pre-proves the required conntrack/limit/ceiling modules or namespace-scoped kernel control, and nftables implements the same semantic ceiling/rate contract. Configuration is rejected unless `maxTrackedFlows * maxRunnerCapacity` remains below the configured host reserve threshold.
+
+Host conformance records `nf_conntrack_max`; health samples current occupancy; the pressure policy narrows capacity through the same acquisition epoch barrier before the warning threshold and safe-stops before exhaustion. Chaos tests flood short-lived varied-destination TCP and UDP flows from held and active namespaces and prove the per-runner NEW-flow cap, capacity reduction, no listener release after the stop threshold, preservation of the controller/Docker control path, and recovery only after pressure clears. This is a host-resource guard, not per-runner VM isolation, and remains visible as a residual container-grade boundary.
 
 ### 7.3 Egress policy
 
 The default profile is public-internet-only IPv4 egress with explicitly configured public DNS. It does not use a domain allowlist because current build workloads require diverse public registries and package services.
 
-Host profiles must discover and block their real host, bridge, management, and local routes at runtime. A static check for a single private range is insufficient. Tests must cover every blocked class and prove that loss or corruption of policy prevents listener release.
+Host profiles must discover and block their real host, bridge, management, and local routes at runtime. A static check for a single private range is insufficient. Tests must cover every blocked class and prove that loss or corruption of policy prevents listener release. Backend parity tests feed the same manifest to nftables and iptables-legacy compilers and require the same normalized decision graph; target-host conformance then proves the selected kernel actually enforces that graph.
 
 ### 7.4 Residual boundary
 
