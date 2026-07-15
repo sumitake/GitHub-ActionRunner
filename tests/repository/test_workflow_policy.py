@@ -38,7 +38,7 @@ EXPECTED_STABLE_CONTEXTS = {
 # the CodeQL scan job (results go to the Security tab -- it is intentionally
 # NOT one of the seven required PR status-check contexts above, but it is
 # still a unique job id that must not collide with any of them).
-EXPECTED_ALL_CONTEXTS = EXPECTED_STABLE_CONTEXTS | {"codeql"}
+EXPECTED_ALL_CONTEXTS = EXPECTED_STABLE_CONTEXTS | {"codeql", "release"}
 
 # A minimal workflow that should pass every check cleanly. Each negative
 # test below takes this exact text and mutates ONE line to introduce ONE
