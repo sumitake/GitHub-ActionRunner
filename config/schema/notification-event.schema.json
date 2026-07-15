@@ -52,7 +52,14 @@
       "format": "date-time"
     },
     "operatorAction": {
-      "enum": ["none", "acknowledge", "escalate", "retry", "rollback", "suppress"]
+      "enum": [
+        "none",
+        "acknowledge",
+        "escalate",
+        "retry",
+        "rollback",
+        "suppress"
+      ]
     }
   }
 }

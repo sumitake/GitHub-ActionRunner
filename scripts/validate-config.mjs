@@ -54,8 +54,14 @@ export function validateFile(schemaPath, dataPath) {
 
 const PAIRS = [
   ["config/schema/fleet.schema.json", "config/examples/fleet.example.json"],
-  ["config/schema/host-profile.schema.json", "config/examples/host-profile.example.json"],
-  ["config/schema/public-log-event.schema.json", "config/examples/public-log-event.example.json"],
+  [
+    "config/schema/host-profile.schema.json",
+    "config/examples/host-profile.example.json",
+  ],
+  [
+    "config/schema/public-log-event.schema.json",
+    "config/examples/public-log-event.example.json",
+  ],
   [
     "config/schema/notification-event.schema.json",
     "config/examples/notification-event.example.json",
@@ -84,7 +90,8 @@ function main() {
 }
 
 const invokedDirectly =
-  process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (invokedDirectly) {
   main();

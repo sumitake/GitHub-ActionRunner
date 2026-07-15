@@ -84,10 +84,16 @@
             "privateUniqueLocal": { "$ref": "#/$defs/blockedEgressClass" },
             "linkLocalMetadata": { "$ref": "#/$defs/blockedEgressClass" },
             "sharedCgnat": { "$ref": "#/$defs/blockedEgressClass" },
-            "reservedDocumentationBenchmarking": { "$ref": "#/$defs/blockedEgressClass" },
+            "reservedDocumentationBenchmarking": {
+              "$ref": "#/$defs/blockedEgressClass"
+            },
             "multicastBroadcast": { "$ref": "#/$defs/blockedEgressClass" },
-            "dockerHostBridgeManagement": { "$ref": "#/$defs/blockedEgressClass" },
-            "outsidePublicUnicastByExclusion": { "$ref": "#/$defs/blockedEgressClass" }
+            "dockerHostBridgeManagement": {
+              "$ref": "#/$defs/blockedEgressClass"
+            },
+            "outsidePublicUnicastByExclusion": {
+              "$ref": "#/$defs/blockedEgressClass"
+            }
           }
         }
       }
@@ -106,7 +112,13 @@
     "canaryPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hostingPosture", "mode", "expectedRevision", "repositoryAlias", "workflow"],
+      "required": [
+        "hostingPosture",
+        "mode",
+        "expectedRevision",
+        "repositoryAlias",
+        "workflow"
+      ],
       "properties": {
         "hostingPosture": {
           "const": "safe-hosted"

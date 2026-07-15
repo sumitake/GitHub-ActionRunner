@@ -4,8 +4,8 @@
   "config": {
     "MD013": false,
     "MD033": false,
-    "MD010": { "code_blocks": false }
+    "MD010": { "code_blocks": false },
   },
   "globs": ["docs/**/*.md", "*.md"],
-  "ignores": ["node_modules", "**/node_modules"]
+  "ignores": ["node_modules", "**/node_modules"],
 }

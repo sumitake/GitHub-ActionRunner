@@ -39,7 +39,10 @@ const FENCE_LANG = "operator-command";
 // Bare planned binary names an operator-command line may invoke directly.
 // Neither exists on disk yet in Phase 1; both are named in the Phase 2+
 // repository layout cited above.
-const PLANNED_EXECUTABLES = new Set(["portable-ghar", "portable-ghar-watchdog"]);
+const PLANNED_EXECUTABLES = new Set([
+  "portable-ghar",
+  "portable-ghar-watchdog",
+]);
 
 // Known interpreters that may prefix a repo-relative script path in an
 // illustrative command line (e.g. "python3 scripts/sanitize_public.py").
@@ -127,7 +130,9 @@ function isKnownCommand(token) {
 }
 
 function relDisplay(absPath) {
-  return absPath.startsWith(REPO_ROOT) ? absPath.slice(REPO_ROOT.length + 1) : absPath;
+  return absPath.startsWith(REPO_ROOT)
+    ? absPath.slice(REPO_ROOT.length + 1)
+    : absPath;
 }
 
 function checkFile(absPath, findings) {
@@ -139,12 +144,14 @@ function checkFile(absPath, findings) {
       const lineNo = block.startLine + idx;
       const token = resolveCommandToken(trimmed);
       if (token === null) {
-        findings.push(`${relDisplay(absPath)}:${lineNo}: operator-command line has no command token: ${JSON.stringify(trimmed)}`);
+        findings.push(
+          `${relDisplay(absPath)}:${lineNo}: operator-command line has no command token: ${JSON.stringify(trimmed)}`,
+        );
         return;
       }
       if (!isKnownCommand(token)) {
         findings.push(
-          `${relDisplay(absPath)}:${lineNo}: unknown operator command ${JSON.stringify(token)} (not an existing repo-relative script path and not a documented planned executable)`
+          `${relDisplay(absPath)}:${lineNo}: unknown operator command ${JSON.stringify(token)} (not an existing repo-relative script path and not a documented planned executable)`,
         );
       }
     });

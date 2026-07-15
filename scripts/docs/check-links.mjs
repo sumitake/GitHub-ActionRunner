@@ -109,7 +109,11 @@ const anchorCache = new Map();
 function anchorsForFile(absPath) {
   if (anchorCache.has(absPath)) return anchorCache.get(absPath);
   let anchors;
-  if (extname(absPath) === ".md" && existsSync(absPath) && statSync(absPath).isFile()) {
+  if (
+    extname(absPath) === ".md" &&
+    existsSync(absPath) &&
+    statSync(absPath).isFile()
+  ) {
     anchors = anchorSetFor(readFileSync(absPath, "utf8"));
   } else {
     anchors = new Set();
@@ -183,7 +187,9 @@ function checkFile(absPath, findings) {
     }
     if (EXTERNAL_SCHEME_RE.test(target)) {
       if (!isSyntacticallyValidExternal(target)) {
-        findings.push(`${absPath}:${line}: external link is not a syntactically valid URI: ${target}`);
+        findings.push(
+          `${absPath}:${line}: external link is not a syntactically valid URI: ${target}`,
+        );
       }
       continue; // external: syntax-checked only, never fetched
     }
@@ -196,7 +202,9 @@ function checkFile(absPath, findings) {
     if (pathPart !== "") {
       targetFile = resolve(dirname(absPath), pathPart);
       if (!existsSync(targetFile) || !statSync(targetFile).isFile()) {
-        findings.push(`${absPath}:${line}: local link target does not exist: ${pathPart}`);
+        findings.push(
+          `${absPath}:${line}: local link target does not exist: ${pathPart}`,
+        );
         continue;
       }
     }
@@ -204,7 +212,7 @@ function checkFile(absPath, findings) {
       const anchors = anchorsForFile(targetFile);
       if (!anchors.has(anchorPart)) {
         findings.push(
-          `${absPath}:${line}: anchor #${anchorPart} not found in ${pathPart || "(same file)"}`
+          `${absPath}:${line}: anchor #${anchorPart} not found in ${pathPart || "(same file)"}`,
         );
       }
     }
