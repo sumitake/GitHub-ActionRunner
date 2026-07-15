@@ -1,0 +1,83 @@
+{
+  "capacity": {
+    "units": 4,
+    "profiles": [
+      { "name": "example-standard", "weight": 1 },
+      { "name": "example-highmem", "weight": 2 }
+    ]
+  },
+  "repositories": [
+    {
+      "alias": "example-fleet",
+      "owner": "owner",
+      "repository": "repository",
+      "weight": 1,
+      "agingThresholdSeconds": 86400,
+      "maxConcurrency": 2,
+      "archiveEligibility": "active"
+    }
+  ],
+  "hostProfileRef": "example-host-profile",
+  "networkPolicy": {
+    "addressFamily": "public-ipv4-only",
+    "blockedEgressClasses": {
+      "loopback": {
+        "posture": "deny",
+        "cidrs": ["127.0.0.0/8", "::1"]
+      },
+      "privateUniqueLocal": {
+        "posture": "deny",
+        "cidrs": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"]
+      },
+      "linkLocalMetadata": {
+        "posture": "deny",
+        "cidrs": ["169.254.0.0/16", "fe80::/10", "169.254.169.254"]
+      },
+      "sharedCgnat": {
+        "posture": "deny",
+        "cidrs": ["100.64.0.0/10"]
+      },
+      "reservedDocumentationBenchmarking": {
+        "posture": "deny",
+        "cidrs": [
+          "0.0.0.0/8",
+          "192.0.0.0/24",
+          "192.0.2.0/24",
+          "198.51.100.0/24",
+          "203.0.113.0/24",
+          "198.18.0.0/15",
+          "240.0.0.0/4",
+          "::",
+          "2001:db8::/32"
+        ]
+      },
+      "multicastBroadcast": {
+        "posture": "deny",
+        "cidrs": ["224.0.0.0/4", "255.255.255.255", "ff00::/8"]
+      },
+      "dockerHostBridgeManagement": {
+        "posture": "deny",
+        "cidrs": []
+      },
+      "outsidePublicUnicastByExclusion": {
+        "posture": "deny",
+        "cidrs": []
+      }
+    }
+  },
+  "evaluationIntervalSeconds": 60,
+  "staleThresholdSeconds": 360,
+  "unhealthyObservationsBeforeFailover": 2,
+  "canaryPolicy": {
+    "hostingPosture": "safe-hosted",
+    "mode": "automatic",
+    "expectedRevision": "example-revision-1",
+    "repositoryAlias": "example-fleet",
+    "workflow": "example-workflow.yml"
+  },
+  "notifications": {
+    "email": true,
+    "webhook": false
+  },
+  "heartbeatKeyRef": "env:EXAMPLE_HEARTBEAT_KEY_REF"
+}

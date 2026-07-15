@@ -1,0 +1,10 @@
+{
+  "identifier": "example-log-000001",
+  "component": "fleet-controller",
+  "event": "fleet.capacity.updated",
+  "severity": "info",
+  "reasonCode": "CAPACITY_RECALCULATED",
+  "aliases": ["example-fleet"],
+  "receiptTime": "2024-01-01T00:00:00Z",
+  "buildId": "example-build-0001"
+}
