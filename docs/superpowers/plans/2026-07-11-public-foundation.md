@@ -58,7 +58,7 @@
 - Create: <code>go.mod</code>, <code>go.sum</code>, <code>internal/buildinfo/buildinfo.go</code>, <code>internal/buildinfo/buildinfo_test.go</code>
 - Create: <code>package.json</code>, <code>package-lock.json</code>, <code>eslint.config.mjs</code>, <code>tsconfig.base.json</code>
 - Create: <code>worker/package.json</code>, <code>worker/tsconfig.json</code>, <code>worker/vitest.config.ts</code>, <code>worker/src/protocol/version.ts</code>, <code>worker/test/protocol/version.test.ts</code>
-- Create: <code>images/manifest.json</code> and README-only directories for <code>images/{runner,network-adapter,network-broker,network-helper,network-verifier}</code> and <code>deploy/{qts,systemd}</code>
+- Create: <code>images/manifest.json</code> and README-only directories for <code>images/{runner,network-adapter,network-broker-parser,network-broker-dialer,network-helper,network-verifier}</code> and <code>deploy/{qts,systemd}</code>
 
 **Interfaces:** Produces <code>buildinfo.Info() BuildInfo</code>, <code>HEARTBEAT_PROTOCOL_VERSION = 1</code>, and <code>{"version":1,"images":[]}</code>; no executable or deployable runtime.
 
@@ -199,7 +199,7 @@ useDefault = true
 
 **Interfaces:** Adds remaining stable contexts <code>sanitization</code> and <code>dependency-review</code>; CodeQL scans Go plus JavaScript/TypeScript.
 
-- [ ] First assert triggers/permissions: sanitization and CodeQL run push, PR, weekly schedule, manual; dependency review runs PR; CodeQL matrix is exactly <code>go</code> and <code>javascript-typescript</code>; Dependabot ecosystems are actions, gomod, npm, and Docker in all five future image directories: <code>runner</code>, <code>network-adapter</code>, <code>network-broker</code>, <code>network-helper</code>, and <code>network-verifier</code>.
+- [ ] First assert triggers/permissions: sanitization and CodeQL run push, PR, weekly schedule, manual; dependency review runs PR; CodeQL matrix is exactly <code>go</code> and <code>javascript-typescript</code>; Dependabot ecosystems are actions, gomod, npm, and Docker in all six future image directories: <code>runner</code>, <code>network-adapter</code>, <code>network-broker-parser</code>, <code>network-broker-dialer</code>, <code>network-helper</code>, and <code>network-verifier</code>.
 - [ ] Run repository tests. Expected: FAIL with missing workflows/config.
 - [ ] Sanitization checks out full history, runs Gitleaks over the base-to-head branch-introduced range on PRs and complete reachable history on push/schedule/manual, then runs generic tracked/generated scans; it never receives the private denylist. Dependency review fails on high vulnerabilities and denied licenses. CodeQL uses only GitHub-hosted runners and <code>security-events: write</code>.
 - [ ] Dependabot groups safe minor/patch updates weekly, caps open PRs, and never coexists with Renovate.
