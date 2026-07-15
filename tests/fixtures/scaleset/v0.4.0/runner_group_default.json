@@ -1,0 +1,11 @@
+{
+  "count": 1,
+  "value": [
+    {
+      "id": 1,
+      "name": "default",
+      "size": 1,
+      "isDefaultGroup": true
+    }
+  ]
+}

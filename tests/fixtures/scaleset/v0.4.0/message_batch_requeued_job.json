@@ -1,0 +1,14 @@
+{
+  "messageId": 102,
+  "messageType": "RunnerScaleSetJobMessages",
+  "body": "[\n  {\n    \"messageType\": \"JobAvailable\",\n    \"acquireJobUrl\": \"https://198.51.100.10/_apis/runtime/runnerscalesets/42/acquirejobs\",\n    \"runnerRequestId\": 9001,\n    \"repositoryName\": \"repository\",\n    \"ownerName\": \"owner\",\n    \"jobId\": \"00000000-0000-4000-8000-000000000009\",\n    \"jobWorkflowRef\": \"owner/repository/.github/workflows/example.yml@refs/heads/main\",\n    \"jobDisplayName\": \"example-requeued-job\",\n    \"workflowRunId\": 5009,\n    \"eventName\": \"push\",\n    \"requestLabels\": [\"example-scaleset\"],\n    \"queueTime\": \"2026-01-01T00:00:00Z\",\n    \"scaleSetAssignTime\": \"2026-01-01T00:00:01Z\",\n    \"runnerAssignTime\": \"0001-01-01T00:00:00Z\",\n    \"finishTime\": \"0001-01-01T00:00:00Z\"\n  },\n  {\n    \"messageType\": \"JobAvailable\",\n    \"acquireJobUrl\": \"https://198.51.100.10/_apis/runtime/runnerscalesets/42/acquirejobs\",\n    \"runnerRequestId\": 9010,\n    \"repositoryName\": \"repository\",\n    \"ownerName\": \"owner\",\n    \"jobId\": \"00000000-0000-4000-8000-000000000009\",\n    \"jobWorkflowRef\": \"owner/repository/.github/workflows/example.yml@refs/heads/main\",\n    \"jobDisplayName\": \"example-requeued-job\",\n    \"workflowRunId\": 5009,\n    \"eventName\": \"push\",\n    \"requestLabels\": [\"example-scaleset\"],\n    \"queueTime\": \"2026-01-01T00:00:00Z\",\n    \"scaleSetAssignTime\": \"2026-01-01T00:05:00Z\",\n    \"runnerAssignTime\": \"0001-01-01T00:00:00Z\",\n    \"finishTime\": \"0001-01-01T00:00:00Z\"\n  }\n]",
+  "statistics": {
+    "totalAvailableJobs": 1,
+    "totalAcquiredJobs": 0,
+    "totalAssignedJobs": 0,
+    "totalRunningJobs": 0,
+    "totalRegisteredRunners": 2,
+    "totalBusyRunners": 0,
+    "totalIdleRunners": 2
+  }
+}
