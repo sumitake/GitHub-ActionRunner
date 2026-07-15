@@ -12,8 +12,8 @@
 
 ## Global Constraints
 
-- The approved design at <code>docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md</code> is authoritative. Implement phase 1 only.
-- Do not add assignment acquisition, runner/helper/verifier images, network rules, host watchdogs, deployment overlays, Worker endpoints, GitHub routing writes, credentials, or production changes.
+- The review-gated design at <code>docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md</code> is authoritative. Implement phase 1 only.
+- Do not add assignment acquisition, runner/adapter/broker/helper/verifier images, network rules, host watchdogs, deployment overlays, Worker endpoints, GitHub routing writes, credentials, or production changes.
 - Do not commit deployment-specific operator identities, mailboxes, hosts, domains, addresses/ranges, paths, repository inventories, scale-set names, Cloudflare/GitHub deployment identifiers, schedules, logs, state, or secrets. The canonical public source identity <code>github.com/sumitake/portable-ghar</code> and governance owner <code>@sumitake</code> are approved narrow exceptions, not deployment identifiers.
 - Public examples use only <code>example-fleet</code>, <code>owner/repository</code>, <code>operator@example.invalid</code>, and IANA documentation values. Unknown fields and inline secret values are errors.
 - Private overlays and deployment-specific denylists stay untracked and never enter CI.
@@ -36,7 +36,7 @@
   | bats-core/bats-action | <code>77d6fb60505b4d0d1d73e48bd035b55074bbfb43</code> / 4.0.0 |
 
 - During pin verification, annotated release tags must be dereferenced to commits before this table is updated; workflows use the exact reviewed commit SHAs recorded above.
-- The operator has pre-authorized the valid CODEOWNERS entry and source self-merge for this session. GitHub cannot count the author's self-approval, so sole-maintainer protection requires zero approvals while retaining ownership routing; independent-reviewer mode may later require one.
+- The operator has pre-authorized the valid CODEOWNERS entry and source self-merge, scoped to phase-1 governance and scaffolding commits only; this is procedural authorization, not an implementation-readiness determination, and it does not waive the design-review gate. GitHub cannot count the author's self-approval, so sole-maintainer protection requires zero approvals while retaining ownership routing; independent-reviewer mode may later require one.
 - A merge is not a deployment. Repository-setting writes occur only after all seven protected contexts have succeeded on one PR head SHA; <code>dependency-review</code> is PR-only and need not run on <code>main</code>.
 - Every task stages only paths named in its Files block; repository-wide <code>git add .</code> and <code>git add -A</code> are prohibited.
 - The phase-1 README must truthfully say pre-deployment. A later final production-posture update may claim live behavior only after deployment, rollback, failover/notification, workflow-migration, and read-back gates pass.
@@ -58,7 +58,7 @@
 - Create: <code>go.mod</code>, <code>go.sum</code>, <code>internal/buildinfo/buildinfo.go</code>, <code>internal/buildinfo/buildinfo_test.go</code>
 - Create: <code>package.json</code>, <code>package-lock.json</code>, <code>eslint.config.mjs</code>, <code>tsconfig.base.json</code>
 - Create: <code>worker/package.json</code>, <code>worker/tsconfig.json</code>, <code>worker/vitest.config.ts</code>, <code>worker/src/protocol/version.ts</code>, <code>worker/test/protocol/version.test.ts</code>
-- Create: <code>images/manifest.json</code> and README-only directories for <code>images/{runner,network-helper,network-verifier}</code> and <code>deploy/{qts,systemd}</code>
+- Create: <code>images/manifest.json</code> and README-only directories for <code>images/{runner,network-adapter,network-broker,network-helper,network-verifier}</code> and <code>deploy/{qts,systemd}</code>
 
 **Interfaces:** Produces <code>buildinfo.Info() BuildInfo</code>, <code>HEARTBEAT_PROTOCOL_VERSION = 1</code>, and <code>{"version":1,"images":[]}</code>; no executable or deployable runtime.
 
@@ -71,7 +71,7 @@ expect(HEARTBEAT_PROTOCOL_VERSION).toBe(1);
 ~~~
 - [ ] Run <code>go test ./internal/buildinfo</code> and <code>npm test --workspace worker</code>. Expected: both fail because implementations are absent.
 - [ ] Set module <code>github.com/sumitake/portable-ghar</code>, <code>go 1.26.0</code>, toolchain <code>go1.26.5</code>; add tools actionlint v1.7.12, govulncheck v1.6.0, staticcheck v0.7.0, shfmt v3.13.1.
-- [ ] Implement immutable <code>BuildInfo</code> defaults and the protocol constant. The root package owns the only lockfile and declares exactly one npm workspace, <code>worker</code>; no nested lockfile is allowed. Pin Node/npm and exact dependencies: Ajv 8.20.0, ajv-formats 3.0.1, ESLint 10.7.0, typescript-eslint 8.63.0, TypeScript 6.0.3, Vitest 4.1.10, Prettier 3.9.5, markdownlint-cli2 0.23.0, yaml 2.9.0, Wrangler 4.110.0, Workers types 5.20260711.1. Assert the published peer ranges are satisfied before locking. Configure Markdown lint to allow long plan lines, inline HTML, and Go tabs inside code blocks while retaining structural rules.
+- [ ] Implement immutable <code>BuildInfo</code> defaults and the protocol constant. The root package owns the only lockfile and declares exactly one npm workspace, <code>worker</code>; no nested lockfile is allowed. Pin Node/npm and exact dependencies: Ajv 8.20.0, ajv-formats 3.0.1, ESLint 10.7.0, typescript-eslint 8.63.0, TypeScript 6.0.3, Vitest 4.1.10, Prettier 3.9.5, markdownlint-cli2 0.23.0, yaml 2.9.0, Wrangler 4.110.0, Workers types 5.20260708.1. Assert the published peer ranges are satisfied before locking. Configure Markdown lint to allow long plan lines, inline HTML, and Go tabs inside code blocks while retaining structural rules.
 - [ ] Ignore environment/key/private-overlay/state/database/dist/cache paths. Image and deploy READMEs must say real paths, identities, schedules, networks, and Dockerfiles are deferred.
 - [ ] Run <code>unformatted="$(find internal/buildinfo -type f -name '*.go' -print0 | xargs -0 gofmt -l)"; test -z "$unformatted" && go test ./internal/buildinfo && npm ci --ignore-scripts && npm run worker:lint && npm run worker:typecheck && npm run worker:test</code>. Expected: no unformatted path, Go <code>ok</code>, one Vitest pass, all checks exit 0 without rewriting source.
 - [ ] Commit: stage only <code>.editorconfig .gitattributes .gitignore .dockerignore .nvmrc .markdownlint-cli2.jsonc go.mod go.sum internal/buildinfo package.json package-lock.json eslint.config.mjs tsconfig.base.json worker images deploy</code>, inspect the staged diff, then <code>git commit -S -m "build: scaffold public foundation toolchains"</code>.
@@ -85,9 +85,9 @@ expect(HEARTBEAT_PROTOCOL_VERSION).toBe(1);
 
 **Interfaces:** Produces Draft 2020-12 schemas with closed objects and <code>validateFile(schemaPath, dataPath)</code>.
 
-- [ ] First test all four examples plus negatives for unknown fields, inline secrets, non-synthetic repository values, host paths/identities/schedules, missing blocked egress classes, IPv6 other than <code>deny</code>, raw log fields, and notification free text.
+- [ ] First test all four examples plus negatives for unknown fields, inline secrets, non-synthetic repository values, host paths/identities/schedules, missing blocked egress classes, missing per-repository maxima or archive-eligibility state, IPv6 other than <code>deny</code>, raw log fields, and notification free text.
 - [ ] Run <code>npm run schema:test</code>. Expected: FAIL because validator/schemas do not exist.
-- [ ] Implement Ajv 2020 strict/all-errors validation. Fleet requires capacity units/profiles, weighted repositories plus aging, host-profile reference, public-IPv4-only network policy, all eight blocked classes, 60-second evaluation, 360-second stale default, two unhealthy observations, canary safe-hosted policy, notification flags, and secret-reference names only.
+- [ ] Implement Ajv 2020 strict/all-errors validation. Fleet requires capacity units/profiles, weighted repositories plus aging, per-repository effective-concurrency maxima and archive-eligibility state (<code>active</code>/<code>archived-disabled</code>/<code>pending-reactivation</code>), host-profile reference, public-IPv4-only network policy with all eight enumerated blocked classes, 60-second evaluation, 360-second stale default, two unhealthy observations, canary safe-hosted policy, notification flags, and secret-reference names only.
 - [ ] Host schema permits adapter <code>qts|systemd</code>, portable kernel/Docker capabilities, non-root/degraded-root declaration, and conformance probe names; it rejects deployment facts.
 - [ ] Log schema allowlists identifiers, component/event/severity/reason, aliases, receipt time, and build ID. Notification schema allowlists event/transition ID, synthetic display name, repository aliases, confirmed route, reason code, Worker receipt time, and generic action.
 - [ ] Run <code>npm run schema:test && npm run schema:validate</code>. Expected: all tests pass and output <code>validated 4 synthetic examples</code>.
@@ -104,7 +104,7 @@ expect(HEARTBEAT_PROTOCOL_VERSION).toBe(1);
 - [ ] Write failing tests for private/loopback/link-local/CGNAT/IPv6 literals, PEM blocks, token/JWT/JIT shapes, personal/NAS paths, non-example mail/domains, deployment identifiers, raw artifacts, archive members, symlinks, oversized/unscannable binaries, and optional private patterns. Add positive tests for the exact canonical source/import prefix <code>github.com/sumitake/portable-ghar</code> and exact CODEOWNERS entry <code>* @sumitake</code>; near-miss usernames, repositories, or placements remain findings.
 - [ ] Test exact allowlist entries <code>{path,line,rule,sha256,reason}</code>; changed content/line, wildcard paths, global regex exemptions, duplicate entries, and unknown rules must fail.
 - [ ] Run <code>python3 -m unittest discover -s tests/sanitization -p 'test_*.py' -v</code>. Expected: FAIL because scanner is absent.
-- [ ] Implement <code>tracked_files</code> using <code>git ls-files -z</code>, explicit generated-path walking, safe zip/tar member inspection, 25 MiB/file cap, sorted findings, content-hash allowlists, and private-denylist rules loaded only from the supplied untracked file. Encode the repository URL/import prefix and CODEOWNERS line as named exact-value/context exceptions, never broad username or GitHub-domain exemptions.
+- [ ] Implement <code>tracked_files</code> using <code>git ls-files -z</code>, explicit generated-path walking, safe zip/tar member inspection, 25 MiB/file cap, sorted findings, content-hash allowlists, and private-denylist rules loaded only from the supplied untracked file. When a private denylist is supplied, also scan every reachable branch-introduced blob and Git metadata (commit messages, author/committer identities, tag messages, and deleted-file paths), not only the current tracked tree, so a deployment identifier that was committed and later deleted cannot pass a tree-only scan yet remain recoverable from history. Encode the repository URL/import prefix and CODEOWNERS line as named exact-value/context exceptions, never broad username or GitHub-domain exemptions.
 - [ ] Configure Gitleaks defaults only:
 ~~~toml
 title = "Portable GHAR public-source secret policy"
@@ -199,7 +199,7 @@ useDefault = true
 
 **Interfaces:** Adds remaining stable contexts <code>sanitization</code> and <code>dependency-review</code>; CodeQL scans Go plus JavaScript/TypeScript.
 
-- [ ] First assert triggers/permissions: sanitization and CodeQL run push, PR, weekly schedule, manual; dependency review runs PR; CodeQL matrix is exactly <code>go</code> and <code>javascript-typescript</code>; Dependabot ecosystems are actions, gomod, npm, and Docker in all three future image directories.
+- [ ] First assert triggers/permissions: sanitization and CodeQL run push, PR, weekly schedule, manual; dependency review runs PR; CodeQL matrix is exactly <code>go</code> and <code>javascript-typescript</code>; Dependabot ecosystems are actions, gomod, npm, and Docker in all five future image directories: <code>runner</code>, <code>network-adapter</code>, <code>network-broker</code>, <code>network-helper</code>, and <code>network-verifier</code>.
 - [ ] Run repository tests. Expected: FAIL with missing workflows/config.
 - [ ] Sanitization checks out full history, runs Gitleaks over the base-to-head branch-introduced range on PRs and complete reachable history on push/schedule/manual, then runs generic tracked/generated scans; it never receives the private denylist. Dependency review fails on high vulnerabilities and denied licenses. CodeQL uses only GitHub-hosted runners and <code>security-events: write</code>.
 - [ ] Dependabot groups safe minor/patch updates weekly, caps open PRs, and never coexists with Renovate.
