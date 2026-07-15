@@ -1,0 +1,33 @@
+{
+  "name": "portable-ghar",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Portable GHAR public control plane (pre-deployment; implementation in progress).",
+  "license": "MPL-2.0",
+  "packageManager": "npm@12.0.1",
+  "engines": {
+    "node": "24.18.0",
+    "npm": "12.0.1"
+  },
+  "workspaces": [
+    "worker"
+  ],
+  "scripts": {
+    "worker:lint": "npm run lint --workspace worker",
+    "worker:typecheck": "npm run typecheck --workspace worker",
+    "worker:test": "npm run test --workspace worker",
+    "lint:docs": "markdownlint-cli2 \"docs/**/*.md\" \"*.md\"",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "eslint": "10.7.0",
+    "markdownlint-cli2": "0.23.0",
+    "prettier": "3.9.5",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.63.0",
+    "yaml": "2.9.0"
+  }
+}
