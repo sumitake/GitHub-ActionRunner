@@ -1,0 +1,107 @@
+[
+  {
+    "path": "tests/config/schema-validation.test.mjs",
+    "line": 89,
+    "rule": "SECRET_TOKEN",
+    "sha256": "2ebfae6629d50448ab2c0e92a5d512d32b9481afe16b0552ad3bac222678722a",
+    "reason": "synthetic ghp_-shaped placeholder value used only to assert the JSON Schema validator REJECTS an inline secret in heartbeatKeyRef; not a real credential. Secret-shaped rules are never fixture-path-exempt by design, so this specific line is allowlisted by exact content hash instead."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 79,
+    "rule": "IP001",
+    "sha256": "9b88549a6fde5cc15b08a20e7dcf36aa4ab3687569c561d9cff5a7400809f026",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 82,
+    "rule": "IP001",
+    "sha256": "8887959055c0f6d0043fb7dc96ba7fc69d1a9207235a9338fc6b64acaaf20511",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 86,
+    "rule": "IP001",
+    "sha256": "abf230aae1a534259928fba5a9d30384a0c2099ada2e849273c6141d4eb76f35",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 88,
+    "rule": "IP001",
+    "sha256": "a231662b5bfbbd44cee4e64bee12cc9ecdcf40f5a09909be0e17569f0fd3cd69",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 92,
+    "rule": "IP001",
+    "sha256": "4259a197f2252945995265096967170135195928b2525709436d208b32056058",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 93,
+    "rule": "IP001",
+    "sha256": "70490c03be9f80fbf5f22c3d3ed7f73775328ff93ac93f6e00a89561f8416018",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 94,
+    "rule": "IP001",
+    "sha256": "add1479361805b75deffaaa12fc67b41eac1997e21eac163a6569276e7fe3b21",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 95,
+    "rule": "IP001",
+    "sha256": "8e5bb8c2a6177b5c25d0016cf81abe5c85eb77c1231c3229a95081b9628eef00",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 96,
+    "rule": "IP001",
+    "sha256": "04eb763b13ba79ab05047a3302ad3ee0dfcefe9425ed736f8c0b801836f4db8c",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 97,
+    "rule": "IP001",
+    "sha256": "40168b35cd60e998444cb0b0746b56072f11f22955f3e04deb9a5dade88ec5e2",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 98,
+    "rule": "IP001",
+    "sha256": "9c539607cd79c852f82a80fc0fb1cfb8364b3fb086ddd68b09be8947ae59d7e0",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 99,
+    "rule": "IP001",
+    "sha256": "0acf6f059d37488e229d4999a57d9d5f5b48d6eec66b14f234e4d32b34a546d1",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 100,
+    "rule": "IP001",
+    "sha256": "b4370eac8fce3bc86558476378ee0765cb8fcc2d6d8b2de7ea97fcce0f5348e7",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py",
+    "line": 105,
+    "rule": "IP001",
+    "sha256": "cba6fc3f6e86e3e05eaa64bfa058bcd38f5ab0c2a5caf3e5e23c806ae5764ccf",
+    "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  }
+]
