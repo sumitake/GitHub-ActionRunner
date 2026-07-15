@@ -1,0 +1,13 @@
+.git/
+node_modules/
+dist/
+coverage/
+.wrangler/
+.env
+.env.*
+*.pem
+*.key
+private-overlay/
+*.local.*
+state/
+.DS_Store

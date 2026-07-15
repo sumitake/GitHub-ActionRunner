@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.wrangler/
+coverage/
+package-lock.json
+**/__pycache__/
+*.pyc
+# Design/plan docs are governed by markdownlint (long lines, tables) not Prettier:
+docs/superpowers/
+# Go sources are gofmt-managed:
+**/*.go
+
+# Test files (synthetic secrets / intentional content):
+tests/

@@ -1,0 +1,177 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-go-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      GOTOOLCHAIN: go1.26.5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Check gofmt
+        run: unformatted="$(find . -type f -name '*.go' -not -path './.git/*' -print0 | xargs -0 gofmt -l)" && test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      - name: go test -race
+        run: go test -race ./...
+      - name: staticcheck
+        run: go tool staticcheck ./...
+      - name: govulncheck
+        run: go tool govulncheck ./...
+
+  worker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-worker-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Worker lint
+        run: npm run worker:lint
+      - name: Worker typecheck
+        run: npm run worker:typecheck
+      - name: Worker test
+        run: npm run worker:test
+
+  shell:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-shell-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      GOTOOLCHAIN: go1.26.5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: ShellCheck
+        run: find scripts deploy -type f -name '*.sh' -print0 | xargs -0 -r shellcheck
+      - name: shfmt diff
+        run: go tool shfmt -d scripts
+      - name: Install Bats
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bats
+      - name: Bats
+        run: bats tests/shell
+
+  repository-metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-repository-metadata-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      GOTOOLCHAIN: go1.26.5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Validate JSON and YAML parse
+        run: 'node -e "const {parseAllDocuments} = require(''yaml''); const fs = require(''fs''); const {execSync} = require(''child_process''); const files = execSync(''git ls-files'').toString(''utf8'').split(''\n'').filter(f => /\.(json|jsonc|ya?ml)$/.test(f)); let failed = false; for (const f of files) { const text = fs.readFileSync(f, ''utf8''); const docs = parseAllDocuments(text, {strict: true}); for (const d of docs) { if (d.errors && d.errors.length) { failed = true; console.error(f + '': '' + d.errors.length + '' parse error(s)''); } } } if (failed) process.exit(1); console.log(''validated '' + files.length + '' JSON/YAML files'');"'
+      - name: Schema tests
+        run: npm run schema:test && npm run schema:validate
+      - name: actionlint
+        run: go tool actionlint .github/workflows/*.yml
+      - name: Docs lint
+        run: npm run lint:docs
+      - name: Format check
+        run: npm run format:check
+      - name: SPDX headers
+        run: 'for f in scripts/check_workflow_policy.py scripts/ci/*.sh; do grep -q ''^# SPDX-License-Identifier: MPL-2.0$'' "$f" || { printf ''%s: missing SPDX-License-Identifier header\n'' "$f"; exit 1; }; done'
+      - name: Workflow policy
+        run: python3 scripts/check_workflow_policy.py .github/workflows
+      - name: Repository metadata
+        run: python3 scripts/check_repository_metadata.py --root .
+      - name: Python unit tests
+        run: find tests -name 'test_*.py' -not -path '*/__pycache__/*' | sed 's/\.py$//; s#/#.#g' | xargs python3 -m unittest -v
+      - name: Sanitize public source
+        run: python3 scripts/sanitize_public.py --tracked
+
+  container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-container-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Check image manifest
+        run: bash scripts/ci/check-images.sh
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          format: json
+          output: trivy-fs-results.json
+      - name: Upload Trivy results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-fs-results
+          path: trivy-fs-results.json
+          retention-days: 14
+      - name: Trivy config scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: 1

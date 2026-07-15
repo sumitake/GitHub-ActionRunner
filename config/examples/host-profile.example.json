@@ -1,0 +1,19 @@
+{
+  "adapter": "systemd",
+  "capabilities": {
+    "kernel": {
+      "portable": true,
+      "minimumVersion": "5.15"
+    },
+    "docker": {
+      "available": true,
+      "rootless": true,
+      "minimumApiVersion": "1.41"
+    }
+  },
+  "executionMode": {
+    "posture": "non-root",
+    "justification": "example-justification-rootless-runner"
+  },
+  "conformanceProbes": ["cgroup-v2", "overlayfs", "userns-remap"]
+}

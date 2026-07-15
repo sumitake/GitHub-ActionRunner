@@ -1,0 +1,86 @@
+name: Bug report
+description: Report unexpected or incorrect behavior in Portable GHAR.
+title: "[bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        **Do not paste real logs, real configuration, real runtime state,
+        hostnames, IP addresses, tokens, or any other deployment-specific
+        detail into this form.** This repository and every issue on it are
+        public. Use the synthetic placeholders described in
+        [CONTRIBUTING.md](../../CONTRIBUTING.md) instead (for example
+        `owner/repository`, `example-fleet`, `operator@example.invalid`).
+        If you are reporting a security vulnerability instead of a bug,
+        stop here and use
+        [private vulnerability reporting](../../SECURITY.md) instead of
+        this form.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: >-
+        Describe the bug using synthetic examples only. Do not paste real
+        logs, configuration, or runtime state.
+      placeholder: >-
+        Use sanitized, synthetic examples (e.g. owner/repository,
+        example-fleet, operator@example.invalid).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: A synthetic description of the expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: >-
+        Minimal reproduction steps using synthetic fixtures, config, or
+        commands only -- never a real deployment's logs, config, or state.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: The tagged version or commit SHA you observed this on.
+      placeholder: e.g. v0.1.0 or a full commit SHA
+    validations:
+      required: false
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      options:
+        - Build / toolchain
+        - Config schemas
+        - Sanitization tooling
+        - CI / workflows
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: >-
+            I confirm this report contains no real logs, configuration,
+            runtime state, secrets, or deployment identifiers -- synthetic
+            examples only.
+          required: true
+        - label: This is not a security vulnerability report.
+          required: true

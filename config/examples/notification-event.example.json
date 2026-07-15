@@ -1,0 +1,10 @@
+{
+  "eventId": "example-notification-000001",
+  "transitionId": "example-transition-000001",
+  "displayName": "Example Fleet Notification",
+  "repositoryAliases": ["example-fleet"],
+  "confirmedRoute": "self-hosted",
+  "reasonCode": "ROUTE_CONFIRMED",
+  "receiptTime": "2024-01-01T00:00:00Z",
+  "operatorAction": "none"
+}

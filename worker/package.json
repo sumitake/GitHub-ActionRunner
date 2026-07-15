@@ -1,0 +1,21 @@
+{
+  "name": "@portable-ghar/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Portable GHAR external failover Worker (scaffold only; no endpoints yet).",
+  "license": "MPL-2.0",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.18.4",
+    "@cloudflare/workers-types": "5.20260708.1",
+    "@vitest/runner": "4.1.10",
+    "@vitest/snapshot": "4.1.10",
+    "vitest": "4.1.10",
+    "wrangler": "4.110.0"
+  }
+}

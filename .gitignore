@@ -1,0 +1,31 @@
+# Dependencies / build output
+node_modules/
+dist/
+coverage/
+.wrangler/
+worker/worker-configuration.d.ts
+
+# Local Go build/test cache artifacts
+/tmp/
+*.out
+
+# Environment, keys, private overlay, state, databases, caches (never committed)
+.env
+.env.*
+*.pem
+*.key
+secrets/
+private-overlay/
+*.local.*
+state/
+*.sqlite
+*.sqlite-*
+*.db
+.cache/
+
+# OS noise
+.DS_Store
+
+# Python build artifacts
+__pycache__/
+*.pyc

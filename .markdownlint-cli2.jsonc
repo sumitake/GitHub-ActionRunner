@@ -1,0 +1,11 @@
+{
+  // Long plan lines, inline HTML, and hard tabs inside fenced code blocks are
+  // intentional in the design/plan docs; structural rules remain enforced.
+  "config": {
+    "MD013": false,
+    "MD033": false,
+    "MD010": { "code_blocks": false },
+  },
+  "globs": ["docs/**/*.md", "*.md"],
+  "ignores": ["node_modules", "**/node_modules"],
+}
