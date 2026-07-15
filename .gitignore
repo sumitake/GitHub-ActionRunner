@@ -17,7 +17,7 @@ worker/worker-configuration.d.ts
 secrets/
 private-overlay/
 *.local.*
-state/
+/state/
 *.sqlite
 *.sqlite-*
 *.db
