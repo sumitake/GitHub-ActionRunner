@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 -->
 
-- **Status:** Approved architecture; implementation not started
+- **Status:** Design complete and review-gated; implementation not started. Code generation remains gated on the executable design probes and a fresh distinct-family review of the current revision (section 22).
 - **Repository:** `portable-ghar`
 - **License:** MPL-2.0
 - **Primary audience:** Operators running ephemeral GitHub Actions workloads on a Linux Docker host, with QNAP/QTS as the first reference host
@@ -75,7 +75,9 @@ The runner worktree is never promoted into the control plane. Control-plane code
 
 ### 4.3 Bounded job credentials
 
-The JIT runner configuration is secret and is never logged or persisted outside the ephemeral runner.
+The JIT runner configuration is secret and is never logged, placed in Docker
+container configuration, or persisted outside controller memory and the
+ephemeral runner process.
 
 The upstream runner accepts JIT configuration through `ACTIONS_RUNNER_INPUT_JITCONFIG`, masks it, and removes it from the listener process environment during startup. Docker host metadata and runner configuration files remain inside the trusted-host/ephemeral-container boundary, so the design does not claim that a malicious job can never observe its own one-job runner credentials. The mitigation is scope and lifetime:
 
@@ -85,6 +87,48 @@ The upstream runner accepts JIT configuration through `ACTIONS_RUNNER_INPUT_JITC
 - no cross-job runner reuse; and
 - immediate container destruction and credential invalidation after completion or error.
 
+Docker `--env`, `--env-file`, labels, command arguments, bind mounts, named
+volumes, and Docker config/secret objects are prohibited for JIT transport.
+The controller retains the JIT bytes in owned memory until the network barrier
+passes. Both frames reach the runner's one long-lived held gate process over a
+single runner-private tmpfs `AF_UNIX` socket the gate owns (mode `0600`): the
+controller delivers each frame by invoking a minimal `docker exec -i` forwarder
+that copies its stdin — the exact frame — into that socket and exits, holding no
+secret state, so only the subcommand name is recorded in Docker exec metadata.
+The readiness token is 32 cryptographically random bytes and is never persisted;
+the gate holds only its SHA-256 digest, in process memory, never in a file. Both stdin protocols
+use fixed binary frames with an eight-byte ASCII magic, version `1`,
+big-endian lengths, and exact EOF. The arm frame is
+`PGHARARM | version:u8 | algorithm:u8=1 | digestLength:u16=32 | digest:32`.
+The release frame is
+`PGHARREL | version:u8 | tokenLength:u16=32 | jitLength:u32 | token | jit`,
+where `jitLength` is nonzero and at most 65,536 bytes. Unknown versions or
+algorithms, duplicate/re-arm attempts, truncation, premature EOF, trailing
+bytes, invalid lengths, and frames over the total bound fail closed and destroy
+the runner. Frames are parsed at fixed offsets driven by the declared lengths;
+scanning the stream for magic bytes is prohibited, because the opaque JIT
+payload may legally contain frame-magic byte sequences. Gate reads enforce a
+bounded read deadline: a stalled or partial frame past the deadline fails
+closed and destroys the runner. Arm/consume state is process-local to the one
+held gate and never persisted; any gate restart or state ambiguity destroys
+the runner rather than re-arming.
+
+The held gate constant-time verifies the previously armed digest against the
+released token, atomically consumes its in-memory arm state, removes the socket,
+and places the JIT value only in the listener child's process environment
+immediately before `exec`. The release frame transits the tmpfs socket as
+kernel-buffered bytes and is never written as a file. The pinned
+upstream listener removes that environment variable during argument parsing
+before any job process starts, while its immutable in-process
+argument/configuration data remains inside the accepted one-job listener trust
+boundary. Tests inspect Docker container/exec metadata, the host-side Docker
+state directory in an isolated test daemon, runner-private tmpfs,
+listener/job environments, logs, and diagnostics for the adversarial JIT
+corpus. Environment-absence assertions begin only after upstream argument
+parsing completes and before the first job process is created; the bootstrap
+environment before that observation point intentionally carries the JIT.
+Tests do not claim Go or .NET heap erasure of prior immutable string copies.
+
 ## 5. Architecture
 
 ```mermaid
@@ -93,6 +137,10 @@ flowchart LR
     Controller["Portable GHAR controller"]
     Docker["Docker host"]
     Helper["One-shot network helper"]
+    Adapter["Loopback relay sidecar"]
+    Broker["Bounded egress broker"]
+    DialAuthority["Per-slot dial authority"]
+    Ledger["Controller SQLite ledger"]
     Runner["Ephemeral runner"]
     Watchdog["Host watchdog"]
     Worker["Cloudflare Worker"]
@@ -103,8 +151,15 @@ flowchart LR
     GitHub <--> Controller
     Controller --> Docker
     Docker --> Helper
+    Docker --> Adapter
+    Docker --> Broker
     Docker --> Runner
-    Helper -. "network namespace only" .-> Runner
+    Helper -. "broker namespace only" .-> Broker
+    Runner -. "loopback only" .-> Adapter
+    Adapter -. "per-job AF_UNIX" .-> Broker
+    Broker -. "permit before every dial" .-> DialAuthority
+    Controller --> DialAuthority
+    DialAuthority --> Ledger
     Watchdog --> Controller
     Controller -- "signed outbound heartbeat" --> Worker
     Worker <--> State
@@ -127,7 +182,7 @@ The controller is divided into replaceable units:
 | Assignment reconciler | Recover assigned jobs after restart and make each transition idempotent. |
 | Capacity broker | Enforce a fleet-wide ceiling and fair admission between repositories. |
 | Runner lifecycle | Create, release, monitor, and destroy one runner per job. |
-| Network jail | Orchestrate the held runner, one-shot helper, independent verifier, and release barrier. |
+| Network jail | Orchestrate the empty runner namespace, adapter, bounded broker, one-shot broker-policy helper, independent verifier, budget, and release barrier. |
 | Host runtime | Execute a narrow Docker/host command interface without exposing it to jobs. |
 | State store | Persist controller job state, outbox records, and reconciliation metadata in a private SQLite database. |
 | Health publisher | Emit a heartbeat only after a complete successful reconciliation cycle. |
@@ -139,16 +194,108 @@ Upstream scale-set structures do not cross the adapter boundary. Compatibility f
 
 Capacity is expressed as resource units, not a count of pre-registered runners.
 
-- Each runner profile declares CPU, memory, PID, and scratch-space requests and limits.
+- Each stable capacity slot declares a checked resource vector for its runner,
+  adapter, held/running broker, per-slot dial-authority endpoint, job socket
+  directory, durable ledger allocation, and serialized helper/verifier peak.
+  The vector covers CPU, memory, PIDs, file descriptors, tmpfs, scratch, socket
+  state, durable bytes, and inodes. Admission charges the complete steady-state
+  sum plus the larger serialized transient peak; if helper and verifier work is
+  ever concurrent, it charges both instead.
 - A global ceiling applies across every configured repository.
+- Each repository may declare an effective-concurrency maximum: a hard per-repository admission cap evaluated independently of its fairness weight. Admission never grants a repository more concurrent slots than its configured maximum even when fleet-wide capacity is free. The sum of per-repository maxima may exceed the fleet-wide ceiling; the ceiling still bounds total concurrency and weighted fairness arbitrates the shared remainder. The fleet-wide ceiling is validated separately against measured host capacity through the host-conformance resource and conntrack budgets; per-repository maxima are configuration, never a host-capacity claim.
 - Repository queues use weighted round-robin admission with an aging override so low-volume governance jobs cannot starve behind a high-volume repository.
 - The controller never advertises more acquirable capacity than the host broker has reserved.
 - Host pressure can reduce available capacity but cannot silently raise it above configured limits.
 - Zero idle runner containers is the default.
 
-Acquisition policy is persisted as `{mode, eligibleScaleSets, maxCapacity, epoch}`. Every effective mode, eligibility, or capacity change uses one compare-and-set barrier: increment the epoch, cancel and join every older poller, invalidate its broker leases, and wait for zero acquisition critical sections before returning. Poll, acquire, and JIT calls have explicit deadlines. If any old operation ignores cancellation past the bounded shutdown deadline, the controller persists `fatal` with zero capacity and terminates its process; lifecycle tooling treats that transition as failed and proves process/runner quiescence before any fence handoff or restart.
+Acquisition policy is persisted as `{mode, eligibleScaleSets, maxCapacity, repositoryPolicyRevision, repositoryPolicies, epoch}`, where `repositoryPolicies` is the per-repository `{alias, maxConcurrency, eligibilityState}` set and `repositoryPolicyRevision` is a monotonic counter bumped on any change to that set (including an eligibility latch). Every effective mode, eligibility, capacity, or repository-policy change uses one compare-and-set barrier: increment the epoch, cancel and join every older poller, invalidate its broker leases, and wait for zero acquisition critical sections before returning. Poll, acquire, and JIT calls have explicit deadlines. If any old operation ignores cancellation past the bounded shutdown deadline, the controller persists `fatal` with zero capacity and terminates its process; lifecycle tooling treats that transition as failed and proves process/runner quiescence before any fence handoff or restart.
 
-Every nonzero poll, acquire, or JIT operation acquires a current `portable` fleet guard, enters an epoch-bound acquisition critical section, then immediately revalidates the current mode, exact eligible scale set, effective capacity, live lease, and epoch before the external effect. `canary-only` permits exactly one persisted canary scale set and one capacity unit. Watchdog stops, failed probes, host-pressure reductions, operator mode changes, and lifecycle suspend all use this same barrier; none may flip a weaker side flag.
+The public acquisition-policy digest is SHA-256 over exact UTF-8 bytes:
+`portable-ghar-acquisition-policy-v1\n`, lowercase mode plus `\n`, base-10
+`maxCapacity` with no leading zero plus `\n`, base-10 `repositoryPolicyRevision`
+plus `\n`, then each exact eligible scale-set name in unsigned UTF-8 byte order
+each followed by `\n`, then a `--\n` separator, then each repository policy as
+`alias`, base-10 `maxConcurrency`, and eligibility state (`active`,
+`archived-disabled`, or `pending-reactivation`) joined by `\t` and followed by
+`\n`, in unsigned UTF-8 alias byte order. The scalar-name and alias grammar
+exclude tab and newline. An empty scale-set or repository set contributes no
+lines for that section; every fixed line still ends in LF. Only the digest,
+policy epoch, repository-policy revision, and capacity enter health.
+
+Every nonzero poll, acquire, or JIT operation enters an epoch-bound acquisition critical section, acquires a current `portable` host-fleet guard, then makes an outbound authenticated request for one fresh Worker acquisition permit bound to the operation ID/type, repository, exact scale set, local policy epoch/digest, Worker transition epoch/permit generation, and server-owned expiry. It immediately revalidates the current mode, exact eligible scale set, effective capacity, live lease, epoch, and every permit binding before the one external effect, retaining both guards until that effect ends. The operation deadline is shorter than the permit lifetime; an unjoinable call triggers fatal persistence and process termination before the permit drain margin. `canary-only` permits exactly one persisted canary scale set and one capacity unit. A local CLI transition or prior admin-status response is intent/evidence only and grants no acquisition authority. Watchdog stops, failed probes, host-pressure reductions, operator mode changes, and lifecycle suspend all use this same barrier; none may flip a weaker side flag.
+
+The Durable Object issues a permit only when its current state authorizes the
+exact requested mode and has no open latest-transition queue risk. It recomputes
+the expected acquisition-policy digest for the mode it is issuing — canary-only
+(mode `canary-only`, the single persisted canary scale set, capacity one) or
+enabled (full configured policy) — from its own authoritative configuration and
+current repository-policy revision, and rejects any permit request whose bound
+`policyEpoch`, `policyDigest`, or repository-policy revision does not equal those
+expected values; the digest is a Worker-owned predicate, never a client echo.
+It also refuses to issue a permit for a repository whose live eligibility state
+is not `active`. That live archive refusal is a permit-gate overlay independent
+of the acquisition-policy digest, which reflects config-declared eligibility; an
+operator configuration revision later brings the declared eligibility (and the
+digest) into agreement with the latch. Each permit is persisted and
+single-operation, never a reusable bearer token. Before any
+hosted transition, the object atomically increments the permit generation,
+enters `acquisition-revoking`, and stops issuance. It commits hosted transition
+intent, queue-risk rows, and GitHub outboxes only after every prior permit is
+closed or its server expiry plus the forced-termination margin has elapsed.
+Thus a new hosted transition cannot invalidate clearance between an operator
+status check and a local poll: the poll needs a live permit inside its epoch
+barrier, and the hosted transition cannot claim its hard zero-acquisition gate
+until all earlier authority is drained. A legacy compatibility wrapper uses
+the same generation as a short renewable process lease and terminates the
+legacy listener before lease expiry if renewal fails; the Worker applies the
+same revoke-and-drain rule before hosted intent.
+
+A drained permit is necessary but not sufficient for mutual exclusion, because
+a runner past `RUNNER_HELD` — in `RELEASE_ARMED` or `LISTENER_RELEASED` but not
+yet `JOB_RUNNING` — holds a released listener that can still accept an
+assignment while carrying no live acquisition permit. Listener authority is
+therefore bound to the acquisition epoch and fleet-fence generation under which
+the runner was released. When the epoch barrier revokes acquisition (operator
+mode change, host pressure, watchdog stop, hosted hold, archival, or failover),
+the controller terminates, as part of that drain, every runner past
+`RUNNER_HELD` that has not reached `JOB_RUNNING`; runners already in
+`JOB_RUNNING` drain normally. Quiescence attestation is required only for transitions that must exclude live
+Portable listeners — a governed legacy rollback and an administrative hold or
+upgrade drain, where the controller is alive by construction: the controller
+publishes the count of un-assigned released listeners, and the Worker does not
+complete such a transition until it has drained every permit/lease and observed
+a fresh heartbeat reporting zero un-assigned released listeners under the current
+generation. A failover to hosted triggered by staleness or an authenticated
+fatal state does not wait for that heartbeat — the host may be down and unable
+to send one, its per-job containers die with it, hosted routing does not
+conflict with any straggler in-flight Portable job beyond the existing
+queue-risk envelope, and the fence prevents a returning zombie controller from
+acquiring anew. In every case, a released listener that observes a superseded
+epoch or fence generation at job-accept time destroys itself rather than
+accepting work.
+
+Repository archival is a per-repository eligibility change, not a fleet
+failover. Each repository carries a latched eligibility state — `active`,
+`archived-disabled`, or `pending-reactivation`. The Worker is the sole live
+reader of GitHub `archived` state (it alone holds Metadata read); it observes
+archival through its bounded five-minute integrity sweep. On observing
+`archived=true` the Worker latches that repository to `archived-disabled`: it
+stops issuing and revokes every acquisition permit and legacy lease for that
+repository and refuses new ones, which forces the controller's effective
+capacity for that alias to zero because the controller cannot acquire without a
+Worker permit. This per-repository disable inserts no fleet-wide queue-risk row
+and never blocks acquisition for other repositories; a job already running when
+archival is observed drains normally, and no new work is admitted. The
+eligibility state is durable and latched: a later live `archived=false` does
+not return the repository to `active` on its own. Reactivation is a distinct
+operator-driven path (`archived-disabled` → `pending-reactivation` → `active`)
+requiring an operator-approved configuration revision, a fresh workflow and
+security eligibility audit, hosted bootstrap and read-back, per-repository
+queue-risk clearance, and a current-epoch canary. Live GitHub archive state
+always wins over configuration for the disable direction: a stale private
+overlay that still lists an archived repository as active never re-enables it,
+and only the operator reactivation path — never a bare live `archived=false` —
+clears the latch.
 
 ### 6.3 Controller job state
 
@@ -157,16 +304,30 @@ Each assignment has a persisted state machine:
 ```text
 RECEIVED
   -> CAPACITY_RESERVED
+  -> ADAPTER_CREATED
+  -> ADAPTER_VERIFIED
+  -> BROKER_HELD
+  -> BROKER_POLICY_APPLIED
+  -> DIAL_AUTHORITY_READY
+  -> BROKER_RELEASED
+  -> EGRESS_VERIFIED
   -> RUNNER_HELD
-  -> NETWORK_CONFIGURED
-  -> NETWORK_VERIFIED
+  -> RELEASE_ARMED
   -> LISTENER_RELEASED
   -> JOB_RUNNING
   -> JOB_FINISHED
   -> DESTROYED
 ```
 
-Any error before `LISTENER_RELEASED` destroys the runner without accepting work. Any error after release records the ambiguity, stops new acquisition when necessary, reads back GitHub and Docker state, and reconciles to one terminal outcome. Repeating a transition must be a no-op or complete the interrupted transition; it must never launch a duplicate runner for the same assignment.
+These checkpoints follow the real external-effect order and persist the adapter,
+held broker namespace-owner, runner, stable capacity-slot, policy, socket, and
+verification identities needed for restart reconciliation. Any error before
+`LISTENER_RELEASED` destroys every per-job component without accepting work.
+Any error after release records the ambiguity, stops new acquisition when
+necessary, reads back GitHub and Docker state, and reconciles to one terminal
+outcome. Repeating a transition must be a no-op or complete the interrupted
+transition; it must never launch a duplicate component or runner for the same
+assignment.
 
 ### 6.4 Safe upgrades
 
@@ -175,13 +336,25 @@ An upgrade proceeds through:
 1. enable the authenticated Worker-owned hosted hold and read back every configured repository on hosted runners;
 2. stop new acquisition;
 3. drain or cancel assigned jobs according to explicit policy;
-4. prove zero listeners and helper containers;
+4. prove zero listeners, adapters, held/running brokers, helpers, verifiers,
+   per-job socket directories, and broker dials; stable slot ledgers remain
+   retained and unavailable for reuse until their measured `T` expires;
 5. replace the pinned controller binary and images;
 6. run compatibility and host-profile probes;
-7. start the replacement disabled, then permit canary-only acquisition;
-8. release the hosted hold into a new recovery epoch;
-9. run a secretless scale-set canary; and
-10. restore self-hosted routing only after the external failover state machine confirms that current-epoch canary.
+7. start the replacement disabled;
+8. clear every open queue-risk row through authenticated same-transition GitHub
+   read-back and selective recovery while local acquisition remains zero;
+9. set canary-only intent, release the hosted hold into a new recovery epoch,
+   and require each exact canary operation to obtain a fresh Worker permit
+   inside the local epoch barrier before running the secretless canary while
+   routing remains hosted;
+10. enable full acquisition intent locally, require fresh enabled-policy Worker
+    permits for every operation, and, while the Worker transition epoch is
+    unchanged, observe a same-enrollment-session heartbeat whose sequence is
+    newer than the canary, reporting `enabled`, the expected policy digest, and
+    complete capacity; and
+11. restore self-hosted routing only after the external failover state machine
+    confirms both the current-epoch canary and that acquisition-enabled proof.
 
 Host lifecycle changes use a durable operation journal with an idempotent operation ID and phase. A rerun resumes or compensates forward. Fence generations never decrement and raw fence snapshots are never restored. An upstream compatibility failure leaves acquisition disabled and hosted routing unchanged.
 
@@ -202,6 +375,9 @@ Every runner uses:
 - `no-new-privileges`;
 - a restrictive seccomp profile;
 - denial of unprivileged user-namespace creation;
+- seccomp denial of `unshare`, `setns`, `clone3`, `bpf`, raw-packet sockets,
+  and `clone` whenever any namespace-creation flag is present; masked,
+  read-only `/proc/sys`;
 - non-root execution when the verified host profile supports it; and
 - no automatic restart policy.
 
@@ -209,44 +385,288 @@ A capability-less root profile may exist only as a named degraded profile when a
 
 ### 7.2 Network setup barrier
 
-The runner starts in a held entrypoint that cannot launch the listener until the controller writes a one-use readiness token into runner-private tmpfs. The network namespace is owned by a dedicated per-job anchor, so Docker does not perform a second network setup when the runner joins it.
+The runner starts in a held entrypoint — the long-lived gate — that cannot
+launch the listener until the controller arms only a one-use readiness-token
+digest in the gate's process memory and later releases the raw token plus JIT
+over the gate's private tmpfs socket through the exec-stdin forwarder (§4.3).
+The digest, raw token, and JIT are never written to a file. Every runner namespace is owned by a dedicated per-job
+adapter sidecar, so Docker does not perform a second network setup when the
+runner joins it. The host profile selects one explicit egress mode:
 
-1. Docker creates a unique per-job network-anchor container with cap-drop ALL, read-only root, a no-network/no-filesystem pause process, and no runner, JIT, or job data.
-2. A pinned apply-helper container joins only the anchor namespace.
-3. The helper receives `NET_ADMIN` and no other capability. It has no Docker socket, host PID/mount/user namespace, host mount, device, runner filesystem, or job input.
-4. The helper installs output policy that blocks private, link-local, carrier-grade NAT, metadata, multicast, Docker-host, and locally detected host networks. IPv6 follows the declared deny posture.
-5. The helper exits, and the controller proves it is gone.
-6. A separate capability-less verifier enters the anchor namespace, runs positive and negative probes, and exits.
-7. Docker creates the held runner with exact network mode `container:<anchor-id>`; this operation must not create or alter interfaces, routes, or rules in the configured namespace.
-8. A pinned NET_ADMIN-only audit helper enters the still-held namespace, performs no mutation, revalidates namespace identity plus the complete base-chain policy/linkage and dedicated policy digest, and exits.
-9. The controller proves the audit helper is gone, the runner still points at the exact anchor, and the namespace identity still matches.
-10. Only after successful verification does the controller create the readiness token.
-11. The held entrypoint consumes the token, removes it, and starts the upstream runner listener.
+- `restricted-broker-v1` is the QTS reference and portable default. The runner
+  shares a trusted adapter sidecar's Docker `none` namespace, which has loopback
+  only, registers no iptables table or conntrack hook, and has no routable
+  interface. The adapter listens only on loopback and byte-relays one TCP client
+  connection to one AF_UNIX broker stream; it does not parse or dial.
+  HTTP CONNECT is required, and optional SOCKS5 CONNECT may be enabled; SOCKS
+  BIND/UDP ASSOCIATE, direct UDP/ICMP/IP, plaintext HTTP proxying, and non-proxy-
+  aware protocols are unsupported. The adapter alone receives a read-only bind
+  of its per-job broker parent directory; the runner has no mount. That
+  directory is mode `0700` and its one socket is mode `0600`, owned by the same
+  dedicated non-runner UID in adapter and broker containers. Broker state uses
+  a different mount that the adapter cannot see. A separate per-job,
+  capability-less broker occupies an independently jailed namespace and is
+  itself split into two processes with disjoint authority: a parser process
+  that reads the untrusted CONNECT/SOCKS bytes and creates no network socket
+  (seccomp denies `socket(AF_INET/AF_INET6)`), and a dialer process that owns
+  every real network socket — the DoH connections and the upstream dials — and
+  performs no untrusted-stream parsing. The parser hands the dialer only a
+  fixed, bounded, already-normalized request struct over an internal socket;
+  the dialer independently re-applies the deny classes and consumes a dial
+  permit before any `connect()`. Parser compromise therefore cannot create a
+  socket, reach a denied destination, or exceed the permit budget.
+- `nftables-direct-v1` is optional only on a modern Linux profile that proves an
+  exact pre-conntrack admission ceiling before any runner packet can allocate
+  shared state. Absence of that proof rejects the profile; there is no filter-
+  table approximation or runtime fallback.
 
-The apply/audit helpers and untrusted listener never execute concurrently during startup. A missing helper exit, failed probe, unexpected route, anchor mismatch, or policy mismatch destroys both runner and anchor. During an active job the controller periodically launches the same input-free audit image in read-only audit mode, compares only typed digest/namespace output, and destroys the job plus safe-stops acquisition on drift. Target-host soak must prove ordinary Docker/QTS daemons do not mutate a live anchor namespace; a hostile root or host daemon remains outside container-grade isolation.
+For `restricted-broker-v1`, startup is exact:
 
-Network policy is compiled into one backend-neutral intermediate policy and applied by an explicitly selected, host-profile-pinned backend. A host profile may select:
+1. Docker creates and starts the capability-less adapter with `--network none`,
+   a read-only root, the read-only per-job broker-directory bind, and no runner,
+   JIT, job data, route, or non-loopback device.
+2. Conformance proves the namespace exposes no registered iptables tables and
+   zero namespace conntrack rows; loopback connection floods must not activate
+   conntrack or change the host-global count beyond measured noise.
+3. Docker creates and starts the capability-less, non-root, read-only broker in
+   held mode on the configured Docker network. That held broker PID is the
+   namespace owner but opens no listener, resolver, or upstream socket. A
+   NET_ADMIN-only helper joins that exact broker namespace, installs the
+   blocked-address/default-drop policy, exits, and is proven gone.
+4. While the broker remains held, the controller starts its mode-restricted
+   per-slot dial-authority socket, proves the stable slot/job generation and
+   durable ledger are current, and checkpoints that identity. The broker sees
+   this directory read-only; the adapter and runner cannot see it.
+5. The controller releases the same held broker exactly once through the fixed
+   host-runtime `ReleaseNetworkBroker` action. No separate anchor image or
+   untracked pause process exists. The broker's only writable paths are bounded
+   tmpfs plus a mode-restricted per-job relay directory. It has no Docker socket,
+   job filesystem, controller credential, shell, or package manager.
+6. The controller revalidates the adapter's fixed loopback relay, namespace,
+   and exact read-only per-job broker-directory bind. The directory—not the
+   socket inode—is mounted so a broker rebind cannot leave a stale inode mount.
+   The runner later shares only the adapter network namespace, not its
+   PID/mount namespace, host socket mount, or broker namespace.
+7. The verifier uses the loopback proxy to prove allowed CONNECT traffic and
+   blocked literal/resolved destinations, then proves direct IP, DNS, UDP, ICMP,
+   non-proxy TCP, and private routes fail. The broker resolves names only over a
+   fixed bounded set of persistent DoH connections, validates every A/AAAA
+   result against the complete deny classes, and dials the already validated
+   literal address without a second resolver lookup. Broker and verifier scratch
+   images contain the same release-locked CA bundle; its source revision,
+   SHA-256, license, copied path, and SBOM entry are mandatory. TLS verifies the
+   configured DoH server name and fails on a missing, expired, wrong-name, or
+   untrusted chain. CA rotation requires a reviewed lock update, rebuilt image
+   digests, those negative tests, and target conformance before acquisition.
+8. Docker creates the held runner in exact network mode
+   `container:<adapter-id>`, with the declared proxy environment and no
+   mount or independent endpoint mutation.
+9. Input-free audit helpers revalidate both namespace identities, the empty
+   runner network, adapter/broker identities, held-broker release generation,
+   relay and dial-authority socket mount sources/types/modes, broker filter
+   digest, Docker attachments, and conntrack budget; then exit.
+10. Only after the final audit has passed and every helper has exited does the
+    controller arm the one-use token digest in the gate's memory, then
+    immediately deliver the raw token plus in-memory JIT release frame over the
+    gate's private tmpfs socket (§4.3). The gate verifies the armed digest and
+    starts the listener. No armed state exists before that audit.
 
-- `nftables-v1` on verified standard Linux hosts; or
-- `iptables-legacy-v1` on a verified QTS/Linux host whose kernel exposes legacy xtables but not `nf_tables`.
+The adapter performs only bounded bidirectional byte relay, with hard client/
+AF_UNIX FD, buffer, timeout, and concurrency caps. The broker parser identifies
+a job by its dedicated Unix listener path, never a client header, and parses
+HTTP CONNECT itself; optional SOCKS5 accepts CONNECT only. It bounds the
+hostname to 253 bytes and rejects NUL/control/ambiguous authority,
+IDNA/IPv4/IPv6 parser disagreement, invalid ports, overlong headers, plaintext
+absolute-form HTTP, and unsupported commands. Destination ports are an explicit
+host-profile allowlist. On a valid CONNECT the parser emits one fixed-size,
+strictly bounded request struct — normalized hostname or literal, and port — to
+the dialer over an internal AF_UNIX socket, and never itself opens a network
+socket. The dialer treats that struct as untrusted input: it re-validates the
+port allowlist, resolves names only over its fixed bounded set of persistent
+DoH connections, re-applies the complete deny classes to every A/AAAA answer,
+and dials the already-validated literal serially with automatic Happy Eyeballs
+disabled. Before every actual kernel `connect()` attempt, including DoH
+reconnects and address fallback, the dialer sends one bounded request to the
+controller-owned per-slot dial-authority Unix socket and waits for a committed
+permit. The controller is the only SQLite writer: it validates the active slot/
+job generation, monotonic request sequence, and peer. The dialer's request frame
+contains no caller time or refill hint; the authority reads only its injected
+trusted monotonic clock, atomically consumes one unit from that slot's durably
+reserved block (fsyncing only when it must raise the reservation, not per
+permit), then returns a monotonic permit ID. A lost reply or dialer crash wastes
+the permit safely; it never refunds or redials without another committed permit.
+The runner and adapter cannot see this socket, and the dialer contains
+no alternate dial path. Neither component logs destinations or payloads.
 
-There is no runtime auto-fallback between backends. Selection is configuration, and the host conformance probe must positively match the selected backend before acquisition can become nonzero. Both backends must implement the same blocked-address classes, default-drop semantics, canonical policy digest, isolated-network-namespace target, cleanup contract, and independent positive/negative verification report.
+The deny classes are a closed, enumerated set applied identically by the
+dialer's literal validator and the compiled filter policy, over both parsed
+literals and every resolved A/AAAA answer, after normalization. Normalization
+folds IPv4-mapped and IPv4-compatible IPv6 (`::ffff:0:0/96`, `::/96`), 6to4
+(`2002::/16`) and Teredo (`2001::/32`) embedded IPv4, and alternate IPv4 literal
+forms (decimal, octal, hex, and fewer-than-four-part) to their canonical
+address before classification; IDNA/UTS-46 with any trailing dot removed governs
+name comparison. The denied classes are exactly: (1) this-host and loopback
+(`127.0.0.0/8`, `::1`); (2) private and unique-local (`10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`); (3) link-local
+(`169.254.0.0/16`, `fe80::/10`), including the cloud metadata address
+`169.254.169.254`; (4) shared/CGNAT (`100.64.0.0/10`); (5) unspecified,
+reserved, documentation, and benchmarking (`0.0.0.0/8`, `192.0.0.0/24`,
+`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `198.18.0.0/15`,
+`240.0.0.0/4`, `::`, `2001:db8::/32`); (6) multicast and broadcast
+(`224.0.0.0/4`, `255.255.255.255`, `ff00::/8`); (7) the discovered Docker host,
+bridge, and management addresses and routes; and (8) anything outside allowed
+public unicast space by exclusion. A DNS answer set is accepted only if every
+returned A/AAAA record is permitted: a single denied record in an RRset fails
+the whole CONNECT closed, with no dialing of a sibling public record and no
+partial acceptance. The dialer dials only the exact validated literal and
+performs no second resolution between validation and `connect()`.
 
-The QTS legacy backend does not trust the host's old `iptables` userspace. Its pinned one-shot helper image contains reviewed `iptables-legacy`/`ip6tables-legacy` userspace, verifies the selected binary reports the legacy backend, and applies complete generated rulesets with `iptables-restore`/`ip6tables-restore` inside the runner's otherwise-empty network namespace. Required xtables modules must already be present and pass the host-profile conformance probe; the helper has no `CAP_SYS_MODULE` and never broadens host kernel state. Exact helper-userspace/kernel compatibility is acceptance-tested on the target profile and after every QTS update.
+Parser
+fuzzing,
+half-close, backpressure, timeout, host-FD/memory exhaustion, slowloris, socket-
+replacement/rebind, peer-identity, and confused-deputy tests are release gates.
 
-IPv4 and IPv6 restore operations cannot be one cross-family kernel transaction. This creates no untrusted escape window because the runner listener remains held, the trusted helper is the only executing process in the namespace, and the helper performs no application network calls. The controller destroys the namespace rather than rolling back if either family fails. A host profile must select exactly one IPv6 posture: `deny-via-ip6tables`, which requires successful restore/read-back; or `kernel-disabled`, which requires positive proof of no IPv6 address, route, or enabled namespace stack. There is no automatic fallback between them.
+The apply/audit helpers and untrusted listener never execute concurrently during
+startup. A missing helper exit, failed probe, unexpected route/table, held-
+broker identity/release mismatch, socket mismatch, policy mismatch, broker/
+adapter death, or budget ambiguity
+destroys the job environment before listener release. During an active job the
+controller periodically repeats the input-free audit and destroys the job plus
+safe-stops acquisition on drift. Target-host soak must prove ordinary
+Docker/QTS daemons do not mutate either namespace; a hostile root or host daemon
+remains outside container-grade isolation.
 
-The helper receives `NET_ADMIN` only, exits before listener release, and returns no rule text or route details. Its read-back parser accepts only the exact grammar emitted by the pinned helper for the complete generated filter table: `OUTPUT` must have exact default policy `DROP`, contain the exact first jump to the dedicated Portable GHAR chain, and contain no earlier accept/bypass; the dedicated chain must match the expected normalized graph. The parser is not a general `iptables-save` parser. The verifier is capability-less and independently exercises positive and negative DNS/TCP plus unprivileged UDP-echo behavior. The final audit helper repeats the full base/delegation/dedicated-chain read-back after behavioral probes and immediately before release. Failure to restore, read back, match the digest, prove the declared IPv6 posture, or block a prohibited probe destroys the runner before listener start.
+Network policy is compiled into a profile-aware intermediate policy. There is
+no runtime auto-fallback. Both modes implement the same blocked-address classes,
+canonical digest, cleanup contract, and positive/negative verification report,
+but the support matrix truthfully records that the restricted broker supports
+proxy-compatible TCP only while a qualified direct profile may support more.
 
-Docker NAT consumes host-global conntrack resources regardless of which policy backend is selected. Every manifest therefore carries a maximum concurrent tracked-flow ceiling plus bounded NEW-connection rate and burst derived from host `nf_conntrack_max`, configured maximum runner capacity, relevant conntrack timeouts, and an explicit host reserve. The compiler permits established public flows but rejects new flows above the per-namespace ceiling and rate-limits remaining new flows before accept; over-limit traffic reaches default drop. Each backend's exact ceiling mechanism is selected and proven by the host profile rather than inferred at runtime. The QTS profile pre-proves the required conntrack/limit/ceiling modules or namespace-scoped kernel control, and nftables implements the same semantic ceiling/rate contract. Configuration is rejected unless `maxTrackedFlows * maxRunnerCapacity` remains below the configured host reserve threshold.
+The QTS broker backend does not trust the host's old `iptables` userspace. Its
+digest-pinned one-shot helper uses a digest-pinned build stage and a scratch
+final stage containing the exact legacy restore/save binaries, dynamic loader,
+transitive shared-library closure, `libxtables`, and complete pinned xtables
+extension directory required by the generated grammar. The build records every
+copied path and digest in the image SBOM and fails if `lddtree`/`scanelf`
+discovers an undeclared dependency. The helper verifies the selected binary
+reports the legacy backend and that every required match/target can restore and
+read back before acquisition is enabled. Required kernel xtables modules must
+already be present and pass the host-profile conformance probe; the helper has
+no `CAP_SYS_MODULE`, shell, package manager, or application-network capability
+and never broadens host kernel state. Exact helper-userspace/kernel compatibility
+is acceptance-tested in the trusted broker namespace on the target profile and
+after every QTS update. The
+scratch runtime has an exact bounded writable lock contract:
+`XTABLES_LOCKFILE=/run/xtables.lock` and a private
+`/run` tmpfs mounted `rw,noexec,nosuid,nodev,size=64k,mode=0700`; every other
+path remains read-only. Image-closure and target tests use those exact final
+run flags and prove the lock file cannot escape that tmpfs.
 
-Host conformance records `nf_conntrack_max`; health samples current occupancy; the pressure policy narrows capacity through the same acquisition epoch barrier before the warning threshold and safe-stops before exhaustion. Chaos tests flood short-lived varied-destination TCP and UDP flows from held and active namespaces and prove the per-runner NEW-flow cap, capacity reduction, no listener release after the stop threshold, preservation of the controller/Docker control path, and recovery only after pressure clears. This is a host-resource guard, not per-runner VM isolation, and remains visible as a residual container-grade boundary.
+IPv4 and IPv6 restore operations cannot be one cross-family kernel transaction.
+This creates no untrusted escape window because the runner does not yet exist,
+the broker remains held and opens no listener or socket, and the trusted helper
+is the only process performing network effects in the broker namespace. The
+controller destroys both namespaces rather than rolling back if either family
+fails. A host profile must select exactly one
+broker IPv6 posture: `deny-via-ip6tables`, which requires successful restore/
+read-back, or `kernel-disabled`, which requires positive proof of no IPv6
+address, route, or enabled broker stack. There is no automatic fallback.
+
+The helper receives `NET_ADMIN` only, exits before the broker/listener starts,
+and returns no rule text or route details. Its read-back parser accepts only the
+exact grammar emitted by the pinned helper for the complete generated filter
+table: `OUTPUT` has default `DROP`, the exact first jump to the dedicated chain,
+and no earlier accept/bypass; the dedicated chain matches the normalized graph.
+The verifier independently exercises positive and negative CONNECT behavior.
+Failure to restore/read back, match the digest, prove IPv6 posture, or block any
+prohibited literal and resolved target destroys the environment before release.
+
+Docker NAT consumes host-global conntrack resources. The restricted-broker
+profile bounds allocation before it becomes attacker-controlled: the runner can
+create no routable packet, and only the trusted broker dialer performs kernel dials.
+Conformance measures a conservative `conntrackEntriesPerActualDial` factor that
+includes broker-namespace plus host-NAT accounting for successful, refused,
+timed-out, and closed dials. Let `O` be the hard simultaneous upstream-socket
+cap, `B` the durable dial burst, `R` the maximum actual kernel dials per second,
+and `T` the maximum observed post-close/post-crash conntrack tail timeout.
+Target crash tests must prove broker FD closure moves every tracked flow out of
+established state; if any flow can remain established, `T` becomes that full
+established timeout or the profile fails closed. Checked arithmetic is applied
+separately to job-tunnel and fixed DoH control classes, then summed:
+
+```text
+classConntrackBudget =
+  conntrackEntriesPerActualDial * (2 * O + B + ceil(R * T))
+
+runnerConntrackBudget = jobClassBudget + dohControlClassBudget
+
+sum(runnerConntrackBudget) + hostReserveEntries <= nf_conntrack_max
+```
+
+The two open-cap terms conservatively cover current sockets plus older sockets
+that enter tail state during the current window; recent active sockets may be
+double-counted. All budget arithmetic uses unsigned 64-bit integers with
+explicit overflow checks; any overflow rejects admission rather than wrapping.
+Each class budget is enforced independently and per dial at permit-consumption
+time — job dials cannot consume the DoH control-class allocation nor the
+reverse, and the budgets are runtime enforcement limits, not merely
+admission-time planning inputs. The retained tail window is keyed to the
+slot's last attributed dial, not merely its release time, and `T` is
+re-derived whenever the re-read kernel timeout observations change. The canonical controller SQLite database is the single writer
+for token and monotonic-clock state keyed by stable capacity-slot ID. A private
+controller-managed state root exposes one mode-restricted dial-authority socket
+per active slot only to that slot's trusted dialer; it never exposes the SQLite
+file. The authority durably reserves consumption in bounded blocks rather than
+fsyncing every individual permit: it fsyncs a raised per-slot high-water
+reservation once per block, then serves permits from memory up to that reserved
+mark, so a normal high-rate workload of thousands of dials costs one fsync per
+block, not one per `connect()`. Crash recovery treats the entire last durably
+reserved block as consumed and never refunds it; because reserved ≥ issued ≥
+actually-dialed, recovery can only over-count, which lowers available capacity
+safely, and the over-count is reclaimed when the tail window `T` expires. The
+ledger is retained across dialer restart, job teardown, slot reuse, and capacity
+reduction for at least `T`; a new assignment never receives a fresh bucket. Slot
+retirement removes the per-job relay and authority socket directories after
+teardown but retains the durable ledger until `T`, after which bounded garbage
+collection may delete it only if no assignment or dialer references the slot.
+The ledger records the boot identity. Within one boot, monotonic-clock
+regression fails closed. A new boot identity together with positive startup
+proof that the kernel conntrack table is empty permits one conservative,
+journaled rebase to zero consumption for reconstructed slots — safe because the
+physical conntrack state the retained ledger accounted for cannot survive the
+reboot; the rebase is never reused within a boot, and rollback or in-boot clock
+regression still fails closed. Storage headroom accounts for every active and
+retained ledger. Every upstream descriptor is
+close-on-exec and cannot survive in a child. Consequently all repeated job/crash
+generations remain inside the same recent-dial term; hidden parallel dialing is
+prohibited. Every change to `nf_conntrack_max`,
+timeout inputs, active capacity, or token state recomputes the bound before
+acquisition; overflow, missing state, or insufficient reserve safe-stops through
+the acquisition epoch barrier. AF_UNIX/client FDs and broker memory have separate
+hard caps because they do not consume conntrack but can exhaust the host.
+
+Host health continuously re-reads `nf_conntrack_count`, `nf_conntrack_max`,
+timeouts, dial/debt state, and the measured factor. Chaos tests flood loopback
+proxy requests, unique destinations, failed dials, broker crashes, and repeated
+restart generations; they prove the global count never exceeds the calculated
+delta, established-stream bandwidth is not throttled, and acquisition stops
+before the reserve is consumed. This is a host-resource guard, not VM isolation.
 
 ### 7.3 Egress policy
 
-The default profile is public-internet-only IPv4 egress with explicitly configured public DNS. It does not use a domain allowlist because current build workloads require diverse public registries and package services.
+The QTS default is public-internet-only, proxy-compatible TCP with fixed
+persistent public DoH and an explicit destination-port allowlist. It does not
+use a domain allowlist because build workloads require diverse public registries
+and package services. Direct UDP, ICMP, SSH, arbitrary IP, plaintext HTTP proxy,
+and tools that ignore the proxy contract are unsupported until a separately
+qualified profile exists.
 
-Host profiles must discover and block their real host, bridge, management, and local routes at runtime. A static check for a single private range is insufficient. Tests must cover every blocked class and prove that loss or corruption of policy prevents listener release. Backend parity tests feed the same manifest to nftables and iptables-legacy compilers and require the same normalized decision graph; target-host conformance then proves the selected kernel actually enforces that graph.
+Host profiles must discover and block their real host, bridge, management, and
+local routes at runtime. A static private-range check is insufficient. Tests
+cover every blocked class before and after DNS resolution and prove loss or
+corruption of runner emptiness, socket identity, broker policy, resolver state,
+or budget prevents listener release. Current workflow compatibility is proven
+by canary; it is never inferred from a tool's usual proxy behavior.
 
 ### 7.4 Residual boundary
 
@@ -286,6 +706,31 @@ Host-specific paths, users, group IDs, schedules, resource ceilings, and Docker 
 
 Each host profile declares minimum kernel/runtime capabilities and includes a positive conformance suite. Unsupported profiles fail closed.
 
+### 8.3 Storage-pressure contract
+
+The runtime manifest declares checked, nonzero minimum free-byte and free-inode
+reserves for every filesystem containing the Docker root, staged releases,
+controller state, rollback material, temporary runner scratch, and logs. The
+install calculation includes the simultaneous old release, new release,
+temporary extraction, verified rollback reserve, configured maximum concurrent
+complete slot vectors, serialized helper/verifier transient peaks, relay and
+dial-authority directories, controller-state reserve, every ledger retained
+through `T`, bounded log reserve, and host safety margin; shared filesystems are
+deduplicated before summing and all arithmetic is overflow-checked. Image staging
+or installation stops before the first write if
+any byte or inode reserve would be crossed.
+
+The controller and watchdog re-read free bytes, free inodes, Docker-root usage,
+state/retained-ledger growth, and log growth before acquisition and on every
+health cycle.
+Crossing a configured warning threshold reduces effective capacity through the
+acquisition epoch barrier; crossing the stop threshold safe-stops before a new
+poll, acquisition, JIT generation, or listener release. Recovery requires a
+sustained healthy window and a complete budget recomputation. Controller and
+watchdog logs use exact byte/file-count retention; every per-job Docker
+log driver is disabled unless a profile explicitly declares bounded
+`max-size`/`max-file` settings. No supported profile permits unbounded logs.
+
 ## 9. External failover control plane
 
 ### 9.1 Why it is external
@@ -311,14 +756,28 @@ A heartbeat is generated only after a successful controller reconciliation and c
 - fleet identifier;
 - server-issued epoch and session identifier;
 - monotonic session sequence;
-- acquisition state;
+- active fleet (`portable`, governed `legacy`, or `none` during a fence
+  handoff) and current host-fence generation;
+- acquisition state, local acquisition-policy epoch, and a canonical SHA-256
+  digest over mode, exact eligible scale-set set, and maximum capacity;
 - available capacity summary;
-- assigned-job count and oldest-assignment age;
+- assigned-job count, oldest-assignment age, and un-assigned released-listener
+  count;
 - last terminal job time;
 - host-profile identifier and degraded-profile flag; and
 - controller build identifier.
 
 The HMAC authenticates the complete payload. Worker receipt time determines freshness. Client time is diagnostic only. Duplicate, reordered, old-epoch, and replayed messages are rejected.
+
+During a governed rollback, the fenced legacy wrapper uses the same managed
+heartbeat client to establish a new server-owned session only after portable
+acquisition is quiescent and the fence reads `legacy`. It publishes sanitized
+legacy process/registration/egress/job observations but has no routing
+credential or writer. The Worker accepts legacy health only when the active
+fleet and monotonically increasing fence generation match the authenticated
+rollback transition; stale/fatal/mismatched legacy health returns routing to
+hosted. This compatibility publisher replaces no acquisition logic and does not
+recreate the retired external watcher.
 
 ### 9.4 Durable Object model
 
@@ -327,33 +786,77 @@ One Durable Object is the coordination atom for one fleet. Multiple independent 
 SQLite stores:
 
 - active enrollment epoch and session;
-- last accepted sequence and receipt time;
+- independent last accepted heartbeat/control sequences and receipt time;
 - per-repository route state;
 - consecutive health observations;
-- current transition epoch, lock, and hosted-hold state;
+- current transition epoch, lock, hosted-hold state, permit generation/mode,
+  and bounded outstanding acquisition permits/legacy lease;
 - monotonic deployment-configuration revision and persisted canary identity;
-- a GitHub mutation outbox;
+- a variable-specific GitHub mutation outbox;
 - canary dispatch and result identity;
 - notification delivery state; and
 - bounded audit events.
 
-Local transition intent and outbox records are committed before external GitHub mutations. Each due row is transactionally claimed with an expiring claim ID before external I/O; outcome commits require the same live claim. A crash or ambiguous API result triggers claim recovery, GitHub read-back, and idempotent reconciliation. No external routing write occurs from unpersisted intent.
+Local transition intent and variable-specific outbox records are committed before external GitHub mutations. Each due row is transactionally claimed with an expiring claim ID before external I/O; outcome commits require the same live claim and can confirm only that row. A crash or ambiguous API result triggers claim recovery, GitHub read-back, and idempotent reconciliation. No external routing write occurs from unpersisted intent.
 
-Cron reconciles the private configuration revision, evaluates health, and starts bounded due work. Each fleet object also owns one alarm. Before committing any SQL state that creates or moves due work, a transactional `getAlarm`/`setAlarm` helper arms only an absent or earlier deadline and never pushes an existing alarm later; a crash before the SQL commit can therefore create only a harmless spurious wake-up, never an unarmed due row. The alarm catches downstream outages and arms again before committing retries, so no pending safety action depends on a future request or cron tick after eviction/crash.
+Cron reconciles the private configuration revision, evaluates health, and
+starts bounded due work. Each fleet object also owns one alarm. Every SQL state
+change that creates or moves due work must use one atomic
+`commitDueWithAlarm(mutation: DueMutation)` synchronous storage transaction.
+Every closed SQL-only insert, reschedule, or claim-release variant contains its
+exact persisted `dueAtMs`; the helper derives the alarm candidate from that same
+field, so callers cannot supply a later split deadline, callback, `Promise`,
+thenable, SQL string, or external-I/O closure. The helper runs inside one
+`ctx.storage.transactionSync(() => { ... })` closure: it executes the selected
+command through `ctx.storage.sql.exec()` and sets the absent-or-earlier deadline
+through `ctx.storage.setAlarm()` in that same synchronous closure. Because the
+SQLite backend stores alarm state as a row in the internal `_cf_METADATA` table
+within the same physical SQLite database as the fleet tables, the closure's SQL
+write and alarm write commit or roll back together under one native SQLite
+transaction; `setAlarm()`'s returned `Promise` is a vestigial type-parity
+artifact of the KV-backed storage class and is never awaited (the closure is
+synchronous, and awaiting it is proven to add nothing to durability). A throw
+inside the closure preserves both the prior alarm and prior SQL state. The
+async `ctx.storage.transaction(txn => ...)` form is prohibited for this helper:
+its `DurableObjectTransaction` handle exposes no `.sql` member, so pairing
+`txn.setAlarm()` with an outer `ctx.storage.sql.exec()` is not a contracted
+atomicity guarantee. Static type tests reject async/thenable mutation inputs.
+Consequently a due row cannot become visible without an equal-or-earlier alarm,
+including when the candidate is already due. The alarm catches downstream
+outages and commits its retry row plus next alarm through the same helper, so no
+pending safety action depends on a future request or cron tick after
+eviction/crash. A pinned executable Workers-runtime contract test uses
+`@cloudflare/workers-types@5.20260708.1`, workerd `1.20260708.1`, and Miniflare
+`4.20260708.1` to prove the combined rollback and minimum-deadline behavior and
+that alarm durability does not depend on awaiting `setAlarm()`; any
+type/runtime disagreement fails deployment closed.
 
-Repository additions are accepted only while the hosted hold is active and the private configuration revision increments exactly once with a matching canonical digest. The Durable Object inserts each new repository unconfirmed-hosted, queues and reads back its Worker-owned hosted mutation, and persists its canary workflow/expected revision before the hold can release. Routine expansion never relies on direct variable writes; identity mutation, revision skip/rollback/digest mismatch, and removal require separate retirement handling.
+Repository additions are accepted only while the hosted hold is active and the private configuration revision increments exactly once with a matching canonical digest. The Durable Object inserts each new repository unconfirmed-hosted, queues one row for each of its route/scale-set/legacy-label variables, reads each back independently, and persists its canary workflow/expected revision before the hold can release. Routine expansion never relies on direct variable writes; identity mutation, revision skip/rollback/digest mismatch, and removal require separate retirement handling.
 
 ### 9.5 Failover state machine
 
 ```text
 BOOTSTRAP
   -> HOSTED_CONFIRMED
+  -> QUEUE_RISK_CLEARED
   -> RECOVERY_OBSERVED
   -> CANARY_PENDING
   -> CANARY_PASSED
+  -> ACQUISITION_ENABLED_CONFIRMED
   -> SELF_HOSTED_CONFIRMED
   -> HEALTHY_SELF_HOSTED
   -> SUSPECT
+  -> FAILOVER_PENDING
+  -> HOSTED_CONFIRMED
+HOSTED_CONFIRMED
+  -> QUEUE_RISK_CLEARED
+QUEUE_RISK_CLEARED
+  -> LEGACY_RECOVERY_PENDING
+LEGACY_RECOVERY_PENDING
+  -> LEGACY_CANARY_PREPARED
+LEGACY_CANARY_PREPARED
+  -> LEGACY_CONFIRMED
+LEGACY_CONFIRMED
   -> FAILOVER_PENDING
   -> HOSTED_CONFIRMED
 ```
@@ -366,24 +869,176 @@ Default policy:
 - at least two consecutive unhealthy evaluations before failover;
 - immediate failover eligibility for authenticated fatal controller states;
 - sustained healthy observations before recovery canary;
-- failback only after a canary tied to the active transition epoch and expected revision succeeds; and
+- failback only after a canary tied to the active transition epoch and expected
+  revision succeeds, local acquisition is then enabled, and a newer-sequence
+  heartbeat in the unchanged Worker transition epoch proves the expected policy
+  digest and complete capacity;
+- zero local acquisition, including canary-only mode or legacy runner restore,
+  until every queue-risk row from the latest hosted transition is cleared by
+  authenticated GitHub read-back and selective recovery;
+- one fresh Worker permit inside each Portable acquisition critical section,
+  or one short renewable Worker lease around a legacy compatibility process;
+  a hosted transition first revokes issuance and drains all prior authority;
+  and
 - late or superseded canary results ignored.
 
-An authenticated, disabled-by-default administrative hosted hold can enter from any state. Enabling it persists hosted transition intent and blocks recovery until every repository reads back hosted. Releasing it creates a new recovery epoch and leaves routing hosted until a current-epoch canary succeeds. Direct repository-variable writes are limited to initial bootstrap, the one-time all-candidate hosted transition, or emergency/legacy recovery; they are never a durable maintenance hold or a routine expansion mechanism.
+The optional legacy branch is an authenticated manual rollback path, not an
+automatic failback target. Because the evidence a legacy route requires — a
+secretless legacy canary observed at the exact head with
+`runner.environment=self-hosted` plus a newer legacy heartbeat — can be produced
+only once a fenced legacy process is actually running, entry is staged so the
+evidence can exist before the state that consumes it. `LEGACY_RECOVERY_PENDING`
+authorizes only a short renewable legacy process lease under the shared fence
+while routing stays hosted. `LEGACY_CANARY_PREPARED` runs and observes the
+secretless legacy canary while routing still stays hosted. Only `LEGACY_CONFIRMED`
+— reached after exact fence, workflow-binding, evidence-digest, and
+legacy-canary verification all agree — creates the explicit `legacy` route
+outbox, after which every repository must read back the explicit `legacy` value.
+The governed rollback's fenced legacy lease is permitted in these staged states
+specifically, even though ordinary Portable acquisition is not; an administrative
+hosted hold blocks only the final `LEGACY_CONFIRMED` commit, not the staged lease
+or canary. Any unhealthy legacy observation transitions back to hosted. Variable
+deletion never selects this state.
+
+An authenticated, disabled-by-default administrative hosted hold can enter from
+any state. Enabling it persists hosted transition intent and blocks recovery
+until every repository reads back hosted. Releasing it creates a new recovery
+epoch and leaves routing hosted while a current-epoch canary runs; because
+routing was already hosted throughout the hold, the release inserts no
+queue-risk row and does not re-block acquisition. Canary success
+does not create a local-route outbox: the controller must first enable full
+acquisition and, while the Worker remains in that transition epoch, a heartbeat
+from the same enrollment session with sequence newer than the canary observation
+must prove `enabled`, the expected acquisition-policy digest, and full configured
+capacity. Only that
+`ACQUISITION_ENABLED_CONFIRMED` state can create self-hosted intent. Direct
+repository-variable writes are limited to initial bootstrap and the one-time
+all-candidate hosted transition before normal Worker authority. Governed
+recovery and legacy rollback remain Worker-owned; direct writes are never a
+durable maintenance hold or a routine expansion/recovery mechanism.
 
 If the canary cannot pass, hosted routing remains the safe state. A documented operator recovery procedure may start a new recovery epoch; there is no automatic bypass of a failed canary.
 
+Every candidate job uses the same three-state consumer contract. The Worker owns
+`PORTABLE_GHAR_ROUTE`, `PORTABLE_GHAR_SCALE_SET`, and
+`PORTABLE_GHAR_LEGACY_LABEL`; private configuration binds the exact expected
+scalar values. The required expression is equivalent to:
+
+```yaml
+runs-on: >-
+  ${{
+    vars.PORTABLE_GHAR_ROUTE == 'self-hosted'
+    && vars.PORTABLE_GHAR_SCALE_SET
+    || vars.PORTABLE_GHAR_ROUTE == 'legacy'
+    && vars.PORTABLE_GHAR_LEGACY_LABEL
+    || 'ubuntu-latest'
+  }}
+```
+
+Both selectors are validated scalars matching
+`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`. The captured legacy selector must be unique
+to the fenced legacy registrations and is verified through Actions runner
+inventory before use. Missing/empty companions and missing, case-variant, or
+unknown route values select `ubuntu-latest`, never a local runner. Explicit
+`self-hosted` selects only the one scalar GitHub.com scale-set name. Explicit
+`legacy` is available only to the authenticated, governed rollback transition
+after the legacy fence, watchdog, unique-label registrations, egress policy,
+and secretless canary are read back; deleting the route variable is not a
+rollback operation. Automatic unhealthy-legacy handling still transitions to
+`hosted`.
+
+The secretless recovery and legacy canaries do not use this consumer expression.
+Each runs a dedicated canary workflow whose `runs-on` targets exactly one scalar
+scale-set name (recovery) or the unique legacy label (legacy rollback) directly,
+never the `PORTABLE_GHAR_ROUTE` variable. The canary therefore lands on the
+self-hosted or legacy runner and proves `runner.environment=self-hosted` while
+consumer routing stays hosted and unflipped — which is exactly why the canary
+can validate local health before any route outbox is created. The strict
+three-state-expression verification applies to migrated consumer workflows, not
+to the dedicated canary workflow.
+
+Companion selectors are not merely called immutable. While hosted, the Worker
+persists and read-backs their exact expected values before any canary or local
+route. Before every local transition and route proof it repeats that read-back.
+Cron also performs a bounded selector-integrity sweep at least every five
+minutes. Missing, changed, invalid, duplicate legacy assignment, or inaccessible
+selector state creates a hosted transition; repair occurs only after hosted is
+confirmed. Route confirmation binds the expected selector values/digests. A
+direct external variable mutation between sweeps can cause a scheduling failure,
+so the deployment permission boundary and bounded detection interval remain an
+explicit GitHub-API residual risk; it is never represented as successful local
+routing.
+
+Before a repository can count as hosted-confirmed, the Worker reads the current
+default-branch head and each candidate workflow through the same installation
+token, verifies the configured workflow path/blob SHA/content SHA-256, exact
+job IDs and required-check names, exact routing expression, and a fixed
+`portable-ghar-route-attestation` step. That step fails unless the documented
+`runner.environment` equals `github-hosted` for the hosted/default branch and
+`self-hosted` for either local branch. Hosted-hold evidence binds all of those
+values to the route-variable read-back. Before any legacy suspension, a
+secretless candidate run at that exact default-branch SHA must complete on a
+GitHub-hosted runner with the attestation step successful; API success or
+variable read-back alone is insufficient.
+
 Changing a routing variable affects newly evaluated jobs. It does not migrate or duplicate already assigned hosted jobs, which may complete concurrently with later self-hosted jobs.
+
+Likewise, a job whose `runs-on` expression was already evaluated to the local
+scale set before failover does not move to GitHub-hosted capacity when the
+variable changes. The Worker never cancels or reruns such work automatically:
+workflow-run cancellation can affect unrelated jobs and a blind rerun can
+duplicate side effects. Every hosted transition therefore sets a sanitized
+`preTransitionQueueMayRemain` flag in status/notifications until the operator
+completes the documented GitHub read-back and selective cancel/rerun procedure.
+Acceptance tests queue a secretless local canary immediately before failover and
+prove it is surfaced, never represented as migrated, and recovered without a
+duplicate execution claim.
+
+The flag is durable, not derived from volatile object memory. A hosted
+transition that changes a repository's effective route away from `self-hosted`
+(an actual failover) atomically inserts one `queue_risk` row for that repository
+and transition epoch with the last verified source head (or explicit unknown)
+and a sanitized evidence digest; obtaining a fresh head never delays a safety
+transition. A transition that leaves an already-hosted repository hosted —
+releasing an administrative hold, a recovery that never left hosted, or a
+per-repository archive disable — inserts no `queue_risk` row and does not
+re-block acquisition, because no job could have been assigned to Portable while
+that repository was already routed hosted. It survives object
+eviction and remains visible until an authenticated, nonce-protected
+`/v1/admin/queue-recovery` request supplies same-epoch selective-recovery
+evidence. The Worker re-reads the exact GitHub run/job state before an idempotent
+clear transaction records `cleared_at`; stale epochs, ambiguous reads, and a
+second clear cannot erase newer risk. Automatic cancellation or rerun remains
+prohibited. While any row from the latest hosted transition is open, the Worker
+issues no acquisition permit or legacy process lease, the controller must
+remain `disabled`, Portable canary-only acquisition is blocked, and legacy
+launchers/runners cannot be restored. Clearing the last row enters
+`QUEUE_RISK_CLEARED`; any new hosted transition first revokes the permit
+generation and drains every earlier permit/lease, then creates a new open risk
+generation and revokes that gate. An admin-status response is never itself a
+clearance artifact.
 
 ### 9.6 GitHub API behavior
 
-The Worker does not poll every repository during steady state. It calls GitHub only for:
+The Worker does not poll every repository on each evaluation during steady state. It calls GitHub only for:
 
 - failover/failback mutations;
-- canary dispatch and bounded status checks; and
-- read-back after ambiguous or partial errors.
+- canary dispatch and bounded status checks;
+- read-back after ambiguous or partial errors; and
+- the bounded five-minute selector-and-archive integrity sweep, which reads
+  each repository's routing companions and live `archived` state and is the
+  live-observation channel for the per-repository archive-disable contract.
 
 Every repository transition is independent, idempotent, and recorded. The Worker honors rate-limit headers and persists retry deadlines. When GitHub is unavailable, it preserves desired state and the last confirmed route; it never reports an unconfirmed mutation as successful.
+
+A route-variable `GET 404` is classified as missing only after the same
+installation token successfully reads both repository metadata and the
+variables collection; otherwise it is installation/access loss. A `POST 422`
+is duplicate only when the bounded structured response contains
+`errors[].code == "already_exists"`; every other `422` is a typed validation or
+abuse failure. Success, timeout, ambiguous POST/PATCH, and every `422` all
+reconcile through exact route read-back before confirmation. A missing variable
+may be created only as `hosted`, never directly as `self-hosted` or `legacy`.
 
 GitHub API availability is an unavoidable dependency. If the API cannot accept a routing change, Portable GHAR cannot guarantee immediate hosted fallback.
 
@@ -432,11 +1087,16 @@ The controller uses a dedicated GitHub App installed only on explicitly configur
 The Worker uses a separate GitHub App installed only on configured repositories.
 
 - Repository variables: read/write.
-- Actions: read/write only when automatic canary dispatch is enabled.
+- Actions: read is mandatory for route-proof and canary run/job/step
+  observation; write is enabled only for automatic canary dispatch.
+- Contents: read, limited to binding configured default-branch workflow blobs
+  to their expected SHA-256 and routing contract.
 - Metadata: read.
-- No contents, pull-request, administration, issue, deployment, or secret permission unless a later reviewed feature requires it.
+- No contents write, pull-request, administration, issue, deployment, or secret
+  permission unless a later reviewed feature requires it.
 
-A deployment choosing manual failback may omit Actions write permission.
+A deployment choosing manual failback may omit Actions write permission but
+never Actions read permission.
 
 GitHub App private keys and heartbeat HMAC keys are Cloudflare Worker secrets. Installation IDs and repository lists are deployment configuration, not source defaults.
 
@@ -457,7 +1117,7 @@ The repository provides schemas and synthetic examples for:
 
 - fleet identity aliases;
 - repository aliases and GitHub owner/repository placeholders;
-- capacity and fairness policy;
+- capacity and fairness policy, including per-repository effective-concurrency maxima and archive-state eligibility (mechanism and schema only);
 - runner resource profiles;
 - host adapter selection;
 - network policy classes;
@@ -474,6 +1134,7 @@ The public Worker configuration omits Cloudflare account identifiers, custom rou
 The private overlay contains:
 
 - actual repository inventory and scale-set names;
+- per-repository effective-concurrency maxima values and the fleet-wide ceiling value;
 - GitHub App and installation identifiers;
 - private-key paths or secret-store references;
 - host paths, users, group IDs, and schedules;
@@ -510,7 +1171,7 @@ The repository's own canonical public module path and valid public CODEOWNER are
 4. Synthetic fixtures use narrow file-and-line allowlists; global regex exemptions are prohibited.
 5. Logs are tested against an allowlisted schema and adversarial secret corpus.
 6. Generated binaries, archives, container layers, SBOMs, license files, and release payloads are scanned before publication.
-7. An optional untracked private denylist applies deployment-specific patterns during operator pre-publication checks. CI never receives this private list.
+7. An optional untracked private denylist applies deployment-specific patterns (private hostnames, paths, repository and account identifiers) during operator pre-publication checks, scanning all reachable branch-introduced blobs AND Git metadata — commit messages, author/committer identities, tag messages, and deleted-file paths — not only the current tracked tree, so a real identifier that was committed and later deleted cannot pass a tree-only scan yet remain recoverable from history. CI never receives this private list.
 8. A release cannot proceed when source, generated-output, or private pre-publication scans fail.
 
 Automated scanning reduces disclosure risk; it cannot prove that every identifying value is absent. Human review remains required for public architecture, examples, logs, issues, and release notes.
@@ -535,8 +1196,11 @@ worker/
   test/
 images/
   runner/
+  network-adapter/
+  network-broker/
   network-helper/
   network-verifier/
+  trust/
 deploy/
   qts/
   systemd/
@@ -656,11 +1320,17 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
 
 ### 17.2 Integration tests
 
-- Held runner cannot start before the readiness token.
-- Network helper receives only its declared namespace/capability boundary.
-- Helper exit and verifier success are both required.
-- Public egress works and every prohibited address class fails.
-- Runner has no socket, host mount, device, or control-plane secret.
+- Held runner cannot start before digest arm plus a valid bounded release frame.
+- Runner namespace remains loopback-only with no registered table/conntrack row;
+  namespace/raw/BPF bypass syscalls fail.
+- Adapter receives only the read-only per-job socket directory; runner receives
+  no mount; broker helper receives only its declared namespace/capability.
+- Helper exit, broker/adapter identity, budget, and verifier success are all
+  required.
+- Proxy-compatible HTTPS succeeds; every prohibited literal/resolved address,
+  direct protocol, plaintext HTTP, unsupported SOCKS command/port, and
+  non-proxy route fails.
+- Runner has no socket mount, host mount, device, or control-plane secret.
 - JIT values are absent from controller logs, job environment, and exported diagnostics.
 - One job completes, deregisters, and leaves no reusable workspace or credential material.
 - Controller restart reconciles assigned jobs without duplication.
@@ -670,7 +1340,10 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
 
 - Controller killed in every lifecycle state.
 - Docker daemon unavailable or restarted.
-- Helper/verifier killed, delayed, or returning contradictory results.
+- Adapter/broker/helper/verifier killed, delayed, socket-replaced, ledger/
+  clock-rolled-back, or returning contradictory results.
+- Loopback/AF_UNIX/host-FD exhaustion, unique-destination dial floods, and
+  repeated broker crashes under the checked conntrack/token budget.
 - Heartbeats delayed, duplicated, reordered, replayed, or dropped.
 - Host local state deleted or rolled back before re-enrollment.
 - Durable Object request failure before and after outbox commit.
@@ -686,6 +1359,9 @@ A supported host must positively prove:
 - Docker/runtime version and required kernel features;
 - CPU, memory, PID, tmpfs, read-only-root, seccomp, and capability enforcement;
 - non-root or explicitly acknowledged degraded-root behavior;
+- checked free-byte/free-inode headroom on Docker-root, state, staging, scratch,
+  rollback, and log filesystems, plus bounded log retention and recurring
+  pressure safe-stop;
 - complete egress-policy enforcement from an actual runner namespace;
 - no access to host Docker control or private paths; and
 - reboot-persistent watchdog behavior.
@@ -702,11 +1378,27 @@ Before changing a deployment, capture its live controller/supervisor scripts, im
 
 1. Build and test Portable GHAR without accepting assignments.
 2. While `legacy` owns the fence, register scale sets and run only a force-disabled observer.
-3. Add a transition-routing variable that legacy writers do not modify and read back every candidate workflow hosted.
-4. Under the Worker hosted hold, suspend the legacy fleet to `none`, then hand `none` to `portable` and start canary-only acquisition.
-5. Add one read-only, secretless repository under a new Worker configuration revision and target its unique scale-set name as one GitHub.com runner label.
-6. Release the hold into a new epoch; prove job lifecycle, isolation, failure recovery, hosted fallback, email, secondary webhook, and signed end-to-end Signal receipt.
-7. For each later repository, reacquire the hold, reconcile it hosted under a new configuration/canary revision, and repeat the epoch canary without renaming required checks.
+3. Merge the exact three-state routing contract without renaming required jobs,
+   bind each default-branch workflow blob/job ID/check name, set the route
+   hosted, and positively observe a bound candidate run whose route-attestation
+   step reports `github-hosted`.
+4. Under the Worker hosted hold, suspend the legacy fleet to `none`, hand `none`
+   to Portable only in disabled mode, and keep all local acquisition at zero.
+5. Clear every latest-transition queue-risk row through authenticated GitHub
+   read-back/selective recovery, then permit canary-only acquisition. Add one
+   read-only, secretless repository under a new Worker configuration revision
+   and target its unique scale-set name as one GitHub.com runner label.
+6. Release the hold into a new epoch; run the one-capacity canary while all
+   repositories remain hosted, enable full acquisition after it passes, observe
+   a fresh enabled/full-capacity heartbeat, and only then permit the Worker to
+   create self-hosted intent. Prove job lifecycle, isolation, failure recovery,
+   hosted fallback, email, secondary webhook, and signed end-to-end Signal
+   receipt.
+7. For each later repository, reacquire the hold, disable acquisition, reconcile
+   it hosted under a new configuration/canary revision, clear the new queue-risk
+   generation, repeat the epoch canary, restore full acquisition, and observe
+   the enabled heartbeat before routing locally, without renaming required
+   checks.
 8. Keep secret-bearing, release, deployment-write, and unsupported browser/container jobs hosted unless separately reviewed.
 
 ### 18.3 External watcher cutover
@@ -729,11 +1421,22 @@ The legacy external watcher is retired only after positive observation of:
 2. Stop new Portable GHAR acquisition.
 3. Drain or cancel assigned new jobs according to policy.
 4. Stop the new controller.
-5. Prove zero new listeners, runner/helper containers, and pending acquisition.
-6. Change the host-local fleet-generation fence from `portable` through `none` to the captured `legacy` generation and prove both watchdog paths honor the same exclusive fence.
-7. Restore and verify the captured legacy gateway, scripts, writers, and runners while workflows still target hosted runners.
-8. Verify complete legacy egress policy, advancing health, and successful secretless canary.
-9. Remove the transition variable so new jobs route to the legacy labels.
+5. Prove zero new listeners, runner/adapter/held-or-running-broker/helper/
+   verifier containers, per-job relay/dial-authority socket directories, broker
+   dials, and pending acquisition. Retain stable slot ledgers through `T` and
+   prove they are unavailable to a fresh bucket.
+6. While the fence is `none` and all local acquisition remains zero, clear every
+   latest-transition queue-risk row through authenticated GitHub read-back and
+   selective recovery.
+7. Change the host-local fleet-generation fence from `none` to the captured
+   `legacy` generation and prove both watchdog paths honor the same exclusive
+   fence.
+8. Restore and verify the captured legacy gateway, scripts, writers, runners,
+   complete egress policy, advancing health, and successful secretless canary
+   while workflows still target hosted runners.
+9. Through the authenticated Worker rollback transition, set and read back the
+   explicit `legacy` route; never delete the variable or interpret a missing
+   value as legacy.
 
 Starting the legacy fleet before proving the new fleet stopped is prohibited.
 
@@ -760,14 +1463,20 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 
 - A fresh container handles exactly one job and is destroyed.
 - Untrusted code cannot access Docker control, host mounts, devices, or control-plane credentials.
-- Every blocked egress class fails from the actual runner namespace.
-- The listener cannot start until the helper has exited and the independent verifier passes.
+- QTS runner namespaces stay loopback-only and conntrack/table-empty; only the
+  durably tokened broker creates bounded real sockets.
+- Every blocked literal/resolved egress class and every unsupported direct/
+  proxy protocol fails from the actual runner namespace.
+- The listener cannot start until helper exit, adapter/broker/socket/policy/
+  budget audit, and independent verifier all pass.
 - Unsupported host profiles fail closed.
 
 ### Control plane
 
 - Duplicate messages and controller restarts do not duplicate job execution.
-- Fleet-wide capacity cannot exceed the configured ceiling.
+- Fleet-wide capacity cannot exceed the configured ceiling, including every
+  runner, adapter, held/running broker, dial-authority/socket/ledger allocation,
+  and serialized helper/verifier transient peak.
 - Every acquisition-policy CAS returns only after old pollers/leases/critical sections are invalidated; an unjoinable upstream call makes the controller fatal and process-terminating rather than hanging or returning success.
 - Canary narrowing, watchdog/probe stops, host-pressure reductions, suspend, and observer startup all traverse that same barrier; no stale or ineligible poll can advertise, acquire, or generate JIT afterward.
 - Upstream compatibility failure prevents acquisition.
@@ -779,11 +1488,22 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 - Controller state loss safely re-enrolls into a new server-owned epoch.
 - Replayed challenge and administrative requests fail timestamp and single-use nonce checks.
 - Hosted hold enters safely from every state, survives Worker rescheduling, blocks recovery until hosted read-back, and releases only into a new recovery epoch.
+- Hosted confirmation binds variable read-back to exact default-branch workflow
+  blobs/job IDs/checks and a successful GitHub-hosted route-attestation run;
+  missing or unknown route values remain hosted.
+- No Portable canary/full acquisition or legacy restore begins while the latest
+  hosted transition has an open queue-risk row; clearing requires authenticated
+  exact GitHub read-back and selective recovery.
 - Stale/fatal health routes affected repositories hosted and reads back confirmation.
 - Ambiguous GitHub responses reconcile idempotently.
 - Cron plus Durable Object alarms recover every persisted due mutation/canary/notification row after eviction or crash.
 - Repository expansion is reconciled hosted under a monotonic configuration revision before its canary or self-hosted mutation.
-- Recovery requires a current-epoch canary; obsolete results cannot fail back.
+- Recovery requires a current-epoch canary followed, without changing that
+  Worker epoch, by a newer-sequence same-session enabled heartbeat with the
+  expected policy digest/full capacity; obsolete results and canary-only
+  acquisition cannot fail back.
+- Governed legacy rollback uses the explicit `legacy` route after fence and
+  legacy-canary proof; variable deletion cannot select local work.
 - Hosted routing remains safe when the canary cannot pass.
 
 ### Notifications
@@ -807,7 +1527,9 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 
 | Risk | Treatment |
 | --- | --- |
-| Shared host kernel | Explicitly accepted container-grade boundary; minimum host profile, seccomp, capabilities, no socket/mounts, live adversarial probes. |
+| Shared host kernel | Explicitly accepted container-grade boundary; minimum host profile, namespace-creation denial, no runner socket/mount, bounded broker dials/FDs, and live adversarial probes. |
+| QTS proxy compatibility | CONNECT-only path is canary-proven per workflow; direct UDP/ICMP/IP, plaintext HTTP, SSH, SOCKS BIND/UDP, and non-proxy-aware tools remain unsupported. |
+| Broker parser compromise | Per-job capless/read-only sandbox, private-deny filter, strict parser/fuzz corpus, bounded resources, no Docker/job/controller access; no claim that parsing untrusted CONNECT is risk-free. |
 | Public-preview scale-set dependency | Exact pin, adapter isolation, contract fixtures, startup probes, hosted safe-stop before upgrades. |
 | GitHub API outage during local failure | Persist desired route and retry; never claim unconfirmed failover. Immediate fallback cannot be guaranteed. |
 | Deployment identifier disclosure | Generic and private scans plus human review; no claim of perfect detection. |
@@ -821,7 +1543,7 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 
 1. **Public repository foundation:** governance files, schemas, sanitization controls, hosted CI, CodeQL, secret scanning, dependency automation, and protected-branch settings.
 2. **Controller core:** scale-set adapter, state machine, capacity broker, redaction, and fake-runtime tests.
-3. **Isolation runtime:** runner/helper/verifier images, Docker host runtime, QTS/systemd adapters, and conformance/chaos suite.
+3. **Isolation runtime:** runner/adapter/broker/helper/verifier images, Docker host runtime, QTS/systemd adapters, and conformance/chaos suite.
 4. **External failover:** Worker, Durable Object, enrollment protocol, GitHub outbox, email, signed webhook, and tests.
 5. **Canary and migration:** private overlay, dark deployment, consumer-workflow PRs, watcher cutover, soak, rollback rehearsal, and legacy retirement.
 6. **Release hardening:** reproducible artifacts, SBOM, provenance, third-party notices, upgrade compatibility automation, and supported-host matrix.
@@ -830,7 +1552,7 @@ Each phase receives a separate implementation plan and review gate. No deploymen
 
 ## 22. Design review record
 
-The design received a three-pass independent adversarial review before this specification was committed.
+The original design received a three-pass independent adversarial review before this specification was first committed. Later revisions are separately gated, as recorded at the end of this section.
 
 Material changes integrated from review:
 
@@ -847,7 +1569,7 @@ Material changes integrated from review:
 
 The remaining strongest concern is the shared-kernel container boundary. That concern is accepted only within the explicit non-VM design and is not represented as stronger isolation than it provides.
 
-The implementation-plan adversarial review added twelve load-bearing clarifications before code generation:
+The implementation-plan adversarial review added twelve load-bearing clarifications; code generation, when it is eventually authorized, must respect all of them:
 
 - safe first boot remains hosted and follows the same current-epoch canary path as recovery;
 - enrollment and administrative HMAC requests add timestamp and single-use nonce replay resistance, with completion bound to its initiating nonce/challenge pair;
@@ -862,4 +1584,61 @@ The implementation-plan adversarial review added twelve load-bearing clarificati
 - QTS lifecycle operations journal and recover forward without rolling fence generations back; and
 - retirement runs only through a positively matched, fixed-action target adapter with post-action read-back.
 
-The final cross-family convergence cycle identified that the acquisition barrier still needed to cover canary narrowing, watchdog/probe stops, pressure reductions, and cancellation-resistant upstream calls. The revised plan applies one bounded policy CAS to every such transition, makes an unjoinable call fatal and process-terminating, preserves the earliest Durable Object alarm transactionally, and gives intermediate phases explicit fail-closed port/provider wiring. A focused full-artifact confirmation by independent Google- and xAI-family reviewers reported no remaining load-bearing objection and rated the plan implementation-ready; the residual risks in Section 20 remain acceptance-gated rather than eliminated.
+The final cross-family convergence cycle identified that the acquisition barrier still needed to cover canary narrowing, watchdog/probe stops, pressure reductions, and cancellation-resistant upstream calls. The revised plan applies one bounded policy CAS to every such transition, makes an unjoinable call fatal and process-terminating, preserves the earliest Durable Object alarm transactionally, and gives intermediate phases explicit fail-closed port/provider wiring. A historical implementation-readiness judgment from that cycle — a focused full-artifact confirmation by independent Google- and xAI-family reviewers reporting no remaining load-bearing objection — was later superseded by delayed review and live target evidence; it is not a claim about this revision and does not satisfy any current review gate.
+
+The delayed review removed Docker environment-file JIT transport, defined the
+bounded stdin gate frames, bound hosted routing to exact workflow/job/runner
+evidence, replaced variable-deletion rollback with explicit Worker-owned
+`legacy`, combined alarm and SQL due-row mutation in one storage transaction,
+pinned the exact Workers types/runtime family, classified GitHub `404`/`422`
+responses safely, completed the scratch-image runtime closure, and added
+storage/conntrack drift gates. A read-only target probe then proved the vendor
+kernel lacks every raw-table/cgroup/BPF primitive required for a safe direct
+pre-conntrack limit. The QTS path was therefore redesigned around an empty
+runner namespace and a durably dial-bounded CONNECT broker instead of claiming
+filter-table enforcement could cap allocation. The public `actions/scaleset`
+pin and Durable Object transaction-alarm API were independently verified from
+primary artifacts.
+
+The final repair pass then addressed the implementation seams exposed by
+whole-artifact review: scalar Worker-owned companion selectors with drift read-back;
+an acquisition-enabled heartbeat gate before any self-hosted outbox; complete
+legacy-canary identity; nonce-schema parity; durable queue-risk recovery; a
+zero-local-acquisition gate until that recovery completes; a
+closed SQL-only `DueMutation` boundary; real external-effect lifecycle states;
+one held broker as namespace owner; a controller-owned, stable-slot dial
+authority and retained ledger; release-locked TLS roots; and complete steady/
+transient resource and cleanup accounting.
+
+Managed distinct-family review routes were unavailable for this final repair,
+so the revision received heightened self-adversarial analysis plus independent
+same-family repository, workflow, target-runtime, and bypass reviews. It did
+not claim fresh cross-family convergence at that point.
+
+On 2026-07-14 a first round of executable design probes ran against this
+revision. The gate-frame grammar passed differential fuzzing (two
+independently coded parsers, twenty thousand mutated streams, structured
+adversarial cases) with no ambiguity; the dial-budget accounting passed a
+discrete-event simulation whose directed adversarial variants (immediate slot
+reuse without the tail window; refund on lost reply) reproduced exactly the
+overruns those rules exist to prevent, confirming both rules are load-bearing;
+the pinned Workers runtime resolved every pin exactly, and a focused re-probe
+established the exact Durable Object atomicity contract: `transactionSync()`
+with `ctx.storage.sql.exec()` and `ctx.storage.setAlarm()` in one synchronous
+closure commits or rolls back both together, because SQLite-backend alarm state
+is co-located in the same physical database (`_cf_METADATA`); `setAlarm()`'s
+`Promise` is never awaited and its durability is independent of awaiting. The
+async `ctx.storage.transaction(txn => ...)` form the plan had specified was
+struck — its transaction handle has no `.sql` member — and the no-await-gap
+write-coalescing model (which does not roll back on throw) is prohibited. The
+§9.4 body and the failover plan were corrected to the verified `transactionSync`
+pattern. Upstream toolchain, runner-asset, and action-SHA pins were
+reverified against their registries with no drift. Prose underdetermination
+found by the probes (fixed-offset frame parsing, gate read deadline,
+process-local arm state, integer width, per-class per-dial budget enforcement,
+tail-window keying) has been folded into the relevant sections.
+
+Implementation remains gated on the outstanding executable probes —
+namespace-emptiness on a live Docker host, consumer workflow-expression
+fixtures, and repository-archive transition behavior — followed by a fresh
+independent distinct-family review of this exact revision.

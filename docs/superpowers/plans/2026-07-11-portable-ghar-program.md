@@ -6,13 +6,13 @@
 
 **Goal:** Build, publish, deploy, validate, and operate Portable GHAR as the generic source-of-truth for ephemeral GitHub Actions runners on a QTS Docker host, then retire the pre-existing runner fleet and external watcher only after a successful reliability soak and rollback rehearsal.
 
-**Architecture:** A Go controller acquires jobs through an exact-pinned `actions/scaleset` adapter, launches one constrained runner per job, and releases the listener only after a one-shot network helper and independent verifier establish public-internet-only egress. A QTS host watchdog may restart or reconcile the controller but cannot change workflow routing; while the legacy fleet owns the stable per-holder generation fence it can run only a zero-capacity observer. A Cloudflare Worker backed by one SQLite Durable Object per fleet is the only automatic routing authority; cron plus a Durable Object alarm reconcile versioned configuration and persisted due work, signed outbound heartbeats drive health, a Worker-owned hosted hold gates maintenance, idempotent GitHub variable mutations are read back, failback requires an epoch-bound secretless canary, and email/signed-webhook notifications retry independently.
+**Architecture:** A Go controller acquires jobs through an exact-pinned `actions/scaleset` adapter and launches one constrained runner per job. On the QTS reference host, the runner shares only an empty `--network none` namespace with a capless loopback relay; a separately jailed, dial-bounded broker owns all real network sockets through a per-job Unix channel, and the listener is released only after namespace, policy, destination, resource-budget, and conntrack proofs pass. A QTS host watchdog may restart or reconcile the controller but cannot change workflow routing; while the legacy fleet owns the stable per-holder generation fence it can run only a zero-capacity observer. A Cloudflare Worker backed by one SQLite Durable Object per fleet is the only automatic routing authority; cron plus a Durable Object alarm reconcile versioned configuration and persisted due work, signed outbound heartbeats drive health, a Worker-owned hosted hold gates maintenance, idempotent GitHub variable mutations are read back, failback requires an epoch-bound secretless canary, and email/signed-webhook notifications retry independently.
 
 **Tech Stack:** Go, SQLite, Docker/OCI, POSIX shell and Bats, TypeScript, Cloudflare Workers, Durable Objects SQLite, Vitest, JSON Schema, GitHub Apps and REST API, GitHub Actions, CodeQL, Gitleaks, Trivy, Syft/CycloneDX or SPDX SBOM tooling.
 
 ## Global Constraints
 
-- The approved design in `docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md` is authoritative. A material architecture change requires a revised design review before code.
+- The review-gated design in `docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md` is authoritative for planning. Implementation has not started, and a material architecture change requires a revised design review before code.
 - The public repository must contain only generic source, schemas, synthetic fixtures, documentation, and reproducible build metadata. Actual host, network, repository, account, notification, schedule, credential, and migration values stay in a mode-restricted private overlay outside the repository.
 - Never place a GitHub App private key, installation token, Cloudflare token, heartbeat key, JIT configuration, webhook URL, notification destination, raw production log, or private denylist in a command transcript, test fixture, issue, pull request, commit, release, or delegate prompt.
 - All public pull-request checks run on GitHub-hosted runners with no deployment secrets, no `pull_request_target`, least-privilege permissions, `persist-credentials: false`, timeouts, concurrency cancellation, and Actions pinned to full commit SHAs.
@@ -33,12 +33,12 @@
 | Phase | Detailed plan | Exit artifact |
 | --- | --- | --- |
 | 1. Public foundation | `docs/superpowers/plans/2026-07-11-public-foundation.md` | Protected, security-scanned repository with stable hosted CI and generic configuration contracts |
-| 2. Controller and isolation runtime | `docs/superpowers/plans/2026-07-11-controller-runtime.md` | Tested controller, runner/helper/verifier images, host adapters, and conformance suite |
+| 2. Controller and isolation runtime | `docs/superpowers/plans/2026-07-11-controller-runtime.md` | Tested controller, runner/adapter/broker/helper/verifier images, host adapters, and conformance suite |
 | 3. External failover and deployment | `docs/superpowers/plans/2026-07-11-failover-deployment.md` | Tested Worker/DO authority, notifications, deployment runbooks, canary/soak/retirement evidence |
 
 The detailed plans are independently executable but not independently deployable. Phase 1 must merge before runtime code. Controller domain and fake-runtime tests must merge before host integration. Worker protocol tests must pass before Cloudflare deployment. Retirement remains the final, separately evidenced gate.
 
-## Program Task 1: Freeze the Approved Contracts
+## Program Task 1: Freeze the Reviewed Contracts
 
 **Files:**
 
@@ -66,7 +66,7 @@ Expected: exit 0 and no unresolved placeholder in an executable command, interfa
 
 **Step 3: Run independent adversarial plan review**
 
-Expected: one Google-family and one xAI-family reviewer read the complete specification plus all phase plans, surface no unresolved load-bearing gap, and agree that implementation can begin. After Phase 1 creates the sanitizer, re-run `python3 scripts/sanitize_public.py --tracked` before any runtime source PR.
+Expected: at least one independent reviewer from a model family distinct from the authoring agent reads the complete specification plus all phase plans as one artifact, surfaces no unresolved load-bearing gap, and agrees that implementation can begin. This must be a fresh review of the exact current revision; the historical review record in the specification's section 22 does not satisfy this step. After Phase 1 creates the sanitizer, re-run `python3 scripts/sanitize_public.py --tracked` before any runtime source PR.
 
 **Step 4: Commit the program and phase plans**
 
@@ -110,7 +110,7 @@ Execute the controller-domain portion of `2026-07-11-controller-runtime.md` usin
 - The lifecycle state machine is persisted before side effects and every transition is idempotent.
 - A complete successful reconciliation cycle is required before a healthy heartbeat can be emitted.
 - The redacting logger accepts only schema-defined fields and the adversarial corpus yields no reusable credential or job-controlled value.
-- Every policy transition invalidates prior pollers and leases; a nonzero poll/acquire/JIT call revalidates mode, exact scale-set eligibility, effective capacity, lease, epoch, and fleet guard in one ordered critical section. Canary-only permits one exact scale set and one unit.
+- Every policy transition invalidates prior pollers and leases; a nonzero poll/acquire/JIT call obtains both the current host-fleet guard and one fresh operation-bound Worker permit inside the same ordered epoch critical section, then revalidates mode, exact scale-set eligibility, effective capacity, lease, local epoch/digest, Worker transition/permit generation, and server expiry. Canary-only permits one exact scale set and one unit. Local CLI/status success alone grants no authority.
 
 **Verification:**
 
@@ -130,11 +130,16 @@ Execute the host-runtime, image, adapter, watchdog, integration, and chaos porti
 **Required barrier:**
 
 ```text
-assignment -> reserve -> create capless per-job network anchor
--> install IPv4 and IPv6 policy in anchor -> apply helper exits
--> capless verifier succeeds -> create held runner joined to exact anchor
--> read-only audit helper proves no attach mutation and exits
--> one-use readiness token appears in runner-private tmpfs -> listener starts
+assignment -> reserve -> create capless per-job network adapter with --network none
+-> prove runner namespace has loopback only, no tables/conntrack
+-> create/start broker held as its namespace owner -> apply broker policy
+-> helper exits -> start/verify the per-slot dial authority
+-> release that same broker once
+-> capless loopback-to-Unix relay and CONNECT verifier succeed
+-> create held runner joined to exact relay namespace with no mount
+-> read-only audit proves namespace/socket/policy/budget and exits
+-> digest-only arm in runner-private tmpfs
+-> bounded one-use token/JIT release frame arrives over stdin -> listener starts
 ```
 
 Any missing, stale, reordered, ambiguous, or contradictory event destroys the pre-listener runner and leaves acquisition safe-stopped.
@@ -146,7 +151,7 @@ PGHAR_INTEGRATION_DOCKER=1 PGHAR_CHAOS_DOCKER=1 ./scripts/test-controller-runtim
 scripts/ci/check-images.sh
 ```
 
-Expected: all commands exit 0; backend-parity tests prove nftables and iptables-legacy implement the same normalized policy contract; an actual runner namespace on each supported host profile proves public egress succeeds and every prohibited IPv4/IPv6 class fails; inspection proves no socket, host mount, device, extra capability, controller secret, or reusable workspace. The QTS reference host explicitly selects the iptables-legacy backend because its verified kernel lacks `nf_tables`; this is a supported profile, not a runtime fallback.
+Expected: all commands exit 0. The QTS profile proves the runner namespace has no routable interface, registered iptables table, or conntrack row before/after loopback flood; only the trusted broker performs durably tokened kernel dials; the checked per-dial conntrack formula, FD/memory caps, legacy broker-policy closure, and complete negative destination/protocol probes pass. Inspection proves the runner has no socket mount, host mount, device, extra capability, controller secret, or reusable workspace. GitHub transport and every current proxy-sensitive workflow tool pass CONNECT canaries; direct UDP/ICMP/IP, plaintext HTTP proxying, SSH, SOCKS BIND/UDP, and non-proxy-aware tools remain explicitly unsupported. The optional nftables direct profile stays disabled unless a different host proves exact pre-conntrack admission; there is no runtime fallback.
 
 ## Program Task 5: Build and Prove the External Routing Authority
 
@@ -157,11 +162,23 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
 - The server owns enrollment epochs and consumes single-use challenges.
 - Fleet, random session, challenge, epoch, and monotonic sequence are authenticated with constant-time comparison.
 - Worker receipt time determines freshness; client time is diagnostic only.
-- Desired routing mutations are persisted per repository before GitHub calls, transactionally claimed, read back after success or ambiguity, and retried idempotently by cron plus Durable Object alarms after eviction/crash.
-- Repository additions reconcile hosted under a monotonic configuration revision and persisted canary identity before the hold may release.
-- Recovery remains hosted until a current-epoch secretless canary succeeds; obsolete or late canaries cannot fail back.
+- Desired routing mutations are persisted per repository before GitHub calls, transactionally claimed, read back after success or ambiguity, and retried idempotently by cron plus Durable Object alarms after eviction/crash. Every due-row create/reschedule uses closed SQL-only mutation data carrying the one exact persisted `dueAtMs`; the helper derives the equal-or-earlier alarm from that field and commits alarm plus row in the same storage transaction, with no caller-supplied second deadline, callback, or Promise surface.
+- Repository additions reconcile hosted plus exact expected scale-set/legacy-label companions under a monotonic configuration revision and persisted canary identity before the hold may release.
+- Recovery remains hosted until a current-epoch secretless canary succeeds,
+  full acquisition is enabled locally, and—without changing the Worker epoch—a
+  same-session/newer-sequence heartbeat proves the expected policy digest and
+  complete capacity; obsolete/late canaries and canary-only acquisition cannot
+  fail back.
 - Email and webhook share a sanitized event ID but have independent persisted delivery attempts and retries.
 - Notification failure never blocks a safety routing mutation.
+- Every hosted transition persists queue risk until an authenticated same-epoch
+  GitHub read-back and selective recovery clears it idempotently.
+- Portable remains disabled and legacy work-accepting components remain stopped
+  until the latest queue-risk generation is completely cleared.
+- Every Portable acquisition effect requires a fresh Worker permit; the legacy
+  compatibility wrapper requires a short renewable Worker process lease. A
+  hosted transition revokes issuance and drains prior authority before it
+  creates hosted intent or the next queue-risk generation.
 
 **Verification:**
 
@@ -249,7 +266,7 @@ portable-ghar deploy host --private "$PORTABLE_GHAR_PRIVATE_OVERLAY/host.json" -
 portable-ghar verify host --private "$PORTABLE_GHAR_PRIVATE_OVERLAY/host.json" --require-zero-listeners
 ```
 
-Expected: target identity matches the overlay; signed release digest and staged manifest match; while `legacy` owns the fence, Portable GHAR first normalizes any stale acquisition policy to a new disabled/empty/zero epoch and survives restart only as a force-disabled observer with `maxCapacity=0`; zero listeners, runner containers, helpers, JIT generations, polls, and assignments exist.
+Expected: target identity matches the overlay; signed release digest and staged manifest match; while `legacy` owns the fence, Portable GHAR first normalizes any stale acquisition policy to a new disabled/empty/zero epoch and survives restart only as a force-disabled observer with `maxCapacity=0`; zero listeners, runner/adapter/held-or-running-broker/helper/verifier containers, per-job relay/dial-authority socket directories, JIT generations, broker dials, polls, and assignments exist. Stable slot ledgers, if any, remain retained and unavailable until their measured `T` expires.
 
 **Step 2: Render and deploy Worker/DO under a hosted hold**
 
@@ -283,47 +300,92 @@ Expected: server-owned epoch is established; three accepted heartbeats are obser
 
 ## Program Task 9: Migrate Consumer Workflows Through a Transition Variable
 
-Create separate governed pull requests in consumer repositories. Introduce the private transition-routing variable without removing or renaming existing check/job identifiers. Keep current secret-bearing, release, deployment-write, and unsupported browser/container jobs on `ubuntu-latest`.
+Create separate governed pull requests in consumer repositories. Replace every
+candidate job's legacy runner selector with the exact three-state
+`PORTABLE_GHAR_ROUTE` contract from the platform design without removing or
+renaming existing job IDs/check names. Missing, empty, case-variant, and unknown
+values must select `ubuntu-latest`; `self-hosted` must resolve to one validated
+scalar scale-set name; `legacy` must resolve to one validated scalar label
+unique to the captured legacy registrations and is reserved for authenticated
+rollback. Add the fixed
+`portable-ghar-route-attestation` step and bind each default-branch head,
+workflow blob/content digest, job ID, and required-check name in the private
+configuration. Keep current secret-bearing, release, deployment-write, and
+unsupported browser/container jobs on `ubuntu-latest`.
 
 Canary order:
 
-1. the smallest read-only, secretless build;
-2. plugin read-only validation gates;
-3. workspace unit-test chain;
-4. workspace governance aggregate last;
-5. application core and aggregate tests;
-6. any write-capable deployment recorder only after separate review.
+1. the smallest public read-only, secretless build;
+2. workspace unit-test chain;
+3. workspace governance aggregate;
+4. application core and aggregate tests;
+5. any write-capable deployment recorder only after separate review.
 
-Before the first canary, route every workflow that could still target the legacy fleet to hosted, stop that fleet through its captured target-safe adapter, and transfer host authority:
+Fresh inventory immediately before migration is authoritative. A repository
+with no workflow that can route self-hosted is excluded from the private fleet
+configuration, receives no scale set or idle capacity, and is not retained as a
+canary merely because a legacy runner profile still exists for it. A repository
+whose live GitHub `archived` state is `true` is likewise excluded with effective
+capacity zero regardless of what any local or private-overlay inventory says;
+unarchiving alone never restores eligibility, and reactivation follows the
+archive-state contract in the platform design (operator-approved configuration
+revision, fresh eligibility audit, hosted bootstrap and read-back, queue-risk
+clearance, and a current-epoch canary).
+
+Before the first canary, route every workflow that could still target the
+legacy fleet to hosted, verify the bound workflow digests/job IDs/check names,
+and positively observe a secretless candidate at that exact default-branch SHA
+with `runner.environment=github-hosted` and its route-attestation step passing.
+Only then stop the legacy fleet through its captured target-safe adapter and
+transfer host authority:
 
 ```sh
 node scripts/ops/control-plane-admin.mjs hold-hosted --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/cutover-hosted-hold.json"
 node scripts/ops/transition-variable.mjs read-back --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --all-configured
-node scripts/ops/suspend-legacy.mjs --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --manifest "$PORTABLE_GHAR_PRIVATE_OVERLAY/legacy-capture.json" --hosted-confirmation "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/cutover-hosted-hold.json" --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/legacy-suspended.json"
+node scripts/ops/verify-consumer-routing.mjs --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect hosted --dispatch-proof --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/hosted-workflow-proof.json"
+node scripts/ops/suspend-legacy.mjs --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --manifest "$PORTABLE_GHAR_PRIVATE_OVERLAY/legacy-capture.json" --hosted-confirmation "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/cutover-hosted-hold.json" --consumer-proof "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/hosted-workflow-proof.json" --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/legacy-suspended.json"
 portable-ghar resume host --private "$PORTABLE_GHAR_PRIVATE_OVERLAY/host.json" --acquisition disabled
+node scripts/ops/control-plane-admin.mjs queue-recovery --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --recovery-manifest "$PORTABLE_GHAR_PRIVATE_OVERLAY/queue-recovery.json" --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/queue-risk-cleared.json"
+node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route hosted --expect-acquisition disabled --require-queue-risk-cleared --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/queue-risk-status.json"
 portable-ghar-controller acquisition --set=canary-only --expected=disabled --eligible-scale-set "$PORTABLE_GHAR_CANARY_SCALE_SET" --json
 node scripts/ops/control-plane-admin.mjs release-hosted --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/recovery-epoch.json"
-node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route self-hosted --expect-hold false --expect-acquisition canary-only --require-current-epoch-canary --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/current-canary.json"
+node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route hosted --expect-hold false --expect-acquisition canary-only --require-current-epoch-canary --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/current-canary.json"
 node scripts/ops/record-drill.mjs --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --drill workflow-canary --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/workflow-canary.json"
 portable-ghar-controller acquisition --set=enabled --expected=canary-only --json
+node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route self-hosted --expect-hold false --expect-acquisition enabled --require-current-epoch-canary --require-acquisition-enabled-confirmed --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/acquisition-enabled.json"
 ```
 
 Run the controller commands on the verified target. The legacy suspend command must return with the fence at `none`, zero legacy processes/listeners, and all candidate repositories read back hosted; `resume host` then hands `none` to `portable` and starts disabled.
+
+The mode-restricted private `queue-recovery.json` is produced by the documented
+selective-recovery procedure from exact latest-transition GitHub run/job
+read-back. It records no claim that a queued job migrated, and it is invalidated
+by any newer hosted transition. The admin tool must clear every configured row
+before the first nonzero acquisition command. That status result and the local
+mode command are evidence/intent only: each later poll/acquire/JIT must obtain a
+fresh Worker permit inside the controller's policy-epoch barrier. If a newer
+hosted transition starts between commands, permit generation is revoked and the
+external call cannot begin; hosted intent waits until all earlier authority is
+drained.
 
 For each later repository-risk expansion, add exactly one repository plus its workflow/expected revision under a new private `configRevision`, then run:
 
 ```sh
 node scripts/ops/control-plane-admin.mjs hold-hosted --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/expansion-hosted-hold.json"
-portable-ghar-controller acquisition --set=canary-only --expected=enabled --eligible-scale-set "$PORTABLE_GHAR_CANARY_SCALE_SET" --json
+portable-ghar-controller acquisition --set=disabled --expected=enabled --json
 node scripts/render-failover-config.mjs --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --output "$PORTABLE_GHAR_PRIVATE_OVERLAY/rendered/wrangler.jsonc"
 npm exec --workspace worker -- wrangler deploy --config "$PORTABLE_GHAR_PRIVATE_OVERLAY/rendered/wrangler.jsonc"
-node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route hosted --expect-hold true --expect-acquisition canary-only --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/expansion-configured.json"
+node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route hosted --expect-hold true --expect-acquisition disabled --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/expansion-configured.json"
+node scripts/ops/control-plane-admin.mjs queue-recovery --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --recovery-manifest "$PORTABLE_GHAR_PRIVATE_OVERLAY/queue-recovery.json" --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/expansion-queue-risk-cleared.json"
+node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route hosted --expect-hold true --expect-acquisition disabled --require-queue-risk-cleared --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/expansion-queue-risk-status.json"
+portable-ghar-controller acquisition --set=canary-only --expected=disabled --eligible-scale-set "$PORTABLE_GHAR_CANARY_SCALE_SET" --json
 node scripts/ops/control-plane-admin.mjs release-hosted --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/expansion-recovery.json"
-node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route self-hosted --expect-hold false --expect-acquisition canary-only --require-current-epoch-canary --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/expansion-canary.json"
+node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route hosted --expect-hold false --expect-acquisition canary-only --require-current-epoch-canary --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/expansion-canary.json"
 portable-ghar-controller acquisition --set=enabled --expected=canary-only --json
+node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route self-hosted --expect-hold false --expect-acquisition enabled --require-current-epoch-canary --require-acquisition-enabled-confirmed --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/expansion-enabled.json"
 ```
 
-The private runbook resolves `PORTABLE_GHAR_CANARY_SCALE_SET` from the validated overlay without printing it. The status command validates the response configuration revision against the current overlay. Routine expansion never writes the transition variable directly. Expected: every acquisition command completes the bounded epoch barrier; a current-epoch exact-revision canary precedes self-hosted read-back; one ephemeral runner accepts exactly one job; original required check names pass; runner and helper are destroyed; no credential/workspace residue remains; email and webhook record the same sanitized routing event ID. If any assertion fails, reacquire the hosted hold before diagnosis.
+The private runbook resolves `PORTABLE_GHAR_CANARY_SCALE_SET` from the validated overlay without printing it. The status command validates the response configuration revision against the current overlay but is not an acquisition credential. Routine expansion never writes the transition variable directly. Expected: every acquisition command completes the bounded epoch barrier; every external poll/acquire/JIT also holds a fresh exact Worker permit; a current-epoch exact-revision canary completes while consumer routing remains hosted; without a Worker epoch change, a later same-enrollment-session/newer-sequence `enabled` heartbeat with the exact policy digest and full expected capacity precedes self-hosted outbox creation/read-back; one ephemeral runner accepts exactly one job; original required check names pass; runner, adapter, held/running broker, helper, verifier, and per-job socket directories are destroyed; the stable slot ledger remains through `T`; no credential/workspace residue remains; email and webhook record the same sanitized routing event ID. If any assertion fails, reacquire the hosted hold before diagnosis.
 
 ## Program Task 10: Exercise Failure and Rollback Paths
 
@@ -332,9 +394,11 @@ Execute every drill from the failover-deployment plan against secretless canary 
 - controller process death in every lifecycle state;
 - Docker unavailability and restart;
 - host watchdog restart and host reboot;
-- helper/verifier failure and contradiction;
+- adapter/broker/helper/verifier failure, socket replacement, token-ledger rollback, and contradiction;
 - delayed, duplicate, reordered, replayed, and dropped heartbeats;
 - local state loss followed by server-owned re-enrollment;
+- governed legacy rollback publisher re-enrollment with matching active-fleet/
+  fence generation, plus stale/fatal mismatch back to hosted;
 - partial/rate-limited/ambiguous GitHub mutations;
 - controller fatal state and uplink loss;
 - late canary from an obsolete epoch;
@@ -342,6 +406,8 @@ Execute every drill from the failover-deployment plan against secretless canary 
 - generation-proof renewal failure and simultaneous portable/legacy watchdog restart races;
 - cancellation-resistant poll/acquire/JIT calls during canary narrowing, pressure reduction, watchdog stop, and suspend;
 - hosted-hold persistence across Worker reschedule/redeploy and release into a new epoch;
+- latest-transition queue-risk persistence/eviction, selective clear, and denial
+  of Portable/legacy acquisition before the final clear;
 - full new-to-legacy rollback with the mutual-exclusion barrier.
 
 For each allowlisted drill:
@@ -361,8 +427,13 @@ Daily evidence must show:
 - heartbeat sequence and reconciliation timestamp advancing;
 - controller, Docker, watchdog, Worker cron, and Durable Object health;
 - assignments received/completed/destroyed with no duplicate job execution;
-- zero idle runner containers outside active jobs;
-- global CPU/memory/PID/scratch ceiling respected;
+- zero idle runner, adapter, or released-broker containers outside active jobs;
+  held brokers exist only for a persisted pre-release assignment and every
+  helper/verifier is transient;
+- global CPU/memory/PID/FD/tmpfs/scratch/durable-byte/inode ceiling respected
+  for complete slots and transient peaks;
+- no orphan per-job relay/dial-authority socket directory; stable slot ledgers
+  are retained, non-refilled, and garbage-collected only after measured `T`;
 - queue latency, job startup latency, job duration, and hosted-fallback duration;
 - no private-egress success from scheduled probes;
 - no JIT/App/Worker/heartbeat secrets in logs or diagnostics;
@@ -420,14 +491,17 @@ Run `portable-ghar resume host` from the deployment workstation, then run the co
 portable-ghar resume host --private "$PORTABLE_GHAR_PRIVATE_OVERLAY/host.json" --acquisition disabled
 portable-ghar-controller probe
 portable-ghar-controller reconcile --once
+node scripts/ops/control-plane-admin.mjs queue-recovery --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --recovery-manifest "$PORTABLE_GHAR_PRIVATE_OVERLAY/queue-recovery.json" --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/post-retirement-queue-risk-cleared.json"
+node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route hosted --expect-acquisition disabled --require-queue-risk-cleared --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/post-retirement-queue-risk-status.json"
 portable-ghar-controller acquisition --set=canary-only --expected=disabled --eligible-scale-set "$PORTABLE_GHAR_CANARY_SCALE_SET" --json
 node scripts/ops/control-plane-admin.mjs release-hosted --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/post-retirement-recovery.json"
-node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route self-hosted --expect-hold false --expect-acquisition canary-only --require-current-epoch-canary --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/post-retirement-canary.json"
+node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route hosted --expect-hold false --expect-acquisition canary-only --require-current-epoch-canary --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/post-retirement-canary.json"
 portable-ghar-controller acquisition --set=enabled --expected=canary-only --json
+node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route self-hosted --expect-hold false --expect-acquisition enabled --require-current-epoch-canary --require-acquisition-enabled-confirmed --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/post-retirement-enabled.json"
 node scripts/ops/verify-retirement-gates.mjs --phase final --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
-Expected: the released hold creates a new recovery epoch; the authenticated status evidence proves a matching current-epoch canary and self-hosted read-back before normal acquisition; managed read-only workloads return to Portable GHAR; the final gate confirms the legacy fleet remains absent and fenced out. On any failure, reacquire the hosted hold and stop acquisition.
+Expected: the released hold creates a new recovery epoch; the authenticated status evidence proves a matching current-epoch canary while consumer routes remain hosted, then a fresh enabled/full-capacity heartbeat before self-hosted outbox/read-back; managed read-only workloads return to Portable GHAR; the final gate confirms the legacy fleet remains absent and fenced out. On any failure, reacquire the hosted hold and stop acquisition.
 
 **Step 5: Preserve rollback material for 30 days**
 
@@ -472,8 +546,13 @@ Tag the first stable release only after all required checks, release rehearsal, 
 
 - The public source, history, generated artifacts, and release payload pass generic and private pre-publication scans.
 - Required hosted CI/security checks are green and protected `main` enforces the observed names.
-- The QTS host runs only the expected controller/watchdog state and ephemeral per-job containers; no runner has Docker control or private-network egress.
+- The QTS host runs only the expected controller/watchdog state and ephemeral per-job runner/adapter/held-or-running-broker/helper/verifier containers; per-job socket directories are removed, stable ledgers remain non-refilled through measured `T`, runner namespaces remain loopback-only/table-empty, no runner has Docker control, mounts, or direct/private-network egress, and every complete-slot resource plus broker dial/FD/conntrack budget is enforced.
 - The Cloudflare Worker/DO is the sole automatic routing writer and all mutations are confirmed through GitHub read-back.
+- Every hosted transition's queue-risk generation is durable, and no Portable
+  or legacy acquisition resumes before its authenticated selective recovery.
+- Every nonzero local acquisition holds current Worker-issued authority, and a
+  hosted transition revokes/drains prior permits or the legacy process lease
+  before claiming the hard zero-acquisition state.
 - Email and signed-webhook notifications work independently and retry without affecting safety; matching Signal delivery is proven by a separate-key receipt from a separate failure domain.
 - All selected consumer workflows retain their job/check contracts and complete on the new fleet with hosted fallback verified.
 - The 14-day qualifying soak and full rollback rehearsal pass.
