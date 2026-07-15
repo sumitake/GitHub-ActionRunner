@@ -459,7 +459,16 @@ def _check_uses(relpath: str, job_id: str, uses_value: Scalar, step: dict, diag:
         )
         return
 
-    pin = REVIEWED_ACTION_PINS.get(name)
+    # The pin table is keyed by "owner/repo" (the reviewed unit), but some
+    # reviewed repos host multiple actions at subpaths with no usable
+    # root-level action (e.g. github/codeql-action's "/init", "/analyze",
+    # "/autobuild" -- there is no "github/codeql-action" action itself). Look
+    # the pin up by the first two "/"-separated segments of the ref so a
+    # subpath action is checked against its owning repo's reviewed pin; for
+    # every single-action repo already in the table this is a no-op (the
+    # owner/repo prefix equals the full name).
+    pin_key = "/".join(name.split("/")[:2])
+    pin = REVIEWED_ACTION_PINS.get(pin_key)
     if pin is None:
         diag.add(relpath, f"{loc}: action {name!r} is not in the reviewed pin table")
         return

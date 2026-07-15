@@ -24,7 +24,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKER = REPO_ROOT / "scripts" / "check_workflow_policy.py"
 REAL_WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 
-EXPECTED_STABLE_CONTEXTS = {"go", "worker", "shell", "repository-metadata", "container"}
+EXPECTED_STABLE_CONTEXTS = {
+    "go",
+    "worker",
+    "shell",
+    "repository-metadata",
+    "container",
+    "sanitization",
+    "dependency-review",
+}
+
+# The full set of job/context ids the real workflow set defines, including
+# the CodeQL scan job (results go to the Security tab -- it is intentionally
+# NOT one of the seven required PR status-check contexts above, but it is
+# still a unique job id that must not collide with any of them).
+EXPECTED_ALL_CONTEXTS = EXPECTED_STABLE_CONTEXTS | {"codeql"}
 
 # A minimal workflow that should pass every check cleanly. Each negative
 # test below takes this exact text and mutates ONE line to introduce ONE
@@ -421,17 +435,94 @@ class RealCiWorkflowTest(unittest.TestCase):
         )
         self.assertIn("passed", result.stdout)
 
-    def test_real_ci_workflow_has_exactly_five_unique_contexts(self) -> None:
+    def test_real_workflows_have_exactly_seven_stable_contexts_once_each(self) -> None:
         sys.path.insert(0, str(REPO_ROOT / "scripts"))
         import check_workflow_policy as cwp  # noqa: PLC0415
 
-        contexts: set[str] = set()
+        context_sources: dict[str, list[str]] = {}
         for path in sorted(REAL_WORKFLOWS_DIR.glob("*.yml")):
             text = path.read_text(encoding="utf-8")
             root = cwp.parse_workflow(text)
             jobs = root.get("jobs", {})
-            contexts.update(jobs.keys())
-        self.assertEqual(contexts, EXPECTED_STABLE_CONTEXTS)
+            for job_id in jobs:
+                context_sources.setdefault(job_id, []).append(path.name)
+
+        # All seven stable/required contexts exist, and each exists exactly
+        # once across the whole workflow set (no accidental duplication of a
+        # job id across two files).
+        for ctx in EXPECTED_STABLE_CONTEXTS:
+            with self.subTest(context=ctx):
+                self.assertIn(ctx, context_sources, f"missing stable context {ctx!r}")
+                self.assertEqual(
+                    len(context_sources[ctx]),
+                    1,
+                    f"stable context {ctx!r} defined more than once: {context_sources[ctx]}",
+                )
+
+        # The full job-id set across every workflow file is exactly the
+        # seven stable contexts plus the CodeQL scan job -- nothing missing,
+        # nothing stray.
+        self.assertEqual(set(context_sources.keys()), EXPECTED_ALL_CONTEXTS)
+
+    def test_sanitization_workflow_triggers_and_job_shape(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import check_workflow_policy as cwp  # noqa: PLC0415
+
+        path = REAL_WORKFLOWS_DIR / "sanitization.yml"
+        self.assertTrue(path.is_file(), "missing .github/workflows/sanitization.yml")
+        root = cwp.parse_workflow(path.read_text(encoding="utf-8"))
+        triggers = set(root.get("on", {}).keys())
+        self.assertEqual(triggers, {"push", "pull_request", "schedule", "workflow_dispatch"})
+        jobs = root.get("jobs", {})
+        self.assertIn("sanitization", jobs)
+
+    def test_codeql_workflow_matrix_is_exactly_go_and_javascript_typescript(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import check_workflow_policy as cwp  # noqa: PLC0415
+
+        path = REAL_WORKFLOWS_DIR / "codeql.yml"
+        self.assertTrue(path.is_file(), "missing .github/workflows/codeql.yml")
+        root = cwp.parse_workflow(path.read_text(encoding="utf-8"))
+        triggers = set(root.get("on", {}).keys())
+        self.assertEqual(triggers, {"push", "pull_request", "schedule", "workflow_dispatch"})
+        job = root["jobs"]["codeql"]
+        self.assertEqual(job["permissions"].get("security-events"), "write")
+        languages = job["strategy"]["matrix"]["language"]
+        self.assertEqual(list(languages), ["go", "javascript-typescript"])
+
+    def test_dependency_review_workflow_is_pull_request_only(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import check_workflow_policy as cwp  # noqa: PLC0415
+
+        path = REAL_WORKFLOWS_DIR / "dependency-review.yml"
+        self.assertTrue(path.is_file(), "missing .github/workflows/dependency-review.yml")
+        root = cwp.parse_workflow(path.read_text(encoding="utf-8"))
+        triggers = set(root.get("on", {}).keys())
+        self.assertEqual(triggers, {"pull_request"})
+        self.assertIn("dependency-review", root.get("jobs", {}))
+
+    def test_dependabot_config_covers_required_ecosystems_and_image_dirs(self) -> None:
+        dependabot_path = REPO_ROOT / ".github" / "dependabot.yml"
+        self.assertTrue(dependabot_path.is_file(), "missing .github/dependabot.yml")
+        text = dependabot_path.read_text(encoding="utf-8")
+        self.assertNotIn("renovate", text.lower(), "dependabot.yml must not coexist with Renovate config")
+        self.assertIn('package-ecosystem: "github-actions"', text)
+        self.assertIn('package-ecosystem: "gomod"', text)
+        self.assertIn('package-ecosystem: "npm"', text)
+        for image_dir in (
+            "runner",
+            "network-adapter",
+            "network-broker-parser",
+            "network-broker-dialer",
+            "network-helper",
+            "network-verifier",
+        ):
+            with self.subTest(image_dir=image_dir):
+                self.assertIn(f'directory: "/images/{image_dir}"', text)
+
+    def test_no_renovate_config_present(self) -> None:
+        self.assertFalse((REPO_ROOT / "renovate.json").exists())
+        self.assertFalse((REPO_ROOT / ".github" / "renovate.json").exists())
 
 
 if __name__ == "__main__":
