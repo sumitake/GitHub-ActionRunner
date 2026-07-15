@@ -88,6 +88,7 @@ exact head SHA you are about to protect.
    vulnerability alerts, automated security updates, private vulnerability
    reporting, and secret scanning with push protection, validity checks, and
    non-provider patterns. Every value is read back after it is set.
+
 5. **Apply the ruleset.** Requires confirmation, admin, the bootstrap PR number,
    and an explicit maintainer mode. The helper first re-proves all seven
    contexts on the PR's head SHA, then creates the ACTIVE `main` ruleset:
@@ -102,6 +103,7 @@ exact head SHA you are about to protect.
    force-push, and enforces strict required status checks for the six
    required-on-main contexts (not `dependency-review`). It declares **no bypass
    actors**.
+
 6. **Read back the ruleset JSON and record the id.** The helper reads the ruleset
    back, confirms its enforcement is `active`, and prints the new
    `<ruleset-id>`. Record that id in the deployment log.
