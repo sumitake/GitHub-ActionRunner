@@ -6,17 +6,19 @@
 
 **Goal:** Build, publish, deploy, validate, and operate Portable GHAR as the generic source-of-truth for ephemeral GitHub Actions runners on a QTS Docker host, then retire the pre-existing runner fleet and external watcher only after a successful reliability soak and rollback rehearsal.
 
-**Architecture:** A Go controller acquires jobs through an exact-pinned `actions/scaleset` adapter and launches one constrained runner per job. On the QTS reference host, the runner shares only an empty `--network none` namespace with a capless loopback relay; a separately jailed, dial-bounded broker owns all real network sockets through a per-job Unix channel, and the listener is released only after namespace, policy, destination, resource-budget, and conntrack proofs pass. A QTS host watchdog may restart or reconcile the controller but cannot change workflow routing; while the legacy fleet owns the stable per-holder generation fence it can run only a zero-capacity observer. A Cloudflare Worker backed by one SQLite Durable Object per fleet is the only automatic routing authority; cron plus a Durable Object alarm reconcile versioned configuration and persisted due work, signed outbound heartbeats drive health, a Worker-owned hosted hold gates maintenance, idempotent GitHub variable mutations are read back, failback requires an epoch-bound secretless canary, and email/signed-webhook notifications retry independently.
+**Architecture:** A Go controller acquires jobs through an exact-pinned `actions/scaleset` adapter and launches one constrained runner per job. On the QTS reference host, the runner shares only an empty `--network none` namespace with a capless loopback relay; a separately jailed, dial-bounded broker owns all real network sockets through a per-job Unix channel, and the listener is released only after namespace, policy, destination, resource-budget, and conntrack proofs pass. A QTS host watchdog may restart or reconcile the controller but cannot change workflow routing; while the legacy fleet owns the stable per-holder generation fence it can run only a zero-capacity observer. A scheduled official-release observer builds and attests immutable one-version runner candidates outside job containers, scale sets disable in-place updates, and whole-container destruction reclaims every job cgroup/tmpfs/workspace. A Cloudflare Worker backed by one SQLite Durable Object per fleet is the only automatic routing authority; cron plus a Durable Object alarm reconcile versioned configuration and persisted due work, signed outbound heartbeats drive health and runner-upgrade holds, idempotent GitHub variable mutations are read back, failback requires an epoch-bound secretless canary, and email/signed-webhook notifications retry independently.
 
 **Tech Stack:** Go, SQLite, Docker/OCI, POSIX shell and Bats, TypeScript, Cloudflare Workers, Durable Objects SQLite, Vitest, JSON Schema, GitHub Apps and REST API, GitHub Actions, CodeQL, Gitleaks, Trivy, Syft/CycloneDX or SPDX SBOM tooling.
 
 ## Global Constraints
 
-- The review-gated design in `docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md` is authoritative for planning. Implementation has not started, and a material architecture change requires a revised design review before code.
+- The review-gated design in `docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md` is authoritative for planning. Phase 2 implementation is underway; the 2026-07-22 runner-lifecycle amendment remains pre-code review-gated, and any further material architecture change requires a revised design review.
 - The public repository must contain only generic source, schemas, synthetic fixtures, documentation, and reproducible build metadata. Actual host, network, repository, account, notification, schedule, credential, and migration values stay in a mode-restricted private overlay outside the repository.
 - Never place a GitHub App private key, installation token, Cloudflare token, heartbeat key, JIT configuration, webhook URL, notification destination, raw production log, or private denylist in a command transcript, test fixture, issue, pull request, commit, release, or delegate prompt.
 - All public pull-request checks run on GitHub-hosted runners with no deployment secrets, no `pull_request_target`, least-privilege permissions, `persist-credentials: false`, timeouts, concurrency cancellation, and Actions pinned to full commit SHAs.
 - Runner jobs never receive a Docker socket, host mount, device, controller credential, Worker credential, or reusable GitHub App credential.
+- Scale sets require `RunnerSetting.DisableUpdate=true`; runner updates occur only through an externally observed, immutable, smoke-tested, attested candidate. A forced bump, pending/rejected candidate, or upgrade interruption must retain GitHub-hosted execution and recover without manual intervention.
+- Runner work is bounded tmpfs by default and never a persistent reusable NAS volume. Completion requires positive whole-container/cgroup/tmpfs/workspace/process/namespace reclamation. Tmpfs, memory, swap, concurrency, and release cadence form one operator-approved sizing tuple; the emergency legacy high-water accommodation is not the Portable baseline.
 - No Kubernetes, ARC, VM-isolation claim, container-job feature, Docker-in-Docker, or inbound host endpoint is in scope.
 - The host watchdog can restart and reconcile local services only. The Cloudflare control plane is the sole automatic writer of routing state; its authenticated hosted hold is the only durable maintenance, upgrade, and retirement freeze.
 - The new and legacy fleets must never acquire the same workflow workload concurrently during rollback or retirement.
@@ -151,7 +153,7 @@ PGHAR_INTEGRATION_DOCKER=1 PGHAR_CHAOS_DOCKER=1 ./scripts/test-controller-runtim
 scripts/ci/check-images.sh
 ```
 
-Expected: all commands exit 0. The QTS profile proves the runner namespace has no routable interface, registered iptables table, or conntrack row before/after loopback flood; only the trusted broker performs durably tokened kernel dials; the checked per-dial conntrack formula, FD/memory caps, legacy broker-policy closure, and complete negative destination/protocol probes pass. Inspection proves the runner has no socket mount, host mount, device, extra capability, controller secret, or reusable workspace. GitHub transport and every current proxy-sensitive workflow tool pass CONNECT canaries; direct UDP/ICMP/IP, plaintext HTTP proxying, SSH, SOCKS BIND/UDP, and non-proxy-aware tools remain explicitly unsupported. The optional nftables direct profile stays disabled unless a different host proves exact pre-conntrack admission; there is no runtime fallback.
+Expected: all commands exit 0. The QTS profile proves the runner namespace has no routable interface, registered iptables table, or conntrack row before/after loopback flood; only the trusted broker performs durably tokened kernel dials; the checked per-dial conntrack formula, FD/memory caps, legacy broker-policy closure, and complete negative destination/protocol probes pass. Inspection proves the runner has no socket mount, host mount, device, extra capability, controller secret, or reusable workspace; its scale set has `DisableUpdate=true`, its image contains one exact smoke-tested runner payload, and every terminal/interrupted path removes the whole container, cgroup, tmpfs, `_work/_update`, processes, and namespaces. Joint tmpfs/memory/swap/concurrency validation rejects the incident's 2,162 MiB `/runner` peak under a 2 GiB memory cap. GitHub transport and every current proxy-sensitive workflow tool pass CONNECT canaries; direct UDP/ICMP/IP, plaintext HTTP proxying, SSH, SOCKS BIND/UDP, and non-proxy-aware tools remain explicitly unsupported. The optional nftables direct profile stays disabled unless a different host proves exact pre-conntrack admission; there is no runtime fallback.
 
 ## Program Task 5: Build and Prove the External Routing Authority
 
@@ -179,6 +181,28 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
   compatibility wrapper requires a short renewable Worker process lease. A
   hosted transition revokes issuance and drains prior authority before it
   creates hosted intent or the next queue-risk generation.
+- A signed non-current runner-release heartbeat enters a Worker-owned
+  `runner-upgrade` hosted hold. Candidate rejection or interruption remains
+  hosted; exact qualified-candidate selection under disabled acquisition and
+  zero listeners auto-releases only that machine-created hold into the normal
+  recovery-canary path. Operator-created holds remain manual.
+- An existing operator hold takes precedence over the runner-upgrade state:
+  release evidence and permit drain persist, but the reason cannot change,
+  every maintenance request returns `wait-hosted`, and no staging, selection,
+  or auto-release occurs. After authenticated operator release, only a fresh
+  non-current heartbeat may begin the runner-upgrade sequence.
+- The host learns each automatic phase only through a fresh signed read-only
+  maintenance directive: `stage-permitted`, `replace-permitted`,
+  `canary-permitted`, then `enable-permitted`. Staging waits for hosted
+  read-back, permit drain, queue clearance, and zero assigned jobs; selection
+  waits for the exact later qualified tuple. A missing, expired, stale-session,
+  wrong-request, wrong-generation, wrong-candidate, or wrong-policy directive
+  means `wait-hosted` and cannot mutate routing.
+- Phase 2 may ship the controller-side release observer, immutable-candidate
+  journal, and fail-closed directive-provider interface, but unattended runner
+  replacement is not operational until this task supplies the authenticated
+  client plus the Worker state machine. The forced-version-bump success
+  criterion is proved only by the integrated Phase 2 + Phase 3 system.
 
 **Verification:**
 
@@ -198,11 +222,12 @@ Expected: exit 0 with deterministic fake-time coverage for replay, sequence, sta
 **Step 1: Run the full local release rehearsal from a clean checkout**
 
 ```sh
-./scripts/release/rehearse-runtime.sh --version 0.1.0-rc.1 --output dist/rehearsal-a
-./scripts/release/rehearse-runtime.sh --version 0.1.0-rc.1 --output dist/rehearsal-b
+./scripts/release/observe-runner-release.sh --current-manifest release/manifest.json --output dist/runner-candidate.json
+./scripts/release/rehearse-runtime.sh --version 0.1.0-rc.1 --runner-manifest dist/runner-candidate.json --output dist/rehearsal-a
+./scripts/release/rehearse-runtime.sh --version 0.1.0-rc.1 --runner-manifest dist/runner-candidate.json --output dist/rehearsal-b
 ```
 
-Expected: clean rebuild; test suite passes; controller binaries and OCI images are built; SBOM, licenses, checksums, image digests, and provenance subjects are generated; filesystem/image/sanitization scans pass.
+Expected: the observer emits one canonical monotonic official-release manifest; clean rebuild; test suite passes; controller binaries and one-version OCI runner image are built; listener version, update-staging absence, SBOM, licenses, checksums, image digests, and provenance subjects are generated; filesystem/image/sanitization scans pass.
 
 **Step 2: Verify reproducibility**
 
@@ -238,7 +263,7 @@ node scripts/validate-failover-config.mjs --config "$PORTABLE_GHAR_PRIVATE_OVERL
 scripts/ops/assert-private-overlay.sh "$PORTABLE_GHAR_PRIVATE_OVERLAY"
 ```
 
-Expected: strict schema and secret-reference validation passes; output is exactly `failover configuration: PASS`. Live target/account/service checks are performed separately by the typed private probe.
+Expected: strict schema and secret-reference validation passes; output is exactly `failover configuration: PASS`. The host overlay also carries the operator-approved `/runner` and `/tmp` tmpfs, memory/swap cgroup, maximum-concurrency, host-reserve, and runner-release-cadence tuple with its evidence digest; host validation must reject it until p99/margin and 32 GiB host-budget inequalities pass. Live target/account/service checks are performed separately by the typed private probe.
 
 **Step 3: Capture the live legacy rollback source**
 
@@ -406,6 +431,11 @@ Execute every drill from the failover-deployment plan against secretless canary 
 - generation-proof renewal failure and simultaneous portable/legacy watchdog restart races;
 - cancellation-resistant poll/acquire/JIT calls during canary narrowing, pressure reduction, watchdog stop, and suspend;
 - hosted-hold persistence across Worker reschedule/redeploy and release into a new epoch;
+- forced runner release while idle, busy, staging, and restarting; automated
+  `runner-upgrade` hold, candidate rejection, later qualification, immutable
+  switch, fresh phase directives across re-enrollment, whole-container
+  reclamation, and canary-gated recovery with no interval in which the hosted
+  path is unavailable;
 - latest-transition queue-risk persistence/eviction, selective clear, and denial
   of Portable/legacy acquisition before the final clear;
 - full new-to-legacy rollback with the mutual-exclusion barrier.
@@ -422,6 +452,12 @@ The recorder stores only sanitized event IDs, state transitions, GitHub read-bac
 
 Run a minimum continuous 14-day soak after all planned read-only workloads are routed to Portable GHAR. A reset-worthy failure restarts the soak clock after remediation and full regression verification.
 
+Before fixing the production sizing tuple, collect at least 15 representative
+jobs over seven days, including the largest eligible workload classes. The
+subsequent 14-day soak exceeds the five-complete-day stability floor and must
+retain the same approved tuple unless a new measured/reviewed revision restarts
+the sizing and soak evidence.
+
 Daily evidence must show:
 
 - heartbeat sequence and reconciliation timestamp advancing;
@@ -432,6 +468,12 @@ Daily evidence must show:
   helper/verifier is transient;
 - global CPU/memory/PID/FD/tmpfs/scratch/durable-byte/inode ceiling respected
   for complete slots and transient peaks;
+- approved tmpfs/memory/swap/concurrency tuple respected, with tmpfs resident
+  pages accounted inside the memory cgroup and swap excluded from RAM capacity;
+- per-job cgroup, `/runner`, `/tmp`, `_work`, `_work/_update`, descendant
+  process, namespace, and container absence observed within the cleanup SLO;
+- memory, swap, tmpfs, storage, process, container, and cgroup use returns to
+  the approved baseline without a monotonic trend or periodic restart;
 - no orphan per-job relay/dial-authority socket directory; stable slot ledgers
   are retained, non-refilled, and garbage-collected only after measured `T`;
 - queue latency, job startup latency, job duration, and hosted-fallback duration;
@@ -547,6 +589,15 @@ Tag the first stable release only after all required checks, release rehearsal, 
 - The public source, history, generated artifacts, and release payload pass generic and private pre-publication scans.
 - Required hosted CI/security checks are green and protected `main` enforces the observed names.
 - The QTS host runs only the expected controller/watchdog state and ephemeral per-job runner/adapter/held-or-running-broker/helper/verifier containers; per-job socket directories are removed, stable ledgers remain non-refilled through measured `T`, runner namespaces remain loopback-only/table-empty, no runner has Docker control, mounts, or direct/private-network egress, and every complete-slot resource plus broker dial/FD/conntrack budget is enforced.
+- Scale-set self-update is disabled; scheduled release observation, immutable
+  qualification, Worker-owned hosted continuity, safe drain, exact listener
+  smoke proof, and canary recovery survive a forced runner bump without manual
+  intervention. Every job/interruption reclaims its entire container/cgroup/
+  tmpfs/workspace/process/namespace footprint, and no persistent reusable NAS
+  work area exists.
+- The operator-approved tmpfs/memory/swap/concurrency/cadence tuple has
+  representative p99 headroom and stays within the 32 GiB host budget; the
+  temporary legacy high-water accommodation is not counted as production proof.
 - The Cloudflare Worker/DO is the sole automatic routing writer and all mutations are confirmed through GitHub read-back.
 - Every hosted transition's queue-risk generation is durable, and no Portable
   or legacy acquisition resumes before its authenticated selective recovery.
