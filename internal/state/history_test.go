@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -240,7 +241,11 @@ func TestHistorySchema(t *testing.T) {
 		t.Fatalf("auto_vacuum = %d, want %d (INCREMENTAL)", autoVacuum, sqliteAutoVacuumIncremental)
 	}
 
-	for _, table := range []string{"message_receipts", "history_tombstones"} {
+	for _, table := range []string{
+		"message_receipts",
+		"history_tombstones",
+		"history_maintenance",
+	} {
 		var count int
 		if err := s.DB().QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table,
@@ -448,6 +453,89 @@ func seedHistorySchemaV0(t *testing.T, path string) *sql.DB {
 	return db
 }
 
+func seedHistorySchemaV1(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", dsnForPath(path))
+	if err != nil {
+		t.Fatalf("sql.Open(%q): %v", path, err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close v1 database: %v", err)
+		}
+	})
+	if _, err := db.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+		t.Fatalf("set v1 auto_vacuum: %v", err)
+	}
+	if _, err := db.Exec(schemaV1); err != nil {
+		t.Fatalf("create schema v1: %v", err)
+	}
+	if _, err := db.Exec(seedAcquisitionState, string(controller.AcquisitionDisabled)); err != nil {
+		t.Fatalf("seed v1 acquisition state: %v", err)
+	}
+	terminalAt := time.Date(2026, 7, 28, 11, 0, 0, 0, time.UTC)
+	retainUntil := terminalAt.Add(time.Hour)
+	if _, err := db.Exec(`
+		INSERT INTO assignments (
+			id, repository_alias, runner_request_id, attempt, workflow_job_id,
+			offer_digest, offer_payload_digest,
+			job_id, repository_name, owner_name, job_workflow_ref,
+			job_display_name, workflow_run_id, event_name, request_labels,
+			queue_time, scale_set_assign_time, runner_assign_time, finish_time,
+			acquire_job_url, history_logical_bytes, state, created_at, updated_at
+		) VALUES (
+			-1, 'repo-v1', 703, 0, 1703, zeroblob(32), zeroblob(32),
+			'', '', '', '', '', 0, '', '[]',
+			'', '', '', '', '', 128, ?, ?, ?
+		)
+	`,
+		string(controller.StateDestroyed),
+		terminalAt.Format(time.RFC3339Nano),
+		terminalAt.Format(time.RFC3339Nano),
+	); err != nil {
+		t.Fatalf("seed v1 assignment: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO message_receipts (
+			repository_alias, message_id, payload_digest, persisted_at,
+			ack_state, ack_confirmed_at, retain_until, logical_bytes
+		) VALUES ('repo-v1', 701, zeroblob(32), ?, 'ack_confirmed', ?, ?, 64)
+	`,
+		terminalAt.Format(time.RFC3339Nano),
+		terminalAt.Format(time.RFC3339Nano),
+		retainUntil.Format(time.RFC3339Nano),
+	); err != nil {
+		t.Fatalf("seed v1 message receipt: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO history_tombstones (
+			repository_alias, runner_request_id, attempt,
+			offer_digest, offer_payload_digest, terminal_at,
+			retain_until, logical_bytes
+		) VALUES ('repo-v1', 702, 0, zeroblob(32), zeroblob(32), ?, ?, 96)
+	`,
+		terminalAt.Format(time.RFC3339Nano),
+		retainUntil.Format(time.RFC3339Nano),
+	); err != nil {
+		t.Fatalf("seed v1 tombstone: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO network_ledgers (
+			ledger_key, assignment_id, state_digest, updated_at,
+			retained_until, logical_bytes
+		) VALUES ('ledger-v1', NULL, 'opaque', ?, ?, 64)
+	`,
+		terminalAt.Format(time.RFC3339Nano),
+		retainUntil.Format(time.RFC3339Nano),
+	); err != nil {
+		t.Fatalf("seed v1 network ledger: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version=1`); err != nil {
+		t.Fatalf("set v1 user_version: %v", err)
+	}
+	return db
+}
+
 func databaseSnapshot(t *testing.T, db *sql.DB) string {
 	t.Helper()
 	var out bytes.Buffer
@@ -582,11 +670,11 @@ func TestHistorySchemaMigratesV0AndRollsBackEveryWrite(t *testing.T) {
 	successPath := filepath.Join(t.TempDir(), "success.db")
 	successDB := seedHistorySchemaV0(t, successPath)
 	var migrationSteps int
-	if err := migrateV0ToV1WithHook(ctx, successDB, func(_ int, _ string) error {
+	if err := migrateV0ToCurrentWithHook(ctx, successDB, func(_ int, _ string) error {
 		migrationSteps++
 		return nil
 	}); err != nil {
-		t.Fatalf("migrateV0ToV1WithHook(success) = %v", err)
+		t.Fatalf("migrateV0ToCurrentWithHook(success) = %v", err)
 	}
 	if migrationSteps == 0 {
 		t.Fatal("migration executed zero injectable write steps")
@@ -641,7 +729,7 @@ func TestHistorySchemaMigratesV0AndRollsBackEveryWrite(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "rollback.db")
 			db := seedHistorySchemaV0(t, path)
 			before := databaseSnapshot(t, db)
-			err := migrateV0ToV1WithHook(ctx, db, func(step int, _ string) error {
+			err := migrateV0ToCurrentWithHook(ctx, db, func(step int, _ string) error {
 				if step == failAt {
 					return injected
 				}
@@ -655,6 +743,183 @@ func TestHistorySchemaMigratesV0AndRollsBackEveryWrite(t *testing.T) {
 				t.Fatalf("database changed after failure before write %d\n--- before ---\n%s\n--- after ---\n%s", failAt, before, after)
 			}
 		})
+	}
+}
+
+func TestHistorySchemaMigratesV1AndRollsBackEveryWrite(t *testing.T) {
+	ctx := context.Background()
+	successPath := filepath.Join(t.TempDir(), "success-v1.db")
+	successDB := seedHistorySchemaV1(t, successPath)
+	var migrationSteps int
+	if err := migrateV1ToV2WithHook(ctx, successDB, func(_ int, _ string) error {
+		migrationSteps++
+		return nil
+	}); err != nil {
+		t.Fatalf("migrateV1ToV2WithHook(success) = %v", err)
+	}
+	if migrationSteps == 0 {
+		t.Fatal("v1 migration executed zero injectable write steps")
+	}
+	var version, maintenanceTables int
+	if err := successDB.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatalf("read migrated v1 user_version: %v", err)
+	}
+	if version != currentSchemaVersion {
+		t.Fatalf("migrated v1 user_version = %d, want %d", version, currentSchemaVersion)
+	}
+	if err := successDB.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'history_maintenance'
+	`).Scan(&maintenanceTables); err != nil {
+		t.Fatalf("read migrated maintenance table: %v", err)
+	}
+	if maintenanceTables != 1 {
+		t.Fatalf("history_maintenance table count = %d, want 1", maintenanceTables)
+	}
+	wantTerminal := formatTime(time.Date(2026, 7, 28, 11, 0, 0, 0, time.UTC))
+	wantRetain := formatTime(time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC))
+	for _, query := range []struct {
+		name       string
+		statement  string
+		wantValues []string
+	}{
+		{
+			name: "assignment",
+			statement: `
+				SELECT created_at, updated_at
+				FROM assignments WHERE runner_request_id = 703
+			`,
+			wantValues: []string{wantTerminal, wantTerminal},
+		},
+		{
+			name:       "receipt",
+			statement:  `SELECT persisted_at, retain_until FROM message_receipts WHERE message_id = 701`,
+			wantValues: []string{wantTerminal, wantRetain},
+		},
+		{
+			name: "tombstone",
+			statement: `
+				SELECT terminal_at, retain_until
+				FROM history_tombstones WHERE runner_request_id = 702
+			`,
+			wantValues: []string{wantTerminal, wantRetain},
+		},
+		{
+			name: "network ledger",
+			statement: `
+				SELECT updated_at, retained_until
+				FROM network_ledgers WHERE ledger_key = 'ledger-v1'
+			`,
+			wantValues: []string{wantTerminal, wantRetain},
+		},
+	} {
+		values := make([]string, len(query.wantValues))
+		destinations := make([]any, len(values))
+		for i := range values {
+			destinations[i] = &values[i]
+		}
+		if err := successDB.QueryRow(query.statement).Scan(destinations...); err != nil {
+			t.Fatalf("read normalized %s timestamps: %v", query.name, err)
+		}
+		if !reflect.DeepEqual(values, query.wantValues) {
+			t.Fatalf(
+				"normalized %s timestamps = %q, want %q",
+				query.name,
+				values,
+				query.wantValues,
+			)
+		}
+	}
+
+	injected := errors.New("injected v1 migration failure")
+	for failAt := 1; failAt <= migrationSteps; failAt++ {
+		t.Run(fmt.Sprintf("rollback-before-write-%03d", failAt), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "rollback-v1.db")
+			db := seedHistorySchemaV1(t, path)
+			before := databaseSnapshot(t, db)
+			err := migrateV1ToV2WithHook(ctx, db, func(step int, _ string) error {
+				if step == failAt {
+					return injected
+				}
+				return nil
+			})
+			if !errors.Is(err, injected) {
+				t.Fatalf("v1 migration error = %v, want injected failure at write %d", err, failAt)
+			}
+			after := databaseSnapshot(t, db)
+			if after != before {
+				t.Fatalf(
+					"v1 database changed after failure before write %d\n--- before ---\n%s\n--- after ---\n%s",
+					failAt,
+					before,
+					after,
+				)
+			}
+		})
+	}
+}
+
+func TestHistorySchemaRollbackRestoresMatchingPriorDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "paired-rollback.db")
+	legacy := seedHistorySchemaV1(t, path)
+	if _, err := legacy.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatalf("checkpoint v1 database: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close v1 database: %v", err)
+	}
+	backup, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read v1 backup: %v", err)
+	}
+
+	current, err := Open(path)
+	if err != nil {
+		t.Fatalf("open current binary over v1 database: %v", err)
+	}
+	if err := current.Close(); err != nil {
+		t.Fatalf("close migrated database: %v", err)
+	}
+	priorHarness := func(path string) error {
+		db, err := sql.Open("sqlite", readOnlyDSNForPath(path))
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		var version int
+		if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+			return err
+		}
+		if version != 1 {
+			return fmt.Errorf("prior harness rejects schema version %d", version)
+		}
+		var maintenanceTables int
+		if err := db.QueryRow(`
+			SELECT COUNT(*) FROM sqlite_master
+			WHERE type = 'table' AND name = 'history_maintenance'
+		`).Scan(&maintenanceTables); err != nil {
+			return err
+		}
+		if maintenanceTables != 0 {
+			return errors.New("prior harness found future maintenance table")
+		}
+		return nil
+	}
+	if err := priorHarness(path); err == nil {
+		t.Fatal("prior harness accepted migrated database")
+	}
+	if err := os.WriteFile(path, backup, 0o600); err != nil {
+		t.Fatalf("restore v1 backup: %v", err)
+	}
+	restored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read restored v1 database: %v", err)
+	}
+	if !bytes.Equal(restored, backup) {
+		t.Fatal("restored v1 database is not byte-identical to backup")
+	}
+	if err := priorHarness(path); err != nil {
+		t.Fatalf("prior harness rejected restored matching database: %v", err)
 	}
 }
 
@@ -677,11 +942,11 @@ func TestHistorySchemaBootstrapRollsBackEveryWrite(t *testing.T) {
 
 	successDB := openEmpty(t)
 	var migrationSteps int
-	if err := bootstrapV1WithHook(ctx, successDB, func(_ int, _ string) error {
+	if err := bootstrapCurrentWithHook(ctx, successDB, func(_ int, _ string) error {
 		migrationSteps++
 		return nil
 	}); err != nil {
-		t.Fatalf("bootstrapV1WithHook(success) = %v", err)
+		t.Fatalf("bootstrapCurrentWithHook(success) = %v", err)
 	}
 	if migrationSteps == 0 {
 		t.Fatal("bootstrap executed zero injectable write steps")
@@ -692,7 +957,7 @@ func TestHistorySchemaBootstrapRollsBackEveryWrite(t *testing.T) {
 		t.Run(fmt.Sprintf("rollback-before-write-%03d", failAt), func(t *testing.T) {
 			db := openEmpty(t)
 			before := databaseSnapshot(t, db)
-			err := bootstrapV1WithHook(ctx, db, func(step int, _ string) error {
+			err := bootstrapCurrentWithHook(ctx, db, func(step int, _ string) error {
 				if step == failAt {
 					return injected
 				}
@@ -720,8 +985,8 @@ func TestHistorySchemaUpgradeMatchesBootstrap(t *testing.T) {
 
 	upgradedPath := filepath.Join(t.TempDir(), "upgraded.db")
 	upgraded := seedHistorySchemaV0(t, upgradedPath)
-	if err := migrateV0ToV1WithHook(ctx, upgraded, nil); err != nil {
-		t.Fatalf("migrateV0ToV1WithHook(upgraded) = %v", err)
+	if err := migrateV0ToCurrentWithHook(ctx, upgraded, nil); err != nil {
+		t.Fatalf("migrateV0ToCurrentWithHook(upgraded) = %v", err)
 	}
 
 	freshSchema := databaseSchemaSnapshot(t, fresh.DB())

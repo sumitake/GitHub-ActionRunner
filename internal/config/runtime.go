@@ -9,14 +9,18 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
+	"time"
 
 	"github.com/sumitake/portable-ghar/internal/redaction"
+	"github.com/sumitake/portable-ghar/internal/state"
 )
 
 // EgressBackend enumerates the controller's egress backends. Only
@@ -56,6 +60,95 @@ type SecretRef struct {
 	Ref    string `json:"ref"`
 }
 
+// HistoryRuntime is the operator-authored, no-default wire representation of
+// state.HistoryLimits. Durations are explicit Go-duration strings rather than
+// implicit nanosecond integers.
+type HistoryRuntime struct {
+	MinRetention                 time.Duration
+	MaxHistoryRows               uint64
+	MaxHistoryLogicalBytes       uint64
+	MaxNetworkLedgerRows         uint64
+	MaxNetworkLedgerLogicalBytes uint64
+	InflightReserveRows          uint64
+	InflightReserveLogicalBytes  uint64
+	GCBatchRows                  uint64
+	NetworkGCBatchRows           uint64
+	VacuumBatchPages             uint64
+	MaintenanceCadence           time.Duration
+}
+
+// UnmarshalJSON strictly decodes every HistoryLimits field. Unknown nested
+// fields are rejected here because implementing json.Unmarshaler otherwise
+// bypasses the outer decoder's DisallowUnknownFields behavior for this object.
+func (h *HistoryRuntime) UnmarshalJSON(data []byte) error {
+	if h == nil || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return errors.New("config: history must be an object")
+	}
+	var document struct {
+		MinRetention                 string `json:"min_retention"`
+		MaxHistoryRows               uint64 `json:"max_history_rows"`
+		MaxHistoryLogicalBytes       uint64 `json:"max_history_logical_bytes"`
+		MaxNetworkLedgerRows         uint64 `json:"max_network_ledger_rows"`
+		MaxNetworkLedgerLogicalBytes uint64 `json:"max_network_ledger_logical_bytes"`
+		InflightReserveRows          uint64 `json:"inflight_reserve_rows"`
+		InflightReserveLogicalBytes  uint64 `json:"inflight_reserve_logical_bytes"`
+		GCBatchRows                  uint64 `json:"gc_batch_rows"`
+		NetworkGCBatchRows           uint64 `json:"network_gc_batch_rows"`
+		VacuumBatchPages             uint64 `json:"vacuum_batch_pages"`
+		MaintenanceCadence           string `json:"maintenance_cadence"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&document); err != nil {
+		return fmt.Errorf("config: decode history: %w", err)
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("config: history contains trailing data")
+		}
+		return fmt.Errorf("config: decode history trailing data: %w", err)
+	}
+	minRetention, err := time.ParseDuration(document.MinRetention)
+	if err != nil {
+		return errors.New("config: invalid history min_retention")
+	}
+	maintenanceCadence, err := time.ParseDuration(document.MaintenanceCadence)
+	if err != nil {
+		return errors.New("config: invalid history maintenance_cadence")
+	}
+	*h = HistoryRuntime{
+		MinRetention:                 minRetention,
+		MaxHistoryRows:               document.MaxHistoryRows,
+		MaxHistoryLogicalBytes:       document.MaxHistoryLogicalBytes,
+		MaxNetworkLedgerRows:         document.MaxNetworkLedgerRows,
+		MaxNetworkLedgerLogicalBytes: document.MaxNetworkLedgerLogicalBytes,
+		InflightReserveRows:          document.InflightReserveRows,
+		InflightReserveLogicalBytes:  document.InflightReserveLogicalBytes,
+		GCBatchRows:                  document.GCBatchRows,
+		NetworkGCBatchRows:           document.NetworkGCBatchRows,
+		VacuumBatchPages:             document.VacuumBatchPages,
+		MaintenanceCadence:           maintenanceCadence,
+	}
+	return nil
+}
+
+func (h HistoryRuntime) limits() state.HistoryLimits {
+	return state.HistoryLimits{
+		MinRetention:                 h.MinRetention,
+		MaxHistoryRows:               h.MaxHistoryRows,
+		MaxHistoryLogicalBytes:       h.MaxHistoryLogicalBytes,
+		MaxNetworkLedgerRows:         h.MaxNetworkLedgerRows,
+		MaxNetworkLedgerLogicalBytes: h.MaxNetworkLedgerLogicalBytes,
+		InflightReserveRows:          h.InflightReserveRows,
+		InflightReserveLogicalBytes:  h.InflightReserveLogicalBytes,
+		GCBatchRows:                  h.GCBatchRows,
+		NetworkGCBatchRows:           h.NetworkGCBatchRows,
+		VacuumBatchPages:             h.VacuumBatchPages,
+		MaintenanceCadence:           h.MaintenanceCadence,
+	}
+}
+
 // secretSourceAllowlist is the exact set of SecretRef.Source values Task 1
 // recognizes. Runtime.validate and ReadSecret share this single set so
 // they can never drift apart -- a source Runtime.validate accepts but
@@ -80,6 +173,15 @@ type Runtime struct {
 	// from. It must be a SecretRef object; an inline secret literal here
 	// is rejected at decode time.
 	Secret SecretRef `json:"secret"`
+
+	// The following fields are required by LoadControllerRuntime. LoadRuntime
+	// remains the narrow Task-1/offline parser so older offline tooling can read
+	// the transport subset without silently inventing production history
+	// defaults.
+	FleetConcurrency                 uint64         `json:"fleet_concurrency"`
+	NetworkLedgerReserveRows         uint64         `json:"network_ledger_reserve_rows"`
+	NetworkLedgerReserveLogicalBytes uint64         `json:"network_ledger_reserve_logical_bytes"`
+	History                          HistoryRuntime `json:"history"`
 }
 
 // LoadRuntime decodes and validates a Runtime document from r.
@@ -110,6 +212,70 @@ func LoadRuntime(r io.Reader) (Runtime, error) {
 		return Runtime{}, err
 	}
 	return rt, nil
+}
+
+// LoadControllerRuntime is the production-startup loader. It requires every
+// durable-history input and proves the configured concurrency fits the
+// full-lifecycle row/byte reserve. NetworkLedgerReserve* is the explicit
+// operator-proven aggregate needed for active concurrency plus the protected
+// detached tail; no tail or size default is inferred here.
+func LoadControllerRuntime(r io.Reader) (Runtime, error) {
+	rt, err := LoadRuntime(r)
+	if err != nil {
+		return Runtime{}, err
+	}
+	if err := rt.validateControllerHistory(); err != nil {
+		return Runtime{}, err
+	}
+	return rt, nil
+}
+
+// HistoryLimits returns the already-decoded state envelope. Production callers
+// must obtain Runtime through LoadControllerRuntime before using it.
+func (rt Runtime) HistoryLimits() state.HistoryLimits {
+	return rt.History.limits()
+}
+
+func (rt Runtime) validateControllerHistory() error {
+	limits := rt.HistoryLimits()
+	if err := state.ValidateHistoryLimits(limits); err != nil {
+		return fmt.Errorf("config: invalid history limits: %w", err)
+	}
+	if rt.FleetConcurrency == 0 ||
+		rt.NetworkLedgerReserveRows == 0 ||
+		rt.NetworkLedgerReserveLogicalBytes == 0 {
+		return errors.New("config: controller history sizing is incomplete")
+	}
+	requiredRows, ok := checkedMultiply(rt.FleetConcurrency, limits.InflightReserveRows)
+	if !ok || requiredRows > limits.MaxHistoryRows {
+		return errors.New("config: fleet history row reserve exceeds cap")
+	}
+	requiredBytes, ok := checkedMultiply(
+		rt.FleetConcurrency,
+		limits.InflightReserveLogicalBytes,
+	)
+	if !ok || requiredBytes > limits.MaxHistoryLogicalBytes {
+		return errors.New("config: fleet history byte reserve exceeds cap")
+	}
+	if rt.NetworkLedgerReserveRows < rt.FleetConcurrency ||
+		rt.NetworkLedgerReserveRows > limits.MaxNetworkLedgerRows {
+		return errors.New("config: network ledger row reserve is inconsistent")
+	}
+	// Every retained ledger row has at least one logical byte by schema. The
+	// explicit reserve must cover at least the active fleet and remain within
+	// the independently configured ledger cap.
+	if rt.NetworkLedgerReserveLogicalBytes < rt.FleetConcurrency ||
+		rt.NetworkLedgerReserveLogicalBytes > limits.MaxNetworkLedgerLogicalBytes {
+		return errors.New("config: network ledger byte reserve is inconsistent")
+	}
+	return nil
+}
+
+func checkedMultiply(left, right uint64) (uint64, bool) {
+	if left != 0 && right > math.MaxUint64/left {
+		return 0, false
+	}
+	return left * right, true
 }
 
 func (rt Runtime) validate() error {

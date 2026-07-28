@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"os"
 	"time"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver.
@@ -26,6 +28,7 @@ var ErrAcquisitionEpochMismatch = errors.New("state: acquisition epoch mismatch"
 // construct one with Open.
 type SQLiteStore struct {
 	db            *sql.DB
+	path          string
 	historyLimits *HistoryLimits
 }
 
@@ -65,6 +68,13 @@ func dsnForPath(path string) string {
 	)
 }
 
+func readOnlyDSNForPath(path string) string {
+	return fmt.Sprintf(
+		"file:%s?mode=ro&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=query_only(1)",
+		path,
+	)
+}
+
 func Open(path string) (*SQLiteStore, error) {
 	return openStore(path, nil)
 }
@@ -78,6 +88,67 @@ func OpenWithHistoryLimits(path string, limits HistoryLimits) (*SQLiteStore, err
 		return nil, fmt.Errorf("state: invalid history limits: %w", err)
 	}
 	return openStore(path, &limits)
+}
+
+// OpenReadOnlyWithHistoryLimits opens an existing current-schema database
+// without creating, migrating, checkpointing, vacuuming, or otherwise writing
+// it. It is the status/readback constructor; a missing, old, future, or
+// non-incremental database fails closed with ErrOfflineMigration.
+func OpenReadOnlyWithHistoryLimits(
+	path string,
+	limits HistoryLimits,
+) (*SQLiteStore, error) {
+	if err := validateRecordLimits(limits); err != nil {
+		return nil, fmt.Errorf("state: invalid history limits: %w", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: read-only database is unavailable", ErrOfflineMigration)
+	}
+	db, err := sql.Open("sqlite", readOnlyDSNForPath(path))
+	if err != nil {
+		return nil, fmt.Errorf("state: open read-only sqlite: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var version, autoVacuum, queryOnly int
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("state: read read-only schema version: %w", err)
+	}
+	if version != currentSchemaVersion {
+		_ = db.Close()
+		return nil, fmt.Errorf(
+			"%w: read-only database schema %d, want %d",
+			ErrOfflineMigration,
+			version,
+			currentSchemaVersion,
+		)
+	}
+	if err := db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&autoVacuum); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("state: read read-only auto_vacuum: %w", err)
+	}
+	if autoVacuum != sqliteAutoVacuumIncremental {
+		_ = db.Close()
+		return nil, fmt.Errorf(
+			"%w: read-only schema %d auto_vacuum=%d, want INCREMENTAL",
+			ErrOfflineMigration,
+			version,
+			autoVacuum,
+		)
+	}
+	if err := db.QueryRowContext(ctx, `PRAGMA query_only`).Scan(&queryOnly); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("state: verify read-only sqlite: %w", err)
+	}
+	if queryOnly != 1 {
+		_ = db.Close()
+		return nil, fmt.Errorf("%w: sqlite query_only is disabled", ErrOfflineMigration)
+	}
+	return &SQLiteStore{db: db, path: path, historyLimits: &limits}, nil
 }
 
 func openStore(path string, historyLimits *HistoryLimits) (*SQLiteStore, error) {
@@ -95,7 +166,7 @@ func openStore(path string, historyLimits *HistoryLimits) (*SQLiteStore, error) 
 		return nil, err
 	}
 
-	return &SQLiteStore{db: db, historyLimits: historyLimits}, nil
+	return &SQLiteStore{db: db, path: path, historyLimits: historyLimits}, nil
 }
 
 // Close closes the underlying database.
@@ -113,15 +184,21 @@ func (s *SQLiteStore) DB() *sql.DB {
 	return s.db
 }
 
-func now() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
-}
+const persistedTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
 func formatTime(value time.Time) string {
 	if value.IsZero() {
 		return ""
 	}
-	return value.UTC().Format(time.RFC3339Nano)
+	// RFC3339Nano removes trailing fractional zeros. That makes an exact-second
+	// value sort after a positive subsecond value in byte order, which is not
+	// safe for SQLite CHECK constraints or retention indexes. Persist a
+	// fixed-width UTC representation; time.RFC3339Nano still parses it.
+	return value.UTC().Format(persistedTimeLayout)
+}
+
+func now() string {
+	return formatTime(time.Now())
 }
 
 func parseOptionalTime(value string) (time.Time, error) {
@@ -143,6 +220,7 @@ func boolToInt(b bool) int {
 // transaction.
 type queryRower interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 type execer interface {
@@ -1035,47 +1113,6 @@ func (s *SQLiteStore) BindTerminalMessage(
 	return nil
 }
 
-func messageDigestTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	repositoryAlias string,
-	messageID int,
-) ([sha256.Size]byte, error) {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT offer_payload_digest, runner_request_id, attempt
-		FROM assignments
-		WHERE repository_alias = ? AND source_message_id = ?
-		UNION ALL
-		SELECT offer_payload_digest, runner_request_id, attempt
-		FROM history_tombstones
-		WHERE repository_alias = ? AND source_message_id = ?
-		ORDER BY runner_request_id, attempt
-	`, repositoryAlias, messageID, repositoryAlias, messageID)
-	if err != nil {
-		return [sha256.Size]byte{}, fmt.Errorf("state: read message offers: %w", err)
-	}
-	defer rows.Close()
-	var digests [][]byte
-	for rows.Next() {
-		var digest []byte
-		var runnerRequestID, attempt int64
-		if err := rows.Scan(&digest, &runnerRequestID, &attempt); err != nil {
-			return [sha256.Size]byte{}, fmt.Errorf("state: scan message offer: %w", err)
-		}
-		if len(digest) != sha256.Size {
-			return [sha256.Size]byte{}, ErrIdentityConflict
-		}
-		digests = append(digests, append([]byte(nil), digest...))
-	}
-	if err := rows.Err(); err != nil {
-		return [sha256.Size]byte{}, fmt.Errorf("state: read message offers: %w", err)
-	}
-	if len(digests) == 0 {
-		return [sha256.Size]byte{}, ErrReplayEvidence
-	}
-	return canonicalMessageDigest(repositoryAlias, messageID, digests), nil
-}
-
 func ensureReceiptHeadroom(ctx context.Context, tx *sql.Tx, limits HistoryLimits, logicalBytes uint64) error {
 	current, err := historyBudgetTotalsTx(ctx, tx)
 	if err != nil {
@@ -1414,8 +1451,7 @@ func (s *SQLiteStore) CompactTerminal(
 	if reservations != 0 || slots != 0 {
 		return fmt.Errorf("state: compact terminal: live durable slot state remains")
 	}
-	if admissionSlotID.Valid ||
-		(admissionPhase.Valid && AdmissionPhase(admissionPhase.Int64) != AdmissionQueued) {
+	if admissionSlotID.Valid || admissionPhase.Valid {
 		return fmt.Errorf("state: compact terminal: live admission projection remains")
 	}
 
@@ -1561,6 +1597,9 @@ func assignmentGraphUsage(
 }
 
 func historyUsageWithQuery(ctx context.Context, q queryRower, limits HistoryLimits) (HistoryUsage, error) {
+	if err := ValidateHistoryLimits(limits); err != nil {
+		return HistoryUsage{}, err
+	}
 	var usage HistoryUsage
 	var err error
 	usage.LiveRows, usage.LiveLogicalBytes, err = assignmentGraphUsage(ctx, q, false)
@@ -1612,42 +1651,655 @@ func historyUsageWithQuery(ctx context.Context, q queryRower, limits HistoryLimi
 		return HistoryUsage{}, err
 	}
 
-	var oldest sql.NullString
+	var (
+		oldestAssignment sql.NullString
+		oldestReceipt    sql.NullString
+		oldestTombstone  sql.NullString
+		oldestLedger     sql.NullString
+	)
 	if err := q.QueryRowContext(ctx, `
-		SELECT MIN(retained_at) FROM (
-			SELECT created_at AS retained_at FROM assignments
-			UNION ALL
-			SELECT persisted_at AS retained_at FROM message_receipts
-			UNION ALL
-			SELECT terminal_at AS retained_at FROM history_tombstones
-			UNION ALL
-			SELECT updated_at AS retained_at FROM network_ledgers
-		)
-		WHERE retained_at != ''
-	`).Scan(&oldest); err != nil {
+		SELECT
+			(SELECT MIN(created_at) FROM assignments),
+			(SELECT MIN(persisted_at) FROM message_receipts),
+			(SELECT MIN(terminal_at) FROM history_tombstones),
+			(SELECT MIN(updated_at) FROM network_ledgers)
+	`).Scan(
+		&oldestAssignment,
+		&oldestReceipt,
+		&oldestTombstone,
+		&oldestLedger,
+	); err != nil {
 		return HistoryUsage{}, fmt.Errorf("state: history usage oldest retained: %w", err)
 	}
-	if oldest.Valid {
-		usage.OldestRetainedAt, err = time.Parse(time.RFC3339Nano, oldest.String)
+	for _, retained := range []sql.NullString{
+		oldestAssignment,
+		oldestReceipt,
+		oldestTombstone,
+		oldestLedger,
+	} {
+		if !retained.Valid {
+			continue
+		}
+		retainedAt, err := time.Parse(time.RFC3339Nano, retained.String)
 		if err != nil {
 			return HistoryUsage{}, fmt.Errorf("state: history usage parse oldest retained: %w", err)
 		}
+		if usage.OldestRetainedAt.IsZero() || retainedAt.Before(usage.OldestRetainedAt) {
+			usage.OldestRetainedAt = retainedAt
+		}
+	}
+	usage.Maintenance, err = historyMaintenanceWithQuery(ctx, q)
+	if err != nil {
+		return HistoryUsage{}, err
 	}
 	return usage, nil
 }
 
-// HistoryUsage implements Store.
-func (s *SQLiteStore) HistoryUsage(ctx context.Context, limits HistoryLimits) (HistoryUsage, error) {
-	return historyUsageWithQuery(ctx, s.db, limits)
+func historyMaintenanceWithQuery(
+	ctx context.Context,
+	q queryRower,
+) (HistoryMaintenanceResult, error) {
+	var (
+		observedAtText string
+		compacted      int64
+		receipts       int64
+		tombstones     int64
+		ledgers        int64
+		busy           int64
+		logPages       int64
+		checkpointed   int64
+		vacuumed       int64
+	)
+	err := q.QueryRowContext(ctx, `
+		SELECT
+			observed_at, compacted_terminal_graphs,
+			deleted_message_receipts, deleted_tombstones,
+			deleted_network_ledgers, checkpoint_busy,
+			checkpoint_log_pages, checkpointed_pages, vacuumed_pages
+		FROM history_maintenance
+		WHERE id = 1
+	`).Scan(
+		&observedAtText,
+		&compacted,
+		&receipts,
+		&tombstones,
+		&ledgers,
+		&busy,
+		&logPages,
+		&checkpointed,
+		&vacuumed,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return HistoryMaintenanceResult{}, nil
+	}
+	if err != nil {
+		return HistoryMaintenanceResult{}, fmt.Errorf(
+			"state: history usage maintenance result: %w",
+			err,
+		)
+	}
+	if compacted < 0 || receipts < 0 || tombstones < 0 || ledgers < 0 ||
+		busy < 0 || busy > 1 || logPages < 0 || checkpointed < 0 || vacuumed < 0 {
+		return HistoryMaintenanceResult{}, ErrHistoryBudget
+	}
+	observedAt, err := time.Parse(time.RFC3339Nano, observedAtText)
+	if err != nil {
+		return HistoryMaintenanceResult{}, fmt.Errorf(
+			"state: history usage parse maintenance time: %w",
+			err,
+		)
+	}
+	return HistoryMaintenanceResult{
+		ObservedAt:              observedAt,
+		CompactedTerminalGraphs: uint64(compacted),
+		DeletedMessageReceipts:  uint64(receipts),
+		DeletedTombstones:       uint64(tombstones),
+		DeletedNetworkLedgers:   uint64(ledgers),
+		CheckpointBusy:          busy == 1,
+		CheckpointLogPages:      uint64(logPages),
+		CheckpointedPages:       uint64(checkpointed),
+		VacuumedPages:           uint64(vacuumed),
+	}, nil
 }
 
-// CollectHistory implements the bounded no-deletion baseline. Task E adds
-// batched expiry deletion, checkpoint, and incremental-vacuum work.
+// HistoryUsage implements Store.
+func (s *SQLiteStore) HistoryUsage(ctx context.Context, limits HistoryLimits) (HistoryUsage, error) {
+	usage, err := historyUsageWithQuery(ctx, s.db, limits)
+	if err != nil {
+		return HistoryUsage{}, err
+	}
+	usage.ActivePageBytes, usage.FreelistBytes, usage.WALBytes, err =
+		s.physicalHistoryUsage(ctx)
+	if err != nil {
+		return HistoryUsage{}, err
+	}
+	return usage, nil
+}
+
+type historyCollectionCandidate struct {
+	key        controller.AssignmentKey
+	terminalAt time.Time
+	id         int64
+}
+
+func (s *SQLiteStore) compactEligibleTerminalGraphs(
+	ctx context.Context,
+	limits HistoryLimits,
+	at time.Time,
+) (uint64, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			a.repository_alias, a.runner_request_id, a.attempt,
+			a.updated_at, a.id
+		FROM assignments AS a
+		JOIN message_receipts AS receipt
+		  ON receipt.repository_alias = a.repository_alias
+		 AND receipt.message_id = a.terminal_message_id
+		WHERE a.state = ?
+		  AND receipt.ack_state = 'ack_confirmed'
+		  AND NOT EXISTS (
+			SELECT 1 FROM effects
+			WHERE assignment_id = a.id AND completed_at IS NULL
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM reservations WHERE assignment_id = a.id
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM runner_slots WHERE assignment_id = a.id
+		  )
+		  AND a.admission_slot_id IS NULL
+		  AND a.admission_phase IS NULL
+		  AND a.updated_at <= ?
+		ORDER BY a.updated_at, a.id
+		LIMIT ?
+	`,
+		string(controller.StateDestroyed),
+		formatTime(at),
+		int64(limits.GCBatchRows),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("state: collect history: select terminal graphs: %w", err)
+	}
+	var candidates []historyCollectionCandidate
+	for rows.Next() {
+		var (
+			candidate historyCollectionCandidate
+			attempt   int64
+			terminal  string
+		)
+		if err := rows.Scan(
+			&candidate.key.RepositoryAlias,
+			&candidate.key.RunnerRequestID,
+			&attempt,
+			&terminal,
+			&candidate.id,
+		); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("state: collect history: scan terminal graph: %w", err)
+		}
+		if candidate.key.RepositoryAlias == "" || candidate.key.RunnerRequestID <= 0 ||
+			attempt < 0 || attempt > int64(^uint32(0)) {
+			_ = rows.Close()
+			return 0, ErrIdentityConflict
+		}
+		candidate.key.Attempt = uint32(attempt)
+		candidate.terminalAt, err = time.Parse(time.RFC3339Nano, terminal)
+		if err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("state: collect history: parse terminal graph time: %w", err)
+		}
+		if candidate.terminalAt.After(at) {
+			_ = rows.Close()
+			return 0, ErrHistoryBudget
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("state: collect history: terminal graph rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("state: collect history: close terminal graphs: %w", err)
+	}
+	var compacted uint64
+	for _, candidate := range candidates {
+		if err := s.CompactTerminal(ctx, candidate.key, limits, at); err != nil {
+			return compacted, fmt.Errorf("state: collect history: compact terminal graph: %w", err)
+		}
+		compacted++
+	}
+	return compacted, nil
+}
+
+type retainedHistoryCandidate struct {
+	kind        string
+	id          int64
+	retainUntil time.Time
+}
+
+func (s *SQLiteStore) deleteExpiredHistory(
+	ctx context.Context,
+	limits HistoryLimits,
+	at time.Time,
+) (receipts uint64, tombstones uint64, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("state: collect history: begin expiry batch: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, `
+		SELECT kind, id, retain_until FROM (
+			SELECT 'tombstone' AS kind, id, retain_until
+			FROM history_tombstones
+			WHERE retain_until <= ?
+			UNION ALL
+			SELECT 'receipt' AS kind, receipt.id, receipt.retain_until
+			FROM message_receipts AS receipt
+			WHERE receipt.ack_state = 'ack_confirmed'
+			  AND receipt.retain_until IS NOT NULL
+			  AND receipt.retain_until <= ?
+			  AND NOT EXISTS (
+				SELECT 1 FROM assignments AS assignment
+				WHERE assignment.repository_alias = receipt.repository_alias
+				  AND (
+					assignment.source_message_id = receipt.message_id OR
+					assignment.terminal_message_id = receipt.message_id
+				  )
+			  )
+		)
+		ORDER BY retain_until, kind, id
+		LIMIT ?
+	`, formatTime(at), formatTime(at), int64(limits.GCBatchRows))
+	if err != nil {
+		return 0, 0, fmt.Errorf("state: collect history: select expiry batch: %w", err)
+	}
+	var candidates []retainedHistoryCandidate
+	for rows.Next() {
+		var candidate retainedHistoryCandidate
+		var retainedText string
+		if err := rows.Scan(&candidate.kind, &candidate.id, &retainedText); err != nil {
+			_ = rows.Close()
+			return 0, 0, fmt.Errorf("state: collect history: scan expiry row: %w", err)
+		}
+		candidate.retainUntil, err = time.Parse(time.RFC3339Nano, retainedText)
+		if err != nil {
+			_ = rows.Close()
+			return 0, 0, fmt.Errorf("state: collect history: parse expiry row: %w", err)
+		}
+		if candidate.retainUntil.After(at) {
+			_ = rows.Close()
+			return 0, 0, ErrHistoryBudget
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, 0, fmt.Errorf("state: collect history: expiry rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, 0, fmt.Errorf("state: collect history: close expiry rows: %w", err)
+	}
+	for _, candidate := range candidates {
+		var result sql.Result
+		switch candidate.kind {
+		case "receipt":
+			result, err = tx.ExecContext(ctx, `
+				DELETE FROM message_receipts
+				WHERE id = ?
+				  AND ack_state = 'ack_confirmed'
+				  AND retain_until IS NOT NULL
+				  AND retain_until <= ?
+				  AND NOT EXISTS (
+					SELECT 1 FROM assignments AS assignment
+					WHERE assignment.repository_alias = message_receipts.repository_alias
+					  AND (
+						assignment.source_message_id = message_receipts.message_id OR
+						assignment.terminal_message_id = message_receipts.message_id
+					  )
+				  )
+			`, candidate.id, formatTime(at))
+			receipts++
+		case "tombstone":
+			result, err = tx.ExecContext(ctx, `
+				DELETE FROM history_tombstones
+				WHERE id = ? AND retain_until <= ?
+			`, candidate.id, formatTime(at))
+			tombstones++
+		default:
+			return 0, 0, ErrHistoryBudget
+		}
+		if err != nil {
+			return 0, 0, fmt.Errorf(
+				"state: collect history: delete expired %s: %w",
+				candidate.kind,
+				err,
+			)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return 0, 0, fmt.Errorf(
+				"state: collect history: expired %s rows affected: %w",
+				candidate.kind,
+				err,
+			)
+		}
+		if affected != 1 {
+			return 0, 0, ErrHistoryBudget
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("state: collect history: commit expiry batch: %w", err)
+	}
+	return receipts, tombstones, nil
+}
+
+func (s *SQLiteStore) deleteExpiredNetworkLedgers(
+	ctx context.Context,
+	limits HistoryLimits,
+	at time.Time,
+) (uint64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("state: collect history: begin network expiry: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, retained_until
+		FROM network_ledgers
+		WHERE assignment_id IS NULL
+		  AND retained_until IS NOT NULL
+		  AND retained_until <= ?
+		ORDER BY retained_until, id
+		LIMIT ?
+	`, formatTime(at), int64(limits.NetworkGCBatchRows))
+	if err != nil {
+		return 0, fmt.Errorf("state: collect history: select network expiry: %w", err)
+	}
+	type networkCandidate struct {
+		id          int64
+		retainUntil time.Time
+	}
+	var candidates []networkCandidate
+	for rows.Next() {
+		var candidate networkCandidate
+		var retainedText string
+		if err := rows.Scan(&candidate.id, &retainedText); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("state: collect history: scan network expiry: %w", err)
+		}
+		candidate.retainUntil, err = time.Parse(time.RFC3339Nano, retainedText)
+		if err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("state: collect history: parse network expiry: %w", err)
+		}
+		if candidate.retainUntil.After(at) {
+			_ = rows.Close()
+			return 0, ErrHistoryBudget
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("state: collect history: network expiry rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("state: collect history: close network expiry: %w", err)
+	}
+	var deleted uint64
+	for _, candidate := range candidates {
+		result, err := tx.ExecContext(ctx, `
+			DELETE FROM network_ledgers
+			WHERE id = ?
+			  AND assignment_id IS NULL
+			  AND retained_until IS NOT NULL
+			  AND retained_until <= ?
+		`, candidate.id, formatTime(at))
+		if err != nil {
+			return 0, fmt.Errorf("state: collect history: delete network ledger: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("state: collect history: network rows affected: %w", err)
+		}
+		if affected != 1 {
+			return 0, ErrHistoryBudget
+		}
+		deleted++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("state: collect history: commit network expiry: %w", err)
+	}
+	return deleted, nil
+}
+
+func (s *SQLiteStore) passiveCheckpoint(
+	ctx context.Context,
+) (busy bool, logPages uint64, checkpointedPages uint64, err error) {
+	var busyInt, logInt, checkpointedInt int64
+	if err := s.db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(PASSIVE)`).Scan(
+		&busyInt,
+		&logInt,
+		&checkpointedInt,
+	); err != nil {
+		return false, 0, 0, fmt.Errorf("state: collect history: passive checkpoint: %w", err)
+	}
+	if busyInt < 0 || busyInt > 1 || logInt < -1 || checkpointedInt < -1 {
+		return false, 0, 0, ErrHistoryBudget
+	}
+	if logInt < 0 {
+		logInt = 0
+	}
+	if checkpointedInt < 0 {
+		checkpointedInt = 0
+	}
+	return busyInt == 1, uint64(logInt), uint64(checkpointedInt), nil
+}
+
+func pragmaInt64(ctx context.Context, db *sql.DB, pragma string) (int64, error) {
+	var value int64
+	if err := db.QueryRowContext(ctx, pragma).Scan(&value); err != nil {
+		return 0, err
+	}
+	if value < 0 {
+		return 0, ErrHistoryBudget
+	}
+	return value, nil
+}
+
+func (s *SQLiteStore) incrementalVacuum(
+	ctx context.Context,
+	limit uint64,
+) (uint64, error) {
+	before, err := pragmaInt64(ctx, s.db, `PRAGMA freelist_count`)
+	if err != nil {
+		return 0, fmt.Errorf("state: collect history: read pre-vacuum freelist: %w", err)
+	}
+	if _, err := s.db.ExecContext(
+		ctx,
+		fmt.Sprintf("PRAGMA incremental_vacuum(%d)", limit),
+	); err != nil {
+		return 0, fmt.Errorf("state: collect history: incremental vacuum: %w", err)
+	}
+	after, err := pragmaInt64(ctx, s.db, `PRAGMA freelist_count`)
+	if err != nil {
+		return 0, fmt.Errorf("state: collect history: read post-vacuum freelist: %w", err)
+	}
+	if after > before {
+		return 0, ErrHistoryBudget
+	}
+	vacuumed := uint64(before - after)
+	if vacuumed > limit {
+		return 0, ErrHistoryBudget
+	}
+	return vacuumed, nil
+}
+
+func (s *SQLiteStore) physicalHistoryUsage(
+	ctx context.Context,
+) (activeBytes uint64, freelistBytes uint64, walBytes uint64, err error) {
+	pageCount, err := pragmaInt64(ctx, s.db, `PRAGMA page_count`)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("state: history usage page count: %w", err)
+	}
+	freelistCount, err := pragmaInt64(ctx, s.db, `PRAGMA freelist_count`)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("state: history usage freelist count: %w", err)
+	}
+	pageSize, err := pragmaInt64(ctx, s.db, `PRAGMA page_size`)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("state: history usage page size: %w", err)
+	}
+	if freelistCount > pageCount || pageSize == 0 {
+		return 0, 0, 0, ErrHistoryBudget
+	}
+	activeBytes, err = multiplyHistoryBytes(uint64(pageCount-freelistCount), uint64(pageSize))
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	freelistBytes, err = multiplyHistoryBytes(uint64(freelistCount), uint64(pageSize))
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	info, statErr := os.Stat(s.path + "-wal")
+	switch {
+	case statErr == nil:
+		if info.Size() < 0 {
+			return 0, 0, 0, ErrHistoryBudget
+		}
+		walBytes = uint64(info.Size())
+	case errors.Is(statErr, os.ErrNotExist):
+		walBytes = 0
+	default:
+		return 0, 0, 0, fmt.Errorf("state: history usage WAL stat: %w", statErr)
+	}
+	return activeBytes, freelistBytes, walBytes, nil
+}
+
+func (s *SQLiteStore) persistHistoryMaintenance(
+	ctx context.Context,
+	result HistoryMaintenanceResult,
+) error {
+	if result.ObservedAt.IsZero() {
+		return ErrHistoryBudget
+	}
+	for _, value := range []uint64{
+		result.CompactedTerminalGraphs,
+		result.DeletedMessageReceipts,
+		result.DeletedTombstones,
+		result.DeletedNetworkLedgers,
+		result.CheckpointLogPages,
+		result.CheckpointedPages,
+		result.VacuumedPages,
+	} {
+		if value > math.MaxInt64 {
+			return ErrHistoryBudget
+		}
+	}
+	checkpointBusy := 0
+	if result.CheckpointBusy {
+		checkpointBusy = 1
+	}
+	sqlResult, err := s.db.ExecContext(ctx, `
+		INSERT INTO history_maintenance (
+			id, observed_at, compacted_terminal_graphs,
+			deleted_message_receipts, deleted_tombstones,
+			deleted_network_ledgers, checkpoint_busy,
+			checkpoint_log_pages, checkpointed_pages, vacuumed_pages
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			observed_at = excluded.observed_at,
+			compacted_terminal_graphs = excluded.compacted_terminal_graphs,
+			deleted_message_receipts = excluded.deleted_message_receipts,
+			deleted_tombstones = excluded.deleted_tombstones,
+			deleted_network_ledgers = excluded.deleted_network_ledgers,
+			checkpoint_busy = excluded.checkpoint_busy,
+			checkpoint_log_pages = excluded.checkpoint_log_pages,
+			checkpointed_pages = excluded.checkpointed_pages,
+			vacuumed_pages = excluded.vacuumed_pages
+	`,
+		formatTime(result.ObservedAt),
+		result.CompactedTerminalGraphs,
+		result.DeletedMessageReceipts,
+		result.DeletedTombstones,
+		result.DeletedNetworkLedgers,
+		checkpointBusy,
+		result.CheckpointLogPages,
+		result.CheckpointedPages,
+		result.VacuumedPages,
+	)
+	if err != nil {
+		return fmt.Errorf("state: collect history: persist maintenance result: %w", err)
+	}
+	affected, err := sqlResult.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("state: collect history: maintenance rows affected: %w", err)
+	}
+	if affected != 1 {
+		return ErrHistoryBudget
+	}
+	return nil
+}
+
+// CollectHistory runs one explicitly bounded maintenance cycle. It never
+// deletes a protected time-floor row to satisfy a cap, never runs full VACUUM,
+// and treats a PASSIVE checkpoint's busy result as observable rather than
+// fatal.
 func (s *SQLiteStore) CollectHistory(
 	ctx context.Context,
 	limits HistoryLimits,
-	_ time.Time,
+	at time.Time,
 ) (HistoryUsage, error) {
+	return s.collectHistory(ctx, limits, at, s.passiveCheckpoint)
+}
+
+type passiveCheckpointFunc func(context.Context) (bool, uint64, uint64, error)
+
+func (s *SQLiteStore) collectHistory(
+	ctx context.Context,
+	limits HistoryLimits,
+	at time.Time,
+	checkpoint passiveCheckpointFunc,
+) (HistoryUsage, error) {
+	if err := ValidateHistoryLimits(limits); err != nil || at.IsZero() || checkpoint == nil {
+		return HistoryUsage{}, ErrHistoryBudget
+	}
+	maintenance := HistoryMaintenanceResult{ObservedAt: at.UTC()}
+	var err error
+	maintenance.CompactedTerminalGraphs, err =
+		s.compactEligibleTerminalGraphs(ctx, limits, at)
+	if err != nil {
+		return HistoryUsage{}, err
+	}
+	maintenance.DeletedMessageReceipts,
+		maintenance.DeletedTombstones,
+		err = s.deleteExpiredHistory(ctx, limits, at)
+	if err != nil {
+		return HistoryUsage{}, err
+	}
+	maintenance.DeletedNetworkLedgers, err =
+		s.deleteExpiredNetworkLedgers(ctx, limits, at)
+	if err != nil {
+		return HistoryUsage{}, err
+	}
+	maintenance.CheckpointBusy,
+		maintenance.CheckpointLogPages,
+		maintenance.CheckpointedPages,
+		err = checkpoint(ctx)
+	if err != nil {
+		return HistoryUsage{}, err
+	}
+	maintenance.VacuumedPages, err =
+		s.incrementalVacuum(ctx, limits.VacuumBatchPages)
+	if err != nil {
+		return HistoryUsage{}, err
+	}
+	// The singleton records only a successfully completed cycle. If any
+	// preceding independently committed maintenance step fails, the previous
+	// completed-cycle marker remains authoritative rather than being relabeled
+	// as a completed partial cycle.
+	if err := s.persistHistoryMaintenance(ctx, maintenance); err != nil {
+		return HistoryUsage{}, err
+	}
 	return s.HistoryUsage(ctx, limits)
 }
 

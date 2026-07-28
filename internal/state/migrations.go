@@ -5,12 +5,13 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/sumitake/portable-ghar/internal/controller"
 )
 
 const (
-	currentSchemaVersion        = 1
+	currentSchemaVersion        = 2
 	sqliteAutoVacuumNone        = 0
 	sqliteAutoVacuumFull        = 1
 	sqliteAutoVacuumIncremental = 2
@@ -189,6 +190,41 @@ CREATE INDEX IF NOT EXISTS history_tombstones_source_message
 	ON history_tombstones (repository_alias, source_message_id);
 `
 
+// schemaV2 adds one bounded aggregate singleton for the last successfully
+// completed maintenance cycle plus the ordering indexes used by bounded
+// oldest-first reporting and collection. The singleton contains no repository,
+// offer, runner, message, or other workload identity and lets status remain a
+// read-only operation. The v1-to-v2 transaction also rewrites every timestamp
+// used by these indexes into the fixed-width UTC key they require.
+const schemaV2 = `
+CREATE TABLE IF NOT EXISTS history_maintenance (
+	id                         INTEGER PRIMARY KEY CHECK (id = 1),
+	observed_at                TEXT    NOT NULL,
+	compacted_terminal_graphs  INTEGER NOT NULL CHECK (compacted_terminal_graphs >= 0),
+	deleted_message_receipts   INTEGER NOT NULL CHECK (deleted_message_receipts >= 0),
+	deleted_tombstones         INTEGER NOT NULL CHECK (deleted_tombstones >= 0),
+	deleted_network_ledgers    INTEGER NOT NULL CHECK (deleted_network_ledgers >= 0),
+	checkpoint_busy            INTEGER NOT NULL CHECK (checkpoint_busy IN (0, 1)),
+	checkpoint_log_pages       INTEGER NOT NULL CHECK (checkpoint_log_pages >= 0),
+	checkpointed_pages         INTEGER NOT NULL CHECK (checkpointed_pages >= 0),
+	vacuumed_pages             INTEGER NOT NULL CHECK (vacuumed_pages >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS assignments_history_oldest
+	ON assignments (created_at);
+CREATE INDEX IF NOT EXISTS assignments_terminal_collection
+	ON assignments (state, updated_at, id);
+CREATE INDEX IF NOT EXISTS message_receipts_history_oldest
+	ON message_receipts (persisted_at);
+CREATE INDEX IF NOT EXISTS history_tombstones_history_oldest
+	ON history_tombstones (terminal_at);
+CREATE INDEX IF NOT EXISTS network_ledgers_history_oldest
+	ON network_ledgers (updated_at);
+CREATE INDEX IF NOT EXISTS network_ledgers_retention
+	ON network_ledgers (retained_until, id)
+	WHERE assignment_id IS NULL AND retained_until IS NOT NULL;
+`
+
 // schemaV0 is the exact pre-history schema. Keeping the source shape beside
 // its migration makes the compatibility contract executable in tests instead
 // of reconstructing an approximate legacy database.
@@ -319,6 +355,185 @@ func (m *migrationStepper) execSchema(labelPrefix, schema string) error {
 	return nil
 }
 
+func canonicalMigrationTimestamp(raw string) (string, error) {
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil || parsed.IsZero() {
+		return "", ErrOfflineMigration
+	}
+	return formatTime(parsed), nil
+}
+
+func normalizeOptionalMigrationTimestamp(
+	steps *migrationStepper,
+	table string,
+	column string,
+) error {
+	var (
+		started bool
+		lastID  int64
+	)
+	for {
+		var (
+			id  int64
+			raw string
+		)
+		query := fmt.Sprintf(
+			`SELECT id, %q
+			 FROM %q
+			 WHERE %q IS NOT NULL
+			 ORDER BY id
+			 LIMIT 1`,
+			column,
+			table,
+			column,
+		)
+		var args []any
+		if started {
+			query = fmt.Sprintf(
+				`SELECT id, %q
+				 FROM %q
+				 WHERE %q IS NOT NULL AND id > ?
+				 ORDER BY id
+				 LIMIT 1`,
+				column,
+				table,
+				column,
+			)
+			args = []any{lastID}
+		}
+		err := steps.tx.QueryRowContext(
+			steps.ctx,
+			query,
+			args...,
+		).Scan(&id, &raw)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if started && id <= lastID {
+			return ErrOfflineMigration
+		}
+		started = true
+		lastID = id
+		canonical, err := canonicalMigrationTimestamp(raw)
+		if err != nil {
+			return err
+		}
+		if canonical == raw {
+			continue
+		}
+		if err := steps.exec(
+			fmt.Sprintf("normalize-%s-%s-%d", table, column, id),
+			fmt.Sprintf(`UPDATE %q SET %q = ? WHERE id = ?`, table, column),
+			canonical,
+			id,
+		); err != nil {
+			return err
+		}
+	}
+}
+
+func normalizeTombstoneMigrationTimestamps(steps *migrationStepper) error {
+	var (
+		started bool
+		lastID  int64
+	)
+	for {
+		var (
+			id          int64
+			rawTerminal string
+			rawRetain   string
+		)
+		query := `SELECT id, terminal_at, retain_until
+			FROM history_tombstones
+			ORDER BY id
+			LIMIT 1`
+		var args []any
+		if started {
+			query = `SELECT id, terminal_at, retain_until
+				FROM history_tombstones
+				WHERE id > ?
+				ORDER BY id
+				LIMIT 1`
+			args = []any{lastID}
+		}
+		err := steps.tx.QueryRowContext(
+			steps.ctx,
+			query,
+			args...,
+		).Scan(&id, &rawTerminal, &rawRetain)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if started && id <= lastID {
+			return ErrOfflineMigration
+		}
+		started = true
+		lastID = id
+		terminalAt, err := time.Parse(time.RFC3339Nano, rawTerminal)
+		if err != nil || terminalAt.IsZero() {
+			return ErrOfflineMigration
+		}
+		retainAt, err := time.Parse(time.RFC3339Nano, rawRetain)
+		if err != nil || retainAt.IsZero() || retainAt.Before(terminalAt) {
+			return ErrOfflineMigration
+		}
+		canonicalTerminal := formatTime(terminalAt)
+		canonicalRetain := formatTime(retainAt)
+		if canonicalTerminal == rawTerminal && canonicalRetain == rawRetain {
+			continue
+		}
+		if err := steps.exec(
+			fmt.Sprintf("normalize-history-tombstones-%d", id),
+			`UPDATE history_tombstones
+			 SET terminal_at = ?, retain_until = ? WHERE id = ?`,
+			canonicalTerminal,
+			canonicalRetain,
+			id,
+		); err != nil {
+			return err
+		}
+	}
+}
+
+func normalizeHistoryMigrationTimestamps(steps *migrationStepper) error {
+	for _, timestamp := range []struct {
+		table  string
+		column string
+	}{
+		{"assignments", "created_at"},
+		{"assignments", "updated_at"},
+		{"message_receipts", "persisted_at"},
+		{"message_receipts", "retain_until"},
+	} {
+		if err := normalizeOptionalMigrationTimestamp(
+			steps,
+			timestamp.table,
+			timestamp.column,
+		); err != nil {
+			return err
+		}
+	}
+	if err := normalizeTombstoneMigrationTimestamps(steps); err != nil {
+		return err
+	}
+	for _, column := range []string{"updated_at", "retained_until"} {
+		if err := normalizeOptionalMigrationTimestamp(
+			steps,
+			"network_ledgers",
+			column,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func migrate(ctx context.Context, db *sql.DB) error {
 	var version, autoVacuum, tableCount int
 	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
@@ -344,6 +559,13 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	}
 
 	if tableCount == 0 {
+		if version != 0 {
+			return fmt.Errorf(
+				"%w: empty database reports schema version %d",
+				ErrOfflineMigration,
+				version,
+			)
+		}
 		if _, err := db.ExecContext(ctx, `PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
 			return fmt.Errorf("state: enable incremental auto_vacuum: %w", err)
 		}
@@ -353,20 +575,27 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		if autoVacuum != sqliteAutoVacuumIncremental {
 			return fmt.Errorf("%w: fresh database auto_vacuum=%d", ErrOfflineMigration, autoVacuum)
 		}
-		return bootstrapV1(ctx, db)
+		return bootstrapCurrent(ctx, db)
 	}
 
 	if autoVacuum != sqliteAutoVacuumIncremental {
 		return fmt.Errorf("%w: existing schema auto_vacuum=%d", ErrOfflineMigration, autoVacuum)
 	}
-	return migrateV0ToV1(ctx, db)
+	switch version {
+	case 0:
+		return migrateV0ToCurrent(ctx, db)
+	case 1:
+		return migrateV1ToV2(ctx, db)
+	default:
+		return fmt.Errorf("%w: unsupported schema version %d", ErrOfflineMigration, version)
+	}
 }
 
-func bootstrapV1(ctx context.Context, db *sql.DB) error {
-	return bootstrapV1WithHook(ctx, db, nil)
+func bootstrapCurrent(ctx context.Context, db *sql.DB) error {
+	return bootstrapCurrentWithHook(ctx, db, nil)
 }
 
-func bootstrapV1WithHook(
+func bootstrapCurrentWithHook(
 	ctx context.Context,
 	db *sql.DB,
 	beforeWrite func(step int, label string) error,
@@ -381,6 +610,9 @@ func bootstrapV1WithHook(
 	if err := steps.execSchema("bootstrap-schema", schemaV1); err != nil {
 		return fmt.Errorf("state: apply schema v1: %w", err)
 	}
+	if err := steps.execSchema("bootstrap-schema-v2", schemaV2); err != nil {
+		return fmt.Errorf("state: apply schema v2: %w", err)
+	}
 	if err := steps.exec("bootstrap-seed-acquisition", seedAcquisitionState, string(controller.AcquisitionDisabled)); err != nil {
 		return fmt.Errorf("state: seed acquisition state: %w", err)
 	}
@@ -393,11 +625,11 @@ func bootstrapV1WithHook(
 	return nil
 }
 
-func migrateV0ToV1(ctx context.Context, db *sql.DB) error {
-	return migrateV0ToV1WithHook(ctx, db, nil)
+func migrateV0ToCurrent(ctx context.Context, db *sql.DB) error {
+	return migrateV0ToCurrentWithHook(ctx, db, nil)
 }
 
-func migrateV0ToV1WithHook(
+func migrateV0ToCurrentWithHook(
 	ctx context.Context,
 	db *sql.DB,
 	beforeWrite func(step int, label string) error,
@@ -479,6 +711,9 @@ func migrateV0ToV1WithHook(
 
 	if err := steps.execSchema("create-v1-schema", schemaV1); err != nil {
 		return fmt.Errorf("state: create v1 tables and indexes: %w", err)
+	}
+	if err := steps.execSchema("create-v2-schema", schemaV2); err != nil {
+		return fmt.Errorf("state: create v2 tables: %w", err)
 	}
 
 	for _, item := range assignments {
@@ -578,6 +813,10 @@ func migrateV0ToV1WithHook(
 		}
 	}
 
+	if err := normalizeHistoryMigrationTimestamps(&steps); err != nil {
+		return fmt.Errorf("state: normalize v0 history timestamps: %w", err)
+	}
+
 	for _, drop := range []struct {
 		label     string
 		statement string
@@ -601,6 +840,40 @@ func migrateV0ToV1WithHook(
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("state: commit v0 migration: %w", err)
+	}
+	return nil
+}
+
+func migrateV1ToV2(ctx context.Context, db *sql.DB) error {
+	return migrateV1ToV2WithHook(ctx, db, nil)
+}
+
+func migrateV1ToV2WithHook(
+	ctx context.Context,
+	db *sql.DB,
+	beforeWrite func(step int, label string) error,
+) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: begin v1 migration: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after commit
+
+	steps := migrationStepper{ctx: ctx, tx: tx, beforeWrite: beforeWrite}
+	if err := steps.execSchema("create-v2-schema", schemaV2); err != nil {
+		return fmt.Errorf("state: create v2 tables: %w", err)
+	}
+	if err := normalizeHistoryMigrationTimestamps(&steps); err != nil {
+		return fmt.Errorf("state: normalize v1 history timestamps: %w", err)
+	}
+	if err := steps.exec(
+		"set-v2-user-version",
+		fmt.Sprintf(`PRAGMA user_version=%d`, currentSchemaVersion),
+	); err != nil {
+		return fmt.Errorf("state: set v2 schema version: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: commit v1 migration: %w", err)
 	}
 	return nil
 }

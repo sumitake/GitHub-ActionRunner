@@ -92,17 +92,32 @@ type EffectRecord struct {
 // HistoryLimits contains every explicit durable-history and maintenance bound.
 // Production configuration supplies all values; this package has no defaults.
 type HistoryLimits struct {
-	MinRetention                 time.Duration
-	MaxHistoryRows               uint64
-	MaxHistoryLogicalBytes       uint64
-	MaxNetworkLedgerRows         uint64
-	MaxNetworkLedgerLogicalBytes uint64
-	InflightReserveRows          uint64
-	InflightReserveLogicalBytes  uint64
-	GCBatchRows                  uint64
-	NetworkGCBatchRows           uint64
-	VacuumBatchPages             uint64
-	MaintenanceCadence           time.Duration
+	MinRetention                 time.Duration `json:"min_retention"`
+	MaxHistoryRows               uint64        `json:"max_history_rows"`
+	MaxHistoryLogicalBytes       uint64        `json:"max_history_logical_bytes"`
+	MaxNetworkLedgerRows         uint64        `json:"max_network_ledger_rows"`
+	MaxNetworkLedgerLogicalBytes uint64        `json:"max_network_ledger_logical_bytes"`
+	InflightReserveRows          uint64        `json:"inflight_reserve_rows"`
+	InflightReserveLogicalBytes  uint64        `json:"inflight_reserve_logical_bytes"`
+	GCBatchRows                  uint64        `json:"gc_batch_rows"`
+	NetworkGCBatchRows           uint64        `json:"network_gc_batch_rows"`
+	VacuumBatchPages             uint64        `json:"vacuum_batch_pages"`
+	MaintenanceCadence           time.Duration `json:"maintenance_cadence"`
+}
+
+// HistoryMaintenanceResult is the identity-free result of one bounded
+// maintenance cycle. CheckpointBusy is observable and nonfatal: a later cycle
+// retries without claiming that every WAL page was checkpointed.
+type HistoryMaintenanceResult struct {
+	ObservedAt              time.Time `json:"observed_at"`
+	CompactedTerminalGraphs uint64    `json:"compacted_terminal_graphs"`
+	DeletedMessageReceipts  uint64    `json:"deleted_message_receipts"`
+	DeletedTombstones       uint64    `json:"deleted_tombstones"`
+	DeletedNetworkLedgers   uint64    `json:"deleted_network_ledgers"`
+	CheckpointBusy          bool      `json:"checkpoint_busy"`
+	CheckpointLogPages      uint64    `json:"checkpoint_log_pages"`
+	CheckpointedPages       uint64    `json:"checkpointed_pages"`
+	VacuumedPages           uint64    `json:"vacuumed_pages"`
 }
 
 // HistoryUsage is an aggregate, identity-free history/storage snapshot.
@@ -121,6 +136,10 @@ type HistoryUsage struct {
 	ReservedRows              uint64
 	ReservedLogicalBytes      uint64
 	OldestRetainedAt          time.Time
+	ActivePageBytes           uint64
+	FreelistBytes             uint64
+	WALBytes                  uint64
+	Maintenance               HistoryMaintenanceResult
 }
 
 // AdmissionPhase is the durable, state-owned representation of the broker's
@@ -171,7 +190,6 @@ var (
 const (
 	offerDigestDomain        = "portable-ghar.offer.v1"
 	offerPayloadDigestDomain = "portable-ghar.offer-payload.v1"
-	messageDigestDomain      = "portable-ghar.message.v1"
 	messageEnvelopeDomain    = "portable-ghar.message-envelope.v2"
 
 	historyStringStructuralBytes = uint64(16)
@@ -365,24 +383,6 @@ func writeUint64(h interface{ Write([]byte) (int, error) }, value uint64) {
 	_, _ = h.Write(scalar[:])
 }
 
-func canonicalMessageDigest(repositoryAlias string, messageID int, offerDigests [][]byte) [sha256.Size]byte {
-	h := sha256.New()
-	_, _ = h.Write([]byte(messageDigestDomain))
-	writeLengthPrefixed(h, []byte(repositoryAlias))
-	var scalar [8]byte
-	binary.BigEndian.PutUint64(scalar[:], uint64(int64(messageID)))
-	_, _ = h.Write(scalar[:])
-	var count [4]byte
-	binary.BigEndian.PutUint32(count[:], uint32(len(offerDigests)))
-	_, _ = h.Write(count[:])
-	for _, digest := range offerDigests {
-		writeLengthPrefixed(h, digest)
-	}
-	var out [sha256.Size]byte
-	copy(out[:], h.Sum(nil))
-	return out
-}
-
 func offerLogicalBytesV1(offer OfferIdentity) (uint64, error) {
 	total := historyOfferFixedBytes + historySliceStructuralBytes
 	values := [...]string{
@@ -437,18 +437,48 @@ func multiplyHistoryBytes(value, count uint64) (uint64, error) {
 	return value * count, nil
 }
 
-func validateRecordLimits(limits HistoryLimits) error {
-	if limits.MaxHistoryRows == 0 ||
+// ValidateHistoryLimits rejects every zero, negative-duration, overflowing, or
+// internally inconsistent durable-history envelope. Fleet-wide reserve
+// multiplication is a runtime-configuration concern because concurrency is
+// not state-owned.
+func ValidateHistoryLimits(limits HistoryLimits) error {
+	if limits.MinRetention <= 0 ||
+		limits.MaintenanceCadence <= 0 ||
+		limits.MaxHistoryRows == 0 ||
 		limits.MaxHistoryLogicalBytes == 0 ||
+		limits.MaxNetworkLedgerRows == 0 ||
+		limits.MaxNetworkLedgerLogicalBytes == 0 ||
 		limits.InflightReserveRows == 0 ||
-		limits.InflightReserveLogicalBytes == 0 {
+		limits.InflightReserveLogicalBytes == 0 ||
+		limits.GCBatchRows == 0 ||
+		limits.NetworkGCBatchRows == 0 ||
+		limits.VacuumBatchPages == 0 ||
+		limits.VacuumBatchPages > math.MaxInt64 {
 		return ErrHistoryBudget
+	}
+	for _, value := range []uint64{
+		limits.MaxHistoryRows,
+		limits.MaxHistoryLogicalBytes,
+		limits.MaxNetworkLedgerRows,
+		limits.MaxNetworkLedgerLogicalBytes,
+		limits.InflightReserveRows,
+		limits.InflightReserveLogicalBytes,
+		limits.GCBatchRows,
+		limits.NetworkGCBatchRows,
+	} {
+		if value > math.MaxInt64 {
+			return ErrHistoryBudget
+		}
 	}
 	if limits.InflightReserveRows > limits.MaxHistoryRows ||
 		limits.InflightReserveLogicalBytes > limits.MaxHistoryLogicalBytes {
 		return ErrHistoryBudget
 	}
 	return nil
+}
+
+func validateRecordLimits(limits HistoryLimits) error {
+	return ValidateHistoryLimits(limits)
 }
 
 func validateOfferEvidence(offer OfferIdentity, evidence OfferEvidence) error {
