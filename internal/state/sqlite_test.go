@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -767,12 +768,19 @@ func TestSQLiteBindRunnerRecordsUpstreamBindingUniquely(t *testing.T) {
 
 	keyA := seedAssignment(t, ctx, s, "owner/repository", 12)
 	keyB := seedAssignment(t, ctx, s, "owner/repository", 13)
+	const observedRequestID = int64(912)
 
-	if err := s.BindRunner(ctx, keyA, 555, "runner-container-a"); err != nil {
+	if err := s.BindRunner(ctx, keyA, 555, observedRequestID, "runner-container-a"); err != nil {
 		t.Fatalf("BindRunner(A) = %v, want nil", err)
 	}
-	if err := s.BindRunner(ctx, keyB, 555, "runner-container-b"); err == nil {
-		t.Fatal("BindRunner(B) with duplicate upstream runner id = nil, want error")
+	if err := s.BindRunner(ctx, keyA, 555, observedRequestID, "runner-container-a"); err != nil {
+		t.Fatalf("BindRunner(A replay) = %v, want nil", err)
+	}
+	if err := s.BindRunner(ctx, keyA, 555, observedRequestID+1, "runner-container-a"); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("BindRunner(A conflicting request) = %v, want ErrIdentityConflict", err)
+	}
+	if err := s.BindRunner(ctx, keyB, 555, observedRequestID+2, "runner-container-b"); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("BindRunner(B) with duplicate upstream runner id = %v, want ErrIdentityConflict", err)
 	}
 
 	list, err := s.ListRecoverable(ctx)
@@ -786,8 +794,541 @@ func TestSQLiteBindRunnerRecordsUpstreamBindingUniquely(t *testing.T) {
 	if ra.Slot.UpstreamRunnerID != 555 {
 		t.Errorf("Slot.UpstreamRunnerID = %d, want 555", ra.Slot.UpstreamRunnerID)
 	}
-	if ra.Slot.BoundRequestID != keyA.RunnerRequestID {
-		t.Errorf("Slot.BoundRequestID = %d, want %d", ra.Slot.BoundRequestID, keyA.RunnerRequestID)
+	if ra.Slot.BoundRequestID != observedRequestID {
+		t.Errorf("Slot.BoundRequestID = %d, want observed request %d", ra.Slot.BoundRequestID, observedRequestID)
+	}
+}
+
+func TestSQLiteAdvancePreReleaseDestroyedRejectsBegunListenerRelease(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	safeKey := seedAssignment(t, ctx, s, "owner/repository", 120)
+	advanceTo(t, ctx, s, safeKey, controller.StateReleaseArmed)
+	if err := s.AdvancePreReleaseDestroyed(ctx, safeKey); err != nil {
+		t.Fatalf("AdvancePreReleaseDestroyed(no listener effect) = %v, want nil", err)
+	}
+
+	ambiguousKey := seedAssignment(t, ctx, s, "owner/repository", 121)
+	advanceTo(t, ctx, s, ambiguousKey, controller.StateReleaseArmed)
+	if began, err := s.BeginEffect(
+		ctx,
+		ambiguousKey,
+		"listener-release-ambiguous-121",
+		LifecycleEffectListenerRelease,
+	); err != nil || !began {
+		t.Fatalf("BeginEffect(listener release) = (%v, %v), want (true, nil)", began, err)
+	}
+	if err := s.AdvancePreReleaseDestroyed(ctx, ambiguousKey); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("AdvancePreReleaseDestroyed(begun listener effect) = %v, want ErrIdentityConflict", err)
+	}
+	list, err := s.ListRecoverable(ctx)
+	if err != nil {
+		t.Fatalf("ListRecoverable() = %v", err)
+	}
+	got, ok := findRecoverable(t, list, ambiguousKey)
+	if !ok || got.State != controller.StateReleaseArmed {
+		t.Fatalf("ambiguous assignment = (%+v, %v), want RELEASE_ARMED and retained", got, ok)
+	}
+}
+
+func TestSQLiteApplyRunnerObservationAtomicallyResolvesAmbiguousRelease(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	key := seedAssignment(t, ctx, s, "owner/repository", 122)
+	advanceTo(t, ctx, s, key, controller.StateReleaseArmed)
+
+	if began, err := s.BeginEffect(
+		ctx,
+		key,
+		"listener-release-observed-122",
+		LifecycleEffectListenerRelease,
+	); err != nil || !began {
+		t.Fatalf("BeginEffect(listener release) = (%v, %v), want (true, nil)", began, err)
+	}
+	if err := s.MarkAmbiguous(ctx, key, "listener-release-checkpoint"); err != nil {
+		t.Fatalf("MarkAmbiguous() = %v", err)
+	}
+	before, ok := findRecoverable(t, mustListRecoverable(t, ctx, s), key)
+	if !ok || before.Slot.RunnerContainerID == "" {
+		t.Fatalf("runner slot before observation = (%+v, %v), want persisted runner container", before, ok)
+	}
+	observation := RunnerObservation{
+		UpstreamRunnerID:  6122,
+		BoundRequestID:    7122,
+		RunnerContainerID: before.Slot.RunnerContainerID,
+		ObservedAt:        time.Now().Add(-time.Second),
+	}
+	if err := s.ApplyRunnerObservation(ctx, key, observation); err != nil {
+		t.Fatalf("ApplyRunnerObservation(started) = %v", err)
+	}
+	if err := s.ApplyRunnerObservation(ctx, key, observation); err != nil {
+		t.Fatalf("ApplyRunnerObservation(replay) = %v", err)
+	}
+	after, ok := findRecoverable(t, mustListRecoverable(t, ctx, s), key)
+	if !ok {
+		t.Fatal("observed assignment missing")
+	}
+	if after.State != controller.StateJobRunning || !after.Released {
+		t.Fatalf("observed state/released = (%s,%v), want (JOB_RUNNING,true)", after.State, after.Released)
+	}
+	if after.Ambiguous || after.AmbiguousReason != "" {
+		t.Fatalf("ambiguity after exact observation = (%v,%q), want cleared", after.Ambiguous, after.AmbiguousReason)
+	}
+	if after.Slot.UpstreamRunnerID != observation.UpstreamRunnerID ||
+		after.Slot.BoundRequestID != observation.BoundRequestID ||
+		after.Slot.RunnerContainerID != observation.RunnerContainerID {
+		t.Fatalf("observed binding = %+v, want exact tuple %+v", after.Slot, observation)
+	}
+	if after.UpdatedAt.Before(before.UpdatedAt) {
+		t.Fatalf(
+			"ApplyRunnerObservation moved durable time backward: before=%s after=%s event=%s",
+			before.UpdatedAt,
+			after.UpdatedAt,
+			observation.ObservedAt,
+		)
+	}
+	if !after.UpdatedAt.After(observation.ObservedAt) {
+		t.Fatalf(
+			"ApplyRunnerObservation persisted upstream event time instead of local observation time: after=%s event=%s",
+			after.UpdatedAt,
+			observation.ObservedAt,
+		)
+	}
+
+	conflict := observation
+	conflict.BoundRequestID++
+	if err := s.ApplyRunnerObservation(ctx, key, conflict); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("ApplyRunnerObservation(conflict) = %v, want ErrIdentityConflict", err)
+	}
+}
+
+func TestSQLiteResolvePostReleaseRequiresEffectAndPersistsEvidence(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	key := seedAssignment(t, ctx, s, "owner/repository", 123)
+	advanceTo(t, ctx, s, key, controller.StateReleaseArmed)
+
+	evidence := sha256.Sum256([]byte("closed-two-sided-readback"))
+	if err := s.ResolvePostRelease(
+		ctx,
+		key,
+		controller.PostReleaseDestroyed,
+		evidence,
+		time.Now().Add(-time.Second),
+	); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("ResolvePostRelease(no listener effect) = %v, want ErrIdentityConflict", err)
+	}
+	if began, err := s.BeginEffect(
+		ctx,
+		key,
+		"listener-release-resolve-123",
+		LifecycleEffectListenerRelease,
+	); err != nil || !began {
+		t.Fatalf("BeginEffect(listener release) = (%v, %v), want (true, nil)", began, err)
+	}
+	if err := s.MarkAmbiguous(ctx, key, "release-outcome-unknown"); err != nil {
+		t.Fatalf("MarkAmbiguous() = %v", err)
+	}
+	marked, ok := findRecoverable(t, mustListRecoverable(t, ctx, s), key)
+	if !ok {
+		t.Fatal("ambiguous release assignment missing")
+	}
+	if err := s.ResolvePostRelease(
+		ctx,
+		key,
+		controller.PostReleaseDestroyed,
+		evidence,
+		marked.UpdatedAt,
+	); err != nil {
+		t.Fatalf("ResolvePostRelease(destroyed) = %v", err)
+	}
+	if _, ok := findRecoverable(t, mustListRecoverable(t, ctx, s), key); ok {
+		t.Fatal("resolved DESTROYED assignment remains recoverable")
+	}
+	record, err := s.LookupAssignmentEffect(ctx, key, LifecycleEffectPostReleaseResolution)
+	if err != nil {
+		t.Fatalf("LookupAssignmentEffect(resolution) = %v", err)
+	}
+	if record.State != EffectCompleted || record.ResultIdentity != fmt.Sprintf("%x", evidence) {
+		t.Fatalf("resolution effect = %+v, want completed digest %x", record, evidence)
+	}
+	if err := s.ResolvePostRelease(
+		ctx,
+		key,
+		controller.PostReleaseDestroyed,
+		[sha256.Size]byte{},
+		time.Now().Add(-time.Second),
+	); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("ResolvePostRelease(zero digest) = %v, want ErrIdentityConflict", err)
+	}
+}
+
+func TestSQLiteResolvePostReleaseAllowsForwardEvidenceSupersession(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	key := seedAssignment(t, ctx, s, "owner/repository", 127)
+	advanceTo(t, ctx, s, key, controller.StateReleaseArmed)
+	if began, err := s.BeginEffect(
+		ctx,
+		key,
+		"listener-release-progress-127",
+		LifecycleEffectListenerRelease,
+	); err != nil || !began {
+		t.Fatalf("BeginEffect(listener release) = (%v,%v), want (true,nil)", began, err)
+	}
+
+	liveEvidence := sha256.Sum256([]byte("release-armed-both-live"))
+	if err := s.ResolvePostRelease(
+		ctx,
+		key,
+		controller.PostReleaseListenerReleased,
+		liveEvidence,
+		time.Now(),
+	); err != nil {
+		t.Fatalf("ResolvePostRelease(listener released) = %v", err)
+	}
+	if err := s.ResolvePostRelease(
+		ctx,
+		key,
+		controller.PostReleaseListenerReleased,
+		liveEvidence,
+		time.Now(),
+	); err != nil {
+		t.Fatalf("ResolvePostRelease(listener exact replay) = %v", err)
+	}
+	if err := s.ResolvePostRelease(
+		ctx,
+		key,
+		controller.PostReleaseListenerReleased,
+		sha256.Sum256([]byte("same-state-conflicting-evidence")),
+		time.Now(),
+	); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf(
+			"ResolvePostRelease(listener conflicting replay) = %v, want ErrIdentityConflict",
+			err,
+		)
+	}
+	destroyedEvidence := sha256.Sum256([]byte("listener-released-both-absent"))
+	if err := s.ResolvePostRelease(
+		ctx,
+		key,
+		controller.PostReleaseDestroyed,
+		destroyedEvidence,
+		time.Now(),
+	); err != nil {
+		t.Fatalf("ResolvePostRelease(destroyed progression) = %v", err)
+	}
+	if _, ok := findRecoverable(t, mustListRecoverable(t, ctx, s), key); ok {
+		t.Fatal("forward-resolved DESTROYED assignment remains recoverable")
+	}
+	record, err := s.LookupAssignmentEffect(
+		ctx,
+		key,
+		LifecycleEffectPostReleaseResolution,
+	)
+	if err != nil {
+		t.Fatalf("LookupAssignmentEffect(resolution) = %v", err)
+	}
+	if record.State != EffectCompleted ||
+		record.ResultIdentity != fmt.Sprintf("%x", destroyedEvidence) {
+		t.Fatalf(
+			"superseded resolution effect = %+v, want final digest %x",
+			record,
+			destroyedEvidence,
+		)
+	}
+	if err := s.ResolvePostRelease(
+		ctx,
+		key,
+		controller.PostReleaseDestroyed,
+		destroyedEvidence,
+		time.Now(),
+	); err != nil {
+		t.Fatalf("ResolvePostRelease(destroyed exact replay) = %v", err)
+	}
+	if err := s.ResolvePostRelease(
+		ctx,
+		key,
+		controller.PostReleaseDestroyed,
+		sha256.Sum256([]byte("destroyed-conflicting-evidence")),
+		time.Now(),
+	); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf(
+			"ResolvePostRelease(destroyed conflicting replay) = %v, want ErrIdentityConflict",
+			err,
+		)
+	}
+}
+
+func TestValidResolutionDigestRequiresCanonicalSHA256Hex(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: strings.Repeat("a", sha256.Size*2), want: true},
+		{value: strings.Repeat("A", sha256.Size*2), want: false},
+		{value: strings.Repeat("g", sha256.Size*2), want: false},
+		{value: strings.Repeat("0", sha256.Size*2-1), want: false},
+		{value: "", want: false},
+	}
+	for _, test := range tests {
+		if got := validResolutionDigest(test.value); got != test.want {
+			t.Errorf(
+				"validResolutionDigest(%q) = %v, want %v",
+				test.value,
+				got,
+				test.want,
+			)
+		}
+	}
+}
+
+func TestSQLitePostReleaseEvidenceRejectsFailedListenerEffect(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	key := seedAssignment(t, ctx, s, "owner/repository", 124)
+	advanceTo(t, ctx, s, key, controller.StateReleaseArmed)
+
+	const idempotencyKey = "listener-release-failed-124"
+	if began, err := s.BeginEffect(
+		ctx,
+		key,
+		idempotencyKey,
+		LifecycleEffectListenerRelease,
+	); err != nil || !began {
+		t.Fatalf("BeginEffect(listener release) = (%v, %v), want (true, nil)", began, err)
+	}
+	if err := s.CompleteEffect(ctx, idempotencyKey, EffectResult{
+		Column:     IdentityNone,
+		ReasonCode: "listener-release-failed",
+	}); err != nil {
+		t.Fatalf("CompleteEffect(failed listener release) = %v", err)
+	}
+	record, ok := findRecoverable(t, mustListRecoverable(t, ctx, s), key)
+	if !ok {
+		t.Fatal("release-armed assignment missing")
+	}
+	observation := RunnerObservation{
+		UpstreamRunnerID:  6124,
+		BoundRequestID:    7124,
+		RunnerContainerID: record.Slot.RunnerContainerID,
+		ObservedAt:        time.Now().Add(-time.Second),
+	}
+	if err := s.ApplyRunnerObservation(
+		ctx,
+		key,
+		observation,
+	); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("ApplyRunnerObservation(failed release effect) = %v, want ErrIdentityConflict", err)
+	}
+	if err := s.ResolvePostRelease(
+		ctx,
+		key,
+		controller.PostReleaseDestroyed,
+		sha256.Sum256([]byte("failed-release-is-not-evidence")),
+		time.Now().Add(-time.Second),
+	); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("ResolvePostRelease(failed release effect) = %v, want ErrIdentityConflict", err)
+	}
+}
+
+func TestSQLitePostReleaseResolutionRejectsBackwardTimeAndNewTerminalEvidence(t *testing.T) {
+	t.Run("backward durable time", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := context.Background()
+		key := seedAssignment(t, ctx, s, "owner/repository", 125)
+		advanceTo(t, ctx, s, key, controller.StateReleaseArmed)
+		if began, err := s.BeginEffect(
+			ctx,
+			key,
+			"listener-release-pending-125",
+			LifecycleEffectListenerRelease,
+		); err != nil || !began {
+			t.Fatalf("BeginEffect(listener release) = (%v,%v)", began, err)
+		}
+		record, ok := findRecoverable(t, mustListRecoverable(t, ctx, s), key)
+		if !ok {
+			t.Fatal("release-armed assignment missing")
+		}
+		if err := s.ResolvePostRelease(
+			ctx,
+			key,
+			controller.PostReleaseDestroyed,
+			sha256.Sum256([]byte("backward-resolution")),
+			record.UpdatedAt.Add(-time.Second),
+		); !errors.Is(err, ErrIdentityConflict) {
+			t.Fatalf("ResolvePostRelease(backward time) = %v, want ErrIdentityConflict", err)
+		}
+	})
+
+	t.Run("new evidence after normal job finish", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := context.Background()
+		key := seedAssignment(t, ctx, s, "owner/repository", 126)
+		advanceTo(t, ctx, s, key, controller.StateReleaseArmed)
+		if began, err := s.BeginEffect(
+			ctx,
+			key,
+			"listener-release-observed-126",
+			LifecycleEffectListenerRelease,
+		); err != nil || !began {
+			t.Fatalf("BeginEffect(listener release) = (%v,%v)", began, err)
+		}
+		record, ok := findRecoverable(t, mustListRecoverable(t, ctx, s), key)
+		if !ok {
+			t.Fatal("release-armed assignment missing")
+		}
+		if err := s.ApplyRunnerObservation(ctx, key, RunnerObservation{
+			UpstreamRunnerID:  6126,
+			BoundRequestID:    7126,
+			RunnerContainerID: record.Slot.RunnerContainerID,
+			Finished:          true,
+			ObservedAt:        time.Now().Add(-time.Second),
+		}); err != nil {
+			t.Fatalf("ApplyRunnerObservation(completed) = %v", err)
+		}
+		if err := s.ResolvePostRelease(
+			ctx,
+			key,
+			controller.PostReleaseJobFinished,
+			sha256.Sum256([]byte("invented-after-normal-finish")),
+			time.Now(),
+		); !errors.Is(err, ErrIdentityConflict) {
+			t.Fatalf("ResolvePostRelease(new terminal evidence) = %v, want ErrIdentityConflict", err)
+		}
+	})
+}
+
+func TestSQLiteReconcileCyclesRemainBoundedAcrossCrashAndCompletion(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	started := time.Now().Add(-10 * time.Second).UTC()
+
+	if err := s.BeginReconcileCycle(ctx, "cycle-1", started); err != nil {
+		t.Fatalf("BeginReconcileCycle(cycle-1) = %v", err)
+	}
+	if err := s.BeginReconcileCycle(ctx, "cycle-2", started.Add(time.Second)); err != nil {
+		t.Fatalf("BeginReconcileCycle(cycle-2) = %v", err)
+	}
+	assertCycleRowCount(t, ctx, s, 2)
+
+	receipt := controller.CycleReceipt{
+		CycleID:         "cycle-2",
+		CompletedAt:     started.Add(2 * time.Second),
+		AssignmentCount: 4,
+		OldestAge:       31 * time.Second,
+	}
+	if err := s.CompleteReconcileCycle(ctx, receipt); err != nil {
+		t.Fatalf("CompleteReconcileCycle(cycle-2) = %v", err)
+	}
+	assertCycleRowCount(t, ctx, s, 1)
+
+	var (
+		completedAt string
+		count       int
+		oldest      int64
+		note        string
+	)
+	if err := s.DB().QueryRowContext(ctx, `
+		SELECT completed_at, assignment_count, oldest_age_seconds, note
+		FROM reconcile_cycles WHERE cycle_id = ?
+	`, receipt.CycleID).Scan(&completedAt, &count, &oldest, &note); err != nil {
+		t.Fatalf("read completed cycle: %v", err)
+	}
+	if completedAt != formatTime(receipt.CompletedAt) ||
+		count != receipt.AssignmentCount ||
+		oldest != int64(receipt.OldestAge/time.Second) ||
+		note != "completed" {
+		t.Fatalf("completed cycle = (%q,%d,%d,%q), want (%q,%d,%d,%q)",
+			completedAt, count, oldest, note,
+			formatTime(receipt.CompletedAt), receipt.AssignmentCount, int64(receipt.OldestAge/time.Second), "completed")
+	}
+
+	if err := s.BeginReconcileCycle(ctx, "cycle-3", started.Add(3*time.Second)); err != nil {
+		t.Fatalf("BeginReconcileCycle(cycle-3) = %v", err)
+	}
+	if err := s.AbortReconcileCycle(ctx, "cycle-3", started.Add(4*time.Second), "assignment-failed"); err != nil {
+		t.Fatalf("AbortReconcileCycle(cycle-3) = %v", err)
+	}
+	assertCycleRowCount(t, ctx, s, 1)
+}
+
+func TestSQLiteReconcileCycleValidationFailsClosed(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	started := time.Now().Add(-time.Minute).UTC()
+	if err := s.BeginReconcileCycle(ctx, "cycle-valid", started); err != nil {
+		t.Fatalf("BeginReconcileCycle(valid) = %v", err)
+	}
+	if err := s.BeginReconcileCycle(ctx, "cycle-valid", started); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("BeginReconcileCycle(duplicate) = %v, want ErrIdentityConflict", err)
+	}
+	if err := s.BeginReconcileCycle(ctx, "cycle-future", time.Now().Add(time.Hour)); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("BeginReconcileCycle(future) = %v, want ErrIdentityConflict", err)
+	}
+	if err := s.CompleteReconcileCycle(ctx, controller.CycleReceipt{
+		CycleID:         "cycle-valid",
+		CompletedAt:     started.Add(time.Second),
+		AssignmentCount: -1,
+	}); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("CompleteReconcileCycle(negative count) = %v, want ErrIdentityConflict", err)
+	}
+	if err := s.AbortReconcileCycle(ctx, "cycle-valid", started.Add(-time.Second), "failed"); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("AbortReconcileCycle(backward time) = %v, want ErrIdentityConflict", err)
+	}
+}
+
+func TestSQLiteBeginReconcileCycleRejectsMultipleIncompleteRows(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	started := time.Now().Add(-time.Minute).UTC()
+	for index, cycleID := range []string{"corrupt-incomplete-a", "corrupt-incomplete-b"} {
+		if _, err := s.DB().ExecContext(ctx, `
+			INSERT INTO reconcile_cycles (cycle_id, started_at)
+			VALUES (?, ?)
+		`, cycleID, formatTime(started.Add(time.Duration(index)*time.Second))); err != nil {
+			t.Fatalf("insert incomplete cycle %q: %v", cycleID, err)
+		}
+	}
+
+	if err := s.BeginReconcileCycle(
+		ctx,
+		"must-not-mask-corruption",
+		started.Add(2*time.Second),
+	); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("BeginReconcileCycle(multiple incomplete) = %v, want ErrIdentityConflict", err)
+	}
+
+	var incomplete int
+	if err := s.DB().QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM reconcile_cycles WHERE completed_at IS NULL`,
+	).Scan(&incomplete); err != nil {
+		t.Fatalf("count incomplete cycles: %v", err)
+	}
+	if incomplete != 2 {
+		t.Fatalf("incomplete cycle count = %d, want original corrupt rows preserved", incomplete)
+	}
+}
+
+func mustListRecoverable(t *testing.T, ctx context.Context, s *SQLiteStore) []RecoverableAssignment {
+	t.Helper()
+	list, err := s.ListRecoverable(ctx)
+	if err != nil {
+		t.Fatalf("ListRecoverable() = %v", err)
+	}
+	return list
+}
+
+func assertCycleRowCount(t *testing.T, ctx context.Context, s *SQLiteStore, want int) {
+	t.Helper()
+	var got int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM reconcile_cycles`).Scan(&got); err != nil {
+		t.Fatalf("count reconcile cycles: %v", err)
+	}
+	if got != want {
+		t.Fatalf("reconcile cycle row count = %d, want %d", got, want)
 	}
 }
 

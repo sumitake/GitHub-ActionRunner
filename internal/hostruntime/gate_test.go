@@ -242,7 +242,10 @@ func gateTestEngine(t *testing.T, namespaceResults ...Result) (*DockerCLI, Runne
 		}
 	}
 	if len(namespaceResults) == 3 {
-		runnerSpec := validRunnerSpec(AdapterHandle{id: adapterID}, adapterSpec.Seccomp)
+		runnerSpec := validRunnerSpec(
+			AdapterHandle{id: adapterID, slotIdentity: adapterSpec.SlotIdentity},
+			adapterSpec.Seccomp,
+		)
 		results = append(results,
 			Result{Stdout: []byte(managedAdapterInspectJSON(adapterID, adapterSpec))},
 			Result{Stdout: []byte(managedRunnerInspectJSON(runnerID, runnerSpec, 4242))},
@@ -271,6 +274,7 @@ func adapterSpecFromRecord(record *runnerRecord) AdapterSpec {
 		Image:           record.adapter.image,
 		BuildID:         record.adapter.buildID,
 		FleetGeneration: record.adapter.fleetGeneration,
+		SlotIdentity:    record.adapter.slotIdentity,
 	}
 }
 

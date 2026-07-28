@@ -7,6 +7,7 @@ import (
 
 	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
+	"github.com/sumitake/portable-ghar/internal/redaction"
 )
 
 const setupCleanupTimeout = 30 * time.Second
@@ -45,10 +46,9 @@ func newOrchestrator(
 	}, nil
 }
 
-// Configure executes the exact held-adapter, held-broker, authority, runner,
-// audit, and one-use listener-release sequence. All provider/runtime errors
-// collapse to closed package errors so job-controlled diagnostics cannot cross
-// the controller boundary.
+// Configure preserves the Task-6 one-call surface while delegating to the
+// Task-7 split transaction. The JIT remains caller-owned until Release and is
+// destroyed on every terminal path.
 func (o *Orchestrator) Configure(ctx context.Context, request SetupRequest) (LiveJail, error) {
 	if request.JIT != nil {
 		defer request.JIT.Destroy()
@@ -56,26 +56,43 @@ func (o *Orchestrator) Configure(ctx context.Context, request SetupRequest) (Liv
 	if o == nil || ctx == nil || validateSetupRequest(request) != nil {
 		return LiveJail{}, ErrSetupInput
 	}
+	held, err := o.Prepare(ctx, preparedSetupRequest(request))
+	if err != nil {
+		return LiveJail{}, err
+	}
+	return o.Release(ctx, held, request.JIT)
+}
+
+// Prepare executes the exact held-adapter, held-broker, authority, runner, and
+// audit sequence through the durable RELEASE_ARMED checkpoint. It accepts no
+// JIT material and never invokes the listener-release effect.
+func (o *Orchestrator) Prepare(
+	ctx context.Context,
+	request PreparedSetupRequest,
+) (HeldJail, error) {
+	if o == nil || ctx == nil || validatePreparedSetupRequest(request) != nil {
+		return HeldJail{}, ErrSetupInput
+	}
 	conntrackBudget, err := request.ConntrackInput.Compute(
 		request.Graph.manifest,
 		request.MaxRunnerCapacity,
 	)
 	if err != nil {
-		return LiveJail{}, ErrSetupInput
+		return HeldJail{}, ErrSetupInput
 	}
 
 	var resources setupResources
-	fail := func(cause error) (LiveJail, error) {
+	fail := func(cause error) (HeldJail, error) {
 		if errors.Is(cause, ErrSetupReplay) && !resources.any() {
-			return LiveJail{}, ErrSetupReplay
+			return HeldJail{}, ErrSetupReplay
 		}
 		if !o.cleanup(ctx, request.Key, resources) {
-			return LiveJail{}, ErrSetupCleanup
+			return HeldJail{}, ErrSetupCleanup
 		}
 		if errors.Is(cause, ErrSetupReplay) {
-			return LiveJail{}, ErrSetupReplay
+			return HeldJail{}, ErrSetupReplay
 		}
-		return LiveJail{}, ErrSetupFailed
+		return HeldJail{}, ErrSetupFailed
 	}
 
 	if err := o.effect(ctx, request.Key, StageAdapterCreate, func() (JournalResult, error) {
@@ -349,47 +366,123 @@ func (o *Orchestrator) Configure(ctx context.Context, request SetupRequest) (Liv
 		return fail(err)
 	}
 
-	if err := o.journal.Before(ctx, request.Key, StageListenerRelease); err != nil {
+	return HeldJail{
+		key:           request.Key,
+		resources:     resources,
+		authorization: authorization,
+		report:        finalAudit.report,
+	}, nil
+}
+
+// Release consumes one exact HeldJail plus one one-job JIT secret. Once the
+// durable listener-release effect has begun, every non-success is ambiguous:
+// the listener may already have exec'd, so resources are preserved for
+// two-sided reconciliation rather than blindly destroyed.
+func (o *Orchestrator) Release(
+	ctx context.Context,
+	held HeldJail,
+	jit *redaction.Secret,
+) (LiveJail, error) {
+	if jit != nil {
+		defer jit.Destroy()
+	}
+	if o == nil || ctx == nil || jit == nil ||
+		held.key.RepositoryAlias == "" ||
+		held.key.RunnerRequestID <= 0 ||
+		!held.resources.adapter.valid ||
+		!held.resources.broker.valid ||
+		!held.resources.runner.valid ||
+		!held.resources.authority.valid ||
+		!held.authorization.valid ||
+		ValidateProbeReport(held.report) != nil {
+		return LiveJail{}, ErrSetupInput
+	}
+
+	if err := o.journal.Before(ctx, held.key, StageListenerRelease); err != nil {
 		if errors.Is(err, ErrSetupReplay) {
-			return fail(ErrSetupReplay)
+			return LiveJail{}, ErrSetupReplay
 		}
-		return fail(ErrSetupFailed)
+		if !o.cleanup(ctx, held.key, held.resources) {
+			return LiveJail{}, ErrSetupCleanup
+		}
+		return LiveJail{}, ErrSetupFailed
 	}
 	if err := o.runtime.ReleaseRunner(
 		ctx,
-		resources.runner,
-		authorization,
-		request.JIT,
+		held.resources.runner,
+		held.authorization,
+		jit,
 	); err != nil {
-		o.recordFailure(ctx, request.Key, StageListenerRelease)
-		return fail(ErrSetupFailed)
+		o.markListenerAmbiguous(ctx, held.key)
+		return LiveJail{}, ErrListenerAmbiguous
 	}
 
 	if err := o.journal.Complete(
 		ctx,
-		request.Key,
+		held.key,
 		StageListenerRelease,
 		JournalResult{},
 	); err != nil {
-		o.markListenerAmbiguous(ctx, request.Key)
+		o.markListenerAmbiguous(ctx, held.key)
 		return LiveJail{}, ErrListenerAmbiguous
 	}
 	if err := o.journal.Advance(
 		ctx,
-		request.Key,
+		held.key,
 		controller.StateListenerReleased,
 	); err != nil {
-		o.markListenerAmbiguous(ctx, request.Key)
+		o.markListenerAmbiguous(ctx, held.key)
 		return LiveJail{}, ErrListenerAmbiguous
 	}
 
 	return LiveJail{
-		adapter:   resources.adapter,
-		broker:    resources.broker,
-		runner:    resources.runner,
-		authority: resources.authority,
-		report:    finalAudit.report,
+		key:       held.key,
+		adapter:   held.resources.adapter,
+		broker:    held.resources.broker,
+		runner:    held.resources.runner,
+		authority: held.resources.authority,
+		report:    held.report,
 	}, nil
+}
+
+// DestroyHeld removes only the runtime graph represented by an
+// orchestrator-issued held capability. The lifecycle owner persists the
+// checked terminal transition after its upstream and runtime absence
+// read-backs; this method never guesses whether listener release began.
+func (o *Orchestrator) DestroyHeld(ctx context.Context, held HeldJail) error {
+	if o == nil || ctx == nil ||
+		held.key.RepositoryAlias == "" ||
+		held.key.RunnerRequestID <= 0 ||
+		!held.resources.any() {
+		return ErrSetupInput
+	}
+	if !o.cleanupResources(ctx, held.resources) {
+		return ErrSetupCleanup
+	}
+	return nil
+}
+
+// DestroyLive removes only the exact live runtime graph. It intentionally
+// leaves the post-release durable state transition to lifecycle reconciliation.
+func (o *Orchestrator) DestroyLive(ctx context.Context, live LiveJail) error {
+	if o == nil || ctx == nil ||
+		live.key.RepositoryAlias == "" ||
+		live.key.RunnerRequestID <= 0 ||
+		!live.adapter.valid ||
+		!live.broker.valid ||
+		!live.runner.valid ||
+		!live.authority.valid {
+		return ErrSetupInput
+	}
+	if !o.cleanupResources(ctx, setupResources{
+		adapter:   live.adapter,
+		broker:    live.broker,
+		runner:    live.runner,
+		authority: live.authority,
+	}) {
+		return ErrSetupCleanup
+	}
+	return nil
 }
 
 func (o *Orchestrator) effect(
@@ -455,6 +548,25 @@ func (o *Orchestrator) cleanup(
 	key controller.AssignmentKey,
 	resources setupResources,
 ) bool {
+	if !o.cleanupResources(ctx, resources) {
+		return false
+	}
+	cleanupCtx, cancel := setupRecoveryContext(ctx)
+	defer cancel()
+	if err := o.journal.Advance(
+		cleanupCtx,
+		key,
+		controller.StateDestroyed,
+	); err != nil {
+		return false
+	}
+	return true
+}
+
+func (o *Orchestrator) cleanupResources(
+	ctx context.Context,
+	resources setupResources,
+) bool {
 	cleanupCtx, cancel := setupRecoveryContext(ctx)
 	defer cancel()
 
@@ -480,13 +592,6 @@ func (o *Orchestrator) cleanup(
 		}
 	}
 	if !ok {
-		return false
-	}
-	if err := o.journal.Advance(
-		cleanupCtx,
-		key,
-		controller.StateDestroyed,
-	); err != nil {
 		return false
 	}
 	return true

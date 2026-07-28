@@ -359,7 +359,9 @@ func (c *DockerCLI) validateVerifierSpec(
 		spec.Adapter.id != adapter.id ||
 		spec.Adapter.nonce != adapter.nonce ||
 		spec.BuildID != adapter.buildID ||
-		spec.FleetGeneration != adapter.fleetGeneration {
+		spec.FleetGeneration != adapter.fleetGeneration ||
+		spec.SlotIdentity == "" ||
+		spec.SlotIdentity != adapter.slotIdentity {
 		return errors.New("hostruntime: verifier adapter binding invalid")
 	}
 	uid, _, err := parseUser(spec.User)
@@ -435,6 +437,7 @@ func (c *DockerCLI) networkVerifierArgv(
 		"--label", "io.portable-ghar.build-id=" + spec.BuildID,
 		"--label", "io.portable-ghar.fleet-generation=" +
 			strconv.FormatUint(spec.FleetGeneration, 10),
+		"--label", "io.portable-ghar.slot=" + spec.SlotIdentity,
 		"--entrypoint", verifierEntrypoint,
 		spec.Image,
 		operation,

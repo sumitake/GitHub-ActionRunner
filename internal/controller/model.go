@@ -49,7 +49,9 @@ const (
 // specific retry (Attempt). A JobAvailable runner-request ID is an
 // acquisition offer, not a promise -- RepositoryAlias plus RunnerRequestID
 // is therefore the natural uniqueness boundary for an offer, and Attempt
-// distinguishes a retry of the same offer from the original.
+// distinguishes a retry of the same offer from the original. Attempt zero is
+// the initial durable offer used by the current admission controller; positive
+// values remain reserved for an explicitly persisted retry.
 type AssignmentKey struct {
 	RepositoryAlias string
 	RunnerRequestID int64

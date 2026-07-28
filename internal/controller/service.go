@@ -50,6 +50,12 @@ const (
 	ReasonPressureBroker
 	ReasonProjectionPersist
 	ReasonActivePersist
+	ReasonLifecycleCanceled
+	ReasonLifecyclePrepareFailed
+	ReasonLifecycleReleaseAmbiguous
+	ReasonLifecycleReassigned
+	ReasonLifecycleJobFinished
+	ReasonLifecycleReconcile
 )
 
 // MessageEnvelope is the controller-owned, secret-free durable projection of
@@ -1371,6 +1377,13 @@ func opaqueSlotName(key AssignmentKey) string {
 	_, _ = h.Write(attempt[:])
 	sum := h.Sum(nil)
 	return fmt.Sprintf("pghar-slot-%x", sum[:16])
+}
+
+// OpaqueSlotName returns the single canonical slot identity derived from an
+// assignment key. Lifecycle builders use the same source of truth rather than
+// accepting a caller-selected container label or name.
+func OpaqueSlotName(key AssignmentKey) string {
+	return opaqueSlotName(key)
 }
 
 func (s *Service) clearQueuedProjectionsLocked(

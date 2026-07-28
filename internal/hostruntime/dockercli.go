@@ -111,7 +111,15 @@ func (c *DockerCLI) CreateNetworkAdapter(ctx context.Context, spec AdapterSpec) 
 	if err != nil {
 		return AdapterHandle{}, err
 	}
-	handle := newAdapterHandle(id, spec.Image, spec.BuildID, spec.FleetGeneration, c.issuer, nonce)
+	handle := newAdapterHandle(
+		id,
+		spec.Image,
+		spec.BuildID,
+		spec.SlotIdentity,
+		spec.FleetGeneration,
+		c.issuer,
+		nonce,
+	)
 	c.mu.Lock()
 	c.adapters[nonce] = &adapterRecord{handle: handle, spec: spec}
 	c.mu.Unlock()
@@ -158,6 +166,7 @@ func (c *DockerCLI) CreateRunner(ctx context.Context, spec RunnerSpec) (RunnerHa
 	handle := newRunnerHandle(
 		id,
 		spec.BuildID,
+		spec.SlotIdentity,
 		spec.FleetGeneration,
 		c.issuer,
 		nonce,
@@ -193,6 +202,9 @@ func (c *DockerCLI) validateAdapterSpec(spec AdapterSpec) error {
 	if spec.FleetGeneration == 0 {
 		return errors.New("hostruntime: fleet generation required")
 	}
+	if err := validateContainerName(spec.SlotIdentity); err != nil {
+		return errors.New("hostruntime: slot identity invalid")
+	}
 	if _, _, err := parseUser(spec.User); err != nil {
 		return err
 	}
@@ -223,6 +235,9 @@ func (c *DockerCLI) validateRunnerSpec(spec RunnerSpec) error {
 	}
 	if spec.BuildID != spec.Adapter.buildID {
 		return errors.New("hostruntime: runner build does not match adapter")
+	}
+	if spec.SlotIdentity == "" || spec.SlotIdentity != spec.Adapter.slotIdentity {
+		return errors.New("hostruntime: runner slot does not match adapter")
 	}
 	uid, gid, err := parseUser(spec.User)
 	if err != nil {
@@ -306,6 +321,7 @@ func (c *DockerCLI) adapterCreateArgv(spec AdapterSpec) []string {
 		"--label", "io.portable-ghar.kind=network-adapter",
 		"--label", "io.portable-ghar.build-id=" + spec.BuildID,
 		"--label", "io.portable-ghar.fleet-generation=" + strconv.FormatUint(spec.FleetGeneration, 10),
+		"--label", "io.portable-ghar.slot=" + spec.SlotIdentity,
 		"--entrypoint", adapterEntrypoint,
 		spec.Image,
 		"hold",
@@ -338,6 +354,7 @@ func (c *DockerCLI) runnerCreateArgv(spec RunnerSpec) []string {
 		"--label", "io.portable-ghar.kind=runner",
 		"--label", "io.portable-ghar.build-id=" + spec.BuildID,
 		"--label", "io.portable-ghar.fleet-generation=" + strconv.FormatUint(spec.FleetGeneration, 10),
+		"--label", "io.portable-ghar.slot=" + spec.SlotIdentity,
 		"--entrypoint", runnerEntrypoint,
 		spec.Image,
 		"hold",
@@ -374,11 +391,12 @@ func (c *DockerCLI) reinspectAdapter(ctx context.Context, handle AdapterHandle) 
 	labels := document.Config.Labels
 	if document.ID != handle.id ||
 		document.Config.Image != spec.Image ||
-		len(labels) != 4 ||
+		len(labels) != 5 ||
 		labels["io.portable-ghar.managed"] != "true" ||
 		labels["io.portable-ghar.kind"] != "network-adapter" ||
 		labels["io.portable-ghar.build-id"] != spec.BuildID ||
 		labels["io.portable-ghar.fleet-generation"] != strconv.FormatUint(spec.FleetGeneration, 10) ||
+		labels["io.portable-ghar.slot"] != spec.SlotIdentity ||
 		!equalStrings(document.Config.Entrypoint, []string{adapterEntrypoint}) ||
 		!equalStrings(document.Config.Cmd, []string{"hold"}) ||
 		document.Config.User != spec.User || len(document.Config.Env) != 0 ||

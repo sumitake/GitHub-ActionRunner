@@ -2617,6 +2617,20 @@ func (s *SQLiteStore) Advance(ctx context.Context, key controller.AssignmentKey,
 
 	wasReleased := controller.HasReleasedListener(current)
 
+	if next == controller.StateDestroyed && !wasReleased {
+		var listenerEffects int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM effects
+			WHERE assignment_id = ? AND kind = ?
+		`, assignmentID, LifecycleEffectListenerRelease).Scan(&listenerEffects); err != nil {
+			return fmt.Errorf("state: advance: inspect listener release: %w", err)
+		}
+		if listenerEffects != 0 {
+			return ErrIdentityConflict
+		}
+	}
+
 	if err := controller.Transition(current, next, wasReleased); err != nil {
 		return fmt.Errorf("state: advance: %w", err)
 	}
@@ -2643,6 +2657,11 @@ func (s *SQLiteStore) Advance(ctx context.Context, key controller.AssignmentKey,
 	return nil
 }
 
+// AdvancePreReleaseDestroyed implements Store.
+func (s *SQLiteStore) AdvancePreReleaseDestroyed(ctx context.Context, key controller.AssignmentKey) error {
+	return s.Advance(ctx, key, controller.StateDestroyed)
+}
+
 // MarkAmbiguous implements Store.
 func (s *SQLiteStore) MarkAmbiguous(ctx context.Context, key controller.AssignmentKey, reasonCode string) error {
 	ts := now()
@@ -2664,7 +2683,17 @@ func (s *SQLiteStore) MarkAmbiguous(ctx context.Context, key controller.Assignme
 }
 
 // BindRunner implements Store.
-func (s *SQLiteStore) BindRunner(ctx context.Context, key controller.AssignmentKey, upstreamRunnerID int64, runnerContainerID string) error {
+func (s *SQLiteStore) BindRunner(
+	ctx context.Context,
+	key controller.AssignmentKey,
+	upstreamRunnerID int64,
+	boundRequestID int64,
+	runnerContainerID string,
+) error {
+	if upstreamRunnerID <= 0 || boundRequestID <= 0 ||
+		runnerContainerID == "" || len(runnerContainerID) > maxEffectIdentityBytes {
+		return ErrIdentityConflict
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("state: bind runner: begin tx: %w", err)
@@ -2676,9 +2705,68 @@ func (s *SQLiteStore) BindRunner(ctx context.Context, key controller.AssignmentK
 		return err
 	}
 
-	res, err := tx.ExecContext(ctx,
-		`UPDATE runner_slots SET upstream_runner_id = ?, bound_request_id = ?, runner_container_id = ?, updated_at = ? WHERE assignment_id = ?`,
-		upstreamRunnerID, key.RunnerRequestID, runnerContainerID, now(), assignmentID)
+	var (
+		storedRunnerID    sql.NullInt64
+		storedRequestID   sql.NullInt64
+		storedContainerID sql.NullString
+	)
+	if err := tx.QueryRowContext(ctx, `
+		SELECT upstream_runner_id, bound_request_id, runner_container_id
+		FROM runner_slots WHERE assignment_id = ?
+	`, assignmentID).Scan(
+		&storedRunnerID,
+		&storedRequestID,
+		&storedContainerID,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrIdentityConflict
+		}
+		return fmt.Errorf("state: bind runner: read slot: %w", err)
+	}
+	if storedRunnerID.Valid != storedRequestID.Valid {
+		return ErrIdentityConflict
+	}
+	if storedRunnerID.Valid {
+		if storedRunnerID.Int64 != upstreamRunnerID ||
+			storedRequestID.Int64 != boundRequestID ||
+			!storedContainerID.Valid ||
+			storedContainerID.String != runnerContainerID {
+			return ErrIdentityConflict
+		}
+		return nil
+	}
+	if storedContainerID.Valid && storedContainerID.String != runnerContainerID {
+		return ErrIdentityConflict
+	}
+
+	var conflictingAssignmentID int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT assignment_id FROM runner_slots
+		WHERE upstream_runner_id = ? AND assignment_id != ?
+	`, upstreamRunnerID, assignmentID).Scan(&conflictingAssignmentID)
+	if err == nil {
+		return ErrIdentityConflict
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("state: bind runner: inspect uniqueness: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE runner_slots
+		SET upstream_runner_id = ?, bound_request_id = ?,
+		    runner_container_id = ?, updated_at = ?
+		WHERE assignment_id = ?
+		  AND upstream_runner_id IS NULL
+		  AND bound_request_id IS NULL
+		  AND (runner_container_id IS NULL OR runner_container_id = ?)
+	`,
+		upstreamRunnerID,
+		boundRequestID,
+		runnerContainerID,
+		now(),
+		assignmentID,
+		runnerContainerID,
+	)
 	if err != nil {
 		return fmt.Errorf("state: bind runner: %w", err)
 	}
@@ -2694,6 +2782,650 @@ func (s *SQLiteStore) BindRunner(ctx context.Context, key controller.AssignmentK
 		return fmt.Errorf("state: bind runner: commit: %w", err)
 	}
 	return nil
+}
+
+// LookupAssignmentEffect implements Store.
+func (s *SQLiteStore) LookupAssignmentEffect(
+	ctx context.Context,
+	key controller.AssignmentKey,
+	kind string,
+) (EffectRecord, error) {
+	if kind == "" || len(kind) > maxEffectKindBytes {
+		return EffectRecord{}, ErrIdentityConflict
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return EffectRecord{}, fmt.Errorf("state: lookup assignment effect: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	assignmentID, _, err := lookupAssignmentTx(ctx, tx, key)
+	if err != nil {
+		return EffectRecord{}, err
+	}
+	return lookupAssignmentEffectTx(ctx, tx, assignmentID, kind)
+}
+
+func lookupAssignmentEffectTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	assignmentID int64,
+	kind string,
+) (EffectRecord, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT completed_at, result_identity, reason_code
+		FROM effects
+		WHERE assignment_id = ? AND kind = ?
+		ORDER BY id
+	`, assignmentID, kind)
+	if err != nil {
+		return EffectRecord{}, fmt.Errorf("state: lookup assignment effect: query: %w", err)
+	}
+	defer rows.Close()
+
+	var records []EffectRecord
+	for rows.Next() {
+		var completedAt, resultIdentity, reasonCode sql.NullString
+		if err := rows.Scan(&completedAt, &resultIdentity, &reasonCode); err != nil {
+			return EffectRecord{}, fmt.Errorf("state: lookup assignment effect: scan: %w", err)
+		}
+		record, err := decodeEffectRecord(completedAt, resultIdentity, reasonCode)
+		if err != nil {
+			return EffectRecord{}, err
+		}
+		records = append(records, record)
+		if len(records) > 1 {
+			return EffectRecord{}, ErrIdentityConflict
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return EffectRecord{}, fmt.Errorf("state: lookup assignment effect: rows: %w", err)
+	}
+	if len(records) == 0 {
+		return EffectRecord{State: EffectAbsent}, nil
+	}
+	return records[0], nil
+}
+
+func decodeEffectRecord(
+	completedAt sql.NullString,
+	resultIdentity sql.NullString,
+	reasonCode sql.NullString,
+) (EffectRecord, error) {
+	if len(resultIdentity.String) > maxEffectIdentityBytes ||
+		len(reasonCode.String) > maxEffectReasonBytes {
+		return EffectRecord{}, ErrIdentityConflict
+	}
+	if !completedAt.Valid {
+		if resultIdentity.Valid || reasonCode.Valid {
+			return EffectRecord{}, ErrIdentityConflict
+		}
+		return EffectRecord{State: EffectPending}, nil
+	}
+	record := EffectRecord{
+		State:          EffectCompleted,
+		ResultIdentity: resultIdentity.String,
+		ReasonCode:     reasonCode.String,
+	}
+	if reasonCode.String != "" {
+		record.State = EffectFailed
+	}
+	return record, nil
+}
+
+// ApplyRunnerObservation implements Store.
+func (s *SQLiteStore) ApplyRunnerObservation(
+	ctx context.Context,
+	key controller.AssignmentKey,
+	observation RunnerObservation,
+) error {
+	persistedAt := time.Now().UTC()
+	if observation.UpstreamRunnerID <= 0 ||
+		observation.BoundRequestID <= 0 ||
+		observation.RunnerContainerID == "" ||
+		len(observation.RunnerContainerID) > maxEffectIdentityBytes ||
+		observation.ObservedAt.IsZero() ||
+		observation.ObservedAt.After(persistedAt) {
+		return ErrIdentityConflict
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: apply runner observation: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	assignmentID, current, err := lookupAssignmentTx(ctx, tx, key)
+	if err != nil {
+		return err
+	}
+	switch current {
+	case controller.StateReleaseArmed:
+		releaseEffect, err := lookupAssignmentEffectTx(
+			ctx,
+			tx,
+			assignmentID,
+			LifecycleEffectListenerRelease,
+		)
+		if err != nil {
+			return fmt.Errorf("state: apply runner observation: inspect release effect: %w", err)
+		}
+		if releaseEffect.State != EffectPending &&
+			releaseEffect.State != EffectCompleted {
+			return ErrIdentityConflict
+		}
+	case controller.StateListenerReleased, controller.StateJobRunning, controller.StateJobFinished:
+	default:
+		return ErrIdentityConflict
+	}
+
+	var (
+		storedRunnerID    sql.NullInt64
+		storedRequestID   sql.NullInt64
+		storedContainerID sql.NullString
+	)
+	if err := tx.QueryRowContext(ctx, `
+		SELECT upstream_runner_id, bound_request_id, runner_container_id
+		FROM runner_slots WHERE assignment_id = ?
+	`, assignmentID).Scan(
+		&storedRunnerID,
+		&storedRequestID,
+		&storedContainerID,
+	); err != nil {
+		return fmt.Errorf("state: apply runner observation: read slot: %w", err)
+	}
+	if !storedContainerID.Valid || storedContainerID.String != observation.RunnerContainerID {
+		return ErrIdentityConflict
+	}
+	if storedRunnerID.Valid != storedRequestID.Valid {
+		return ErrIdentityConflict
+	}
+	if storedRunnerID.Valid {
+		if storedRunnerID.Int64 != observation.UpstreamRunnerID ||
+			storedRequestID.Int64 != observation.BoundRequestID {
+			return ErrIdentityConflict
+		}
+	} else {
+		var conflictingAssignmentID int64
+		err := tx.QueryRowContext(ctx, `
+			SELECT assignment_id FROM runner_slots
+			WHERE upstream_runner_id = ? AND assignment_id != ?
+		`, observation.UpstreamRunnerID, assignmentID).Scan(&conflictingAssignmentID)
+		if err == nil {
+			return ErrIdentityConflict
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("state: apply runner observation: inspect uniqueness: %w", err)
+		}
+		res, err := tx.ExecContext(ctx, `
+			UPDATE runner_slots
+			SET upstream_runner_id = ?, bound_request_id = ?, updated_at = ?
+			WHERE assignment_id = ?
+			  AND upstream_runner_id IS NULL
+			  AND bound_request_id IS NULL
+			  AND runner_container_id = ?
+			`,
+			observation.UpstreamRunnerID,
+			observation.BoundRequestID,
+			formatTime(persistedAt),
+			assignmentID,
+			observation.RunnerContainerID,
+		)
+		if err != nil {
+			return fmt.Errorf("state: apply runner observation: bind slot: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("state: apply runner observation: bind rows: %w", err)
+		}
+		if n != 1 {
+			return ErrIdentityConflict
+		}
+	}
+
+	target := controller.StateJobRunning
+	if observation.Finished {
+		target = controller.StateJobFinished
+	}
+	if current == controller.StateJobFinished {
+		target = controller.StateJobFinished
+	}
+	if current == controller.StateJobRunning && !observation.Finished {
+		target = controller.StateJobRunning
+	}
+	releaseGenerationBump := 0
+	if current == controller.StateReleaseArmed {
+		releaseGenerationBump = 1
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE assignments
+		SET state = ?, released = 1,
+		    release_generation = release_generation + ?,
+		    ambiguous_reason = NULL, ambiguous_at = NULL, updated_at = ?
+		WHERE id = ?
+	`,
+		string(target),
+		releaseGenerationBump,
+		formatTime(persistedAt),
+		assignmentID,
+	); err != nil {
+		return fmt.Errorf("state: apply runner observation: update assignment: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: apply runner observation: commit: %w", err)
+	}
+	return nil
+}
+
+// ResolvePostRelease implements Store.
+func (s *SQLiteStore) ResolvePostRelease(
+	ctx context.Context,
+	key controller.AssignmentKey,
+	outcome controller.PostReleaseOutcome,
+	evidence [sha256.Size]byte,
+	resolvedAt time.Time,
+) error {
+	var zero [sha256.Size]byte
+	if evidence == zero || resolvedAt.IsZero() || resolvedAt.After(time.Now()) {
+		return ErrIdentityConflict
+	}
+	target, err := postReleaseTarget(outcome)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: resolve post release: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	assignmentID, current, err := lookupAssignmentTx(ctx, tx, key)
+	if err != nil {
+		return err
+	}
+	if !validPostReleaseResolution(current, target) {
+		return ErrIdentityConflict
+	}
+	releaseEffect, err := lookupAssignmentEffectTx(
+		ctx,
+		tx,
+		assignmentID,
+		LifecycleEffectListenerRelease,
+	)
+	if err != nil {
+		return fmt.Errorf("state: resolve post release: inspect release effect: %w", err)
+	}
+	if releaseEffect.State != EffectPending &&
+		releaseEffect.State != EffectCompleted {
+		return ErrIdentityConflict
+	}
+
+	digest := fmt.Sprintf("%x", evidence)
+	priorResolution, err := lookupAssignmentEffectTx(
+		ctx,
+		tx,
+		assignmentID,
+		LifecycleEffectPostReleaseResolution,
+	)
+	if err != nil {
+		return fmt.Errorf("state: resolve post release: inspect prior resolution: %w", err)
+	}
+	supersedeResolution := false
+	if priorResolution.State != EffectAbsent {
+		if priorResolution.State != EffectCompleted ||
+			!validResolutionDigest(priorResolution.ResultIdentity) ||
+			priorResolution.ReasonCode != "" {
+			return ErrIdentityConflict
+		}
+		if current == target {
+			if priorResolution.ResultIdentity != digest {
+				return ErrIdentityConflict
+			}
+			return nil
+		}
+		if current == controller.StateReleaseArmed {
+			return ErrIdentityConflict
+		}
+		supersedeResolution = true
+	}
+	if !supersedeResolution &&
+		(current == controller.StateJobFinished ||
+			current == controller.StateDestroyed) {
+		return ErrIdentityConflict
+	}
+	var currentUpdatedRaw string
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT updated_at FROM assignments WHERE id = ?`,
+		assignmentID,
+	).Scan(&currentUpdatedRaw); err != nil {
+		return fmt.Errorf("state: resolve post release: read durable time: %w", err)
+	}
+	currentUpdatedAt, err := time.Parse(time.RFC3339Nano, currentUpdatedRaw)
+	if err != nil || resolvedAt.Before(currentUpdatedAt) {
+		return ErrIdentityConflict
+	}
+
+	idempotencyKey := postReleaseResolutionKey(key)
+	ts := formatTime(resolvedAt)
+	if supersedeResolution {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE effects
+			SET completed_at = ?, result_identity = ?
+			WHERE assignment_id = ?
+			  AND idempotency_key = ?
+			  AND kind = ?
+			  AND completed_at IS NOT NULL
+			  AND result_identity = ?
+			  AND reason_code IS NULL
+		`,
+			ts,
+			digest,
+			assignmentID,
+			idempotencyKey,
+			LifecycleEffectPostReleaseResolution,
+			priorResolution.ResultIdentity,
+		)
+		if err != nil {
+			return fmt.Errorf("state: resolve post release: supersede evidence: %w", err)
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("state: resolve post release: supersede rows: %w", err)
+		}
+		if updated != 1 {
+			return ErrIdentityConflict
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO effects (
+				assignment_id, idempotency_key, kind, began_at,
+				completed_at, result_identity, reason_code
+			) VALUES (?, ?, ?, ?, ?, ?, NULL)
+		`,
+			assignmentID,
+			idempotencyKey,
+			LifecycleEffectPostReleaseResolution,
+			ts,
+			ts,
+			digest,
+		); err != nil {
+			return fmt.Errorf("state: resolve post release: record evidence: %w", err)
+		}
+	}
+	releaseGenerationBump := 0
+	if current == controller.StateReleaseArmed {
+		releaseGenerationBump = 1
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE assignments
+		SET state = ?, released = 1,
+		    release_generation = release_generation + ?,
+		    ambiguous_reason = NULL, ambiguous_at = NULL, updated_at = ?
+		WHERE id = ?
+	`,
+		string(target),
+		releaseGenerationBump,
+		ts,
+		assignmentID,
+	); err != nil {
+		return fmt.Errorf("state: resolve post release: update assignment: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: resolve post release: commit: %w", err)
+	}
+	return nil
+}
+
+func validResolutionDigest(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		if (value[index] < '0' || value[index] > '9') &&
+			(value[index] < 'a' || value[index] > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func postReleaseTarget(outcome controller.PostReleaseOutcome) (controller.State, error) {
+	switch outcome {
+	case controller.PostReleaseListenerReleased:
+		return controller.StateListenerReleased, nil
+	case controller.PostReleaseJobRunning:
+		return controller.StateJobRunning, nil
+	case controller.PostReleaseJobFinished:
+		return controller.StateJobFinished, nil
+	case controller.PostReleaseDestroyed:
+		return controller.StateDestroyed, nil
+	default:
+		return "", ErrIdentityConflict
+	}
+}
+
+func validPostReleaseResolution(current, target controller.State) bool {
+	switch current {
+	case controller.StateReleaseArmed:
+		return target == controller.StateListenerReleased ||
+			target == controller.StateJobRunning ||
+			target == controller.StateJobFinished ||
+			target == controller.StateDestroyed
+	case controller.StateListenerReleased:
+		return target == controller.StateListenerReleased ||
+			target == controller.StateJobRunning ||
+			target == controller.StateJobFinished ||
+			target == controller.StateDestroyed
+	case controller.StateJobRunning:
+		return target == controller.StateJobRunning ||
+			target == controller.StateJobFinished ||
+			target == controller.StateDestroyed
+	case controller.StateJobFinished:
+		return target == controller.StateJobFinished
+	case controller.StateDestroyed:
+		return target == controller.StateDestroyed
+	default:
+		return false
+	}
+}
+
+func postReleaseResolutionKey(key controller.AssignmentKey) string {
+	digest := sha256.Sum256([]byte(fmt.Sprintf(
+		"portable-ghar.post-release-resolution.v1\x00%s\x00%d\x00%d",
+		key.RepositoryAlias,
+		key.RunnerRequestID,
+		key.Attempt,
+	)))
+	return fmt.Sprintf("%x", digest)
+}
+
+// BeginReconcileCycle implements Store.
+func (s *SQLiteStore) BeginReconcileCycle(
+	ctx context.Context,
+	cycleID string,
+	startedAt time.Time,
+) error {
+	if !validCycleID(cycleID) || startedAt.IsZero() || startedAt.After(time.Now()) {
+		return ErrIdentityConflict
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: begin reconcile cycle: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var duplicate int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM reconcile_cycles WHERE cycle_id = ?`,
+		cycleID,
+	).Scan(&duplicate); err != nil {
+		return fmt.Errorf("state: begin reconcile cycle: inspect duplicate: %w", err)
+	}
+	if duplicate != 0 {
+		return ErrIdentityConflict
+	}
+	ts := formatTime(startedAt)
+	var incomplete int
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM reconcile_cycles WHERE completed_at IS NULL`,
+	).Scan(&incomplete); err != nil {
+		return fmt.Errorf("state: begin reconcile cycle: inspect incomplete: %w", err)
+	}
+	if incomplete > 1 {
+		return ErrIdentityConflict
+	}
+	if incomplete == 1 {
+		var priorStartedRaw string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT started_at FROM reconcile_cycles
+			WHERE completed_at IS NULL
+		`).Scan(&priorStartedRaw); err != nil {
+			return fmt.Errorf("state: begin reconcile cycle: read incomplete: %w", err)
+		}
+		priorStartedAt, err := time.Parse(time.RFC3339Nano, priorStartedRaw)
+		if err != nil || startedAt.Before(priorStartedAt) {
+			return ErrIdentityConflict
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE reconcile_cycles
+			SET completed_at = ?, assignment_count = 0,
+			    oldest_age_seconds = 0, note = ?
+			WHERE completed_at IS NULL
+		`, ts, "crash-recovered"); err != nil {
+			return fmt.Errorf("state: begin reconcile cycle: close incomplete: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM reconcile_cycles
+		WHERE completed_at IS NOT NULL
+		  AND id NOT IN (
+			SELECT id FROM reconcile_cycles
+			WHERE completed_at IS NOT NULL
+			ORDER BY completed_at DESC, id DESC
+			LIMIT 1
+		  )
+	`); err != nil {
+		return fmt.Errorf("state: begin reconcile cycle: bound terminal rows: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO reconcile_cycles (cycle_id, started_at)
+		VALUES (?, ?)
+	`, cycleID, ts); err != nil {
+		return fmt.Errorf("state: begin reconcile cycle: insert: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: begin reconcile cycle: commit: %w", err)
+	}
+	return nil
+}
+
+// CompleteReconcileCycle implements Store.
+func (s *SQLiteStore) CompleteReconcileCycle(
+	ctx context.Context,
+	receipt controller.CycleReceipt,
+) error {
+	if !validCycleID(receipt.CycleID) ||
+		receipt.CompletedAt.IsZero() ||
+		receipt.CompletedAt.After(time.Now()) ||
+		receipt.AssignmentCount < 0 ||
+		receipt.OldestAge < 0 {
+		return ErrIdentityConflict
+	}
+	return s.finishReconcileCycle(
+		ctx,
+		receipt.CycleID,
+		receipt.CompletedAt,
+		receipt.AssignmentCount,
+		receipt.OldestAge,
+		"completed",
+	)
+}
+
+// AbortReconcileCycle implements Store.
+func (s *SQLiteStore) AbortReconcileCycle(
+	ctx context.Context,
+	cycleID string,
+	completedAt time.Time,
+	reasonCode string,
+) error {
+	if !validCycleID(cycleID) ||
+		completedAt.IsZero() ||
+		completedAt.After(time.Now()) ||
+		reasonCode == "" ||
+		len(reasonCode) > maxEffectReasonBytes {
+		return ErrIdentityConflict
+	}
+	return s.finishReconcileCycle(ctx, cycleID, completedAt, 0, 0, reasonCode)
+}
+
+func (s *SQLiteStore) finishReconcileCycle(
+	ctx context.Context,
+	cycleID string,
+	completedAt time.Time,
+	assignmentCount int,
+	oldestAge time.Duration,
+	note string,
+) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: finish reconcile cycle: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var startedAtRaw string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT started_at FROM reconcile_cycles
+		WHERE cycle_id = ? AND completed_at IS NULL
+	`, cycleID).Scan(&startedAtRaw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrIdentityConflict
+		}
+		return fmt.Errorf("state: finish reconcile cycle: read current: %w", err)
+	}
+	startedAt, err := time.Parse(time.RFC3339Nano, startedAtRaw)
+	if err != nil || completedAt.Before(startedAt) {
+		return ErrIdentityConflict
+	}
+	oldestSeconds := int64(0)
+	if oldestAge > 0 {
+		oldestSeconds = int64((oldestAge + time.Second - 1) / time.Second)
+	}
+	res, err := tx.ExecContext(ctx, `
+		UPDATE reconcile_cycles
+		SET completed_at = ?, assignment_count = ?,
+		    oldest_age_seconds = ?, note = ?
+		WHERE cycle_id = ? AND completed_at IS NULL
+	`,
+		formatTime(completedAt),
+		assignmentCount,
+		oldestSeconds,
+		note,
+		cycleID,
+	)
+	if err != nil {
+		return fmt.Errorf("state: finish reconcile cycle: update: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("state: finish reconcile cycle: rows affected: %w", err)
+	}
+	if n != 1 {
+		return ErrIdentityConflict
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM reconcile_cycles WHERE cycle_id != ?
+	`, cycleID); err != nil {
+		return fmt.Errorf("state: finish reconcile cycle: prune: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: finish reconcile cycle: commit: %w", err)
+	}
+	return nil
+}
+
+func validCycleID(cycleID string) bool {
+	return cycleID != "" && len(cycleID) <= maxIdempotencyKeyBytes
 }
 
 // ListRecoverable implements Store.

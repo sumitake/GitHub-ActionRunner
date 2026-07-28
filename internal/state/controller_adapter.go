@@ -21,6 +21,7 @@ type ControllerAdapter struct {
 }
 
 var _ controller.DurableState = (*ControllerAdapter)(nil)
+var _ controller.ReconcileState = (*ControllerAdapter)(nil)
 
 func NewControllerAdapter(store Store, limits HistoryLimits) (*ControllerAdapter, error) {
 	if store == nil {
@@ -255,6 +256,38 @@ func (a *ControllerAdapter) ListRecoverable(
 		})
 	}
 	return out, nil
+}
+
+func (a *ControllerAdapter) BeginCycle(
+	ctx context.Context,
+	cycleID string,
+	startedAt time.Time,
+) error {
+	return mapControllerStateError(a.store.BeginReconcileCycle(ctx, cycleID, startedAt))
+}
+
+func (a *ControllerAdapter) CompleteCycle(
+	ctx context.Context,
+	receipt controller.CycleReceipt,
+) error {
+	return mapControllerStateError(a.store.CompleteReconcileCycle(ctx, receipt))
+}
+
+func (a *ControllerAdapter) AbortCycle(
+	ctx context.Context,
+	cycleID string,
+	completedAt time.Time,
+	reason controller.ReasonCode,
+) error {
+	if reason != controller.ReasonLifecycleReconcile {
+		return fmt.Errorf("%w: invalid reconciliation abort reason", controller.ErrDurableIdentityConflict)
+	}
+	return mapControllerStateError(a.store.AbortReconcileCycle(
+		ctx,
+		cycleID,
+		completedAt,
+		"lifecycle-reconcile",
+	))
 }
 
 func (a *ControllerAdapter) CompactTerminal(

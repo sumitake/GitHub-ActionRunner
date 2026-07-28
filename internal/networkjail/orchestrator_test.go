@@ -275,26 +275,31 @@ func validSetupRequest(t *testing.T) SetupRequest {
 	if err != nil {
 		t.Fatalf("CompilePolicyArtifact: %v", err)
 	}
+	slotIdentity := "pghar-slot-" + strings.Repeat("1", 32)
 	return SetupRequest{
 		Key: controller.AssignmentKey{
 			RepositoryAlias: "repo-a", RunnerRequestID: 42, Attempt: 1,
 		},
 		Adapter: hostruntime.AdapterSpec{
 			BuildID: strings.Repeat("b", 64), FleetGeneration: 17,
+			SlotIdentity: slotIdentity,
 		},
 		Broker: hostruntime.BrokerSpec{
 			BuildID: strings.Repeat("b", 64), FleetGeneration: 17,
 			CapacitySlotID: 7, JobGeneration: 19,
 			AuthorityParent: "/synthetic/authority", User: "65532:65532",
+			SlotIdentity: slotIdentity,
 		},
 		Runner: hostruntime.RunnerSpec{
 			BuildID: strings.Repeat("b", 64), FleetGeneration: 17,
+			SlotIdentity: slotIdentity,
 		},
 		Verifier: hostruntime.VerifierSpec{
 			Image: "portable-ghar/network-verifier@sha256:" +
 				strings.Repeat("9", 64),
 			BuildID:         strings.Repeat("b", 64),
 			FleetGeneration: 17,
+			SlotIdentity:    slotIdentity,
 			User:            "65532:65532",
 		},
 		Graph:             graph,
@@ -355,6 +360,213 @@ func TestOrchestratorPersistsExactOrderAndAuditsBeforeArm(t *testing.T) {
 		slices.Contains(events, "cleanup:authority") ||
 		slices.Contains(events, "cleanup:adapter") {
 		t.Fatalf("successful setup performed cleanup: %q", events)
+	}
+}
+
+func TestOrchestratorAcceptsInitialAssignmentAttemptZero(t *testing.T) {
+	request := validSetupRequest(t)
+	request.Key.Attempt = 0
+	defer request.JIT.Destroy()
+	if err := validatePreparedSetupRequest(preparedSetupRequest(request)); err != nil {
+		t.Fatalf("validatePreparedSetupRequest(initial attempt zero) = %v", err)
+	}
+}
+
+func TestOrchestratorPrepareStopsAtReleaseArmedWithoutJIT(t *testing.T) {
+	var events []string
+	runtime := &fakeSetupRuntime{events: &events}
+	authority := &fakeAuthorityManager{events: &events}
+	verifier := &fakeSetupVerifier{events: &events}
+	journal := &fakeLifecycleJournal{events: &events}
+	orchestrator, err := newOrchestrator(runtime, journal, authority, verifier)
+	if err != nil {
+		t.Fatalf("newOrchestrator: %v", err)
+	}
+	setup := validSetupRequest(t)
+	jit := setup.JIT
+	setup.JIT = nil
+	held, err := orchestrator.Prepare(context.Background(), PreparedSetupRequest{
+		Key:               setup.Key,
+		Adapter:           setup.Adapter,
+		Broker:            setup.Broker,
+		Runner:            setup.Runner,
+		Verifier:          setup.Verifier,
+		Graph:             setup.Graph,
+		Policy:            setup.Policy,
+		ConntrackInput:    setup.ConntrackInput,
+		MaxRunnerCapacity: setup.MaxRunnerCapacity,
+		SeedIDs:           setup.SeedIDs,
+	})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	t.Cleanup(jit.Destroy)
+	if held.AdapterID() != "adapter-id" ||
+		held.BrokerID() != "broker-id" ||
+		held.RunnerID() != "runner-id" {
+		t.Fatalf(
+			"held jail identities = %q/%q/%q",
+			held.AdapterID(),
+			held.BrokerID(),
+			held.RunnerID(),
+		)
+	}
+	if !slices.Contains(events, "journal:advance:RELEASE_ARMED") {
+		t.Fatalf("Prepare did not persist RELEASE_ARMED: %q", events)
+	}
+	if slices.Contains(events, "runtime:release-listener") ||
+		slices.Contains(events, "journal:advance:LISTENER_RELEASED") {
+		t.Fatalf("Prepare crossed listener-release boundary: %q", events)
+	}
+	if err := jit.Use(func(io.Reader) error { return nil }); err != nil {
+		t.Fatalf("Prepare consumed caller-owned JIT: %v", err)
+	}
+}
+
+func TestOrchestratorDestroyHeldRemovesResourcesWithoutDurableTransition(t *testing.T) {
+	var events []string
+	runtime := &fakeSetupRuntime{events: &events}
+	authority := &fakeAuthorityManager{events: &events}
+	verifier := &fakeSetupVerifier{events: &events}
+	journal := &fakeLifecycleJournal{events: &events}
+	orchestrator, err := newOrchestrator(runtime, journal, authority, verifier)
+	if err != nil {
+		t.Fatalf("newOrchestrator: %v", err)
+	}
+	setup := validSetupRequest(t)
+	defer setup.JIT.Destroy()
+	held, err := orchestrator.Prepare(
+		context.Background(),
+		preparedSetupRequest(setup),
+	)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	beforeDestroy := len(events)
+	if err := orchestrator.DestroyHeld(context.Background(), held); err != nil {
+		t.Fatalf("DestroyHeld: %v", err)
+	}
+	destroyEvents := events[beforeDestroy:]
+	for _, expected := range []string{
+		"cleanup:runner",
+		"cleanup:broker",
+		"cleanup:authority",
+		"cleanup:adapter",
+	} {
+		if !slices.Contains(destroyEvents, expected) {
+			t.Errorf("DestroyHeld missing %s: %q", expected, destroyEvents)
+		}
+	}
+	if slices.Contains(destroyEvents, "journal:advance:DESTROYED") ||
+		slices.Contains(destroyEvents, "runtime:release-listener") {
+		t.Fatalf("DestroyHeld crossed lifecycle boundary: %q", destroyEvents)
+	}
+}
+
+func TestOrchestratorDestroyLiveRemovesResourcesWithoutDurableTransition(t *testing.T) {
+	var events []string
+	runtime := &fakeSetupRuntime{events: &events}
+	authority := &fakeAuthorityManager{events: &events}
+	verifier := &fakeSetupVerifier{events: &events}
+	journal := &fakeLifecycleJournal{events: &events}
+	orchestrator, err := newOrchestrator(runtime, journal, authority, verifier)
+	if err != nil {
+		t.Fatalf("newOrchestrator: %v", err)
+	}
+	setup := validSetupRequest(t)
+	jit := setup.JIT
+	setup.JIT = nil
+	held, err := orchestrator.Prepare(
+		context.Background(),
+		PreparedSetupRequest{
+			Key:               setup.Key,
+			Adapter:           setup.Adapter,
+			Broker:            setup.Broker,
+			Runner:            setup.Runner,
+			Verifier:          setup.Verifier,
+			Graph:             setup.Graph,
+			Policy:            setup.Policy,
+			ConntrackInput:    setup.ConntrackInput,
+			MaxRunnerCapacity: setup.MaxRunnerCapacity,
+			SeedIDs:           setup.SeedIDs,
+		},
+	)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	live, err := orchestrator.Release(context.Background(), held, jit)
+	if err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	beforeDestroy := len(events)
+	if err := orchestrator.DestroyLive(context.Background(), live); err != nil {
+		t.Fatalf("DestroyLive: %v", err)
+	}
+	destroyEvents := events[beforeDestroy:]
+	for _, expected := range []string{
+		"cleanup:runner",
+		"cleanup:broker",
+		"cleanup:authority",
+		"cleanup:adapter",
+	} {
+		if !slices.Contains(destroyEvents, expected) {
+			t.Errorf("DestroyLive missing %s: %q", expected, destroyEvents)
+		}
+	}
+	if slices.Contains(destroyEvents, "journal:advance:DESTROYED") {
+		t.Fatalf("DestroyLive advanced durable state: %q", destroyEvents)
+	}
+}
+
+func TestOrchestratorReleaseInvocationFailureRemainsAmbiguousWithoutCleanup(t *testing.T) {
+	var events []string
+	runtime := &fakeSetupRuntime{
+		events: &events,
+		failAt: "runtime:release-listener",
+	}
+	authority := &fakeAuthorityManager{events: &events}
+	verifier := &fakeSetupVerifier{events: &events}
+	journal := &fakeLifecycleJournal{events: &events}
+	orchestrator, err := newOrchestrator(runtime, journal, authority, verifier)
+	if err != nil {
+		t.Fatalf("newOrchestrator: %v", err)
+	}
+	setup := validSetupRequest(t)
+	jit := setup.JIT
+	setup.JIT = nil
+	held, err := orchestrator.Prepare(context.Background(), PreparedSetupRequest{
+		Key:               setup.Key,
+		Adapter:           setup.Adapter,
+		Broker:            setup.Broker,
+		Runner:            setup.Runner,
+		Verifier:          setup.Verifier,
+		Graph:             setup.Graph,
+		Policy:            setup.Policy,
+		ConntrackInput:    setup.ConntrackInput,
+		MaxRunnerCapacity: setup.MaxRunnerCapacity,
+		SeedIDs:           setup.SeedIDs,
+	})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if _, err := orchestrator.Release(context.Background(), held, jit); !errors.Is(err, ErrListenerAmbiguous) {
+		t.Fatalf("Release error = %v, want ErrListenerAmbiguous", err)
+	}
+	if !slices.Contains(events, "journal:before:runner-listener-release") {
+		t.Fatalf("listener-release intent was not durable before invocation: %q", events)
+	}
+	for _, forbidden := range []string{
+		"cleanup:runner",
+		"cleanup:broker",
+		"cleanup:authority",
+		"cleanup:adapter",
+	} {
+		if slices.Contains(events, forbidden) {
+			t.Fatalf("ambiguous release performed %s: %q", forbidden, events)
+		}
+	}
+	if err := jit.Use(func(io.Reader) error { return nil }); err == nil {
+		t.Fatal("Release failure left JIT usable")
 	}
 }
 
@@ -420,7 +632,6 @@ func TestOrchestratorFaultInjectionNeverArmsEarlyAndCleansReverseOwnership(t *te
 		"runtime:namespace-final",
 		"runtime:audit-held-runner",
 		"runtime:authorize-runner",
-		"runtime:release-listener",
 	}
 	for _, failAt := range failures {
 		t.Run(failAt, func(t *testing.T) {
@@ -445,8 +656,7 @@ func TestOrchestratorFaultInjectionNeverArmsEarlyAndCleansReverseOwnership(t *te
 			if _, err := orchestrator.Configure(context.Background(), request); err == nil {
 				t.Fatal("Configure accepted injected failure")
 			}
-			if failAt != "runtime:release-listener" &&
-				slices.Contains(events, "journal:advance:LISTENER_RELEASED") {
+			if slices.Contains(events, "journal:advance:LISTENER_RELEASED") {
 				t.Fatalf("failure advanced listener release: %q", events)
 			}
 			if eventIndex(events, "verify:final-audit") < 0 &&

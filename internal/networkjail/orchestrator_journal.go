@@ -76,7 +76,7 @@ func (stage SetupStage) String() string {
 	case StageRunnerAuthorize:
 		return "runner-release-authorize"
 	case StageListenerRelease:
-		return "runner-listener-release"
+		return state.LifecycleEffectListenerRelease
 	default:
 		return ""
 	}

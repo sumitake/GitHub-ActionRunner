@@ -255,6 +255,7 @@ type VerifierSpec struct {
 	Image           string
 	BuildID         string
 	FleetGeneration uint64
+	SlotIdentity    string
 	Adapter         AdapterHandle
 	User            string
 	Seccomp         SeccompBinding
@@ -267,6 +268,7 @@ type AdapterSpec struct {
 	Image           string
 	BuildID         string
 	FleetGeneration uint64
+	SlotIdentity    string
 	BrokerParent    string
 	User            string
 	Seccomp         SeccompBinding
@@ -280,6 +282,7 @@ type RunnerSpec struct {
 	Image           string
 	BuildID         string
 	FleetGeneration uint64
+	SlotIdentity    string
 	Adapter         AdapterHandle
 	Profile         HostProfile
 	User            string
@@ -296,6 +299,7 @@ type BrokerSpec struct {
 	HelperImage     string
 	BuildID         string
 	FleetGeneration uint64
+	SlotIdentity    string
 	CapacitySlotID  uint32
 	JobGeneration   uint64
 	Adapter         AdapterHandle

@@ -13,6 +13,7 @@ func validVerifierSpec(adapter AdapterHandle, spec AdapterSpec) VerifierSpec {
 		Image:           "portable-ghar/network-verifier@sha256:" + strings.Repeat("9", 64),
 		BuildID:         spec.BuildID,
 		FleetGeneration: spec.FleetGeneration,
+		SlotIdentity:    spec.SlotIdentity,
 		Adapter:         adapter,
 		User:            spec.User,
 		Seccomp:         spec.Seccomp,
@@ -169,6 +170,7 @@ func TestVerifyNetworkEgressBindsBothNamespacesParserAndPolicy(t *testing.T) {
 		adapterID,
 		adapterSpec.Image,
 		adapterSpec.BuildID,
+		adapterSpec.SlotIdentity,
 		adapterSpec.FleetGeneration,
 		cli.issuer,
 		adapterNonce,
@@ -183,6 +185,7 @@ func TestVerifyNetworkEgressBindsBothNamespacesParserAndPolicy(t *testing.T) {
 	broker := newBrokerHandle(
 		brokerID,
 		brokerSpec.BuildID,
+		brokerSpec.SlotIdentity,
 		brokerSpec.FleetGeneration,
 		adapterNonce,
 		cli.issuer,

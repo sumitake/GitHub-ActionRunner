@@ -109,6 +109,7 @@ func (c *DockerCLI) CreateNetworkBrokerHeld(ctx context.Context, spec BrokerSpec
 	handle := newBrokerHandle(
 		id,
 		spec.BuildID,
+		spec.SlotIdentity,
 		spec.FleetGeneration,
 		spec.Adapter.nonce,
 		c.issuer,
@@ -190,6 +191,9 @@ func (c *DockerCLI) validateBrokerSpec(spec BrokerSpec) error {
 	if spec.FleetGeneration == 0 ||
 		spec.FleetGeneration != spec.Adapter.fleetGeneration {
 		return errors.New("hostruntime: broker generation does not match adapter")
+	}
+	if spec.SlotIdentity == "" || spec.SlotIdentity != spec.Adapter.slotIdentity {
+		return errors.New("hostruntime: broker slot does not match adapter")
 	}
 	if spec.CapacitySlotID == 0 || spec.JobGeneration == 0 {
 		return errors.New("hostruntime: broker slot generation required")
@@ -299,6 +303,7 @@ func (c *DockerCLI) brokerCreateArgv(spec BrokerSpec) []string {
 		"--label", "io.portable-ghar.kind=network-broker",
 		"--label", "io.portable-ghar.build-id=" + spec.BuildID,
 		"--label", "io.portable-ghar.fleet-generation=" + strconv.FormatUint(spec.FleetGeneration, 10),
+		"--label", "io.portable-ghar.slot=" + spec.SlotIdentity,
 		"--entrypoint", brokerEntrypoint,
 		spec.Image,
 		"hold",

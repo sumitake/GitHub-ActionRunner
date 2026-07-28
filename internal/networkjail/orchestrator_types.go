@@ -99,10 +99,45 @@ type SetupRequest struct {
 	JIT               *redaction.Secret
 }
 
+// PreparedSetupRequest is the complete nonsecret input to the held-jail
+// transaction. Listener authority and JIT material are deliberately absent:
+// Prepare stops at the durable RELEASE_ARMED checkpoint, and Release accepts
+// the one-job secret only after every held-runtime proof is complete.
+type PreparedSetupRequest struct {
+	Key               controller.AssignmentKey
+	Adapter           hostruntime.AdapterSpec
+	Broker            hostruntime.BrokerSpec
+	Runner            hostruntime.RunnerSpec
+	Verifier          hostruntime.VerifierSpec
+	Graph             DecisionGraph
+	Policy            hostruntime.PolicyArtifact
+	ConntrackInput    Budget
+	MaxRunnerCapacity uint64
+	SeedIDs           []string
+}
+
+// HeldJail is returned only after the release authorization and
+// StateReleaseArmed checkpoint are durable. Every authority-bearing field is
+// private so a caller cannot synthesize or replay listener release.
+type HeldJail struct {
+	key           controller.AssignmentKey
+	resources     setupResources
+	authorization releaseAuthorizationRuntimeRef
+	report        ProbeReport
+}
+
+func (j HeldJail) AdapterID() string { return j.resources.adapter.id }
+func (j HeldJail) BrokerID() string  { return j.resources.broker.id }
+func (j HeldJail) RunnerID() string  { return j.resources.runner.id }
+func (j HeldJail) ProbeReport() ProbeReport {
+	return j.report
+}
+
 // LiveJail is returned only after the listener-release checkpoint is durable.
 // It exposes nonsecret container identities while keeping all release proofs
 // and cleanup authority internal.
 type LiveJail struct {
+	key       controller.AssignmentKey
 	adapter   adapterRuntimeRef
 	broker    brokerRuntimeRef
 	runner    runnerRuntimeRef
@@ -118,10 +153,15 @@ func (j LiveJail) ProbeReport() ProbeReport {
 }
 
 func validateSetupRequest(request SetupRequest) error {
+	if request.JIT == nil {
+		return ErrSetupInput
+	}
+	return validatePreparedSetupRequest(preparedSetupRequest(request))
+}
+
+func validatePreparedSetupRequest(request PreparedSetupRequest) error {
 	if request.Key.RepositoryAlias == "" ||
 		request.Key.RunnerRequestID <= 0 ||
-		request.Key.Attempt == 0 ||
-		request.JIT == nil ||
 		request.Broker.Adapter.ID() != "" ||
 		request.Runner.Adapter.ID() != "" ||
 		request.Verifier.Adapter.ID() != "" ||
@@ -132,6 +172,10 @@ func validateSetupRequest(request SetupRequest) error {
 		request.Broker.FleetGeneration != request.Adapter.FleetGeneration ||
 		request.Runner.FleetGeneration != request.Adapter.FleetGeneration ||
 		request.Verifier.FleetGeneration != request.Adapter.FleetGeneration ||
+		request.Adapter.SlotIdentity == "" ||
+		request.Broker.SlotIdentity != request.Adapter.SlotIdentity ||
+		request.Runner.SlotIdentity != request.Adapter.SlotIdentity ||
+		request.Verifier.SlotIdentity != request.Adapter.SlotIdentity ||
 		request.Broker.CapacitySlotID == 0 ||
 		request.Broker.JobGeneration == 0 ||
 		request.Graph.digest == (Digest{}) ||
@@ -155,6 +199,21 @@ func validateSetupRequest(request SetupRequest) error {
 		return ErrSetupInput
 	}
 	return nil
+}
+
+func preparedSetupRequest(request SetupRequest) PreparedSetupRequest {
+	return PreparedSetupRequest{
+		Key:               request.Key,
+		Adapter:           request.Adapter,
+		Broker:            request.Broker,
+		Runner:            request.Runner,
+		Verifier:          request.Verifier,
+		Graph:             request.Graph,
+		Policy:            request.Policy,
+		ConntrackInput:    request.ConntrackInput,
+		MaxRunnerCapacity: request.MaxRunnerCapacity,
+		SeedIDs:           append([]string(nil), request.SeedIDs...),
+	}
 }
 
 func validateAdapterEmptiness(

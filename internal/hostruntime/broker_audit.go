@@ -115,11 +115,12 @@ func validateBrokerInspect(
 	labels := document.Config.Labels
 	if document.ID != record.handle.id ||
 		document.Config.Image != spec.Image ||
-		len(labels) != 4 ||
+		len(labels) != 5 ||
 		labels["io.portable-ghar.managed"] != "true" ||
 		labels["io.portable-ghar.kind"] != "network-broker" ||
 		labels["io.portable-ghar.build-id"] != spec.BuildID ||
 		labels["io.portable-ghar.fleet-generation"] != strconv.FormatUint(spec.FleetGeneration, 10) ||
+		labels["io.portable-ghar.slot"] != spec.SlotIdentity ||
 		!equalStrings(document.Config.Entrypoint, []string{brokerEntrypoint}) ||
 		!equalStrings(document.Config.Cmd, []string{"hold"}) ||
 		document.Config.User != spec.User ||

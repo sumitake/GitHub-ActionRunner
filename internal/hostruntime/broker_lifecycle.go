@@ -116,6 +116,7 @@ func (c *DockerCLI) policyHelperArgv(record *brokerRecord) []string {
 		"--label", "io.portable-ghar.kind=network-policy-helper",
 		"--label", "io.portable-ghar.build-id=" + spec.BuildID,
 		"--label", "io.portable-ghar.fleet-generation=" + strconv.FormatUint(spec.FleetGeneration, 10),
+		"--label", "io.portable-ghar.slot=" + spec.SlotIdentity,
 		"--entrypoint", helperEntrypoint,
 		spec.HelperImage,
 		"apply",

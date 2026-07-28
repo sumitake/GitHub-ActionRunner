@@ -67,6 +67,26 @@ type EffectResult struct {
 	ReasonCode     string
 }
 
+const (
+	// LifecycleEffectListenerRelease is the durable external-effect boundary
+	// after which blind cleanup is forbidden.
+	LifecycleEffectListenerRelease = "runner-listener-release"
+
+	// LifecycleEffectPostReleaseResolution records the closed reconciliation
+	// evidence digest used to resolve an ambiguous listener release.
+	LifecycleEffectPostReleaseResolution = "post-release-resolution"
+)
+
+// RunnerObservation is the exact, secret-free upstream tuple established by
+// a Started or Completed scale-set event.
+type RunnerObservation struct {
+	UpstreamRunnerID  int64
+	BoundRequestID    int64
+	RunnerContainerID string
+	Finished          bool
+	ObservedAt        time.Time
+}
+
 // RecoverableAssignment is one row ListRecoverable returns: an assignment
 // not yet DESTROYED, with every identity persisted for it so far, so a
 // restarted controller can reconcile it from whatever checkpoint it last
@@ -193,12 +213,36 @@ type Store interface {
 	// a no-op success.
 	MarkAmbiguous(ctx context.Context, key controller.AssignmentKey, reasonCode string) error
 
-	// BindRunner records that upstreamRunnerID and runnerContainerID are
-	// now bound to key's runner slot, from a JobAssigned/JobStarted
-	// observation. An acquisition offer is never itself a binding; only
-	// BindRunner establishes it. upstreamRunnerID must be unique across
-	// live runner slots.
-	BindRunner(ctx context.Context, key controller.AssignmentKey, upstreamRunnerID int64, runnerContainerID string) error
+	// BindRunner records that the exact observed upstream runner, request, and
+	// container tuple is now bound to key's runner slot. An acquisition offer
+	// is never itself a binding. The first tuple is immutable and an exact
+	// replay is a no-op.
+	BindRunner(ctx context.Context, key controller.AssignmentKey, upstreamRunnerID, boundRequestID int64, runnerContainerID string) error
+
+	// LookupAssignmentEffect returns the unique effect of kind for key. More
+	// than one matching effect is an identity conflict.
+	LookupAssignmentEffect(ctx context.Context, key controller.AssignmentKey, kind string) (EffectRecord, error)
+
+	// AdvancePreReleaseDestroyed is the checked pre-release terminal shortcut.
+	// It succeeds only while no listener-release effect exists.
+	AdvancePreReleaseDestroyed(ctx context.Context, key controller.AssignmentKey) error
+
+	// ApplyRunnerObservation atomically establishes the exact runner binding,
+	// proves the listener-release boundary, clears stale ambiguity, and
+	// advances to JOB_RUNNING or JOB_FINISHED.
+	ApplyRunnerObservation(ctx context.Context, key controller.AssignmentKey, observation RunnerObservation) error
+
+	// ResolvePostRelease records a nonzero, closed evidence digest and resolves
+	// one ambiguous post-release state without using the ordinary pre-release
+	// DESTROYED shortcut. A later legal forward outcome atomically supersedes
+	// that evidence; exact-state replay remains digest-identical.
+	ResolvePostRelease(ctx context.Context, key controller.AssignmentKey, outcome controller.PostReleaseOutcome, evidence [sha256.Size]byte, resolvedAt time.Time) error
+
+	// Reconcile-cycle methods retain at most the current incomplete cycle and
+	// the latest terminal cycle.
+	BeginReconcileCycle(ctx context.Context, cycleID string, startedAt time.Time) error
+	CompleteReconcileCycle(ctx context.Context, receipt controller.CycleReceipt) error
+	AbortReconcileCycle(ctx context.Context, cycleID string, completedAt time.Time, reasonCode string) error
 
 	// ListRecoverable returns every assignment not yet in StateDestroyed,
 	// so a restarted controller can reconcile from any checkpoint,
