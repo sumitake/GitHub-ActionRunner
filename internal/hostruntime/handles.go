@@ -37,6 +37,45 @@ func newAdapterHandle(id, image, buildID string, generation uint64, issuer, nonc
 	}
 }
 
+// BrokerHandle is the only broker-container identity accepted after creation.
+// It binds the broker to the same engine, build, fleet generation, and adapter
+// without exposing any constructor outside this package.
+type BrokerHandle struct {
+	id              string
+	buildID         string
+	fleetGeneration uint64
+	adapterNonce    [32]byte
+	issuer          [32]byte
+	nonce           [32]byte
+}
+
+// ID returns the nonsecret Docker identity for diagnostics and persistence.
+func (h BrokerHandle) ID() string { return h.id }
+
+func (h BrokerHandle) validFor(issuer [32]byte) bool {
+	return h.id != "" &&
+		h.buildID != "" &&
+		h.fleetGeneration != 0 &&
+		nonzero32(h.adapterNonce) &&
+		nonzero32(h.nonce) &&
+		subtle.ConstantTimeCompare(h.issuer[:], issuer[:]) == 1
+}
+
+func newBrokerHandle(
+	id, buildID string,
+	generation uint64,
+	adapterNonce, issuer, nonce [32]byte,
+) BrokerHandle {
+	return BrokerHandle{
+		id:              id,
+		buildID:         buildID,
+		fleetGeneration: generation,
+		adapterNonce:    adapterNonce,
+		issuer:          issuer,
+		nonce:           nonce,
+	}
+}
+
 // RunnerHandle is likewise engine-issued. The degraded bit is an explicit
 // non-conformance signal, never a fallback profile selection.
 type RunnerHandle struct {

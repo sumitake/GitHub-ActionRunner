@@ -78,7 +78,10 @@ func (c *DockerCLI) AuditHeldRunner(ctx context.Context, handle RunnerHandle) (H
 	}
 	c.mu.Lock()
 	record := c.runners[handle.nonce]
-	if record == nil || record.destroyed || record.busy || record.next != GateRelease || record.releaseAuthorized {
+	auditablePhase := record != nil &&
+		(record.next == GateArm || record.next == GateRelease)
+	if record == nil || record.destroyed || record.busy ||
+		!auditablePhase || record.releaseAuthorized {
 		if record != nil && !record.destroyed {
 			record.destroyed = true
 			zeroToken(&record.token)

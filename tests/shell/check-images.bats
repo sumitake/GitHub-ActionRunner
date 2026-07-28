@@ -3,7 +3,7 @@
 #
 # TDD suite for scripts/ci/check-images.sh -- the manifest-driven container
 # image build/reproducibility gate. Asserts an explicit empty manifest passes
-# without invoking Docker, the real manifest registers both Task-5 images,
+# without invoking Docker, the real manifest registers all Task-5/6 images,
 # and malformed manifests fail closed before any Docker invocation.
 
 setup() {
@@ -28,10 +28,10 @@ teardown() {
   [[ "$output" == *"registers no images"* ]]
 }
 
-@test "the real manifest registers the runner and network adapter contexts" {
+@test "the real manifest registers all Task 5 and Task 6 contexts" {
   run jq -r '.images[].name' "$REPO_ROOT/images/manifest.json"
   [ "$status" -eq 0 ]
-  [ "$output" = $'network-adapter\nrunner' ]
+  [ "$output" = $'network-adapter\nnetwork-broker-dialer\nnetwork-broker-parser\nnetwork-helper\nnetwork-verifier\nrunner' ]
 }
 
 @test "default manifest path resolves relative to the current directory" {

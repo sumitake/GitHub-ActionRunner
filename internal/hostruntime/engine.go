@@ -5,6 +5,7 @@ package hostruntime
 
 import (
 	"context"
+	"encoding/hex"
 	"io"
 	"os"
 
@@ -21,7 +22,14 @@ type CommandRunner interface {
 // arguments or caller-synthesized container identities.
 type Engine interface {
 	CreateNetworkAdapter(context.Context, AdapterSpec) (AdapterHandle, error)
+	CreateNetworkBrokerHeld(context.Context, BrokerSpec) (BrokerHandle, error)
+	ApplyNetworkPolicy(context.Context, BrokerHandle, PolicyArtifact) error
+	BindDialAuthority(context.Context, BrokerHandle, AuthorityProof) error
+	ReleaseNetworkBroker(context.Context, BrokerHandle) (BrokerPeerProof, error)
+	AuditNetworkBroker(context.Context, BrokerHandle) (BrokerAudit, error)
 	BindBrokerPeer(context.Context, AdapterHandle, BrokerPeerProof) error
+	VerifyNetworkAdapterEmpty(context.Context, AdapterHandle, VerifierSpec) (AdapterEmptinessEvidence, error)
+	VerifyNetworkEgress(context.Context, AdapterHandle, BrokerHandle, PolicyArtifact, VerifierSpec) (NetworkEgressEvidence, error)
 	CreateRunner(context.Context, RunnerSpec) (RunnerHandle, error)
 	HydrateSeeds(context.Context, RunnerHandle, []string) error
 	ProbeRunnerNetworkNamespace(context.Context, RunnerHandle, GateOperation) (NetworkNamespaceProof, error)
@@ -30,6 +38,7 @@ type Engine interface {
 	AuthorizeRelease(context.Context, RunnerHandle, NetworkNamespaceProof, NetworkNamespaceProof) (ReleaseAuthorization, error)
 	ReleaseRunner(context.Context, RunnerHandle, ReleaseAuthorization, *redaction.Secret) error
 	RemoveRunner(context.Context, RunnerHandle) error
+	RemoveNetworkBroker(context.Context, BrokerHandle) error
 	RemoveNetworkAdapter(context.Context, AdapterHandle) error
 }
 
@@ -69,6 +78,103 @@ type HeldRunnerAudit struct {
 	issuer      [32]byte
 	generation  uint64
 	digest      [32]byte
+}
+
+// BrokerAudit binds a released broker's immutable container configuration,
+// namespace owner, parser child, filter proof, sockets, policy, authority, and
+// exact process inventory. Construction remains inside the host runtime.
+type BrokerAudit struct {
+	brokerNonce [32]byte
+	issuer      [32]byte
+	generation  uint64
+	digest      [32]byte
+}
+
+// Digest returns the nonsecret canonical evidence digest.
+func (a BrokerAudit) Digest() string {
+	return hex.EncodeToString(a.digest[:])
+}
+
+// Digest returns the nonsecret canonical held-runner evidence digest.
+func (a HeldRunnerAudit) Digest() string {
+	return hex.EncodeToString(a.digest[:])
+}
+
+// NetworkNamespaceIdentity is a nonsecret device/inode observation. It becomes
+// authority only while sealed inside an engine-issued opaque evidence value.
+type NetworkNamespaceIdentity struct {
+	Device uint64 `json:"device"`
+	Inode  uint64 `json:"inode"`
+}
+
+// NetworkVerifierReport is the exact capability-less verifier observation
+// prior to the controller adding host conntrack-budget evidence.
+type NetworkVerifierReport struct {
+	PolicyDigest         string
+	EgressBackend        string
+	RunnerNetNSID        NetworkNamespaceIdentity
+	BrokerNetNSID        NetworkNamespaceIdentity
+	RunnerLoopbackOnly   bool
+	RunnerTablesEmpty    bool
+	RunnerConntrackEmpty bool
+	ParserHasNoSocket    bool
+	PositiveOK           bool
+	NegativeOK           bool
+}
+
+// AdapterEmptinessEvidence can be issued only after the engine re-inspects the
+// same held adapter on both sides of a capability-less one-shot verifier.
+type AdapterEmptinessEvidence struct {
+	adapterID string
+	namespace NetworkNamespaceIdentity
+	issuer    [32]byte
+	nonce     [32]byte
+	digest    [32]byte
+}
+
+func (e AdapterEmptinessEvidence) AdapterID() string {
+	return e.adapterID
+}
+
+func (e AdapterEmptinessEvidence) Namespace() NetworkNamespaceIdentity {
+	return e.namespace
+}
+
+func (e AdapterEmptinessEvidence) Digest() string {
+	return hex.EncodeToString(e.digest[:])
+}
+
+// NetworkEgressEvidence binds both disjoint namespaces, the parser sandbox,
+// the exact immutable policy artifact, and the one-shot proxy results.
+type NetworkEgressEvidence struct {
+	adapterID      string
+	brokerID       string
+	policyArtifact string
+	report         NetworkVerifierReport
+	issuer         [32]byte
+	adapterNonce   [32]byte
+	brokerNonce    [32]byte
+	digest         [32]byte
+}
+
+func (e NetworkEgressEvidence) AdapterID() string {
+	return e.adapterID
+}
+
+func (e NetworkEgressEvidence) BrokerID() string {
+	return e.brokerID
+}
+
+func (e NetworkEgressEvidence) PolicyArtifactDigest() string {
+	return e.policyArtifact
+}
+
+func (e NetworkEgressEvidence) Report() NetworkVerifierReport {
+	return e.report
+}
+
+func (e NetworkEgressEvidence) Digest() string {
+	return hex.EncodeToString(e.digest[:])
 }
 
 // GateOperation is the complete ordered Docker-exec surface of a held runner.
@@ -120,6 +226,41 @@ type RunnerLimits struct {
 	ProcessMarginBytes uint64
 }
 
+// BrokerLimits contains every persistent broker-container resource ceiling.
+// StateBytes and ScratchBytes are tmpfs sub-limits charged inside MemoryBytes.
+type BrokerLimits struct {
+	MilliCPU        uint64
+	MemoryBytes     uint64
+	PIDs            uint64
+	FileDescriptors uint64
+	StateBytes      uint64
+	ScratchBytes    uint64
+	LogBytes        uint64
+	LogFiles        uint64
+}
+
+// OneShotLimits bounds the short-lived NET_ADMIN policy helper. Its private
+// 64 KiB /run tmpfs and disabled Docker log are fixed by the implementation.
+type OneShotLimits struct {
+	MilliCPU        uint64
+	MemoryBytes     uint64
+	PIDs            uint64
+	FileDescriptors uint64
+}
+
+// VerifierSpec is the complete closed configuration of the capability-less
+// one-shot verifier. The container name is derived from engine-issued nonces,
+// never supplied by a job.
+type VerifierSpec struct {
+	Image           string
+	BuildID         string
+	FleetGeneration uint64
+	Adapter         AdapterHandle
+	User            string
+	Seccomp         SeccompBinding
+	Limits          OneShotLimits
+}
+
 // AdapterSpec contains no pass-through options, environment map, or secret.
 type AdapterSpec struct {
 	Name            string
@@ -144,6 +285,26 @@ type RunnerSpec struct {
 	User            string
 	Seccomp         SeccompBinding
 	Limits          RunnerLimits
+}
+
+// BrokerSpec contains no Docker option fragments, arbitrary environment, raw
+// container identity, or secret. The broker network itself is fixed in
+// DockerCLIConfig so a job cannot select it.
+type BrokerSpec struct {
+	Name            string
+	Image           string
+	HelperImage     string
+	BuildID         string
+	FleetGeneration uint64
+	CapacitySlotID  uint32
+	JobGeneration   uint64
+	Adapter         AdapterHandle
+	RelayParent     string
+	AuthorityParent string
+	User            string
+	Seccomp         SeccompBinding
+	Limits          BrokerLimits
+	HelperLimits    OneShotLimits
 }
 
 var _ Engine = (*DockerCLI)(nil)

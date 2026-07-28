@@ -1,0 +1,10 @@
+**
+!Dockerfile
+!.dockerignore
+!build/
+!build/portable-ghar-network-broker-dialer
+!build/portable-ghar-network-broker-parser
+!build/ca-bundle.pem
+!build/ca-bundle.sha256
+!build/ca-bundle.lock.json
+!build/ca-bundle.spdx.json

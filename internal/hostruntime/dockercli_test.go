@@ -167,6 +167,9 @@ func TestCreateNetworkAdapterUsesClosedIsolationArgv(t *testing.T) {
 		t.Fatalf("command count = %d, want 1", len(runner.commands))
 	}
 	argv := runner.commands[0].argv
+	if len(argv) < 3 || argv[1] != "run" || argv[2] != "--detach" {
+		t.Fatalf("adapter was not started as held namespace owner: %q", argv)
+	}
 
 	requireArgPair(t, argv, "--network", "none")
 	requireArgPair(t, argv, "--cap-drop", "ALL")
@@ -433,6 +436,9 @@ func TestCreateRunnerReinspectsOpaqueAdapterAndUsesNoMountOrSecretMetadata(t *te
 		t.Fatalf("second command is not adapter re-inspection: %q", commands.commands[1].argv)
 	}
 	argv := commands.commands[2].argv
+	if len(argv) < 3 || argv[1] != "run" || argv[2] != "--detach" {
+		t.Fatalf("runner was not started as held gate owner: %q", argv)
+	}
 	requireArgPair(t, argv, "--network", "container:"+adapterID)
 	requireArgPair(t, argv, "--user", "65532:65532")
 	requireArgPair(t, argv, "--cap-drop", "ALL")

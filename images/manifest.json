@@ -7,6 +7,26 @@
       "dockerfile": "images/network-adapter/Dockerfile"
     },
     {
+      "name": "network-broker-dialer",
+      "context": "images/network-broker-dialer",
+      "dockerfile": "images/network-broker-dialer/Dockerfile"
+    },
+    {
+      "name": "network-broker-parser",
+      "context": "images/network-broker-parser",
+      "dockerfile": "images/network-broker-parser/Dockerfile"
+    },
+    {
+      "name": "network-helper",
+      "context": "images/network-helper",
+      "dockerfile": "images/network-helper/Dockerfile"
+    },
+    {
+      "name": "network-verifier",
+      "context": "images/network-verifier",
+      "dockerfile": "images/network-verifier/Dockerfile"
+    },
+    {
       "name": "runner",
       "context": "images/runner",
       "dockerfile": "images/runner/Dockerfile"

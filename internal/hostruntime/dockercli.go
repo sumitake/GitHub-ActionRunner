@@ -22,6 +22,7 @@ import (
 const (
 	maxSeccompBytes   = 1 << 20
 	maxDockerMilliCPU = uint64(math.MaxInt64 / 1_000_000)
+	maxBrokerRecords  = 1024
 	adapterMountDst   = "/run/portable-ghar/broker"
 	adapterEntrypoint = "/usr/local/bin/portable-ghar-network-adapter"
 	runnerEntrypoint  = "/usr/local/bin/portable-ghar-runner-gate"
@@ -35,19 +36,22 @@ var (
 // DockerCLIConfig binds every path-valued Docker argument to a
 // controller-owned root. No environment-derived Docker endpoint is used.
 type DockerCLIConfig struct {
-	DockerPath  string
-	BrokerRoot  string
-	SeccompRoot string
+	DockerPath    string
+	BrokerRoot    string
+	SeccompRoot   string
+	BrokerNetwork string
 }
 
 // DockerCLI is the only Docker argv constructor in Task 5.
 type DockerCLI struct {
-	cfg      DockerCLIConfig
-	runner   CommandRunner
-	issuer   [32]byte
-	mu       sync.Mutex
-	adapters map[[32]byte]*adapterRecord
-	runners  map[[32]byte]*runnerRecord
+	cfg                DockerCLIConfig
+	runner             CommandRunner
+	issuer             [32]byte
+	mu                 sync.Mutex
+	adapters           map[[32]byte]*adapterRecord
+	brokers            map[[32]byte]*brokerRecord
+	brokerReservations map[[32]byte]brokerReservation
+	runners            map[[32]byte]*runnerRecord
 }
 
 // NewDockerCLI validates fixed roots and creates an in-process handle issuer.
@@ -65,10 +69,12 @@ func NewDockerCLI(cfg DockerCLIConfig, runner CommandRunner) (*DockerCLI, error)
 		return nil, err
 	}
 	cli := &DockerCLI{
-		cfg:      cfg,
-		runner:   runner,
-		adapters: make(map[[32]byte]*adapterRecord),
-		runners:  make(map[[32]byte]*runnerRecord),
+		cfg:                cfg,
+		runner:             runner,
+		adapters:           make(map[[32]byte]*adapterRecord),
+		brokers:            make(map[[32]byte]*brokerRecord),
+		brokerReservations: make(map[[32]byte]brokerReservation),
+		runners:            make(map[[32]byte]*runnerRecord),
 	}
 	if _, err := io.ReadFull(rand.Reader, cli.issuer[:]); err != nil {
 		return nil, errors.New("hostruntime: handle issuer generation failed")
@@ -76,7 +82,9 @@ func NewDockerCLI(cfg DockerCLIConfig, runner CommandRunner) (*DockerCLI, error)
 	return cli, nil
 }
 
-// CreateNetworkAdapter creates, but does not start, one held adapter.
+// CreateNetworkAdapter creates and starts one held namespace owner. The
+// adapter opens no loopback listener until BindBrokerPeer consumes its exact
+// broker proof.
 func (c *DockerCLI) CreateNetworkAdapter(ctx context.Context, spec AdapterSpec) (AdapterHandle, error) {
 	if c == nil {
 		return AdapterHandle{}, errors.New("hostruntime: docker cli required")
@@ -275,7 +283,7 @@ func (c *DockerCLI) verifySeccomp(binding SeccompBinding) error {
 func (c *DockerCLI) adapterCreateArgv(spec AdapterSpec) []string {
 	uid, gid, _ := parseUser(spec.User)
 	return []string{
-		c.cfg.DockerPath, "create",
+		c.cfg.DockerPath, "run", "--detach",
 		"--name", spec.Name,
 		"--network", "none",
 		"--cap-drop", "ALL",
@@ -307,7 +315,7 @@ func (c *DockerCLI) adapterCreateArgv(spec AdapterSpec) []string {
 func (c *DockerCLI) runnerCreateArgv(spec RunnerSpec) []string {
 	uid, gid, _ := parseUser(spec.User)
 	return []string{
-		c.cfg.DockerPath, "create",
+		c.cfg.DockerPath, "run", "--detach",
 		"--name", spec.Name,
 		"--network", "container:" + spec.Adapter.id,
 		"--cap-drop", "ALL",

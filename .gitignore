@@ -13,6 +13,16 @@ images/runner/.build.*
 images/network-adapter/build/
 images/network-adapter/.build.*
 images/.task5-prepare.lock/
+images/network-helper/build/
+images/network-helper/.build.*
+images/network-verifier/build/
+images/network-verifier/.build.*
+images/network-broker-parser/build/
+images/network-broker-parser/.build.*
+images/network-broker-dialer/build/
+images/network-broker-dialer/.build.*
+images/trust/.build.*
+images/.task6-prepare.lock/
 
 # Environment, keys, private overlay, state, databases, caches (never committed)
 .env
