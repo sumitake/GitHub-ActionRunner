@@ -1,4 +1,15 @@
 {
   "version": 1,
-  "images": []
+  "images": [
+    {
+      "name": "network-adapter",
+      "context": "images/network-adapter",
+      "dockerfile": "images/network-adapter/Dockerfile"
+    },
+    {
+      "name": "runner",
+      "context": "images/runner",
+      "dockerfile": "images/runner/Dockerfile"
+    }
+  ]
 }

@@ -7,7 +7,7 @@ permissions: {}
 jobs:
   release:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     permissions:
       contents: write
       id-token: write
@@ -81,6 +81,8 @@ jobs:
         run: find tests -name 'test_*.py' -not -path '*/__pycache__/*' | sed 's/\.py$//; s#/#.#g' | xargs python3 -m unittest -v
       - name: Sanitize tracked source
         run: python3 scripts/sanitize_public.py --tracked
+      - name: Prepare Task 5 image contexts
+        run: scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID"
       - name: Check image manifest
         run: bash scripts/ci/check-images.sh
       - name: Trivy source scan

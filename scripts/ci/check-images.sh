@@ -7,8 +7,8 @@
 # via IMAGES_MANIFEST) against a small closed schema, then -- for every
 # registered image -- builds it twice with --no-cache and requires the two
 # resulting image IDs to be identical (a basic reproducible-build gate).
-# The phase-1 manifest registers zero images ({"version":1,"images":[]})
-# and must pass explicitly without ever invoking docker.
+# An explicitly empty override manifest still passes without invoking Docker;
+# the repository manifest registers the prepared Task-5 images.
 #
 # Usage: scripts/ci/check-images.sh [MANIFEST_PATH]
 #        IMAGES_MANIFEST=path scripts/ci/check-images.sh

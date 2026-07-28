@@ -22,7 +22,7 @@ func writeTempSecretFile(t *testing.T, contents string) string {
 // well-formed document naming the available egress backend and either
 // supported IP family, with secret material referenced (not inlined).
 func TestLoadRuntimeAcceptsValidDocument(t *testing.T) {
-	secretPath := writeTempSecretFile(t, "ghp_EXAMPLETOKEN1234567890")
+	secretPath := writeTempSecretFile(t, "EXAMPLE_SECRET_VALUE")
 
 	tests := []struct {
 		name     string
@@ -77,7 +77,7 @@ func TestLoadRuntimeRejectsUnknownNestedFields(t *testing.T) {
 	doc := `{
 		"egress_backend": "restricted-broker-v1",
 		"ip_family": "public_ipv4_only",
-		"secret": {"source": "file", "ref": "/example/secret.txt", "value": "ghp_EXAMPLE"}
+			"secret": {"source": "file", "ref": "/example/secret.txt", "value": "EXAMPLE_VALUE"}
 	}`
 	if _, err := LoadRuntime(strings.NewReader(doc)); err == nil {
 		t.Fatal("LoadRuntime accepted a secret ref with an unknown nested field")
@@ -91,7 +91,7 @@ func TestLoadRuntimeRejectsInlineSecretValue(t *testing.T) {
 	doc := `{
 		"egress_backend": "restricted-broker-v1",
 		"ip_family": "public_ipv4_only",
-		"secret": "ghp_EXAMPLETOKEN1234567890"
+			"secret": "EXAMPLE_SECRET_VALUE"
 	}`
 	if _, err := LoadRuntime(strings.NewReader(doc)); err == nil {
 		t.Fatal("LoadRuntime accepted an inline secret literal instead of a SecretRef object")
@@ -107,7 +107,7 @@ func TestLoadRuntimeRejectsBogusSecretSource(t *testing.T) {
 	doc := `{
 		"egress_backend": "restricted-broker-v1",
 		"ip_family": "public_ipv4_only",
-		"secret": {"source": "literal", "ref": "ghp_EXAMPLETOKEN1234567890"}
+			"secret": {"source": "literal", "ref": "EXAMPLE_SECRET_VALUE"}
 	}`
 	if _, err := LoadRuntime(strings.NewReader(doc)); err == nil {
 		t.Fatal("LoadRuntime accepted a SecretRef with bogus source \"literal\"")
@@ -121,7 +121,7 @@ func TestLoadRuntimeRejectsEmptySecretSource(t *testing.T) {
 	doc := `{
 		"egress_backend": "restricted-broker-v1",
 		"ip_family": "public_ipv4_only",
-		"secret": {"source": "", "ref": "ghp_EXAMPLETOKEN1234567890"}
+			"secret": {"source": "", "ref": "EXAMPLE_SECRET_VALUE"}
 	}`
 	if _, err := LoadRuntime(strings.NewReader(doc)); err == nil {
 		t.Fatal("LoadRuntime accepted a SecretRef with empty source")
@@ -132,8 +132,8 @@ func TestLoadRuntimeRejectsEmptySecretSource(t *testing.T) {
 // accepts every source ReadSecret recognizes ("file" and "env"), so the
 // new source validation doesn't regress the previously-accepted sources.
 func TestLoadRuntimeAcceptsEachValidSecretSource(t *testing.T) {
-	secretPath := writeTempSecretFile(t, "ghp_EXAMPLETOKEN1234567890")
-	t.Setenv("PORTABLE_GHAR_EXAMPLE_SECRET", "ghp_EXAMPLETOKEN1234567890")
+	secretPath := writeTempSecretFile(t, "EXAMPLE_SECRET_VALUE")
+	t.Setenv("PORTABLE_GHAR_EXAMPLE_SECRET", "EXAMPLE_SECRET_VALUE")
 
 	tests := []struct {
 		name   string
@@ -218,7 +218,7 @@ func TestLoadRuntimeRejectsMalformedJSON(t *testing.T) {
 // into an owned, redacting Secret whose String() never reveals the bytes,
 // while Use still provides the real content within its callback scope.
 func TestReadSecretFromFile(t *testing.T) {
-	const want = "ghp_EXAMPLETOKEN1234567890"
+	const want = "EXAMPLE_SECRET_VALUE"
 	secretPath := writeTempSecretFile(t, want)
 
 	s, err := ReadSecret(SecretRef{Source: "file", Ref: secretPath})

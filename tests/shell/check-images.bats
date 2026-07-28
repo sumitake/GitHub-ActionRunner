@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: MPL-2.0
 #
 # TDD suite for scripts/ci/check-images.sh -- the manifest-driven container
-# image build/reproducibility gate. Asserts the real phase-1 manifest
-# ({"version":1,"images":[]}) passes explicitly without invoking docker,
-# and that every malformed-manifest class fails closed before any docker
-# invocation is attempted.
+# image build/reproducibility gate. Asserts an explicit empty manifest passes
+# without invoking Docker, the real manifest registers both Task-5 images,
+# and malformed manifests fail closed before any Docker invocation.
 
 setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -22,21 +21,30 @@ teardown() {
   [ -x "$SCRIPT" ]
 }
 
-@test "the real phase-1 manifest passes explicitly with zero registered images" {
-  run bash "$SCRIPT" "$REPO_ROOT/images/manifest.json"
+@test "an explicit empty manifest passes without invoking docker" {
+  printf '%s\n' '{"version":1,"images":[]}' >"$TMP_DIR/manifest.json"
+  run bash "$SCRIPT" "$TMP_DIR/manifest.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"registers no images"* ]]
 }
 
+@test "the real manifest registers the runner and network adapter contexts" {
+  run jq -r '.images[].name' "$REPO_ROOT/images/manifest.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'network-adapter\nrunner' ]
+}
+
 @test "default manifest path resolves relative to the current directory" {
-  cd "$REPO_ROOT"
+  mkdir -p "$TMP_DIR/images"
+  printf '%s\n' '{"version":1,"images":[]}' >"$TMP_DIR/images/manifest.json"
+  cd "$TMP_DIR"
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
 }
 
 @test "IMAGES_MANIFEST env override is honored" {
-  cd "$REPO_ROOT"
-  run env IMAGES_MANIFEST="$REPO_ROOT/images/manifest.json" bash "$SCRIPT"
+  printf '%s\n' '{"version":1,"images":[]}' >"$TMP_DIR/manifest.json"
+  run env IMAGES_MANIFEST="$TMP_DIR/manifest.json" bash "$SCRIPT"
   [ "$status" -eq 0 ]
 }
 

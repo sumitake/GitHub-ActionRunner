@@ -103,5 +103,124 @@
     "rule": "IP001",
     "sha256": "cba6fc3f6e86e3e05eaa64bfa058bcd38f5ab0c2a5caf3e5e23c806ae5764ccf",
     "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "internal/githubscale/adapter_contract_test.go",
+    "line": 886,
+    "rule": "IP001",
+    "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",
+    "reason": "Synthetic RFC 3849 documentation address in a canonical URL normalization assertion; the exact expected line is required to prove bracketed IPv6 and default-port handling and contains no deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/main.go",
+    "line": 40,
+    "rule": "IP001",
+    "sha256": "7742ab1dc84fb69d1c6c180f8cf039c24ff2929e2ef054aefb57cbe5572679ed",
+    "reason": "Load-bearing fixed loopback endpoint in the capless adapter's closed compile-time relay table; it is not a host or deployment address."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay.go",
+    "line": 50,
+    "rule": "IP001",
+    "sha256": "b786c176d47a83e7b4441a302ac696f316abe9f81f7cb4813fe99851d568d853",
+    "reason": "Load-bearing exact comparison against the adapter's sole allowed loopback endpoint; it is not a host or deployment address."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay.go",
+    "line": 55,
+    "rule": "IP001",
+    "sha256": "9cf3f9374331f40c39fdea72bc7d5036202e00a5e0cc3400a50ebbec8eadf6d4",
+    "reason": "Load-bearing exact host comparison that prevents the adapter from binding outside IPv4 loopback; it is not a host or deployment address."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 75,
+    "rule": "IP001",
+    "sha256": "fae7866dd601a14984e982e03d6ab5acfbd630e201390d559c5bbf03e563ce4c",
+    "reason": "Synthetic loopback listener used only by a local relay unit test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 117,
+    "rule": "IP001",
+    "sha256": "eb4c7b14607625fa0760c34b9645f3d450ea7c0aa07adedbaa80694d3e5e3b45",
+    "reason": "Synthetic expected loopback endpoint in the adapter closed-table boundary test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 123,
+    "rule": "IP001",
+    "sha256": "91855c1978a4b257c9712748a1e7b4b820c08ae30f3c6e940b1c499457d81eea",
+    "reason": "Synthetic unspecified-address negative fixture proving a non-loopback endpoint is rejected; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 124,
+    "rule": "IP001",
+    "sha256": "8600094ed00b7526ebb4fc1922306d1e1c72769f3cc4dc0567b47b3c424afd27",
+    "reason": "Synthetic loopback wrong-port fixture in the adapter closed-table rejection test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 125,
+    "rule": "IP001",
+    "sha256": "dc55ef4f5d0f4f7c6295fdaf94c8409f06def6096dd6ab37addb78a3a36c5799",
+    "reason": "Synthetic loopback path-escape fixture in the adapter closed-table rejection test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 127,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Synthetic first duplicate loopback endpoint in the adapter closed-table rejection test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 128,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Synthetic second duplicate loopback endpoint in the adapter closed-table rejection test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 139,
+    "rule": "IP001",
+    "sha256": "f5e033b0b0539f383adb418a1338921a906fca0fdb26c0dc868166259abf6d30",
+    "reason": "Synthetic loopback listener used only by the relay flood-bound unit test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go",
+    "line": 43,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Synthetic UUID-shaped GitHub release-asset object identifier required by the canonical redirect acceptance fixture; it is not a deployment identifier."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go",
+    "line": 53,
+    "rule": "URI001",
+    "sha256": "5e037138d3d5a8ce0c020abf12cb3e4cb477a71f32e9e681c982059b19cb1dbe",
+    "reason": "Adversarial URL-userinfo mutation used only to prove the runner redirect validator rejects userinfo before acquisition."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go",
+    "line": 74,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Synthetic UUID-shaped GitHub release-asset object identifier required by the bounded-stdin redirect fixture; it is not a deployment identifier."
+  },
+  {
+    "path": "internal/archive/manifest_test.go",
+    "line": 51,
+    "rule": "MAIL001",
+    "sha256": "b35442bdc16bbb4fbb1adb6e8f90894437162daff3fcdec537f08cca8ec5c99e",
+    "reason": "Adversarial URL-userinfo fixture that resembles an email address only because it proves the seed source parser rejects userinfo."
+  },
+  {
+    "path": "internal/archive/manifest_test.go",
+    "line": 51,
+    "rule": "URI001",
+    "sha256": "b35442bdc16bbb4fbb1adb6e8f90894437162daff3fcdec537f08cca8ec5c99e",
+    "reason": "Adversarial URL-userinfo fixture used only to prove the seed source parser rejects userinfo before archive staging."
   }
 ]

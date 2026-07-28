@@ -204,17 +204,17 @@ func TestLoggerEventAllowlist(t *testing.T) {
 		},
 		{
 			name:    "token is rejected",
-			fields:  map[string]any{"token": "ghp_EXAMPLE1234567890"},
+			fields:  map[string]any{"token": "EXAMPLE_TOKEN_VALUE"},
 			wantErr: true,
 		},
 		{
 			name:    "secret ref is rejected",
-			fields:  map[string]any{"secret_ref": "file:///example"},
+			fields:  map[string]any{"secret_ref": "EXAMPLE_SECRET_REFERENCE"},
 			wantErr: true,
 		},
 		{
 			name:    "filesystem path is rejected",
-			fields:  map[string]any{"path": "/var/run/example.sock"},
+			fields:  map[string]any{"path": "/example/adapter.sock"},
 			wantErr: true,
 		},
 		{

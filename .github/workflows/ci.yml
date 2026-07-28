@@ -139,17 +139,25 @@ jobs:
 
   container:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read
     concurrency:
       group: ${{ github.workflow }}-container-${{ github.ref }}
       cancel-in-progress: true
+    env:
+      GOTOOLCHAIN: go1.26.5
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Prepare Task 5 image contexts
+        run: scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID"
       - name: Check image manifest
         run: bash scripts/ci/check-images.sh
       - name: Trivy filesystem scan

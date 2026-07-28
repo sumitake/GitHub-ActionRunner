@@ -1,7 +1,18 @@
 # images/network-adapter
 
-Deferred to a later phase. Real Dockerfiles, base-image digests, build
-arguments, paths, identities, schedules, and networks are **not** defined here
-yet and must never be committed with deployment-specific values. This directory
-is a registered placeholder only; the phase-1 `images/manifest.json` lists no
-buildable image.
+Task 5 defines the capless, static network-adapter image. Its ignored `build/`
+directory is produced with the runner context by:
+
+```sh
+scripts/prepare-task5-images.sh --generation <nonzero-integer>
+```
+
+The deny-all `.dockerignore` admits only this Dockerfile and the final static
+Linux binary. A referenced context-audit stage checks the effective Docker
+context, and the final `scratch` image contains only the binary, required empty
+tmpfs mount points, and a nonsecret audit marker. It has no environment, shell,
+package manager, or mutable default filesystem and runs as numeric UID/GID
+`65532`.
+
+Source construction does not claim Linux namespace, seccomp, peer-identity, or
+relay target-conformance; those remain later target gates.

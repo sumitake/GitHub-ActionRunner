@@ -8,6 +8,11 @@ worker/worker-configuration.d.ts
 # Local Go build/test cache artifacts
 /tmp/
 *.out
+images/runner/build/
+images/runner/.build.*
+images/network-adapter/build/
+images/network-adapter/.build.*
+images/.task5-prepare.lock/
 
 # Environment, keys, private overlay, state, databases, caches (never committed)
 .env
