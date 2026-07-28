@@ -3,9 +3,14 @@ package githubscale
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/actions/scaleset"
@@ -60,6 +65,10 @@ type ClientConfig struct {
 	// non-zero.
 	ResponseHeaderTimeout time.Duration
 
+	// MaxResponseBytes is the required maximum number of decompressed bytes
+	// any scale-set HTTP response may deliver to the pinned client.
+	MaxResponseBytes int64
+
 	// retryableHTTPClient is a test-only escape hatch letting
 	// adapter_contract_test.go substitute a fully custom retryable HTTP
 	// client (for example one whose transport dials an httptest server
@@ -72,8 +81,15 @@ type ClientConfig struct {
 // around *scaleset.Client. No exported method or field of client ever
 // returns or accepts an upstream scaleset type.
 type client struct {
-	upstream  *scaleset.Client
-	opTimeout time.Duration
+	upstream       *scaleset.Client
+	opTimeout      time.Duration
+	configScopeURL string
+	gate           *serializationGate
+
+	// probe is instance-scoped so package tests can supply synthetic build
+	// metadata without a global mutable hook. Production construction always
+	// installs the real runtime build-info Probe.
+	probe func(context.Context) (CompatibilityReport, error)
 }
 
 // NewClient constructs a Client authenticated against cfg.GitHubConfigURL.
@@ -85,6 +101,13 @@ func NewClient(cfg ClientConfig) (Client, error) {
 	}
 	if cfg.PersonalAccessToken == "" {
 		return nil, fmt.Errorf("githubscale: NewClient: PersonalAccessToken is required")
+	}
+	if cfg.MaxResponseBytes <= 0 {
+		return nil, fmt.Errorf("githubscale: NewClient: MaxResponseBytes is required")
+	}
+	configScopeURL, err := canonicalGitHubScopeURL(cfg.GitHubConfigURL)
+	if err != nil {
+		return nil, fmt.Errorf("githubscale: NewClient: %w", err)
 	}
 
 	opTimeout := cfg.OperationTimeout
@@ -100,10 +123,11 @@ func NewClient(cfg ClientConfig) (Client, error) {
 	if retryable == nil {
 		retryable = newRetryableHTTPClient(headerTimeout)
 	}
+	boundRetryableResponseBodies(retryable, cfg.MaxResponseBytes)
 
 	upstream, err := scaleset.NewClientWithPersonalAccessToken(
 		scaleset.NewClientWithPersonalAccessTokenConfig{
-			GitHubConfigURL:     cfg.GitHubConfigURL,
+			GitHubConfigURL:     configScopeURL,
 			PersonalAccessToken: cfg.PersonalAccessToken,
 			SystemInfo: scaleset.SystemInfo{
 				System:    cfg.System,
@@ -115,10 +139,192 @@ func NewClient(cfg ClientConfig) (Client, error) {
 		scaleset.WithRetryableHTTPClint(retryable),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("githubscale: NewClient: %w", err)
+		return nil, sanitizeUpstreamError(context.Background(), "NewClient: initialize upstream client", err)
 	}
 
-	return &client{upstream: upstream, opTimeout: opTimeout}, nil
+	return &client{
+		upstream:       upstream,
+		opTimeout:      opTimeout,
+		configScopeURL: configScopeURL,
+		gate:           newSerializationGate(),
+		probe:          Probe,
+	}, nil
+}
+
+// serializationGate is an adapter-owned, context-aware mutex shared by Open
+// and every Session derived from this Client. Lock order is singular: acquire
+// this gate first, then call upstream (which may take its own ordinary mutex),
+// then return from upstream before releasing this gate. Adapter code never
+// acquires the gate while holding an upstream lock and never calls one gated
+// adapter operation from another.
+type serializationGate struct {
+	token chan struct{}
+}
+
+func newSerializationGate() *serializationGate {
+	g := &serializationGate{token: make(chan struct{}, 1)}
+	g.token <- struct{}{}
+	return g
+}
+
+func (g *serializationGate) enter(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-g.token:
+		if err := ctx.Err(); err != nil {
+			g.token <- struct{}{}
+			return nil, err
+		}
+		return func() { g.token <- struct{}{} }, nil
+	}
+}
+
+// canonicalGitHubScopeURL retains the exact endpoint and organization /
+// repository / enterprise path while normalizing URL syntax that does not
+// change scope identity. It intentionally does not restrict hosts: deployment
+// policy is enforced by later configuration, while this adapter only requires
+// the Fleet and Client to name the same canonical scope.
+func canonicalGitHubScopeURL(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("invalid GitHubConfigURL: %w", err)
+	}
+	if u.Scheme == "" || u.Host == "" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("invalid GitHubConfigURL scope")
+	}
+
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	if port := u.Port(); (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		u.Host = strings.TrimSuffix(u.Host, ":"+port)
+	}
+	u.Path = "/" + strings.Trim(u.Path, "/")
+	u.RawPath = ""
+	return u.String(), nil
+}
+
+type boundedResponseBody struct {
+	body      io.ReadCloser
+	remaining int64
+	tooLarge  bool
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func newBoundedResponseBody(body io.ReadCloser, maxBytes int64) *boundedResponseBody {
+	return &boundedResponseBody{body: body, remaining: maxBytes}
+}
+
+func (b *boundedResponseBody) Read(p []byte) (int, error) {
+	if b.tooLarge {
+		return 0, ErrResponseTooLarge
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if b.remaining > 0 {
+		if int64(len(p)) > b.remaining {
+			p = p[:int(b.remaining)]
+		}
+		n, err := b.body.Read(p)
+		b.remaining -= int64(n)
+		return n, err
+	}
+
+	var probe [1]byte
+	n, err := b.body.Read(probe[:])
+	if n > 0 {
+		b.tooLarge = true
+		_ = b.Close()
+		return 0, ErrResponseTooLarge
+	}
+	return 0, err
+}
+
+func (b *boundedResponseBody) Close() error {
+	b.closeOnce.Do(func() {
+		b.closeErr = b.body.Close()
+	})
+	return b.closeErr
+}
+
+func boundRetryableResponseBodies(client *retryablehttp.Client, maxBytes int64) {
+	previousRequestHook := client.RequestLogHook
+	previousResponseHook := client.ResponseLogHook
+	var retryAttempt int
+	var shouldRetry bool
+
+	// actions/scaleset v0.4.0 requires HTTPClient.Transport to remain exactly
+	// *http.Transport, and it replaces CheckRetry while refreshing its admin
+	// connection. RequestLogHook is the stable point immediately before each
+	// attempt: wrap the then-current retry policy for one invocation, record
+	// its decision, and restore it before calling through.
+	client.RequestLogHook = func(logger retryablehttp.Logger, req *http.Request, attempt int) {
+		if previousRequestHook != nil {
+			previousRequestHook(logger, req, attempt)
+		}
+		retryAttempt = attempt
+		shouldRetry = false
+		checkRetry := client.CheckRetry
+		client.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
+			client.CheckRetry = checkRetry
+			shouldRetry, err = checkRetry(ctx, resp, err)
+			return shouldRetry, err
+		}
+	}
+
+	client.ResponseLogHook = func(logger retryablehttp.Logger, resp *http.Response) {
+		if resp != nil && resp.Body != nil {
+			resp.Body = newBoundedResponseBody(resp.Body, maxBytes)
+		}
+
+		// A response the pinned retry policy would retry must be drained here
+		// so an over-limit byte can stop that retry before another network
+		// attempt. Bounded retryable bodies are discarded exactly as
+		// retryablehttp would discard them; non-retryable bodies remain
+		// streaming for the pinned client's eager reader.
+		if shouldRetry && resp != nil && resp.Body != nil {
+			errorHandler := client.ErrorHandler
+			switch {
+			case retryAttempt >= client.RetryMax:
+				// retryablehttp normally converts a final retryable status
+				// into its own error before the pinned eager reader sees the
+				// response. Pass the final response through so that same
+				// bounded reader remains the single body-reading path.
+				client.ErrorHandler = func(resp *http.Response, _ error, _ int) (*http.Response, error) {
+					client.ErrorHandler = errorHandler
+					return resp, nil
+				}
+
+			default:
+				_, readErr := io.Copy(io.Discard, resp.Body)
+				if !errors.Is(readErr, ErrResponseTooLarge) {
+					_ = resp.Body.Close()
+					resp.Body = http.NoBody
+					break
+				}
+
+				retryMax := client.RetryMax
+				client.RetryMax = retryAttempt
+				client.ErrorHandler = func(resp *http.Response, _ error, _ int) (*http.Response, error) {
+					client.RetryMax = retryMax
+					client.ErrorHandler = errorHandler
+					if resp != nil && resp.Body != nil {
+						_ = resp.Body.Close()
+					}
+					return nil, ErrResponseTooLarge
+				}
+			}
+		}
+
+		if previousResponseHook != nil {
+			previousResponseHook(logger, resp)
+		}
+	}
 }
 
 // newRetryableHTTPClient builds a retryablehttp.Client whose underlying
@@ -165,29 +371,53 @@ func newRetryableHTTPClient(headerTimeout time.Duration) *retryablehttp.Client {
 
 // Open implements Client.
 func (c *client) Open(ctx context.Context, fleet Fleet) (Session, error) {
+	report, err := c.Probe(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("githubscale: open: compatibility probe: %w", err)
+	}
+	if !report.Compatible {
+		return nil, fmt.Errorf("githubscale: open: compatibility probe: %w", ErrIncompatibleModuleVersion)
+	}
+	fleetScopeURL, err := canonicalGitHubScopeURL(fleet.GitHubConfigURL)
+	if err != nil {
+		return nil, fmt.Errorf("githubscale: open: %w: %v", ErrIdentityMismatch, err)
+	}
+	if fleetScopeURL != c.configScopeURL {
+		return nil, fmt.Errorf("githubscale: open: %w: fleet scope does not match client scope", ErrIdentityMismatch)
+	}
+
 	cctx, cancel := withOperationDeadline(ctx, c.opTimeout)
 	defer cancel()
+	release, err := c.gate.enter(cctx)
+	if err != nil {
+		return nil, fmt.Errorf("githubscale: open: wait for serialization: %w", err)
+	}
+	defer release()
 
 	group, err := c.upstream.GetRunnerGroupByName(cctx, scaleset.DefaultRunnerGroup)
 	if err != nil {
-		return nil, fmt.Errorf("githubscale: open: resolve runner group: %w", err)
+		return nil, sanitizeUpstreamError(cctx, "open: resolve runner group", err)
 	}
 
 	scaleSet, err := c.upstream.GetRunnerScaleSet(cctx, group.ID, fleet.ScaleSetName)
 	if err != nil {
-		return nil, fmt.Errorf("githubscale: open: resolve scale set %q: %w", fleet.ScaleSetName, err)
+		return nil, sanitizeUpstreamError(cctx, "open: resolve scale set", err)
 	}
 	if scaleSet == nil {
 		return nil, fmt.Errorf("githubscale: open: %w: %q", ErrScaleSetNotFound, fleet.ScaleSetName)
 	}
+	if err := verifyScaleSetIdentity(scaleSet, group, fleet); err != nil {
+		return nil, fmt.Errorf("githubscale: open: %w", err)
+	}
 
-	if err := verifySingleNameLabel(scaleSet, fleet.ScaleSetName); err != nil {
+	compatibility, err := verifyScaleSetCompatibility(scaleSet, fleet.ScaleSetName)
+	if err != nil {
 		return nil, fmt.Errorf("githubscale: open: %w", err)
 	}
 
 	sessionClient, err := c.upstream.MessageSessionClient(cctx, scaleSet.ID, fleet.RepositoryAlias)
 	if err != nil {
-		return nil, fmt.Errorf("githubscale: open: create message session: %w", err)
+		return nil, sanitizeUpstreamError(cctx, "open: create message session", err)
 	}
 
 	return &v040Session{
@@ -195,14 +425,29 @@ func (c *client) Open(ctx context.Context, fleet Fleet) (Session, error) {
 		upstreamSession: sessionClient,
 		scaleSetID:      scaleSet.ID,
 		opTimeout:       c.opTimeout,
+		gate:            c.gate,
+		compatibility:   compatibility,
 	}, nil
+}
+
+func verifyScaleSetIdentity(scaleSet *scaleset.RunnerScaleSet, group *scaleset.RunnerGroup, fleet Fleet) error {
+	if group == nil || group.Name != scaleset.DefaultRunnerGroup || !group.IsDefault {
+		return fmt.Errorf("%w: resolved runner group does not match requested default group", ErrIdentityMismatch)
+	}
+	if scaleSet.Name != fleet.ScaleSetName {
+		return fmt.Errorf("%w: returned scale-set name %q does not match requested name %q", ErrIdentityMismatch, scaleSet.Name, fleet.ScaleSetName)
+	}
+	if scaleSet.RunnerGroupID != group.ID || scaleSet.RunnerGroupName != group.Name {
+		return fmt.Errorf("%w: returned scale-set runner group does not match resolved group", ErrIdentityMismatch)
+	}
+	return nil
 }
 
 // Probe implements Client. It defers entirely to the package-level Probe
 // function (probe.go), which depends only on this binary's own linked
 // module version -- never on c.upstream or any live GitHub API call.
 func (c *client) Probe(ctx context.Context) (CompatibilityReport, error) {
-	return Probe(ctx)
+	return c.probe(ctx)
 }
 
 // verifySingleNameLabel enforces the single-name-label rule this adapter
@@ -220,4 +465,26 @@ func verifySingleNameLabel(scaleSet *scaleset.RunnerScaleSet, name string) error
 		return fmt.Errorf("%w: scale set %q carries label %q, want %q", ErrLabelMismatch, name, scaleSet.Labels[0].Name, name)
 	}
 	return nil
+}
+
+// verifyScaleSetCompatibility validates every live scale-set invariant Open
+// needs before creating a message session and constructs the evidence retained
+// by the resulting Session from those same checks. Keeping validation and
+// evidence construction together prevents the reported state from drifting
+// from the state that was actually admitted.
+func verifyScaleSetCompatibility(scaleSet *scaleset.RunnerScaleSet, name string) (ScaleSetCompatibilityReport, error) {
+	if err := verifySingleNameLabel(scaleSet, name); err != nil {
+		return ScaleSetCompatibilityReport{}, err
+	}
+	if !scaleSet.RunnerSetting.DisableUpdate {
+		return ScaleSetCompatibilityReport{}, fmt.Errorf(
+			"%w: scale set %q must set RunnerSetting.disableUpdate=true",
+			ErrUpdateSettingMismatch,
+			name,
+		)
+	}
+	return ScaleSetCompatibilityReport{
+		SingleNameLabel: true,
+		DisableUpdate:   true,
+	}, nil
 }

@@ -10,11 +10,12 @@
 //
 // Scope for Task 3 is the adapter itself: Client.Open, Session's
 // Poll/Ack/Acquire/GenerateJIT/runner operations, and the startup
-// CompatibilityReport gate (probe.go). It does not implement the admission
-// broker, the reconciler, or the acquisition-policy state machine that
-// later tasks build on top of this package -- see internal/controller's
-// and internal/state's package docs for the matching scope notes on the
-// domain types those own.
+// build CompatibilityReport gate (probe.go), and the live scale-set
+// ScaleSetCompatibilityReport gate (Client.Open). It does not implement the
+// admission broker, the reconciler, or the acquisition-policy state machine
+// that later tasks build on top of this package -- see internal/controller's
+// and internal/state's package docs for the matching scope notes on the domain
+// types those own.
 package githubscale
 
 import (
@@ -43,8 +44,9 @@ type Fleet struct {
 	GitHubConfigURL string
 
 	// ScaleSetName is the exact scale-set name Open resolves and validates
-	// against the single-name-label rule (see verifySingleNameLabel in
-	// client.go) before any acquisition against it is possible.
+	// against the live compatibility rules (single name label and disabled
+	// in-place updates; see verifyScaleSetCompatibility in client.go) before
+	// any acquisition against it is possible.
 	ScaleSetName string
 }
 
@@ -197,11 +199,17 @@ type JITConfig struct {
 // License), what is actually linked into the running binary
 // (LinkedVersion), and whether they match.
 type CompatibilityReport struct {
-	ModulePath      string
-	ExpectedVersion string
-	LinkedVersion   string
-	Commit          string
-	License         string
+	ModulePath         string
+	ExpectedVersion    string
+	LinkedVersion      string
+	ExpectedSum        string
+	LinkedSum          string
+	Replaced           bool
+	ReplacementPath    string
+	ReplacementVersion string
+	ReplacementSum     string
+	Commit             string
+	License            string
 
 	// Compatible is true only when LinkedVersion == ExpectedVersion. A
 	// caller must treat any non-Compatible report as a hard startup
@@ -213,18 +221,28 @@ type CompatibilityReport struct {
 	Reason string
 }
 
+// ScaleSetCompatibilityReport is immutable-by-copy evidence captured from
+// the live runner scale set during a successful Open. It is deliberately
+// separate from CompatibilityReport: Probe proves only this binary's linked
+// module version, while this report proves the live scale-set invariants that
+// must hold before a message session can exist.
+type ScaleSetCompatibilityReport struct {
+	SingleNameLabel bool
+	DisableUpdate   bool
+}
+
 // Client is this adapter's top-level entry point: it authenticates once
 // against a GitHub config URL and, from there, opens per-fleet Sessions
 // and runs the startup compatibility Probe. No upstream scaleset type
 // appears in this interface.
 type Client interface {
 	// Open resolves fleet.ScaleSetName within the default runner group,
-	// enforces the single-name-label rule (see client.go), opens an
-	// upstream message session, and returns a Session bound to it. Open
+	// enforces the live scale-set compatibility rules (see client.go), opens
+	// an upstream message session, and returns a Session bound to it. Open
 	// returns a non-nil error -- and no Session -- for every case that must
 	// keep acquisition disabled: the scale set not found, a label mismatch,
-	// a scale-set-identity mismatch, a session-creation failure, or context
-	// cancellation.
+	// in-place updates not explicitly disabled, a scale-set-identity mismatch,
+	// a session-creation failure, or context cancellation.
 	Open(ctx context.Context, fleet Fleet) (Session, error)
 
 	// Probe runs the startup compatibility check (see probe.go) and
@@ -243,6 +261,11 @@ type Client interface {
 // timeout (see client.go's newHTTPTransport) -- neither Poll, Acquire,
 // GenerateJIT, nor any runner call can hang past those bounds.
 type Session interface {
+	// Compatibility returns the live scale-set evidence Open validated before
+	// creating this Session. The report is returned by value so callers cannot
+	// mutate the evidence retained by the Session.
+	Compatibility() ScaleSetCompatibilityReport
+
 	// Poll fetches the next batch of messages after lastMessageID, capped
 	// at maxCapacity (passed through to the upstream API unchanged). Poll
 	// never acks (deletes) the message it returns -- see Ack.
@@ -265,14 +288,23 @@ type Session interface {
 	// Runner or an empty encoded config).
 	GenerateJIT(ctx context.Context, req JITRequest) (JITConfig, error)
 
-	GetRunnerByName(ctx context.Context, name string) (RunnerRef, error)
-	GetRunner(ctx context.Context, id int64) (RunnerRef, error)
+	// Runner lookup absence is not an error: found=false with a zero RunnerRef
+	// means no matching runner exists. found=true is returned only after the
+	// upstream reference passes session/request identity validation.
+	GetRunnerByName(ctx context.Context, name string) (RunnerRef, bool, error)
+	GetRunner(ctx context.Context, id int64) (RunnerRef, bool, error)
 	RemoveRunner(ctx context.Context, id int64) error
 
 	// Close releases the upstream message session. It does not close or
 	// otherwise invalidate the Client that opened this Session.
 	Close(ctx context.Context) error
 }
+
+type upstreamTimeoutError struct{}
+
+func (upstreamTimeoutError) Error() string   { return "githubscale: upstream request timed out" }
+func (upstreamTimeoutError) Timeout() bool   { return true }
+func (upstreamTimeoutError) Temporary() bool { return true }
 
 // Sentinel errors this package returns, always wrapped with additional
 // context via fmt.Errorf's %w. Callers should compare with errors.Is.
@@ -286,14 +318,19 @@ var (
 	// equal to Fleet.ScaleSetName.
 	ErrLabelMismatch = errors.New("githubscale: scale set does not carry exactly one label matching its name")
 
+	// ErrUpdateSettingMismatch is returned by Open when the resolved scale
+	// set does not explicitly disable in-place runner updates. An omitted
+	// setting decodes false and is rejected identically.
+	ErrUpdateSettingMismatch = errors.New("githubscale: scale set does not disable in-place runner updates")
+
+	// ErrIdentityMismatch is returned whenever a Fleet, resolved scale set,
+	// or returned runner reference does not match the Client/Session/request
+	// identity it must be bound to. Identity mismatches always fail closed.
+	ErrIdentityMismatch = errors.New("githubscale: scope or returned identity mismatch")
+
 	// ErrJITShapeMismatch is returned by GenerateJIT when the upstream
 	// response is missing its runner reference or its encoded config.
 	ErrJITShapeMismatch = errors.New("githubscale: JIT runner config response is missing its runner or encoded config")
-
-	// ErrRunnerNotFound is returned by GetRunnerByName when the upstream
-	// lookup finds no matching runner (upstream's (nil, nil) "not found"
-	// response).
-	ErrRunnerNotFound = errors.New("githubscale: runner not found")
 
 	// ErrIncompatibleModuleVersion is returned by Probe when the linked
 	// actions/scaleset module version does not exactly match the pinned
@@ -304,4 +341,19 @@ var (
 	// runtime/debug.ReadBuildInfo reports no build info at all (for
 	// example, a binary built without module mode).
 	ErrBuildInfoUnavailable = errors.New("githubscale: runtime/debug.ReadBuildInfo unavailable")
+
+	// ErrUpstreamRequest is returned when a pinned upstream operation fails
+	// for a reason other than caller cancellation or a timeout. The adapter
+	// never wraps the original upstream error because actions/scaleset v0.4.0
+	// can embed arbitrary response bodies in that error.
+	ErrUpstreamRequest = errors.New("githubscale: upstream request failed")
+
+	// ErrResponseTooLarge is returned when a decompressed upstream response
+	// exceeds ClientConfig.MaxResponseBytes. No response bytes are retained in
+	// or attached to this adapter-owned sentinel.
+	ErrResponseTooLarge = errors.New("githubscale: upstream response exceeds configured byte limit")
+
+	// ErrUpstreamTimeout preserves net.Error timeout classification without
+	// retaining the upstream error or its potentially sensitive text.
+	ErrUpstreamTimeout error = upstreamTimeoutError{}
 )

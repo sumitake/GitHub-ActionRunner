@@ -40,26 +40,49 @@ func Probe(ctx context.Context) (CompatibilityReport, error) {
 		return report, fmt.Errorf("githubscale: probe: %w", ErrBuildInfoUnavailable)
 	}
 
-	linkedVersion, found := findLinkedScalesetVersion(info)
-	return evaluateCompatibility(buildinfo.Pins().Scaleset, linkedVersion, found)
+	linked, found := findLinkedScalesetModule(info)
+	return evaluateCompatibility(buildinfo.Pins().Scaleset, linked, found)
 }
 
-// findLinkedScalesetVersion searches info's dependency list for the pinned
-// scaleset module path and returns (version, true) if found, or ("",
-// false) if this binary does not link it at all -- which is itself an
-// incompatibility evaluateCompatibility reports.
-func findLinkedScalesetVersion(info *debug.BuildInfo) (version string, found bool) {
+type linkedScalesetModule struct {
+	Version string
+	Sum     string
+
+	Replaced           bool
+	ReplacementPath    string
+	ReplacementVersion string
+	ReplacementSum     string
+}
+
+// findLinkedScalesetModule retains every provenance field required by the
+// compatibility decision. In particular, a requested version is not enough:
+// debug.Module.Replace and the linked module sum are both load-bearing.
+func findLinkedScalesetModule(info *debug.BuildInfo) (linkedScalesetModule, bool) {
 	const modulePath = "github.com/actions/scaleset"
 
 	if info.Main.Path == modulePath {
-		return info.Main.Version, true
+		return linkedModuleDetails(&info.Main), true
 	}
 	for _, dep := range info.Deps {
-		if dep.Path == modulePath {
-			return dep.Version, true
+		if dep != nil && dep.Path == modulePath {
+			return linkedModuleDetails(dep), true
 		}
 	}
-	return "", false
+	return linkedScalesetModule{}, false
+}
+
+func linkedModuleDetails(module *debug.Module) linkedScalesetModule {
+	linked := linkedScalesetModule{
+		Version: module.Version,
+		Sum:     module.Sum,
+	}
+	if module.Replace != nil {
+		linked.Replaced = true
+		linked.ReplacementPath = module.Replace.Path
+		linked.ReplacementVersion = module.Replace.Version
+		linked.ReplacementSum = module.Replace.Sum
+	}
+	return linked
 }
 
 // evaluateCompatibility is the pure comparison at the heart of Probe,
@@ -67,21 +90,35 @@ func findLinkedScalesetVersion(info *debug.BuildInfo) (version string, found boo
 // input without needing a second real build pinned to a different
 // scaleset version (see adapter_contract_test.go's
 // TestProbeRejectsIncompatibleLinkedVersion).
-func evaluateCompatibility(pin buildinfo.ModulePin, linkedVersion string, found bool) (CompatibilityReport, error) {
+func evaluateCompatibility(pin buildinfo.ModulePin, linked linkedScalesetModule, found bool) (CompatibilityReport, error) {
 	report := CompatibilityReport{
-		ModulePath:      pin.Path,
-		ExpectedVersion: pin.Version,
-		LinkedVersion:   linkedVersion,
-		Commit:          pin.Commit,
-		License:         pin.License,
+		ModulePath:         pin.Path,
+		ExpectedVersion:    pin.Version,
+		LinkedVersion:      linked.Version,
+		ExpectedSum:        pin.Sum,
+		LinkedSum:          linked.Sum,
+		Replaced:           linked.Replaced,
+		ReplacementPath:    linked.ReplacementPath,
+		ReplacementVersion: linked.ReplacementVersion,
+		ReplacementSum:     linked.ReplacementSum,
+		Commit:             pin.Commit,
+		License:            pin.License,
 	}
 
 	if !found {
 		report.Reason = fmt.Sprintf("%s is not linked into this binary at all", pin.Path)
 		return report, fmt.Errorf("githubscale: probe: %w: %s", ErrIncompatibleModuleVersion, report.Reason)
 	}
-	if linkedVersion != pin.Version {
-		report.Reason = fmt.Sprintf("linked %s@%s, this adapter is pinned to @%s", pin.Path, linkedVersion, pin.Version)
+	if linked.Replaced {
+		report.Reason = fmt.Sprintf("linked %s uses a module replacement", pin.Path)
+		return report, fmt.Errorf("githubscale: probe: %w: %s", ErrIncompatibleModuleVersion, report.Reason)
+	}
+	if linked.Version != pin.Version {
+		report.Reason = fmt.Sprintf("linked %s@%s, this adapter is pinned to @%s", pin.Path, linked.Version, pin.Version)
+		return report, fmt.Errorf("githubscale: probe: %w: %s", ErrIncompatibleModuleVersion, report.Reason)
+	}
+	if linked.Sum != pin.Sum {
+		report.Reason = fmt.Sprintf("linked %s@%s has module sum %q, expected %q", pin.Path, linked.Version, linked.Sum, pin.Sum)
 		return report, fmt.Errorf("githubscale: probe: %w: %s", ErrIncompatibleModuleVersion, report.Reason)
 	}
 

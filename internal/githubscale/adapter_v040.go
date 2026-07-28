@@ -2,7 +2,9 @@ package githubscale
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/actions/scaleset"
@@ -29,17 +31,40 @@ type v040Session struct {
 	upstreamSession *scaleset.MessageSessionClient
 	scaleSetID      int
 	opTimeout       time.Duration
+	gate            *serializationGate
+	compatibility   ScaleSetCompatibilityReport
+}
+
+// Compatibility implements Session.
+func (s *v040Session) Compatibility() ScaleSetCompatibilityReport {
+	return s.compatibility
+}
+
+func (s *v040Session) beginOperation(ctx context.Context) (context.Context, func(), error) {
+	cctx, cancel := withOperationDeadline(ctx, s.opTimeout)
+	release, err := s.gate.enter(cctx)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	return cctx, func() {
+		cancel()
+		release()
+	}, nil
 }
 
 // Poll implements Session. It never acks (deletes) the message it
 // returns -- see Ack.
 func (s *v040Session) Poll(ctx context.Context, lastMessageID, maxCapacity int) (Batch, error) {
-	cctx, cancel := withOperationDeadline(ctx, s.opTimeout)
-	defer cancel()
+	cctx, done, err := s.beginOperation(ctx)
+	if err != nil {
+		return Batch{}, fmt.Errorf("githubscale: poll: wait for serialization: %w", err)
+	}
+	defer done()
 
 	msg, err := s.upstreamSession.GetMessage(cctx, lastMessageID, maxCapacity)
 	if err != nil {
-		return Batch{}, fmt.Errorf("githubscale: poll: %w", err)
+		return Batch{}, sanitizeUpstreamError(cctx, "poll", err)
 	}
 	return translateBatch(msg), nil
 }
@@ -48,23 +73,29 @@ func (s *v040Session) Poll(ctx context.Context, lastMessageID, maxCapacity int) 
 // adapter itself never calls this internally from Poll -- see
 // TestAckDisciplineNeverCalledInternallyByPoll.
 func (s *v040Session) Ack(ctx context.Context, messageID int) error {
-	cctx, cancel := withOperationDeadline(ctx, s.opTimeout)
-	defer cancel()
+	cctx, done, err := s.beginOperation(ctx)
+	if err != nil {
+		return fmt.Errorf("githubscale: ack: wait for serialization: %w", err)
+	}
+	defer done()
 
 	if err := s.upstreamSession.DeleteMessage(cctx, messageID); err != nil {
-		return fmt.Errorf("githubscale: ack: %w", err)
+		return sanitizeUpstreamError(cctx, "ack", err)
 	}
 	return nil
 }
 
 // Acquire implements Session.
 func (s *v040Session) Acquire(ctx context.Context, requestIDs []int64) ([]int64, error) {
-	cctx, cancel := withOperationDeadline(ctx, s.opTimeout)
-	defer cancel()
+	cctx, done, err := s.beginOperation(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("githubscale: acquire: wait for serialization: %w", err)
+	}
+	defer done()
 
 	ids, err := s.upstreamSession.AcquireJobs(cctx, requestIDs)
 	if err != nil {
-		return nil, fmt.Errorf("githubscale: acquire: %w", err)
+		return nil, sanitizeUpstreamError(cctx, "acquire", err)
 	}
 	return ids, nil
 }
@@ -76,8 +107,11 @@ func (s *v040Session) Acquire(ctx context.Context, requestIDs []int64) ([]int64,
 // step so no further Go-visible reference to the plaintext remains outside
 // the Secret.
 func (s *v040Session) GenerateJIT(ctx context.Context, req JITRequest) (JITConfig, error) {
-	cctx, cancel := withOperationDeadline(ctx, s.opTimeout)
-	defer cancel()
+	cctx, done, err := s.beginOperation(ctx)
+	if err != nil {
+		return JITConfig{}, fmt.Errorf("githubscale: generate jit: wait for serialization: %w", err)
+	}
+	defer done()
 
 	cfg, err := s.upstreamClient.GenerateJitRunnerConfig(
 		cctx,
@@ -88,15 +122,27 @@ func (s *v040Session) GenerateJIT(ctx context.Context, req JITRequest) (JITConfi
 		s.scaleSetID,
 	)
 	if err != nil {
-		return JITConfig{}, fmt.Errorf("githubscale: generate jit: %w", err)
+		return JITConfig{}, sanitizeUpstreamError(cctx, "generate jit", err)
 	}
-	if cfg == nil || cfg.Runner == nil || cfg.EncodedJITConfig == "" {
+	if cfg == nil {
 		return JITConfig{}, fmt.Errorf("githubscale: generate jit: %w", ErrJITShapeMismatch)
 	}
 
-	encoded := cfg.EncodedJITConfig
-	cfg.EncodedJITConfig = ""
-	secret := redaction.SecretFromBytes([]byte(encoded))
+	var secret *redaction.Secret
+	if cfg.EncodedJITConfig != "" {
+		secret = redaction.SecretFromBytes([]byte(cfg.EncodedJITConfig))
+		cfg.EncodedJITConfig = ""
+	}
+	if cfg.Runner == nil || secret == nil {
+		if secret != nil {
+			secret.Destroy()
+		}
+		return JITConfig{}, fmt.Errorf("githubscale: generate jit: %w", ErrJITShapeMismatch)
+	}
+	if err := verifyRunnerIdentity(cfg.Runner, s.scaleSetID, req.RunnerName, nil); err != nil {
+		secret.Destroy()
+		return JITConfig{}, fmt.Errorf("githubscale: generate jit: %w", err)
+	}
 
 	return JITConfig{
 		Runner:  translateRunnerRef(cfg.Runner),
@@ -104,43 +150,120 @@ func (s *v040Session) GenerateJIT(ctx context.Context, req JITRequest) (JITConfi
 	}, nil
 }
 
+// sanitizeUpstreamError preserves only closed, adapter-owned error
+// classifications. The pinned upstream client includes untrusted response
+// bodies in many error strings, so no upstream error value may cross this
+// package boundary -- even when the body is not expected to carry JIT data.
+func sanitizeUpstreamError(ctx context.Context, operation string, err error) error {
+	if errors.Is(err, ErrResponseTooLarge) {
+		return fmt.Errorf("githubscale: %s: %w", operation, ErrResponseTooLarge)
+	}
+	if ctx != nil {
+		switch ctx.Err() {
+		case context.Canceled:
+			return fmt.Errorf("githubscale: %s: %w", operation, context.Canceled)
+		case context.DeadlineExceeded:
+			return fmt.Errorf("githubscale: %s: %w", operation, context.DeadlineExceeded)
+		}
+	}
+
+	var netErr net.Error
+	switch {
+	case errors.As(err, &netErr) && netErr.Timeout():
+		return fmt.Errorf("githubscale: %s: %w", operation, ErrUpstreamTimeout)
+	default:
+		return fmt.Errorf("githubscale: %s: %w", operation, ErrUpstreamRequest)
+	}
+}
+
 // GetRunnerByName implements Session.
-func (s *v040Session) GetRunnerByName(ctx context.Context, name string) (RunnerRef, error) {
-	cctx, cancel := withOperationDeadline(ctx, s.opTimeout)
-	defer cancel()
+func (s *v040Session) GetRunnerByName(ctx context.Context, name string) (RunnerRef, bool, error) {
+	cctx, done, err := s.beginOperation(ctx)
+	if err != nil {
+		return RunnerRef{}, false, fmt.Errorf("githubscale: get runner by name: wait for serialization: %w", err)
+	}
+	defer done()
 
 	ref, err := s.upstreamClient.GetRunnerByName(cctx, name)
 	if err != nil {
-		return RunnerRef{}, fmt.Errorf("githubscale: get runner by name: %w", err)
+		if errors.Is(err, scaleset.RunnerNotFoundError) {
+			return RunnerRef{}, false, nil
+		}
+		return RunnerRef{}, false, sanitizeUpstreamError(cctx, "get runner by name", err)
 	}
 	if ref == nil {
-		return RunnerRef{}, fmt.Errorf("githubscale: get runner by name %q: %w", name, ErrRunnerNotFound)
+		return RunnerRef{}, false, nil
 	}
-	return translateRunnerRef(ref), nil
+	if err := verifyRunnerIdentity(ref, s.scaleSetID, name, nil); err != nil {
+		return RunnerRef{}, false, fmt.Errorf("githubscale: get runner by name: %w", err)
+	}
+	return translateRunnerRef(ref), true, nil
 }
 
 // GetRunner implements Session.
-func (s *v040Session) GetRunner(ctx context.Context, id int64) (RunnerRef, error) {
-	cctx, cancel := withOperationDeadline(ctx, s.opTimeout)
-	defer cancel()
+func (s *v040Session) GetRunner(ctx context.Context, id int64) (RunnerRef, bool, error) {
+	cctx, done, err := s.beginOperation(ctx)
+	if err != nil {
+		return RunnerRef{}, false, fmt.Errorf("githubscale: get runner: wait for serialization: %w", err)
+	}
+	defer done()
 
 	ref, err := s.upstreamClient.GetRunner(cctx, int(id))
 	if err != nil {
-		return RunnerRef{}, fmt.Errorf("githubscale: get runner: %w", err)
+		if errors.Is(err, scaleset.RunnerNotFoundError) {
+			return RunnerRef{}, false, nil
+		}
+		return RunnerRef{}, false, sanitizeUpstreamError(cctx, "get runner", err)
 	}
 	if ref == nil {
-		return RunnerRef{}, fmt.Errorf("githubscale: get runner %d: %w", id, ErrRunnerNotFound)
+		return RunnerRef{}, false, nil
 	}
-	return translateRunnerRef(ref), nil
+	if err := verifyRunnerIdentity(ref, s.scaleSetID, "", &id); err != nil {
+		return RunnerRef{}, false, fmt.Errorf("githubscale: get runner: %w", err)
+	}
+	return translateRunnerRef(ref), true, nil
+}
+
+func verifyRunnerIdentity(ref *scaleset.RunnerReference, scaleSetID int, expectedName string, expectedID *int64) error {
+	if ref.RunnerScaleSetID != scaleSetID {
+		return fmt.Errorf("%w: runner scale-set id %d does not match session scale-set id %d", ErrIdentityMismatch, ref.RunnerScaleSetID, scaleSetID)
+	}
+	if expectedName != "" && ref.Name != expectedName {
+		return fmt.Errorf("%w: returned runner name %q does not match requested name %q", ErrIdentityMismatch, ref.Name, expectedName)
+	}
+	if expectedID != nil && int64(ref.ID) != *expectedID {
+		return fmt.Errorf("%w: returned runner id %d does not match requested id %d", ErrIdentityMismatch, ref.ID, *expectedID)
+	}
+	return nil
 }
 
 // RemoveRunner implements Session.
 func (s *v040Session) RemoveRunner(ctx context.Context, id int64) error {
-	cctx, cancel := withOperationDeadline(ctx, s.opTimeout)
-	defer cancel()
+	cctx, done, err := s.beginOperation(ctx)
+	if err != nil {
+		return fmt.Errorf("githubscale: remove runner: wait for serialization: %w", err)
+	}
+	defer done()
+
+	ref, err := s.upstreamClient.GetRunner(cctx, int(id))
+	if err != nil {
+		if errors.Is(err, scaleset.RunnerNotFoundError) {
+			return nil
+		}
+		return sanitizeUpstreamError(cctx, "remove runner: lookup", err)
+	}
+	if ref == nil {
+		return nil
+	}
+	if err := verifyRunnerIdentity(ref, s.scaleSetID, "", &id); err != nil {
+		return fmt.Errorf("githubscale: remove runner: %w", err)
+	}
 
 	if err := s.upstreamClient.RemoveRunner(cctx, id); err != nil {
-		return fmt.Errorf("githubscale: remove runner: %w", err)
+		if errors.Is(err, scaleset.RunnerNotFoundError) {
+			return nil
+		}
+		return sanitizeUpstreamError(cctx, "remove runner: delete", err)
 	}
 	return nil
 }
@@ -149,11 +272,14 @@ func (s *v040Session) RemoveRunner(ctx context.Context, id int64) error {
 // does not close or otherwise invalidate the Client that opened this
 // Session (s.upstreamClient is left alone).
 func (s *v040Session) Close(ctx context.Context) error {
-	cctx, cancel := withOperationDeadline(ctx, s.opTimeout)
-	defer cancel()
+	cctx, done, err := s.beginOperation(ctx)
+	if err != nil {
+		return fmt.Errorf("githubscale: close: wait for serialization: %w", err)
+	}
+	defer done()
 
 	if err := s.upstreamSession.Close(cctx); err != nil {
-		return fmt.Errorf("githubscale: close: %w", err)
+		return sanitizeUpstreamError(cctx, "close", err)
 	}
 	return nil
 }

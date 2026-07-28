@@ -1,17 +1,22 @@
 package githubscale
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +25,7 @@ import (
 
 	"github.com/actions/scaleset"
 	"github.com/google/uuid"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sumitake/portable-ghar/internal/buildinfo"
 	"github.com/sumitake/portable-ghar/internal/redaction"
 )
@@ -55,9 +61,15 @@ type upstreamMessageSessionClient interface {
 	Close(ctx context.Context) error
 }
 
+type canonicalRunnerLookup interface {
+	GetRunnerByName(context.Context, string) (RunnerRef, bool, error)
+	GetRunner(context.Context, int64) (RunnerRef, bool, error)
+}
+
 var (
 	_ upstreamClient               = (*scaleset.Client)(nil)
 	_ upstreamMessageSessionClient = (*scaleset.MessageSessionClient)(nil)
+	_ canonicalRunnerLookup        = (Session)(nil)
 )
 
 func TestContractUpstreamTypesSatisfyPinnedInterfaces(t *testing.T) {
@@ -65,19 +77,19 @@ func TestContractUpstreamTypesSatisfyPinnedInterfaces(t *testing.T) {
 	// package-level var _ assertions above; this test exists so `go test
 	// -run TestContract...` (the brief's Step 2 RED command) has a runnable
 	// name, and so a future accidental removal of the var _ lines still
-	// leaves an explicit, named test asserting the same thing at runtime.
-	var c upstreamClient = &scaleset.Client{}
-	var s upstreamMessageSessionClient = &scaleset.MessageSessionClient{}
-	if c == nil || s == nil {
-		t.Fatal("unreachable: nil-checking a non-nil interface value")
-	}
+	// leaves explicit, named compile-time assignments here.
+	var _ upstreamClient = (*scaleset.Client)(nil)
+	var _ upstreamMessageSessionClient = (*scaleset.MessageSessionClient)(nil)
 }
 
 // ---------------------------------------------------------------------
 // Fixture loading helpers.
 // ---------------------------------------------------------------------
 
-const fixtureDir = "../../tests/fixtures/scaleset/v0.4.0"
+const (
+	fixtureDir           = "../../tests/fixtures/scaleset/v0.4.0"
+	testMaxResponseBytes = int64(1 << 20)
+)
 
 func readFixture(t *testing.T, name string) []byte {
 	t.Helper()
@@ -86,6 +98,26 @@ func readFixture(t *testing.T, name string) []byte {
 		t.Fatalf("readFixture(%q): %v", name, err)
 	}
 	return b
+}
+
+func jobIDFromMessageFixture(t *testing.T, name string, index int) string {
+	t.Helper()
+	var envelope struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal(readFixture(t, name), &envelope); err != nil {
+		t.Fatalf("decode message fixture %q: %v", name, err)
+	}
+	var messages []struct {
+		JobID string `json:"jobId"`
+	}
+	if err := json.Unmarshal([]byte(envelope.Body), &messages); err != nil {
+		t.Fatalf("decode message fixture %q body: %v", name, err)
+	}
+	if index < 0 || index >= len(messages) {
+		t.Fatalf("message fixture %q index %d outside %d messages", name, index, len(messages))
+	}
+	return messages[index].JobID
 }
 
 // ---------------------------------------------------------------------
@@ -100,19 +132,27 @@ type fixtureServer struct {
 	t   *testing.T
 	srv *httptest.Server
 
-	mu             sync.Mutex
-	groupBody      []byte
-	scaleSetBody   []byte
-	jitBody        []byte
-	jitStatus      int
-	runnerBody     []byte
-	runnerStatus   int
-	mqGetHandler   http.HandlerFunc
-	mqDelHandler   http.HandlerFunc
-	acquireHandler http.HandlerFunc
+	mu              sync.Mutex
+	groupBody       []byte
+	scaleSetBody    []byte
+	jitBody         []byte
+	jitStatus       int
+	jitHandler      http.HandlerFunc
+	runnerBody      []byte
+	runnerStatus    int
+	groupHandler    http.HandlerFunc
+	scaleSetHandler http.HandlerFunc
+	sessionHandler  http.HandlerFunc
+	runnerHandler   http.HandlerFunc
+	mqGetHandler    http.HandlerFunc
+	mqDelHandler    http.HandlerFunc
+	acquireHandler  http.HandlerFunc
 
 	deleteMessageCalls int32
 	acquireCalls       int32
+	requestCalls       int32
+	sessionCreateCalls int32
+	maxCapacityHeader  string
 }
 
 // newFixtureServer starts a fixture server preloaded with the "happy path"
@@ -180,6 +220,14 @@ func servePinnedMessage(body []byte) http.HandlerFunc {
 	}
 }
 
+func serveUntrustedUpstreamError(body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(body))
+	}
+}
+
 // stallDuration bounds every "server that never completes a response"
 // handler below. It must comfortably exceed every deadline-test client
 // timeout (so the client always gives up first) while staying short
@@ -215,6 +263,7 @@ func blockLongerThanClientDeadline(w http.ResponseWriter, r *http.Request) {
 }
 
 func (fs *fixtureServer) dispatch(w http.ResponseWriter, r *http.Request) {
+	atomic.AddInt32(&fs.requestCalls, 1)
 	path := r.URL.Path
 
 	// Snapshot the current handler/body configuration under the lock, then
@@ -227,8 +276,13 @@ func (fs *fixtureServer) dispatch(w http.ResponseWriter, r *http.Request) {
 	scaleSetBody := fs.scaleSetBody
 	jitBody := fs.jitBody
 	jitStatus := fs.jitStatus
+	jitHandler := fs.jitHandler
 	runnerBody := fs.runnerBody
 	runnerStatus := fs.runnerStatus
+	groupHandler := fs.groupHandler
+	scaleSetHandler := fs.scaleSetHandler
+	sessionHandler := fs.sessionHandler
+	runnerHandler := fs.runnerHandler
 	mqGetHandler := fs.mqGetHandler
 	mqDelHandler := fs.mqDelHandler
 	acquireHandler := fs.acquireHandler
@@ -248,19 +302,32 @@ func (fs *fixtureServer) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case strings.HasSuffix(path, "/_apis/runtime/runnergroups/"):
+		if groupHandler != nil {
+			groupHandler(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(groupBody)
 		return
 
 	case strings.Contains(path, "/sessions/"):
+		if sessionHandler != nil {
+			sessionHandler(w, r)
+			return
+		}
 		// DELETE closes an existing session (MessageSessionClient.Close).
 		w.WriteHeader(http.StatusNoContent)
 		return
 
 	case strings.HasSuffix(path, "/sessions"):
+		if sessionHandler != nil {
+			sessionHandler(w, r)
+			return
+		}
 		// POST creates a new session; PATCH refreshes an expired one. Both
 		// return the same session shape, pointed at this fixture server's
 		// own message-queue sub-path.
+		atomic.AddInt32(&fs.sessionCreateCalls, 1)
 		session := scaleset.RunnerScaleSetSession{
 			SessionID:               uuid.New(),
 			OwnerName:               "test-owner",
@@ -272,6 +339,10 @@ func (fs *fixtureServer) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case strings.HasSuffix(path, "/generatejitconfig"):
+		if jitHandler != nil {
+			jitHandler(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(jitStatus)
 		_, _ = w.Write(jitBody)
@@ -282,11 +353,19 @@ func (fs *fixtureServer) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case strings.HasSuffix(path, "/_apis/runtime/runnerscalesets"):
+		if scaleSetHandler != nil {
+			scaleSetHandler(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(scaleSetBody)
 		return
 
 	case strings.Contains(path, "/_apis/distributedtask/pools/0/agents"):
+		if runnerHandler != nil {
+			runnerHandler(w, r)
+			return
+		}
 		if r.Method == http.MethodDelete {
 			// RemoveRunner expects 204 No Content on success.
 			w.WriteHeader(http.StatusNoContent)
@@ -302,6 +381,9 @@ func (fs *fixtureServer) dispatch(w http.ResponseWriter, r *http.Request) {
 			mqDelHandler(w, r)
 			return
 		}
+		fs.mu.Lock()
+		fs.maxCapacityHeader = r.Header.Get(scaleset.HeaderScaleSetMaxCapacity)
+		fs.mu.Unlock()
 		mqGetHandler(w, r)
 		return
 
@@ -331,25 +413,59 @@ func fakeAdminToken(expiresAt time.Time) string {
 
 func newTestClient(t *testing.T, fs *fixtureServer, opTimeout, headerTimeout time.Duration) Client {
 	t.Helper()
+	return newTestClientWithRetryMax(t, fs, opTimeout, headerTimeout, 4)
+}
+
+func newTestClientWithRetryMax(t *testing.T, fs *fixtureServer, opTimeout, headerTimeout time.Duration, retryMax int) Client {
+	t.Helper()
+	return newTestClientWithResponseLimit(t, fs, opTimeout, headerTimeout, testMaxResponseBytes, retryMax)
+}
+
+func newTestClientWithResponseLimit(
+	t *testing.T,
+	fs *fixtureServer,
+	opTimeout, headerTimeout time.Duration,
+	maxResponseBytes int64,
+	retryMax int,
+) Client {
+	t.Helper()
+	retryable := newRetryableHTTPClient(headerTimeout)
+	retryable.RetryMax = retryMax
+	retryable.RetryWaitMin = time.Millisecond
+	retryable.RetryWaitMax = time.Millisecond
 	c, err := NewClient(ClientConfig{
 		GitHubConfigURL:       fs.configURL("owner/repository"),
 		PersonalAccessToken:   "placeholder-pat-token",
 		System:                "portable-ghar-test",
 		OperationTimeout:      opTimeout,
 		ResponseHeaderTimeout: headerTimeout,
-		retryableHTTPClient:   newRetryableHTTPClient(headerTimeout),
+		MaxResponseBytes:      maxResponseBytes,
+		retryableHTTPClient:   retryable,
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
+	forceCompatibleProbe(t, c)
 	return c
+}
+
+func forceCompatibleProbe(t *testing.T, c Client) {
+	t.Helper()
+	impl, ok := c.(*client)
+	if !ok {
+		t.Fatalf("test client implementation = %T, want *client", c)
+	}
+	impl.probe = func(context.Context) (CompatibilityReport, error) {
+		return CompatibilityReport{Compatible: true}, nil
+	}
 }
 
 func openTestSession(t *testing.T, c Client) Session {
 	t.Helper()
+	impl := c.(*client)
 	sess, err := c.Open(context.Background(), Fleet{
 		RepositoryAlias: "example-fleet",
-		GitHubConfigURL: "https://github.com/owner/repository",
+		GitHubConfigURL: impl.configScopeURL,
 		ScaleSetName:    "example-scaleset",
 	})
 	if err != nil {
@@ -397,8 +513,8 @@ func TestTranslateBatchAllFourMessageTypes(t *testing.T) {
 	if offer.RunnerRequestID != 9001 {
 		t.Errorf("Offer.RunnerRequestID = %d, want 9001", offer.RunnerRequestID)
 	}
-	if offer.JobID != "00000000-0000-4000-8000-000000000001" {
-		t.Errorf("Offer.JobID = %q, want the fixture's job 1 GUID", offer.JobID)
+	if want := jobIDFromMessageFixture(t, "message_batch_full.json", 0); offer.JobID != want {
+		t.Errorf("Offer.JobID = %q, want fixture value %q", offer.JobID, want)
 	}
 	if offer.AcquireJobURL == "" {
 		t.Error("Offer.AcquireJobURL is empty, want the fixture's synthetic TEST-NET-2 URL")
@@ -448,6 +564,22 @@ func TestNilPollWhenNoMessageAvailable(t *testing.T) {
 	}
 	if len(batch.Offers)+len(batch.Assigned)+len(batch.Started)+len(batch.Completed) != 0 {
 		t.Fatalf("Poll: empty batch carries non-empty event slices: %+v", batch)
+	}
+}
+
+func TestPollPassesExactMaxCapacityHeader(t *testing.T) {
+	fs := newFixtureServer(t)
+	c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+	sess := openTestSession(t, c)
+
+	if _, err := sess.Poll(context.Background(), 0, 37); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	fs.mu.Lock()
+	got := fs.maxCapacityHeader
+	fs.mu.Unlock()
+	if got != "37" {
+		t.Fatalf("%s = %q, want exact value %q", scaleset.HeaderScaleSetMaxCapacity, got, "37")
 	}
 }
 
@@ -553,7 +685,7 @@ func TestSingleNameLabelRule(t *testing.T) {
 			c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
 			sess, err := c.Open(context.Background(), Fleet{
 				RepositoryAlias: "example-fleet",
-				GitHubConfigURL: "https://github.com/owner/repository",
+				GitHubConfigURL: fs.configURL("owner/repository"),
 				ScaleSetName:    "example-scaleset",
 			})
 
@@ -575,6 +707,84 @@ func TestSingleNameLabelRule(t *testing.T) {
 	}
 }
 
+func TestOpenRequiresDisableUpdateAndCapturesCompatibility(t *testing.T) {
+	explicitTrue := true
+	explicitFalse := false
+	cases := []struct {
+		name        string
+		disable     *bool
+		wantOpen    bool
+		wantSession ScaleSetCompatibilityReport
+	}{
+		{
+			name:        "explicit true accepts and captures live evidence",
+			disable:     &explicitTrue,
+			wantOpen:    true,
+			wantSession: ScaleSetCompatibilityReport{SingleNameLabel: true, DisableUpdate: true},
+		},
+		{
+			name:     "explicit false rejects",
+			disable:  &explicitFalse,
+			wantOpen: false,
+		},
+		{
+			name:     "omitted setting rejects",
+			disable:  nil,
+			wantOpen: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := newFixtureServer(t)
+			fs.scaleSetBody = withScaleSetDisableUpdate(t, fs.scaleSetBody, tc.disable)
+			c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+
+			sess, err := c.Open(context.Background(), Fleet{
+				RepositoryAlias: "example-fleet",
+				GitHubConfigURL: fs.configURL("owner/repository"),
+				ScaleSetName:    "example-scaleset",
+			})
+
+			if tc.wantOpen {
+				if err != nil {
+					t.Fatalf("Open: unexpected error: %v", err)
+				}
+				if sess == nil {
+					t.Fatal("Open: returned a nil session")
+				}
+				t.Cleanup(func() { _ = sess.Close(context.Background()) })
+
+				got := sess.Compatibility()
+				if got != tc.wantSession {
+					t.Fatalf("Compatibility = %+v, want %+v", got, tc.wantSession)
+				}
+
+				got.SingleNameLabel = false
+				got.DisableUpdate = false
+				if second := sess.Compatibility(); second != tc.wantSession {
+					t.Fatalf("Compatibility after mutating returned copy = %+v, want immutable %+v", second, tc.wantSession)
+				}
+				return
+			}
+
+			if sess != nil {
+				_ = sess.Close(context.Background())
+				t.Error("Open: returned a session when in-place runner updates were not disabled")
+			}
+			if err == nil {
+				t.Fatal("Open: got nil error, want an update-setting rejection")
+			}
+			if !errors.Is(err, ErrUpdateSettingMismatch) {
+				t.Fatalf("Open: err = %v, want it to wrap ErrUpdateSettingMismatch", err)
+			}
+			if got := atomic.LoadInt32(&fs.sessionCreateCalls); got != 0 {
+				t.Fatalf("Open: created %d message sessions before rejecting the update setting, want 0", got)
+			}
+		})
+	}
+}
+
 func TestScaleSetNotFoundRejectsOpen(t *testing.T) {
 	fs := newFixtureServer(t)
 	fs.scaleSetBody = []byte(`{"count":0,"value":[]}`)
@@ -582,7 +792,7 @@ func TestScaleSetNotFoundRejectsOpen(t *testing.T) {
 	c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
 	_, err := c.Open(context.Background(), Fleet{
 		RepositoryAlias: "example-fleet",
-		GitHubConfigURL: "https://github.com/owner/repository",
+		GitHubConfigURL: fs.configURL("owner/repository"),
 		ScaleSetName:    "example-scaleset",
 	})
 	if err == nil {
@@ -593,108 +803,780 @@ func TestScaleSetNotFoundRejectsOpen(t *testing.T) {
 	}
 }
 
+func TestFleetScopeMismatchRejectedBeforeNetwork(t *testing.T) {
+	fs := newFixtureServer(t)
+	c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+
+	sess, err := c.Open(context.Background(), Fleet{
+		RepositoryAlias: "example-fleet",
+		GitHubConfigURL: "https://example.invalid/owner/repository",
+		ScaleSetName:    "example-scaleset",
+	})
+	if sess != nil {
+		_ = sess.Close(context.Background())
+		t.Error("Open: returned a session for a Fleet in a different GitHub scope")
+	}
+	if err == nil {
+		t.Error("Open: got nil error for a Fleet in a different GitHub scope")
+	}
+	if !errors.Is(err, ErrIdentityMismatch) {
+		t.Errorf("Open: err = %v, want ErrIdentityMismatch", err)
+	}
+	if got := atomic.LoadInt32(&fs.requestCalls); got != 0 {
+		t.Errorf("Open: performed %d network requests before rejecting a Fleet scope mismatch, want 0", got)
+	}
+}
+
+func TestFleetScopeCanonicalizationAcceptsSameScope(t *testing.T) {
+	fs := newFixtureServer(t)
+	c, err := NewClient(ClientConfig{
+		GitHubConfigURL:       fs.configURL("owner/repository") + "/",
+		PersonalAccessToken:   "placeholder-pat-token",
+		System:                "portable-ghar-test",
+		OperationTimeout:      5 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+		MaxResponseBytes:      testMaxResponseBytes,
+		retryableHTTPClient:   newRetryableHTTPClient(5 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	forceCompatibleProbe(t, c)
+
+	sess, err := c.Open(context.Background(), Fleet{
+		RepositoryAlias: "example-fleet",
+		GitHubConfigURL: fs.configURL("owner/repository"),
+		ScaleSetName:    "example-scaleset",
+	})
+	if err != nil {
+		t.Fatalf("Open: canonical-equivalent scopes were rejected: %v", err)
+	}
+	if sess == nil {
+		t.Fatal("Open: canonical-equivalent scopes returned a nil session")
+	}
+	if err := sess.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestCanonicalGitHubScopeURLNormalizesDefaultPorts(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "https default",
+			raw:  "HTTPS://EXAMPLE.COM:443/owner/repository/",
+			want: "https://example.com/owner/repository",
+		},
+		{
+			name: "http default",
+			raw:  "HTTP://EXAMPLE.COM:80/owner/repository/",
+			want: "http://example.com/owner/repository",
+		},
+		{
+			name: "non-default preserved",
+			raw:  "https://EXAMPLE.COM:8443/owner/repository/",
+			want: "https://example.com:8443/owner/repository",
+		},
+		{
+			name: "bracketed ipv6 https default",
+			raw:  "HTTPS://[2001:DB8::1]:443/owner/repository/",
+			want: "https://[2001:db8::1]/owner/repository",
+		},
+		{
+			name: "bracketed ipv6 non-default preserved",
+			raw:  "https://[2001:DB8::1]:8443/owner/repository/",
+			want: "https://[2001:db8::1]:8443/owner/repository",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := canonicalGitHubScopeURL(tc.raw)
+			if err != nil {
+				t.Fatalf("canonicalGitHubScopeURL(%q): %v", tc.raw, err)
+			}
+			if got != tc.want {
+				t.Fatalf("canonicalGitHubScopeURL(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNewClientRequiresMaxResponseBytes(t *testing.T) {
+	_, err := NewClient(ClientConfig{
+		GitHubConfigURL:     "https://github.com/owner/repository",
+		PersonalAccessToken: "placeholder-pat-token",
+	})
+	if err == nil {
+		t.Fatal("NewClient: got nil error without MaxResponseBytes, want required bound rejection")
+	}
+	if !strings.Contains(err.Error(), "MaxResponseBytes is required") {
+		t.Fatalf("NewClient: err = %q, want closed MaxResponseBytes validation", err)
+	}
+}
+
+func TestScaleSetIdentityMismatchesRejectedBeforeSession(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*scaleset.RunnerScaleSet)
+	}{
+		{
+			name: "scale set name",
+			mutate: func(set *scaleset.RunnerScaleSet) {
+				set.Name = "different-scaleset"
+			},
+		},
+		{
+			name: "runner group id",
+			mutate: func(set *scaleset.RunnerScaleSet) {
+				set.RunnerGroupID = 99
+			},
+		},
+		{
+			name: "runner group name",
+			mutate: func(set *scaleset.RunnerScaleSet) {
+				set.RunnerGroupName = "different-group"
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := newFixtureServer(t)
+			fs.scaleSetBody = mutateScaleSetFixture(t, fs.scaleSetBody, tc.mutate)
+			c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+
+			sess, err := c.Open(context.Background(), Fleet{
+				RepositoryAlias: "example-fleet",
+				GitHubConfigURL: fs.configURL("owner/repository"),
+				ScaleSetName:    "example-scaleset",
+			})
+			if sess != nil {
+				_ = sess.Close(context.Background())
+				t.Error("Open: returned a session for a mismatched scale-set identity")
+			}
+			if err == nil {
+				t.Error("Open: got nil error for a mismatched scale-set identity")
+			}
+			if !errors.Is(err, ErrIdentityMismatch) {
+				t.Errorf("Open: err = %v, want ErrIdentityMismatch", err)
+			}
+			if got := atomic.LoadInt32(&fs.sessionCreateCalls); got != 0 {
+				t.Errorf("Open: created %d message sessions for a mismatched scale-set identity, want 0", got)
+			}
+		})
+	}
+}
+
+func mutateScaleSetFixture(t *testing.T, body []byte, mutate func(*scaleset.RunnerScaleSet)) []byte {
+	t.Helper()
+	var response struct {
+		Count int                       `json:"count"`
+		Value []scaleset.RunnerScaleSet `json:"value"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode scale-set fixture: %v", err)
+	}
+	if len(response.Value) != 1 {
+		t.Fatalf("scale-set fixture contains %d values, want 1", len(response.Value))
+	}
+	mutate(&response.Value[0])
+	mutated, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("encode scale-set fixture: %v", err)
+	}
+	return mutated
+}
+
+func withScaleSetDisableUpdate(t *testing.T, body []byte, disable *bool) []byte {
+	t.Helper()
+	var response struct {
+		Count int                          `json:"count"`
+		Value []map[string]json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode scale-set fixture: %v", err)
+	}
+	if len(response.Value) != 1 {
+		t.Fatalf("scale-set fixture contains %d values, want 1", len(response.Value))
+	}
+	if disable == nil {
+		delete(response.Value[0], "RunnerSetting")
+	} else {
+		setting, err := json.Marshal(struct {
+			DisableUpdate bool `json:"disableUpdate"`
+		}{DisableUpdate: *disable})
+		if err != nil {
+			t.Fatalf("encode runner setting: %v", err)
+		}
+		response.Value[0]["RunnerSetting"] = setting
+	}
+	mutated, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("encode scale-set fixture: %v", err)
+	}
+	return mutated
+}
+
+func TestOpenRequiresCompatibleProbeBeforeNetwork(t *testing.T) {
+	fs := newFixtureServer(t)
+	c, err := NewClient(ClientConfig{
+		GitHubConfigURL:       fs.configURL("owner/repository"),
+		PersonalAccessToken:   "placeholder-pat-token",
+		System:                "portable-ghar-test",
+		OperationTimeout:      5 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+		MaxResponseBytes:      testMaxResponseBytes,
+		retryableHTTPClient:   newRetryableHTTPClient(5 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	sess, err := c.Open(context.Background(), Fleet{
+		RepositoryAlias: "example-fleet",
+		GitHubConfigURL: "https://github.com/owner/repository",
+		ScaleSetName:    "example-scaleset",
+	})
+	if sess != nil {
+		_ = sess.Close(context.Background())
+		t.Error("Open: returned a session for a build whose compatibility probe is not compatible")
+	}
+	if !errors.Is(err, ErrIncompatibleModuleVersion) {
+		t.Errorf("Open: err = %v, want ErrIncompatibleModuleVersion", err)
+	}
+	if got := atomic.LoadInt32(&fs.requestCalls); got != 0 {
+		t.Errorf("Open: performed %d network requests before obtaining a compatible probe result, want 0", got)
+	}
+}
+
+func TestOpenProbeFailureModesReturnNoSessionBeforeNetwork(t *testing.T) {
+	errSyntheticProbe := errors.New("synthetic probe failure")
+	cases := []struct {
+		name    string
+		probe   func(context.Context) (CompatibilityReport, error)
+		wantErr error
+	}{
+		{
+			name: "probe error",
+			probe: func(context.Context) (CompatibilityReport, error) {
+				return CompatibilityReport{}, errSyntheticProbe
+			},
+			wantErr: errSyntheticProbe,
+		},
+		{
+			name: "incompatible report without probe error",
+			probe: func(context.Context) (CompatibilityReport, error) {
+				return CompatibilityReport{Compatible: false, Reason: "synthetic mismatch"}, nil
+			},
+			wantErr: ErrIncompatibleModuleVersion,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := newFixtureServer(t)
+			c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+			c.(*client).probe = tc.probe
+
+			sess, err := c.Open(context.Background(), Fleet{
+				RepositoryAlias: "example-fleet",
+				GitHubConfigURL: "https://github.com/owner/repository",
+				ScaleSetName:    "example-scaleset",
+			})
+			if sess != nil {
+				_ = sess.Close(context.Background())
+				t.Error("Open: returned a session after a failed compatibility probe")
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("Open: err = %v, want %v", err, tc.wantErr)
+			}
+			if got := atomic.LoadInt32(&fs.requestCalls); got != 0 {
+				t.Errorf("Open: performed %d network requests after a failed compatibility probe, want 0", got)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------
 // Deadline / cancellation: prove Poll, Acquire, and GenerateJIT never
 // hang against a server that never completes a response.
 // ---------------------------------------------------------------------
 
-// deadlineTestBudget is how long the CLIENT side of a deadline test may
-// take before we consider it "hung." It must comfortably exceed
-// opTimeout/headerTimeout below (so normal retries/backoff have room) but
-// stay far under stallDuration's server-side bound would ever require.
-const deadlineTestBudget = 3 * time.Second
+const operationReturnBound = 250 * time.Millisecond
 
-func TestDeadlineExceededNeverHangs(t *testing.T) {
-	const opTimeout = 100 * time.Millisecond
-	const headerTimeout = 40 * time.Millisecond
-
-	t.Run("Poll", func(t *testing.T) {
-		fs := newFixtureServer(t)
-		fs.mqGetHandler = blockLongerThanClientDeadline
-
-		c := newTestClient(t, fs, opTimeout, headerTimeout)
-		sess := openTestSession(t, c)
-
-		start := time.Now()
-		_, err := sess.Poll(context.Background(), 0, 10)
-		elapsed := time.Since(start)
-
-		if err == nil {
-			t.Fatal("Poll against a stalling server: got nil error, want a deadline error")
-		}
-		if elapsed > deadlineTestBudget {
-			t.Fatalf("Poll took %s, want it bounded well under the %s test budget", elapsed, deadlineTestBudget)
-		}
-	})
-
-	t.Run("Acquire", func(t *testing.T) {
-		fs := newFixtureServer(t)
-		fs.acquireHandler = blockLongerThanClientDeadline
-
-		c := newTestClient(t, fs, opTimeout, headerTimeout)
-		sess := openTestSession(t, c)
-
-		start := time.Now()
-		_, err := sess.Acquire(context.Background(), []int64{9001})
-		elapsed := time.Since(start)
-
-		if err == nil {
-			t.Fatal("Acquire against a stalling server: got nil error, want a deadline error")
-		}
-		if elapsed > deadlineTestBudget {
-			t.Fatalf("Acquire took %s, want it bounded well under the %s test budget", elapsed, deadlineTestBudget)
-		}
-	})
-
-	t.Run("GenerateJIT", func(t *testing.T) {
-		// generatejitconfig has no dedicated fixtureServer field to swap
-		// (unlike mqGetHandler/acquireHandler), so this subtest wraps a
-		// second, dedicated server's whole dispatcher instead.
-		fs := newFixtureServer(t)
-		origDispatch := fs.srv.Config.Handler
-		fs.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasSuffix(r.URL.Path, "/generatejitconfig") {
-				blockLongerThanClientDeadline(w, r)
-				return
-			}
-			origDispatch.ServeHTTP(w, r)
-		})
-
-		c := newTestClient(t, fs, opTimeout, headerTimeout)
-		sess := openTestSession(t, c)
-
-		start := time.Now()
-		_, err := sess.GenerateJIT(context.Background(), JITRequest{RunnerName: "example-fleet-runner-0001"})
-		elapsed := time.Since(start)
-
-		if err == nil {
-			t.Fatal("GenerateJIT against a stalling server: got nil error, want a deadline error")
-		}
-		if elapsed > deadlineTestBudget {
-			t.Fatalf("GenerateJIT took %s, want it bounded well under the %s test budget", elapsed, deadlineTestBudget)
-		}
-	})
+type stallingOperation struct {
+	name  string
+	stall func(*fixtureServer)
+	call  func(context.Context, Session) error
 }
 
-func TestExplicitCancellationReturnsPromptly(t *testing.T) {
+func stallingOperations() []stallingOperation {
+	return []stallingOperation{
+		{
+			name:  "Poll",
+			stall: func(fs *fixtureServer) { fs.mqGetHandler = blockLongerThanClientDeadline },
+			call: func(ctx context.Context, sess Session) error {
+				_, err := sess.Poll(ctx, 0, 10)
+				return err
+			},
+		},
+		{
+			name:  "Acquire",
+			stall: func(fs *fixtureServer) { fs.acquireHandler = blockLongerThanClientDeadline },
+			call: func(ctx context.Context, sess Session) error {
+				_, err := sess.Acquire(ctx, []int64{9001})
+				return err
+			},
+		},
+		{
+			name:  "GenerateJIT",
+			stall: func(fs *fixtureServer) { fs.jitHandler = blockLongerThanClientDeadline },
+			call: func(ctx context.Context, sess Session) error {
+				_, err := sess.GenerateJIT(ctx, JITRequest{RunnerName: "example-fleet-runner-0001"})
+				return err
+			},
+		},
+	}
+}
+
+func TestOperationDeadlineIdentityAndBound(t *testing.T) {
+	for _, op := range stallingOperations() {
+		t.Run(op.name, func(t *testing.T) {
+			fs := newFixtureServer(t)
+			op.stall(fs)
+			sess := openTestSession(t, newTestClient(t, fs, 5*time.Second, 5*time.Second))
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+			defer cancel()
+
+			start := time.Now()
+			err := op.call(ctx, sess)
+			elapsed := time.Since(start)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("%s: err = %v, want context.DeadlineExceeded", op.name, err)
+			}
+			if elapsed > operationReturnBound {
+				t.Fatalf("%s: elapsed = %s, want <= %s", op.name, elapsed, operationReturnBound)
+			}
+		})
+	}
+}
+
+func TestOperationExplicitCancellationIdentityAndBound(t *testing.T) {
+	for _, op := range stallingOperations() {
+		t.Run(op.name, func(t *testing.T) {
+			fs := newFixtureServer(t)
+			op.stall(fs)
+			sess := openTestSession(t, newTestClient(t, fs, 5*time.Second, 5*time.Second))
+			ctx, cancel := context.WithCancel(context.Background())
+			timer := time.AfterFunc(50*time.Millisecond, cancel)
+			defer timer.Stop()
+			defer cancel()
+
+			start := time.Now()
+			err := op.call(ctx, sess)
+			elapsed := time.Since(start)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("%s: err = %v, want context.Canceled", op.name, err)
+			}
+			if elapsed > operationReturnBound {
+				t.Fatalf("%s: elapsed = %s, want <= %s", op.name, elapsed, operationReturnBound)
+			}
+		})
+	}
+}
+
+func TestTransportResponseHeaderTimeoutIsIndependent(t *testing.T) {
 	fs := newFixtureServer(t)
 	fs.mqGetHandler = blockLongerThanClientDeadline
-
-	c := newTestClient(t, fs, 30*time.Second, 30*time.Second)
-	sess := openTestSession(t, c)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(50*time.Millisecond, cancel)
+	sess := openTestSession(t, newTestClientWithRetryMax(t, fs, 5*time.Second, 50*time.Millisecond, 0))
 
 	start := time.Now()
-	_, err := sess.Poll(ctx, 0, 10)
+	_, err := sess.Poll(context.Background(), 0, 10)
 	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("Poll: got nil error after caller cancellation, want an error")
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Fatalf("Poll: err = %v, want a transport timeout error", err)
 	}
-	if elapsed > deadlineTestBudget {
-		t.Fatalf("Poll took %s after explicit cancellation, want it bounded well under %s", elapsed, deadlineTestBudget)
+	if !errors.Is(err, ErrUpstreamTimeout) {
+		t.Fatalf("Poll: err = %v, want ErrUpstreamTimeout", err)
+	}
+	if elapsed > operationReturnBound {
+		t.Fatalf("Poll response-header timeout: elapsed = %s, want <= %s", elapsed, operationReturnBound)
+	}
+}
+
+const responseBodyTestLimit = int64(1024)
+
+func paddedEmptyMessage(t *testing.T, size int) []byte {
+	t.Helper()
+	base := []byte(`{"messageId":101,"messageType":"RunnerScaleSetJobMessages","body":"[]","statistics":{}}`)
+	if len(base) > size {
+		t.Fatalf("minimal message size = %d, exceeds requested size %d", len(base), size)
+	}
+	return append(base, bytes.Repeat([]byte(" "), size-len(base))...)
+}
+
+func TestResponseBodyBoundExactLimitSucceeds(t *testing.T) {
+	fs := newFixtureServer(t)
+	body := paddedEmptyMessage(t, int(responseBodyTestLimit))
+	var calls int32
+	fs.mqGetHandler = func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}
+	sess := openTestSession(t, newTestClientWithResponseLimit(
+		t, fs, 5*time.Second, 5*time.Second, responseBodyTestLimit, 0,
+	))
+
+	batch, err := sess.Poll(context.Background(), 0, 10)
+	if err != nil {
+		t.Fatalf("Poll exact-limit response: %v", err)
+	}
+	if batch.MessageID != 101 {
+		t.Fatalf("Poll exact-limit response MessageID = %d, want 101", batch.MessageID)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("Poll exact-limit response made %d requests, want 1", got)
+	}
+}
+
+func TestResponseBodyBoundLimitPlusOneFailsClosedWithoutLeakOrRetry(t *testing.T) {
+	const jobControlled = "JOB-CONTROLLED-RESPONSE-MUST-NOT-LEAK"
+	fs := newFixtureServer(t)
+	body := append([]byte(jobControlled), bytes.Repeat([]byte("x"), int(responseBodyTestLimit)+1-len(jobControlled))...)
+	var calls int32
+	fs.mqGetHandler = func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}
+
+	retryable := newRetryableHTTPClient(5 * time.Second)
+	retryable.RetryMax = 0
+	var logs bytes.Buffer
+	c, err := NewClient(ClientConfig{
+		GitHubConfigURL:       fs.configURL("owner/repository"),
+		PersonalAccessToken:   "placeholder-pat-token",
+		System:                "portable-ghar-test",
+		OperationTimeout:      5 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+		MaxResponseBytes:      responseBodyTestLimit,
+		retryableHTTPClient:   retryable,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	forceCompatibleProbe(t, c)
+	sess := openTestSession(t, c)
+	// actions/scaleset installs its own discard logger while Open constructs
+	// the session client, so attach the capture after Open to observe Poll.
+	retryable.Logger = log.New(&logs, "", 0)
+
+	_, err = sess.Poll(context.Background(), 0, 10)
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("Poll limit-plus-one response: err = %v, want ErrResponseTooLarge", err)
+	}
+	if strings.Contains(err.Error(), jobControlled) {
+		t.Fatalf("Poll limit-plus-one error leaked response bytes: %q", err)
+	}
+	if strings.Contains(logs.String(), jobControlled) {
+		t.Fatalf("Poll limit-plus-one logs leaked response bytes: %q", logs.String())
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("Poll limit-plus-one response made %d requests, want 1", got)
+	}
+}
+
+func TestResponseBodyBoundRejectsChunkedLimitPlusOne(t *testing.T) {
+	fs := newFixtureServer(t)
+	body := paddedEmptyMessage(t, int(responseBodyTestLimit)+1)
+	var calls int32
+	fs.mqGetHandler = func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		for offset := 0; offset < len(body); offset += 73 {
+			end := offset + 73
+			if end > len(body) {
+				end = len(body)
+			}
+			_, _ = w.Write(body[offset:end])
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+	}
+	sess := openTestSession(t, newTestClientWithResponseLimit(
+		t, fs, 5*time.Second, 5*time.Second, responseBodyTestLimit, 0,
+	))
+
+	_, err := sess.Poll(context.Background(), 0, 10)
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("Poll chunked limit-plus-one response: err = %v, want ErrResponseTooLarge", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("Poll chunked limit-plus-one response made %d requests, want 1", got)
+	}
+}
+
+func TestResponseBodyBoundAppliesAfterTransparentDecompression(t *testing.T) {
+	fs := newFixtureServer(t)
+	body := paddedEmptyMessage(t, int(responseBodyTestLimit)+1)
+	var compressed bytes.Buffer
+	gz := gzip.NewWriter(&compressed)
+	if _, err := gz.Write(body); err != nil {
+		t.Fatalf("gzip response body: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip response body: %v", err)
+	}
+	if int64(compressed.Len()) >= responseBodyTestLimit {
+		t.Fatalf("compressed fixture size = %d, want below decompressed limit %d", compressed.Len(), responseBodyTestLimit)
+	}
+
+	var calls int32
+	fs.mqGetHandler = func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(compressed.Bytes())
+	}
+	sess := openTestSession(t, newTestClientWithResponseLimit(
+		t, fs, 5*time.Second, 5*time.Second, responseBodyTestLimit, 0,
+	))
+
+	_, err := sess.Poll(context.Background(), 0, 10)
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("Poll compressed expansion: err = %v, want ErrResponseTooLarge", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("Poll compressed expansion made %d requests, want 1", got)
+	}
+}
+
+func TestOversizedResponseBodyOnNonSuccessIsTypedAndNotRetried(t *testing.T) {
+	const jobControlled = "OVERSIZED-NON-SUCCESS-BODY-MUST-NOT-LEAK"
+	fs := newFixtureServer(t)
+	body := append([]byte(jobControlled), bytes.Repeat([]byte("y"), int(responseBodyTestLimit)+1-len(jobControlled))...)
+	var calls int32
+	fs.mqGetHandler = func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write(body)
+	}
+	sess := openTestSession(t, newTestClientWithResponseLimit(
+		t, fs, 5*time.Second, 5*time.Second, responseBodyTestLimit, 1,
+	))
+
+	_, err := sess.Poll(context.Background(), 0, 10)
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("Poll oversized non-success response: err = %v, want ErrResponseTooLarge", err)
+	}
+	if strings.Contains(err.Error(), jobControlled) {
+		t.Fatalf("Poll oversized non-success error leaked response bytes: %q", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("Poll oversized non-success response made %d requests, want 1", got)
+	}
+}
+
+func TestOversizedResponseBodyOnFinalRetryableAttemptIsTyped(t *testing.T) {
+	fs := newFixtureServer(t)
+	body := bytes.Repeat([]byte("z"), int(responseBodyTestLimit)+1)
+	var calls int32
+	fs.mqGetHandler = func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write(body)
+	}
+	sess := openTestSession(t, newTestClientWithResponseLimit(
+		t, fs, 5*time.Second, 5*time.Second, responseBodyTestLimit, 0,
+	))
+
+	_, err := sess.Poll(context.Background(), 0, 10)
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("Poll oversized final retryable response: err = %v, want ErrResponseTooLarge", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("Poll oversized final retryable response made %d requests, want 1", got)
+	}
+}
+
+func TestResponseBodyBoundPreservesRetryForBoundedRetryableResponse(t *testing.T) {
+	fs := newFixtureServer(t)
+	valid := paddedEmptyMessage(t, int(responseBodyTestLimit))
+	var calls int32
+	fs.mqGetHandler = func(w http.ResponseWriter, _ *http.Request) {
+		call := atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if call == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("bounded retryable response"))
+			return
+		}
+		_, _ = w.Write(valid)
+	}
+	sess := openTestSession(t, newTestClientWithResponseLimit(
+		t, fs, 5*time.Second, 5*time.Second, responseBodyTestLimit, 1,
+	))
+
+	batch, err := sess.Poll(context.Background(), 0, 10)
+	if err != nil {
+		t.Fatalf("Poll after bounded retryable response: %v", err)
+	}
+	if batch.MessageID != 101 {
+		t.Fatalf("Poll after bounded retryable response MessageID = %d, want 101", batch.MessageID)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("Poll bounded retryable response made %d requests, want 2", got)
+	}
+}
+
+func TestResponseBodyBoundRestoresRetryStateForNextOperation(t *testing.T) {
+	fs := newFixtureServer(t)
+	oversized := bytes.Repeat([]byte("z"), int(responseBodyTestLimit)+1)
+	valid := paddedEmptyMessage(t, int(responseBodyTestLimit))
+	var calls int32
+	fs.mqGetHandler = func(w http.ResponseWriter, _ *http.Request) {
+		call := atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		switch call {
+		case 1:
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write(oversized)
+		case 2:
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("bounded retryable response"))
+		default:
+			_, _ = w.Write(valid)
+		}
+	}
+	sess := openTestSession(t, newTestClientWithResponseLimit(
+		t, fs, 5*time.Second, 5*time.Second, responseBodyTestLimit, 1,
+	))
+
+	_, err := sess.Poll(context.Background(), 0, 10)
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("first Poll oversized response: err = %v, want ErrResponseTooLarge", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("first Poll made %d requests, want 1", got)
+	}
+
+	batch, err := sess.Poll(context.Background(), 0, 10)
+	if err != nil {
+		t.Fatalf("second Poll after oversized response: %v", err)
+	}
+	if batch.MessageID != 101 {
+		t.Fatalf("second Poll MessageID = %d, want 101", batch.MessageID)
+	}
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Fatalf("second Poll total requests = %d, want 3 (bounded retry then success)", got)
+	}
+}
+
+type closeTrackingReadCloser struct {
+	io.Reader
+	closeCalls int
+}
+
+func (b *closeTrackingReadCloser) Close() error {
+	b.closeCalls++
+	return nil
+}
+
+func TestResponseBodyBoundClosesUnderlyingBodyOnOverflow(t *testing.T) {
+	underlying := &closeTrackingReadCloser{Reader: strings.NewReader("four")}
+	body := newBoundedResponseBody(underlying, 3)
+	_, err := io.ReadAll(body)
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("ReadAll bounded body: err = %v, want ErrResponseTooLarge", err)
+	}
+	if underlying.closeCalls != 1 {
+		t.Fatalf("underlying Close calls after overflow = %d, want 1", underlying.closeCalls)
+	}
+	if err := body.Close(); err != nil {
+		t.Fatalf("Close bounded body: %v", err)
+	}
+	if underlying.closeCalls != 1 {
+		t.Fatalf("underlying Close calls after explicit Close = %d, want still 1", underlying.closeCalls)
+	}
+}
+
+func TestResponseBodyBoundPrecedesExistingHookAndIgnoresMisleadingContentLength(t *testing.T) {
+	underlying := &closeTrackingReadCloser{
+		Reader: strings.NewReader(strings.Repeat("x", int(responseBodyTestLimit)+1)),
+	}
+	resp := &http.Response{
+		Body:          underlying,
+		ContentLength: 1,
+	}
+	retryable := newRetryableHTTPClient(5 * time.Second)
+	var previousHookErr error
+	retryable.ResponseLogHook = func(_ retryablehttp.Logger, got *http.Response) {
+		_, previousHookErr = io.ReadAll(got.Body)
+	}
+
+	boundRetryableResponseBodies(retryable, responseBodyTestLimit)
+	retryable.ResponseLogHook(nil, resp)
+
+	if !errors.Is(previousHookErr, ErrResponseTooLarge) {
+		t.Fatalf("existing response hook read: err = %v, want ErrResponseTooLarge", previousHookErr)
+	}
+	if underlying.closeCalls != 1 {
+		t.Fatalf("underlying Close calls after misleading Content-Length overflow = %d, want 1", underlying.closeCalls)
+	}
+}
+
+func TestContextAwareSerializationGateHonorsWaitingDeadline(t *testing.T) {
+	fs := newFixtureServer(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var enterOnce sync.Once
+	var releaseOnce sync.Once
+	releasePoll := func() { releaseOnce.Do(func() { close(release) }) }
+	fs.mqGetHandler = func(http.ResponseWriter, *http.Request) {
+		enterOnce.Do(func() { close(entered) })
+		<-release
+	}
+
+	c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+	sess := openTestSession(t, c)
+	pollDone := make(chan error, 1)
+	go func() {
+		_, err := sess.Poll(context.Background(), 0, 10)
+		pollDone <- err
+	}()
+	<-entered
+
+	releaseTimer := time.AfterFunc(300*time.Millisecond, releasePoll)
+	defer releaseTimer.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := sess.Acquire(ctx, []int64{9001})
+	elapsed := time.Since(start)
+	releasePoll()
+	<-pollDone
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Acquire waiting behind Poll: err = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed > 180*time.Millisecond {
+		t.Fatalf("Acquire waited %s behind an upstream mutex, want return within 180ms", elapsed)
+	}
+	if got := atomic.LoadInt32(&fs.acquireCalls); got != 0 {
+		t.Fatalf("Acquire entered the upstream HTTP operation %d times after its waiting context expired, want 0", got)
 	}
 }
 
@@ -718,6 +1600,158 @@ func TestGenerateJITShapeMismatchRejected(t *testing.T) {
 	}
 	if cfg.Encoded != nil {
 		t.Fatal("GenerateJIT: shape-mismatch path must return a zero-value JITConfig (Encoded == nil)")
+	}
+	if strings.Contains(err.Error(), "PLACEHOLDER.JIT.SHAPE.TOKEN") {
+		t.Fatalf("GenerateJIT: shape-mismatch error leaked encoded JIT material: %q", err)
+	}
+}
+
+func TestGenerateJITErrorDoesNotLeakUpstreamResponse(t *testing.T) {
+	fs := newFixtureServer(t)
+	fs.jitStatus = http.StatusInternalServerError
+	fs.jitBody = readFixture(t, "jit_config_error.json")
+
+	c := newTestClientWithRetryMax(t, fs, 5*time.Second, 5*time.Second, 0)
+	sess := openTestSession(t, c)
+
+	_, err := sess.GenerateJIT(context.Background(), JITRequest{RunnerName: "example-fleet-runner-0001"})
+	if err == nil {
+		t.Fatal("GenerateJIT: got nil error for an upstream error response")
+	}
+	for _, forbidden := range []string{
+		"PLACEHOLDER.JIT.ERROR.TOKEN",
+		"raw response content",
+	} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("GenerateJIT: error leaked untrusted upstream response content %q: %q", forbidden, err)
+		}
+	}
+}
+
+func TestEveryUpstreamOperationSanitizesUntrustedErrorBodies(t *testing.T) {
+	const secret = "PLACEHOLDER.NONJIT.UPSTREAM.ERROR.TOKEN"
+
+	assertSanitized := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("operation returned nil error for an upstream 500 response")
+		}
+		if !errors.Is(err, ErrUpstreamRequest) {
+			t.Fatalf("error = %v, want it to wrap ErrUpstreamRequest", err)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("error leaked untrusted upstream response body: %q", err)
+		}
+	}
+
+	open := func(t *testing.T, c Client, fs *fixtureServer) error {
+		t.Helper()
+		_, err := c.Open(context.Background(), Fleet{
+			RepositoryAlias: "example-fleet",
+			GitHubConfigURL: fs.configURL("owner/repository"),
+			ScaleSetName:    "example-scaleset",
+		})
+		return err
+	}
+
+	t.Run("Open runner group", func(t *testing.T) {
+		fs := newFixtureServer(t)
+		fs.groupHandler = serveUntrustedUpstreamError(secret)
+		c := newTestClientWithRetryMax(t, fs, 5*time.Second, 5*time.Second, 0)
+		assertSanitized(t, open(t, c, fs))
+	})
+
+	t.Run("Open scale set", func(t *testing.T) {
+		fs := newFixtureServer(t)
+		fs.scaleSetHandler = serveUntrustedUpstreamError(secret)
+		c := newTestClientWithRetryMax(t, fs, 5*time.Second, 5*time.Second, 0)
+		assertSanitized(t, open(t, c, fs))
+	})
+
+	t.Run("Open message session", func(t *testing.T) {
+		fs := newFixtureServer(t)
+		fs.sessionHandler = serveUntrustedUpstreamError(secret)
+		c := newTestClientWithRetryMax(t, fs, 5*time.Second, 5*time.Second, 0)
+		assertSanitized(t, open(t, c, fs))
+	})
+
+	type sessionCase struct {
+		name      string
+		configure func(*fixtureServer)
+		call      func(Session) error
+	}
+	cases := []sessionCase{
+		{
+			name:      "Poll",
+			configure: func(fs *fixtureServer) { fs.mqGetHandler = serveUntrustedUpstreamError(secret) },
+			call: func(sess Session) error {
+				_, err := sess.Poll(context.Background(), 0, 1)
+				return err
+			},
+		},
+		{
+			name:      "Ack",
+			configure: func(fs *fixtureServer) { fs.mqDelHandler = serveUntrustedUpstreamError(secret) },
+			call:      func(sess Session) error { return sess.Ack(context.Background(), 1) },
+		},
+		{
+			name:      "Acquire",
+			configure: func(fs *fixtureServer) { fs.acquireHandler = serveUntrustedUpstreamError(secret) },
+			call: func(sess Session) error {
+				_, err := sess.Acquire(context.Background(), []int64{1})
+				return err
+			},
+		},
+		{
+			name:      "GetRunnerByName",
+			configure: func(fs *fixtureServer) { fs.runnerHandler = serveUntrustedUpstreamError(secret) },
+			call: func(sess Session) error {
+				_, _, err := sess.GetRunnerByName(context.Background(), "runner")
+				return err
+			},
+		},
+		{
+			name:      "GetRunner",
+			configure: func(fs *fixtureServer) { fs.runnerHandler = serveUntrustedUpstreamError(secret) },
+			call: func(sess Session) error {
+				_, _, err := sess.GetRunner(context.Background(), 501)
+				return err
+			},
+		},
+		{
+			name:      "RemoveRunner lookup",
+			configure: func(fs *fixtureServer) { fs.runnerHandler = serveUntrustedUpstreamError(secret) },
+			call:      func(sess Session) error { return sess.RemoveRunner(context.Background(), 501) },
+		},
+		{
+			name: "RemoveRunner delete",
+			configure: func(fs *fixtureServer) {
+				fs.runnerHandler = func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodDelete {
+						serveUntrustedUpstreamError(secret)(w, r)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write(fs.runnerBody)
+				}
+			},
+			call: func(sess Session) error { return sess.RemoveRunner(context.Background(), 501) },
+		},
+		{
+			name:      "Close",
+			configure: func(fs *fixtureServer) { fs.sessionHandler = serveUntrustedUpstreamError(secret) },
+			call:      func(sess Session) error { return sess.Close(context.Background()) },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := newFixtureServer(t)
+			c := newTestClientWithRetryMax(t, fs, 5*time.Second, 5*time.Second, 0)
+			sess := openTestSession(t, c)
+			tc.configure(fs)
+			assertSanitized(t, tc.call(sess))
+		})
 	}
 }
 
@@ -775,6 +1809,56 @@ func TestGenerateJITWrapsEncodedConfigIntoSecret(t *testing.T) {
 	cfg.Encoded.Destroy()
 }
 
+func TestGenerateJITRunnerIdentityMismatchesRejected(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*scaleset.RunnerReference)
+	}{
+		{
+			name: "runner name",
+			mutate: func(ref *scaleset.RunnerReference) {
+				ref.Name = "different-runner"
+			},
+		},
+		{
+			name: "runner scale set id",
+			mutate: func(ref *scaleset.RunnerReference) {
+				ref.RunnerScaleSetID = 99
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := newFixtureServer(t)
+			var cfg scaleset.RunnerScaleSetJitRunnerConfig
+			if err := json.Unmarshal(fs.jitBody, &cfg); err != nil {
+				t.Fatalf("decode JIT fixture: %v", err)
+			}
+			tc.mutate(cfg.Runner)
+			var err error
+			fs.jitBody, err = json.Marshal(cfg)
+			if err != nil {
+				t.Fatalf("encode JIT fixture: %v", err)
+			}
+
+			c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+			sess := openTestSession(t, c)
+			got, err := sess.GenerateJIT(context.Background(), JITRequest{RunnerName: "example-fleet-runner-0001"})
+			if got.Encoded != nil {
+				got.Encoded.Destroy()
+				t.Error("GenerateJIT: returned encoded secret material for a mismatched runner identity")
+			}
+			if err == nil {
+				t.Error("GenerateJIT: got nil error for a mismatched runner identity")
+			}
+			if !errors.Is(err, ErrIdentityMismatch) {
+				t.Errorf("GenerateJIT: err = %v, want ErrIdentityMismatch", err)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------
 // GetRunner / GetRunnerByName / RemoveRunner.
 // ---------------------------------------------------------------------
@@ -786,9 +1870,27 @@ func TestGetRunnerByNameNotFound(t *testing.T) {
 	c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
 	sess := openTestSession(t, c)
 
-	_, err := sess.GetRunnerByName(context.Background(), "does-not-exist")
-	if !errors.Is(err, ErrRunnerNotFound) {
-		t.Fatalf("GetRunnerByName: err = %v, want it to wrap ErrRunnerNotFound", err)
+	ref, found, err := sess.GetRunnerByName(context.Background(), "does-not-exist")
+	if err != nil {
+		t.Fatalf("GetRunnerByName: %v", err)
+	}
+	if found || ref != (RunnerRef{}) {
+		t.Fatalf("GetRunnerByName: ref=%+v found=%v, want zero,false,nil for absence", ref, found)
+	}
+}
+
+func TestGetRunnerByNameFound(t *testing.T) {
+	fs := newFixtureServer(t)
+	fs.runnerBody = readFixture(t, "runner_reference_list.json")
+	c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+	sess := openTestSession(t, c)
+
+	ref, found, err := sess.GetRunnerByName(context.Background(), "example-fleet-runner-0001")
+	if err != nil {
+		t.Fatalf("GetRunnerByName: %v", err)
+	}
+	if !found || ref.ID != 501 || ref.Name != "example-fleet-runner-0001" || ref.RunnerScaleSetID != 42 {
+		t.Fatalf("GetRunnerByName: ref=%+v found=%v, want the identity-valid fixture runner", ref, found)
 	}
 }
 
@@ -798,17 +1900,232 @@ func TestGetRunnerAndRemoveRunner(t *testing.T) {
 	c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
 	sess := openTestSession(t, c)
 
-	ref, err := sess.GetRunner(context.Background(), 501)
+	ref, found, err := sess.GetRunner(context.Background(), 501)
 	if err != nil {
 		t.Fatalf("GetRunner: %v", err)
 	}
-	if ref.ID != 501 || ref.Name != "example-fleet-runner-0001" {
+	if !found || ref.ID != 501 || ref.Name != "example-fleet-runner-0001" {
 		t.Fatalf("GetRunner: got %+v, want the fixture's runner", ref)
 	}
 
 	if err := sess.RemoveRunner(context.Background(), 501); err != nil {
 		t.Fatalf("RemoveRunner: %v", err)
 	}
+}
+
+func TestRemoveRunnerVerifiesExactSessionIdentityBeforeDelete(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*scaleset.RunnerReference)
+	}{
+		{
+			name: "runner id",
+			mutate: func(ref *scaleset.RunnerReference) {
+				ref.ID = 999
+			},
+		},
+		{
+			name: "runner scale set",
+			mutate: func(ref *scaleset.RunnerReference) {
+				ref.RunnerScaleSetID = 99
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := newFixtureServer(t)
+			var ref scaleset.RunnerReference
+			if err := json.Unmarshal(fs.runnerBody, &ref); err != nil {
+				t.Fatalf("decode runner fixture: %v", err)
+			}
+			tc.mutate(&ref)
+			body, err := json.Marshal(ref)
+			if err != nil {
+				t.Fatalf("encode runner fixture: %v", err)
+			}
+
+			var deleteCalls int32
+			fs.runnerHandler = func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodDelete {
+					atomic.AddInt32(&deleteCalls, 1)
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(body)
+			}
+
+			c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+			sess := openTestSession(t, c)
+			err = sess.RemoveRunner(context.Background(), 501)
+			if !errors.Is(err, ErrIdentityMismatch) {
+				t.Fatalf("RemoveRunner: err = %v, want ErrIdentityMismatch", err)
+			}
+			if got := atomic.LoadInt32(&deleteCalls); got != 0 {
+				t.Fatalf("RemoveRunner issued %d DELETE requests after identity mismatch, want 0", got)
+			}
+		})
+	}
+}
+
+func TestRemoveRunnerTreatsLookupAbsenceAsIdempotentSuccess(t *testing.T) {
+	fs := newFixtureServer(t)
+	var deleteCalls int32
+	fs.runnerHandler = func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&deleteCalls, 1)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"typeName":"AgentNotFoundException","message":"already absent"}`))
+	}
+
+	c := newTestClientWithRetryMax(t, fs, 5*time.Second, 5*time.Second, 0)
+	sess := openTestSession(t, c)
+	if err := sess.RemoveRunner(context.Background(), 501); err != nil {
+		t.Fatalf("RemoveRunner absent runner: %v, want idempotent nil", err)
+	}
+	if got := atomic.LoadInt32(&deleteCalls); got != 0 {
+		t.Fatalf("RemoveRunner issued %d DELETE requests after lookup absence, want 0", got)
+	}
+}
+
+func TestRemoveRunnerTreatsDeleteRaceAbsenceAsIdempotentSuccess(t *testing.T) {
+	fs := newFixtureServer(t)
+	var deleteCalls int32
+	fs.runnerHandler = func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&deleteCalls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"typeName":"AgentNotFoundException","message":"removed concurrently"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(fs.runnerBody)
+	}
+
+	c := newTestClientWithRetryMax(t, fs, 5*time.Second, 5*time.Second, 0)
+	sess := openTestSession(t, c)
+	if err := sess.RemoveRunner(context.Background(), 501); err != nil {
+		t.Fatalf("RemoveRunner concurrent absence: %v, want idempotent nil", err)
+	}
+	if got := atomic.LoadInt32(&deleteCalls); got != 1 {
+		t.Fatalf("RemoveRunner issued %d DELETE requests, want exactly 1", got)
+	}
+}
+
+func TestGetRunnerNotFound(t *testing.T) {
+	fs := newFixtureServer(t)
+	fs.runnerStatus = http.StatusNotFound
+	fs.runnerBody = []byte(`{"typeName":"AgentNotFoundException","message":"synthetic runner absent"}`)
+	c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+	sess := openTestSession(t, c)
+
+	ref, found, err := sess.GetRunner(context.Background(), 999)
+	if err != nil {
+		t.Fatalf("GetRunner: %v", err)
+	}
+	if found || ref != (RunnerRef{}) {
+		t.Fatalf("GetRunner: ref=%+v found=%v, want zero,false,nil for absence", ref, found)
+	}
+}
+
+func TestRunnerLookupIdentityMismatchesRejected(t *testing.T) {
+	t.Run("by name", func(t *testing.T) {
+		cases := []struct {
+			name   string
+			mutate func(*scaleset.RunnerReference)
+		}{
+			{
+				name: "returned name",
+				mutate: func(ref *scaleset.RunnerReference) {
+					ref.Name = "different-runner"
+				},
+			},
+			{
+				name: "runner scale set id",
+				mutate: func(ref *scaleset.RunnerReference) {
+					ref.RunnerScaleSetID = 99
+				},
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				fs := newFixtureServer(t)
+				var list scaleset.RunnerReferenceList
+				if err := json.Unmarshal(readFixture(t, "runner_reference_list.json"), &list); err != nil {
+					t.Fatalf("decode runner-list fixture: %v", err)
+				}
+				tc.mutate(&list.RunnerReferences[0])
+				var err error
+				fs.runnerBody, err = json.Marshal(list)
+				if err != nil {
+					t.Fatalf("encode runner-list fixture: %v", err)
+				}
+
+				c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+				sess := openTestSession(t, c)
+				_, _, err = sess.GetRunnerByName(context.Background(), "example-fleet-runner-0001")
+				if err == nil {
+					t.Error("GetRunnerByName: got nil error for a mismatched runner identity")
+				}
+				if !errors.Is(err, ErrIdentityMismatch) {
+					t.Errorf("GetRunnerByName: err = %v, want ErrIdentityMismatch", err)
+				}
+			})
+		}
+	})
+
+	t.Run("by id", func(t *testing.T) {
+		cases := []struct {
+			name   string
+			mutate func(*scaleset.RunnerReference)
+		}{
+			{
+				name: "returned id",
+				mutate: func(ref *scaleset.RunnerReference) {
+					ref.ID = 999
+				},
+			},
+			{
+				name: "runner scale set id",
+				mutate: func(ref *scaleset.RunnerReference) {
+					ref.RunnerScaleSetID = 99
+				},
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				fs := newFixtureServer(t)
+				var ref scaleset.RunnerReference
+				if err := json.Unmarshal(fs.runnerBody, &ref); err != nil {
+					t.Fatalf("decode runner fixture: %v", err)
+				}
+				tc.mutate(&ref)
+				var err error
+				fs.runnerBody, err = json.Marshal(ref)
+				if err != nil {
+					t.Fatalf("encode runner fixture: %v", err)
+				}
+
+				c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+				sess := openTestSession(t, c)
+				_, _, err = sess.GetRunner(context.Background(), 501)
+				if err == nil {
+					t.Error("GetRunner: got nil error for a mismatched runner identity")
+				}
+				if !errors.Is(err, ErrIdentityMismatch) {
+					t.Errorf("GetRunner: err = %v, want ErrIdentityMismatch", err)
+				}
+			})
+		}
+	})
 }
 
 // ---------------------------------------------------------------------
@@ -940,7 +2257,7 @@ func TestProbeRespectsCancelledContext(t *testing.T) {
 
 func TestEvaluateCompatibilityRejectsWrongVersion(t *testing.T) {
 	pin := buildinfo.Pins().Scaleset
-	report, err := evaluateCompatibility(pin, "v0.3.9", true)
+	report, err := evaluateCompatibility(pin, linkedScalesetModule{Version: "v0.3.9", Sum: pin.Sum}, true)
 	if err == nil {
 		t.Fatal("evaluateCompatibility: got nil error for a mismatched version")
 	}
@@ -960,7 +2277,7 @@ func TestEvaluateCompatibilityRejectsWrongVersion(t *testing.T) {
 
 func TestEvaluateCompatibilityRejectsMissingDependency(t *testing.T) {
 	pin := buildinfo.Pins().Scaleset
-	report, err := evaluateCompatibility(pin, "", false)
+	report, err := evaluateCompatibility(pin, linkedScalesetModule{}, false)
 	if err == nil {
 		t.Fatal("evaluateCompatibility: got nil error when the dependency is not linked at all")
 	}
@@ -974,12 +2291,152 @@ func TestEvaluateCompatibilityRejectsMissingDependency(t *testing.T) {
 
 func TestEvaluateCompatibilityAcceptsExactPin(t *testing.T) {
 	pin := buildinfo.Pins().Scaleset
-	report, err := evaluateCompatibility(pin, pin.Version, true)
+	report, err := evaluateCompatibility(pin, linkedScalesetModule{Version: pin.Version, Sum: pin.Sum}, true)
 	if err != nil {
 		t.Fatalf("evaluateCompatibility: unexpected error for an exact pin match: %v", err)
 	}
 	if !report.Compatible {
 		t.Fatalf("evaluateCompatibility: Compatible = false for an exact pin match, report = %+v", report)
+	}
+}
+
+func TestEvaluateCompatibilitySyntheticBuildInfoMatrix(t *testing.T) {
+	pin := buildinfo.Pins().Scaleset
+	cases := []struct {
+		name                string
+		info                *debug.BuildInfo
+		wantCompatible      bool
+		wantLinkedSum       string
+		wantReplaced        bool
+		wantReplacementPath string
+	}{
+		{
+			name: "exact match",
+			info: &debug.BuildInfo{Deps: []*debug.Module{{
+				Path: pin.Path, Version: pin.Version, Sum: pin.Sum,
+			}}},
+			wantCompatible: true,
+			wantLinkedSum:  pin.Sum,
+		},
+		{
+			name: "wrong version",
+			info: &debug.BuildInfo{Deps: []*debug.Module{{
+				Path: pin.Path, Version: "v0.3.9", Sum: pin.Sum,
+			}}},
+			wantLinkedSum: pin.Sum,
+		},
+		{
+			name: "missing dependency",
+			info: &debug.BuildInfo{},
+		},
+		{
+			name: "replacement",
+			info: &debug.BuildInfo{Deps: []*debug.Module{{
+				Path: pin.Path, Version: pin.Version, Sum: pin.Sum,
+				Replace: &debug.Module{
+					Path: "example.invalid/replacement", Version: pin.Version, Sum: pin.Sum,
+				},
+			}}},
+			wantLinkedSum:       pin.Sum,
+			wantReplaced:        true,
+			wantReplacementPath: "example.invalid/replacement",
+		},
+		{
+			name: "wrong sum",
+			info: &debug.BuildInfo{Deps: []*debug.Module{{
+				Path: pin.Path, Version: pin.Version, Sum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			}}},
+			wantLinkedSum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		},
+		{
+			name: "empty sum",
+			info: &debug.BuildInfo{Deps: []*debug.Module{{
+				Path: pin.Path, Version: pin.Version,
+			}}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			linked, found := findLinkedScalesetModule(tc.info)
+			report, err := evaluateCompatibility(pin, linked, found)
+			if report.ExpectedSum != pin.Sum {
+				t.Errorf("ExpectedSum = %q, want %q", report.ExpectedSum, pin.Sum)
+			}
+			if report.LinkedSum != tc.wantLinkedSum {
+				t.Errorf("LinkedSum = %q, want %q", report.LinkedSum, tc.wantLinkedSum)
+			}
+			if report.Replaced != tc.wantReplaced {
+				t.Errorf("Replaced = %v, want %v", report.Replaced, tc.wantReplaced)
+			}
+			if report.ReplacementPath != tc.wantReplacementPath {
+				t.Errorf("ReplacementPath = %q, want %q", report.ReplacementPath, tc.wantReplacementPath)
+			}
+			if tc.wantCompatible {
+				if err != nil || !report.Compatible {
+					t.Fatalf("evaluateCompatibility: report=%+v err=%v, want compatible", report, err)
+				}
+				return
+			}
+			if err == nil || report.Compatible {
+				t.Fatalf("evaluateCompatibility: report=%+v err=%v, want fail-closed incompatibility", report, err)
+			}
+		})
+	}
+}
+
+func TestOpenRejectsSyntheticCompatibilityFailuresBeforeNetwork(t *testing.T) {
+	pin := buildinfo.Pins().Scaleset
+	cases := []struct {
+		name string
+		info *debug.BuildInfo
+	}{
+		{
+			name: "wrong version",
+			info: &debug.BuildInfo{Deps: []*debug.Module{{Path: pin.Path, Version: "v0.3.9", Sum: pin.Sum}}},
+		},
+		{name: "missing dependency", info: &debug.BuildInfo{}},
+		{
+			name: "replacement",
+			info: &debug.BuildInfo{Deps: []*debug.Module{{
+				Path: pin.Path, Version: pin.Version, Sum: pin.Sum,
+				Replace: &debug.Module{Path: "example.invalid/replacement", Version: pin.Version, Sum: pin.Sum},
+			}}},
+		},
+		{
+			name: "sum mismatch",
+			info: &debug.BuildInfo{Deps: []*debug.Module{{
+				Path: pin.Path, Version: pin.Version, Sum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			}}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := newFixtureServer(t)
+			c := newTestClient(t, fs, 5*time.Second, 5*time.Second)
+			linked, found := findLinkedScalesetModule(tc.info)
+			report, probeErr := evaluateCompatibility(pin, linked, found)
+			c.(*client).probe = func(context.Context) (CompatibilityReport, error) {
+				return report, probeErr
+			}
+
+			sess, err := c.Open(context.Background(), Fleet{
+				RepositoryAlias: "example-fleet",
+				GitHubConfigURL: "https://github.com/owner/repository",
+				ScaleSetName:    "example-scaleset",
+			})
+			if sess != nil {
+				_ = sess.Close(context.Background())
+				t.Error("Open: returned a session for an incompatible synthetic build")
+			}
+			if !errors.Is(err, ErrIncompatibleModuleVersion) {
+				t.Errorf("Open: err = %v, want ErrIncompatibleModuleVersion", err)
+			}
+			if got := atomic.LoadInt32(&fs.requestCalls); got != 0 {
+				t.Errorf("Open: performed %d network requests for an incompatible synthetic build, want 0", got)
+			}
+		})
 	}
 }
 
@@ -1023,10 +2480,10 @@ func TestJITConfigEncodedFieldIsPointerForCopySafety(t *testing.T) {
 // It is safe for concurrent use (guarded by mu) so it can also be
 // exercised under `go test -race -count=20` per the brief's Step 4.
 type fakeAckSession struct {
-	mu        sync.Mutex
-	pending   *Batch
-	acked     []int
-	pollCalls int
+	mu      sync.Mutex
+	pending *Batch
+	acked   []int
+	trace   []string
 }
 
 var _ Session = (*fakeAckSession)(nil)
@@ -1036,10 +2493,14 @@ func newFakeAckSession(b Batch) *fakeAckSession {
 	return &fakeAckSession{pending: &cp}
 }
 
+func (f *fakeAckSession) Compatibility() ScaleSetCompatibilityReport {
+	return ScaleSetCompatibilityReport{SingleNameLabel: true, DisableUpdate: true}
+}
+
 func (f *fakeAckSession) Poll(ctx context.Context, lastMessageID, maxCapacity int) (Batch, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.pollCalls++
+	f.trace = append(f.trace, "Poll")
 	if f.pending == nil {
 		return Batch{Empty: true}, nil
 	}
@@ -1049,9 +2510,28 @@ func (f *fakeAckSession) Poll(ctx context.Context, lastMessageID, maxCapacity in
 func (f *fakeAckSession) Ack(ctx context.Context, messageID int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.trace = append(f.trace, "Ack")
 	f.acked = append(f.acked, messageID)
 	f.pending = nil
 	return nil
+}
+
+func (f *fakeAckSession) recordTrace(event string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.trace = append(f.trace, event)
+}
+
+func (f *fakeAckSession) traceSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.trace...)
+}
+
+func (f *fakeAckSession) resetTrace() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.trace = nil
 }
 
 func (f *fakeAckSession) ackedIDs() []int {
@@ -1068,12 +2548,12 @@ func (f *fakeAckSession) GenerateJIT(ctx context.Context, req JITRequest) (JITCo
 	return JITConfig{}, fmt.Errorf("fakeAckSession: GenerateJIT not implemented")
 }
 
-func (f *fakeAckSession) GetRunnerByName(ctx context.Context, name string) (RunnerRef, error) {
-	return RunnerRef{}, fmt.Errorf("fakeAckSession: GetRunnerByName not implemented")
+func (f *fakeAckSession) GetRunnerByName(ctx context.Context, name string) (RunnerRef, bool, error) {
+	return RunnerRef{}, false, fmt.Errorf("fakeAckSession: GetRunnerByName not implemented")
 }
 
-func (f *fakeAckSession) GetRunner(ctx context.Context, id int64) (RunnerRef, error) {
-	return RunnerRef{}, fmt.Errorf("fakeAckSession: GetRunner not implemented")
+func (f *fakeAckSession) GetRunner(ctx context.Context, id int64) (RunnerRef, bool, error) {
+	return RunnerRef{}, false, fmt.Errorf("fakeAckSession: GetRunner not implemented")
 }
 
 func (f *fakeAckSession) RemoveRunner(ctx context.Context, id int64) error {
@@ -1087,7 +2567,7 @@ func (f *fakeAckSession) Close(ctx context.Context) error {
 // processOnePoll models the discipline every real caller (a later task's
 // reconciler) must follow: Poll, then durably persist, and only call Ack
 // if persistence succeeded. It returns whether Ack was called.
-func processOnePoll(ctx context.Context, sess Session, persistOK bool) (acked bool, err error) {
+func processOnePoll(ctx context.Context, sess Session, persist func(Batch) error) (acked bool, err error) {
 	batch, err := sess.Poll(ctx, 0, 10)
 	if err != nil {
 		return false, fmt.Errorf("poll: %w", err)
@@ -1095,10 +2575,8 @@ func processOnePoll(ctx context.Context, sess Session, persistOK bool) (acked bo
 	if batch.Empty {
 		return false, fmt.Errorf("no message to process")
 	}
-	if !persistOK {
-		// Persistence failed: the caller must NOT Ack, so the message is
-		// redelivered on the next Poll.
-		return false, fmt.Errorf("simulated persistence failure")
+	if err := persist(batch); err != nil {
+		return false, fmt.Errorf("persist: %w", err)
 	}
 	if err := sess.Ack(ctx, batch.MessageID); err != nil {
 		return false, fmt.Errorf("ack: %w", err)
@@ -1112,10 +2590,17 @@ func TestAckDisciplinePersistFailureBlocksAckAndRedelivers(t *testing.T) {
 		Offers:    []Offer{{JobRef: JobRef{RunnerRequestID: 1}}},
 	})
 	ctx := context.Background()
+	errPersist := errors.New("synthetic persistence failure")
 
-	// Cycle 1: persistence fails -> zero Ack calls, message redelivered.
-	if _, err := processOnePoll(ctx, fake, false); err == nil {
-		t.Fatal("processOnePoll: expected the simulated persistence failure to propagate")
+	// Cycle 1: Poll -> persistence callback fails -> no Ack.
+	if _, err := processOnePoll(ctx, fake, func(Batch) error {
+		fake.recordTrace("persist callback")
+		return errPersist
+	}); !errors.Is(err, errPersist) {
+		t.Fatalf("processOnePoll: err = %v, want synthetic persistence failure", err)
+	}
+	if got := strings.Join(fake.traceSnapshot(), " -> "); got != "Poll -> persist callback" {
+		t.Fatalf("persistence-failure trace = %q, want %q", got, "Poll -> persist callback")
 	}
 	if got := fake.ackedIDs(); len(got) != 0 {
 		t.Fatalf("Ack calls = %v, want none after a persistence failure", got)
@@ -1128,10 +2613,16 @@ func TestAckDisciplinePersistFailureBlocksAckAndRedelivers(t *testing.T) {
 	if redelivered.Empty || redelivered.MessageID != 55 {
 		t.Fatalf("Poll after a failed persist = %+v, want message 55 redelivered", redelivered)
 	}
+	if got := strings.Join(fake.traceSnapshot(), " -> "); got != "Poll -> persist callback -> Poll" {
+		t.Fatalf("redelivery trace = %q, want %q", got, "Poll -> persist callback -> Poll")
+	}
 
-	// Cycle 2: persistence succeeds -> exactly one Ack call, for the same
-	// message ID.
-	acked, err := processOnePoll(ctx, fake, true)
+	// Cycle 2: exact success order is Poll -> persistence callback -> Ack.
+	fake.resetTrace()
+	acked, err := processOnePoll(ctx, fake, func(Batch) error {
+		fake.recordTrace("persist callback")
+		return nil
+	})
 	if err != nil {
 		t.Fatalf("processOnePoll: %v", err)
 	}
@@ -1140,6 +2631,9 @@ func TestAckDisciplinePersistFailureBlocksAckAndRedelivers(t *testing.T) {
 	}
 	if got := fake.ackedIDs(); len(got) != 1 || got[0] != 55 {
 		t.Fatalf("Ack calls = %v, want exactly [55]", got)
+	}
+	if got := strings.Join(fake.traceSnapshot(), " -> "); got != "Poll -> persist callback -> Ack" {
+		t.Fatalf("success trace = %q, want %q", got, "Poll -> persist callback -> Ack")
 	}
 
 	// No further redelivery once acked.

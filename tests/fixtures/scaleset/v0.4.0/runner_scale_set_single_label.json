@@ -9,6 +9,9 @@
       "labels": [
         { "type": "System", "name": "example-scaleset" }
       ],
+      "RunnerSetting": {
+        "disableUpdate": true
+      },
       "runnerJitConfigUrl": "https://198.51.100.10/_apis/runtime/runnerscalesets/42/generatejitconfig"
     }
   ]
