@@ -91,6 +91,10 @@ type RecoverableAssignment struct {
 // interface, not a runtime check: see TestStoreAPISurfaceRejectsSecretTypes
 // in sqlite_test.go for the automated proof.
 type Store interface {
+	// RecordMessageReceipt persists a V2 digest over the complete
+	// message-intrinsic controller envelope before any batch side effect.
+	RecordMessageReceipt(ctx context.Context, envelope controller.MessageEnvelope, persistedAt time.Time) (MessageReceipt, error)
+
 	// RecordOffer is the authoritative replay/identity boundary. It inserts a
 	// new, evidence-backed offer only when configured history reserve is
 	// available; an equal active or terminal replay is classified without a
@@ -113,6 +117,28 @@ type Store interface {
 	// outstanding again and may be retried only when its exact digest matches.
 	ObserveMessageRedelivery(ctx context.Context, repositoryAlias string, messageID int, payloadDigest [sha256.Size]byte, observedAt time.Time) error
 
+	// ListUncertainAcks returns every protected ack_started receipt so startup
+	// can account for it without cursor or absence inference.
+	ListUncertainAcks(ctx context.Context) ([]UncertainMessageReceipt, error)
+
+	// LookupEffect returns the exact bounded state for one
+	// assignment/idempotency-key/kind tuple. A key already owned by a different
+	// tuple fails closed with ErrIdentityConflict.
+	LookupEffect(ctx context.Context, key controller.AssignmentKey, idempotencyKey, kind string) (EffectRecord, error)
+
+	// ReserveActive atomically persists an exact active broker projection,
+	// stable reservation/runner-slot identity, and RECEIVED ->
+	// CAPACITY_RESERVED transition.
+	ReserveActive(ctx context.Context, key controller.AssignmentKey, projection AdmissionProjection, opaqueName string) error
+
+	// ClearAdmissionProjection removes a queued projection after a normal
+	// all-or-nothing broker refusal or after terminal broker retirement.
+	ClearAdmissionProjection(ctx context.Context, key controller.AssignmentKey) error
+
+	// BindTerminalMessage durably binds a DESTROYED assignment to an existing
+	// message receipt. The first binding is immutable.
+	BindTerminalMessage(ctx context.Context, key controller.AssignmentKey, messageID int) error
+
 	// CompactTerminal atomically inserts a digest-bound tombstone, detaches
 	// independently retained network ledgers, and deletes the full assignment
 	// graph only after every durable terminal/Ack/cleanup precondition holds.
@@ -122,13 +148,6 @@ type Store interface {
 	// Collection behavior is implemented by the later maintenance slice.
 	HistoryUsage(ctx context.Context, limits HistoryLimits) (HistoryUsage, error)
 	CollectHistory(ctx context.Context, limits HistoryLimits, now time.Time) (HistoryUsage, error)
-
-	// UpsertOffer persists offer as a new assignment at StateReceived, or
-	// returns the existing assignment's key unchanged if an assignment for
-	// the same (RepositoryAlias, RunnerRequestID) already exists. Offer
-	// identity is unique on that pair; UpsertOffer never creates a second
-	// row for the same offer.
-	UpsertOffer(ctx context.Context, offer OfferIdentity) (controller.AssignmentKey, error)
 
 	// Reserve performs the RECEIVED -> CAPACITY_RESERVED transition inside
 	// a single BEGIN IMMEDIATE transaction: it takes the write-intent lock,

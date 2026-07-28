@@ -180,9 +180,11 @@ type LiveReference struct {
 // terminal identity only after active capacity was released. Broker's public
 // Enqueue method retains its strict duplicate-error contract.
 type LiveHistory interface {
+	CheckOffer(githubscale.Offer) error
 	EnsureQueued(githubscale.Offer) error
 	EnsureQueuedBatch([]githubscale.Offer) ([]LiveReference, error)
 	Restore([]LiveReference) error
+	Reference(controller.AssignmentKey) (LiveReference, bool, error)
 	Retire(controller.AssignmentKey) error
 	HasLiveReference(controller.AssignmentKey) bool
 }

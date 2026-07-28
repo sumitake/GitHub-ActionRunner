@@ -1552,6 +1552,56 @@ func TestBrokerEnsureQueuedBatchReturnsExactActiveReplayProjection(t *testing.T)
 	}
 }
 
+func TestLiveHistoryReferenceReturnsExactQueuedAndActiveProjection(t *testing.T) {
+	clock := newFakeClock()
+	candidate := offer("repo-a", 9101, clock.Now())
+	broker := mustBroker(t, testConfig(
+		clock,
+		1,
+		Resources{MemoryBytes: 3, DurableStateBytes: 2},
+		policy("repo-a", 1, 1, EligibilityActive, SlotResources{
+			Runner:        Resources{MemoryBytes: 3},
+			DialAuthority: Resources{DurableStateBytes: 2},
+		}),
+	))
+	live := broker.(LiveHistory)
+	if err := live.EnsureQueued(candidate); err != nil {
+		t.Fatalf("EnsureQueued: %v", err)
+	}
+	key := offerKey(candidate)
+	queued, ok, err := live.Reference(key)
+	if err != nil || !ok {
+		t.Fatalf("Reference(queued) = (%+v, %v, %v), want present", queued, ok, err)
+	}
+	if queued.Key != key || queued.Phase != LiveQueued || queued.Offer.RunnerRequestID != candidate.RunnerRequestID {
+		t.Fatalf("queued reference = %+v, want exact queued identity", queued)
+	}
+
+	decisions, err := broker.Admit(clock.Now())
+	if err != nil || len(decisions) != 1 {
+		t.Fatalf("Admit = (%+v, %v), want one", decisions, err)
+	}
+	active, ok, err := live.Reference(key)
+	if err != nil || !ok {
+		t.Fatalf("Reference(active) = (%+v, %v, %v), want present", active, ok, err)
+	}
+	if active.Phase != LiveActive || active.SlotID != decisions[0].SlotID ||
+		active.FullCharge != (Resources{MemoryBytes: 3, DurableStateBytes: 2}) ||
+		active.LedgerCharge != (Resources{DurableStateBytes: 2}) ||
+		!active.LedgerEverUsed {
+		t.Fatalf("active reference = %+v, want exact active projection", active)
+	}
+
+	missing, ok, err := live.Reference(controller.AssignmentKey{
+		RepositoryAlias: "repo-a",
+		RunnerRequestID: 9999,
+	})
+	if err != nil || ok || missing.Key != (controller.AssignmentKey{}) ||
+		missing.Phase != 0 || missing.Offer.RunnerRequestID != 0 {
+		t.Fatalf("Reference(missing) = (%+v, %v, %v), want zero/false/nil", missing, ok, err)
+	}
+}
+
 func TestBrokerUnleasedOfferCannotConsumeCommittedLiveBytes(t *testing.T) {
 	clock := newFakeClock()
 	leasedOffer := offer("repo-a", 92, clock.Now())
@@ -1968,7 +2018,7 @@ func TestBrokerDecisionKeyMatchesPersistedInitialOfferIdentity(t *testing.T) {
 		Attempt:         0,
 	}
 	if got := decisions[0].Assignment; got != want {
-		t.Fatalf("Decision.Assignment = %+v, want persisted UpsertOffer key %+v", got, want)
+		t.Fatalf("Decision.Assignment = %+v, want persisted RecordOffer key %+v", got, want)
 	}
 }
 

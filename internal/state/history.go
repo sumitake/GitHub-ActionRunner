@@ -43,6 +43,52 @@ type OfferReceipt struct {
 	State       controllerState
 }
 
+// AckState is the closed durable state of one message receipt.
+type AckState uint8
+
+const (
+	AckPersisted AckState = iota + 1
+	AckStarted
+	AckRedeliveryProven
+	AckConfirmed
+)
+
+// MessageReceipt is RecordMessageReceipt's bounded result. Digest is computed
+// internally from the complete controller-owned message envelope; callers
+// never supply it.
+type MessageReceipt struct {
+	Digest   [sha256.Size]byte
+	State    AckState
+	Inserted bool
+}
+
+// UncertainMessageReceipt is one protected ack_started receipt required at
+// controller restart. The payload itself is never returned.
+type UncertainMessageReceipt struct {
+	RepositoryAlias string
+	MessageID       int
+	Digest          [sha256.Size]byte
+	StartedAt       time.Time
+}
+
+// EffectState is the closed durable state of one idempotent external effect.
+type EffectState uint8
+
+const (
+	EffectAbsent EffectState = iota + 1
+	EffectPending
+	EffectCompleted
+	EffectFailed
+)
+
+// EffectRecord is the bounded, secret-free lookup result for one exact
+// assignment/idempotency-key/kind tuple.
+type EffectRecord struct {
+	State          EffectState
+	ResultIdentity string
+	ReasonCode     string
+}
+
 // HistoryLimits contains every explicit durable-history and maintenance bound.
 // Production configuration supplies all values; this package has no defaults.
 type HistoryLimits struct {
@@ -126,6 +172,7 @@ const (
 	offerDigestDomain        = "portable-ghar.offer.v1"
 	offerPayloadDigestDomain = "portable-ghar.offer-payload.v1"
 	messageDigestDomain      = "portable-ghar.message.v1"
+	messageEnvelopeDomain    = "portable-ghar.message-envelope.v2"
 
 	historyStringStructuralBytes = uint64(16)
 	historySliceStructuralBytes  = uint64(24)
@@ -135,6 +182,11 @@ const (
 	historyRunnerSlotFixedBytes  = uint64(128)
 	historyReservationFixedBytes = uint64(96)
 	historyEffectFixedBytes      = uint64(160)
+
+	maxEffectIdentityBytes = 4096
+	maxEffectReasonBytes   = 128
+	maxEffectKindBytes     = 128
+	maxIdempotencyKeyBytes = 256
 )
 
 // Small aliases keep this file's public type declarations readable without
@@ -200,6 +252,100 @@ func CanonicalOfferPayloadDigest(offer OfferIdentity) [sha256.Size]byte {
 	var out [sha256.Size]byte
 	copy(out[:], h.Sum(nil))
 	return out
+}
+
+// CanonicalMessageEnvelopeDigest binds only fields delivered in the
+// controller-owned upstream message projection. RepositoryAlias is an outer
+// fleet namespace and is deliberately excluded, as are local clocks, policy,
+// pressure, readiness, and routing state.
+func CanonicalMessageEnvelopeDigest(envelope controller.MessageEnvelope) [sha256.Size]byte {
+	h := sha256.New()
+	_, _ = h.Write([]byte(messageEnvelopeDomain))
+	writeInt64(h, int64(envelope.MessageID))
+
+	for _, value := range []int{
+		envelope.Statistics.TotalAvailableJobs,
+		envelope.Statistics.TotalAcquiredJobs,
+		envelope.Statistics.TotalAssignedJobs,
+		envelope.Statistics.TotalRunningJobs,
+		envelope.Statistics.TotalRegisteredRunners,
+		envelope.Statistics.TotalBusyRunners,
+		envelope.Statistics.TotalIdleRunners,
+	} {
+		writeInt64(h, int64(value))
+	}
+
+	writeUint64(h, uint64(len(envelope.Offers)))
+	for _, value := range envelope.Offers {
+		writeLengthPrefixed(h, []byte("offer"))
+		writeMessageJobRef(h, value.Job)
+		writeLengthPrefixed(h, []byte(value.AcquireJobURL))
+	}
+	writeUint64(h, uint64(len(envelope.Assigned)))
+	for _, value := range envelope.Assigned {
+		writeLengthPrefixed(h, []byte("assigned"))
+		writeMessageJobRef(h, value.Job)
+	}
+	writeUint64(h, uint64(len(envelope.Started)))
+	for _, value := range envelope.Started {
+		writeLengthPrefixed(h, []byte("started"))
+		writeMessageJobRef(h, value.Job)
+		writeInt64(h, value.RunnerID)
+		writeLengthPrefixed(h, []byte(value.RunnerName))
+	}
+	writeUint64(h, uint64(len(envelope.Completed)))
+	for _, value := range envelope.Completed {
+		writeLengthPrefixed(h, []byte("completed"))
+		writeMessageJobRef(h, value.Job)
+		writeLengthPrefixed(h, []byte(value.Result))
+		writeInt64(h, value.RunnerID)
+		writeLengthPrefixed(h, []byte(value.RunnerName))
+	}
+
+	var out [sha256.Size]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+func writeMessageJobRef(
+	h interface{ Write([]byte) (int, error) },
+	ref controller.MessageJobRef,
+) {
+	writeInt64(h, ref.RunnerRequestID)
+	for _, value := range []string{
+		ref.JobID,
+		ref.RepositoryName,
+		ref.OwnerName,
+		ref.JobWorkflowRef,
+		ref.JobDisplayName,
+	} {
+		writeLengthPrefixed(h, []byte(value))
+	}
+	writeInt64(h, ref.WorkflowRunID)
+	writeLengthPrefixed(h, []byte(ref.EventName))
+	writeUint64(h, uint64(len(ref.RequestLabels)))
+	for _, label := range ref.RequestLabels {
+		writeLengthPrefixed(h, []byte(label))
+	}
+	for _, value := range []time.Time{
+		ref.QueueTime,
+		ref.ScaleSetAssignTime,
+		ref.RunnerAssignTime,
+		ref.FinishTime,
+	} {
+		writeCanonicalTime(h, value)
+	}
+}
+
+func writeCanonicalTime(h interface{ Write([]byte) (int, error) }, value time.Time) {
+	if value.IsZero() {
+		_, _ = h.Write([]byte{0})
+		return
+	}
+	_, _ = h.Write([]byte{1})
+	value = value.UTC()
+	writeInt64(h, value.Unix())
+	writeInt64(h, int64(value.Nanosecond()))
 }
 
 func writeLengthPrefixed(h interface{ Write([]byte) (int, error) }, value []byte) {
@@ -311,9 +457,13 @@ func validateOfferEvidence(offer OfferIdentity, evidence OfferEvidence) error {
 	}
 	switch evidence.Kind {
 	case EvidenceCurrentPoll:
-		if evidence.MessageID <= 0 || evidence.QueueTime.IsZero() || offer.QueueTime.IsZero() {
+		if evidence.MessageID <= 0 {
 			return ErrReplayEvidence
 		}
+		// The authenticated Poll is the journal authority. QueueTime is
+		// copied into the evidence tuple (including its zero value) so the
+		// durable payload and observation cannot diverge, but freshness is a
+		// later controller eligibility decision rather than an insert gate.
 		if !evidence.QueueTime.Equal(offer.QueueTime) {
 			return ErrReplayEvidence
 		}

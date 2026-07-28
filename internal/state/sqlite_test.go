@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -20,9 +21,9 @@ import (
 func newTestStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "controller.db")
-	s, err := Open(path)
+	s, err := OpenWithHistoryLimits(path, testHistoryLimits())
 	if err != nil {
-		t.Fatalf("Open(%q) = %v, want nil", path, err)
+		t.Fatalf("OpenWithHistoryLimits(%q) = %v, want nil", path, err)
 	}
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
@@ -30,6 +31,23 @@ func newTestStore(t *testing.T) *SQLiteStore {
 		}
 	})
 	return s
+}
+
+func recordTestOffer(
+	t *testing.T,
+	ctx context.Context,
+	s *SQLiteStore,
+	offer OfferIdentity,
+) controller.AssignmentKey {
+	t.Helper()
+	receipt, err := s.RecordOffer(ctx, offer, OfferEvidence{
+		Kind:       EvidenceSelectiveReadback,
+		ObservedAt: time.Date(2026, 7, 28, 1, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("RecordOffer() = %v, want nil", err)
+	}
+	return receipt.Key
 }
 
 var slotCounter uint32
@@ -66,14 +84,11 @@ var checkpointSteps = []checkpointStep{
 // resulting key. The assignment is left at StateCapacityReserved.
 func seedAssignment(t *testing.T, ctx context.Context, s *SQLiteStore, repositoryAlias string, runnerRequestID int64) controller.AssignmentKey {
 	t.Helper()
-	key, err := s.UpsertOffer(ctx, OfferIdentity{
+	key := recordTestOffer(t, ctx, s, OfferIdentity{
 		RepositoryAlias: repositoryAlias,
 		RunnerRequestID: runnerRequestID,
 		WorkflowJobID:   1000 + runnerRequestID,
 	})
-	if err != nil {
-		t.Fatalf("UpsertOffer() = %v, want nil", err)
-	}
 
 	opaqueName := fmt.Sprintf("slot-%s-%d", repositoryAlias, runnerRequestID)
 	if err := s.Reserve(ctx, key, opaqueName, nextCapacitySlotID(t)); err != nil {
@@ -335,6 +350,51 @@ func TestSQLiteIdempotentEffectReplay(t *testing.T) {
 	}
 	if err := s.Advance(ctx, key, controller.StateAdapterCreated); err != nil {
 		t.Fatalf("Advance() replay = %v, want nil (idempotent no-op)", err)
+	}
+}
+
+func TestSQLiteCompleteEffectRejectsZeroRowConditionalUpdate(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	key := seedAssignment(t, ctx, s, "owner/repository", 31)
+	const idempotencyKey = "owner/repository|31|0|adapter-create"
+	if began, err := s.BeginEffect(ctx, key, idempotencyKey, "adapter-create"); err != nil || !began {
+		t.Fatalf("BeginEffect() = (%v, %v), want (true, nil)", began, err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `
+		CREATE TRIGGER ignore_test_effect_completion
+		BEFORE UPDATE OF completed_at ON effects
+		WHEN OLD.idempotency_key = 'owner/repository|31|0|adapter-create'
+		BEGIN
+			SELECT RAISE(IGNORE);
+		END
+	`); err != nil {
+		t.Fatalf("create zero-row update fixture: %v", err)
+	}
+
+	result := EffectResult{
+		ResultIdentity: "adapter-container-31",
+		Column:         IdentityAdapterContainer,
+	}
+	if err := s.CompleteEffect(ctx, idempotencyKey, result); !errors.Is(err, ErrIdentityConflict) {
+		t.Fatalf("CompleteEffect(zero-row update) err = %v, want ErrIdentityConflict", err)
+	}
+
+	var completedAt, adapterContainer sql.NullString
+	if err := s.DB().QueryRowContext(ctx, `
+		SELECT e.completed_at, rs.adapter_container_id
+		FROM effects e
+		JOIN runner_slots rs ON rs.assignment_id = e.assignment_id
+		WHERE e.idempotency_key = ?
+	`, idempotencyKey).Scan(&completedAt, &adapterContainer); err != nil {
+		t.Fatalf("read zero-row completion state: %v", err)
+	}
+	if completedAt.Valid || adapterContainer.Valid {
+		t.Fatalf(
+			"zero-row effect update diverged effect/slot state: completed=%v slot=%v",
+			completedAt,
+			adapterContainer,
+		)
 	}
 }
 
@@ -610,21 +670,15 @@ func TestSQLiteReleasedColumnMatchesListenerReleaseBoundary(t *testing.T) {
 
 // --- unique offer / runner-slot keys ---------------------------------------
 
-func TestSQLiteUpsertOfferIsUniqueAndIdempotent(t *testing.T) {
+func TestSQLiteRecordOfferIsUniqueAndIdempotent(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
 	offer := OfferIdentity{RepositoryAlias: "owner/repository", RunnerRequestID: 7, WorkflowJobID: 1007}
-	key1, err := s.UpsertOffer(ctx, offer)
-	if err != nil {
-		t.Fatalf("UpsertOffer() first call = %v, want nil", err)
-	}
-	key2, err := s.UpsertOffer(ctx, offer)
-	if err != nil {
-		t.Fatalf("UpsertOffer() replay = %v, want nil", err)
-	}
+	key1 := recordTestOffer(t, ctx, s, offer)
+	key2 := recordTestOffer(t, ctx, s, offer)
 	if key1 != key2 {
-		t.Errorf("UpsertOffer() replay key = %+v, want unchanged %+v", key2, key1)
+		t.Errorf("RecordOffer() replay key = %+v, want unchanged %+v", key2, key1)
 	}
 
 	var count int
@@ -643,18 +697,20 @@ func TestSQLiteReserveRejectsDuplicateCapacitySlot(t *testing.T) {
 
 	sharedSlotID := nextCapacitySlotID(t)
 
-	keyA, err := s.UpsertOffer(ctx, OfferIdentity{RepositoryAlias: "owner/repository", RunnerRequestID: 8, WorkflowJobID: 1008})
-	if err != nil {
-		t.Fatalf("UpsertOffer(A) = %v, want nil", err)
-	}
+	keyA := recordTestOffer(t, ctx, s, OfferIdentity{
+		RepositoryAlias: "owner/repository",
+		RunnerRequestID: 8,
+		WorkflowJobID:   1008,
+	})
 	if err := s.Reserve(ctx, keyA, "slot-a", sharedSlotID); err != nil {
 		t.Fatalf("Reserve(A) = %v, want nil", err)
 	}
 
-	keyB, err := s.UpsertOffer(ctx, OfferIdentity{RepositoryAlias: "owner/repository", RunnerRequestID: 9, WorkflowJobID: 1009})
-	if err != nil {
-		t.Fatalf("UpsertOffer(B) = %v, want nil", err)
-	}
+	keyB := recordTestOffer(t, ctx, s, OfferIdentity{
+		RepositoryAlias: "owner/repository",
+		RunnerRequestID: 9,
+		WorkflowJobID:   1009,
+	})
 	if err := s.Reserve(ctx, keyB, "slot-b", sharedSlotID); err == nil {
 		t.Fatal("Reserve(B) with duplicate capacity slot id = nil, want error")
 	}
@@ -686,18 +742,20 @@ func TestSQLiteReserveRejectsDuplicateOpaqueName(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	keyA, err := s.UpsertOffer(ctx, OfferIdentity{RepositoryAlias: "owner/repository", RunnerRequestID: 10, WorkflowJobID: 1010})
-	if err != nil {
-		t.Fatalf("UpsertOffer(A) = %v, want nil", err)
-	}
+	keyA := recordTestOffer(t, ctx, s, OfferIdentity{
+		RepositoryAlias: "owner/repository",
+		RunnerRequestID: 10,
+		WorkflowJobID:   1010,
+	})
 	if err := s.Reserve(ctx, keyA, "shared-opaque-name", nextCapacitySlotID(t)); err != nil {
 		t.Fatalf("Reserve(A) = %v, want nil", err)
 	}
 
-	keyB, err := s.UpsertOffer(ctx, OfferIdentity{RepositoryAlias: "owner/repository", RunnerRequestID: 11, WorkflowJobID: 1011})
-	if err != nil {
-		t.Fatalf("UpsertOffer(B) = %v, want nil", err)
-	}
+	keyB := recordTestOffer(t, ctx, s, OfferIdentity{
+		RepositoryAlias: "owner/repository",
+		RunnerRequestID: 11,
+		WorkflowJobID:   1011,
+	})
 	if err := s.Reserve(ctx, keyB, "shared-opaque-name", nextCapacitySlotID(t)); err == nil {
 		t.Fatal("Reserve(B) with duplicate opaque name = nil, want error")
 	}
@@ -770,9 +828,9 @@ func TestSQLiteRestartFromEveryCheckpoint(t *testing.T) {
 			path := filepath.Join(dir, "controller.db")
 			ctx := context.Background()
 
-			s1, err := Open(path)
+			s1, err := OpenWithHistoryLimits(path, testHistoryLimits())
 			if err != nil {
-				t.Fatalf("Open() = %v, want nil", err)
+				t.Fatalf("OpenWithHistoryLimits() = %v, want nil", err)
 			}
 
 			key := seedAssignment(t, ctx, s1, "owner/repository", int64(200+i))
@@ -784,9 +842,9 @@ func TestSQLiteRestartFromEveryCheckpoint(t *testing.T) {
 			}
 
 			// Simulate a controller restart: reopen the same file.
-			s2, err := Open(path)
+			s2, err := OpenWithHistoryLimits(path, testHistoryLimits())
 			if err != nil {
-				t.Fatalf("Open() (restart) = %v, want nil", err)
+				t.Fatalf("OpenWithHistoryLimits() (restart) = %v, want nil", err)
 			}
 			defer func() {
 				if err := s2.Close(); err != nil {

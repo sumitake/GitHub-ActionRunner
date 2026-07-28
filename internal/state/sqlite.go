@@ -71,8 +71,8 @@ func Open(path string) (*SQLiteStore, error) {
 
 // OpenWithHistoryLimits opens the store with explicit durable-history bounds.
 // It is the only constructor that authorizes RecordOffer to insert a new
-// identity; Open remains a compatibility path whose history admission fails
-// closed because production limits have no defaults.
+// identity; Open exists for offline migration/readback paths and fails closed
+// for history admission because production limits have no defaults.
 func OpenWithHistoryLimits(path string, limits HistoryLimits) (*SQLiteStore, error) {
 	if err := validateRecordLimits(limits); err != nil {
 		return nil, fmt.Errorf("state: invalid history limits: %w", err)
@@ -212,32 +212,6 @@ func persistOffer(
 		return [sha256.Size]byte{}, [sha256.Size]byte{}, 0, err
 	}
 	return digest, payloadDigest, logicalBytes, nil
-}
-
-// UpsertOffer implements Store's temporary compatibility path.
-func (s *SQLiteStore) UpsertOffer(ctx context.Context, offer OfferIdentity) (controller.AssignmentKey, error) {
-	digest, payloadDigest, _, err := persistOffer(ctx, s.db, offer, nil, now())
-	if err != nil {
-		return controller.AssignmentKey{}, fmt.Errorf("state: upsert offer: %w", err)
-	}
-
-	var existing, existingPayload []byte
-	if err := s.db.QueryRowContext(ctx, `
-			SELECT offer_digest, offer_payload_digest FROM assignments
-			WHERE repository_alias = ? AND runner_request_id = ? AND attempt = 0
-		`, offer.RepositoryAlias, offer.RunnerRequestID).Scan(&existing, &existingPayload); err != nil {
-		return controller.AssignmentKey{}, fmt.Errorf("state: read upserted offer: %w", err)
-	}
-	if len(existing) != sha256.Size || !bytes.Equal(existing, digest[:]) ||
-		len(existingPayload) != sha256.Size || !bytes.Equal(existingPayload, payloadDigest[:]) {
-		return controller.AssignmentKey{}, fmt.Errorf("%w: %s/%d", ErrIdentityConflict, offer.RepositoryAlias, offer.RunnerRequestID)
-	}
-
-	return controller.AssignmentKey{
-		RepositoryAlias: offer.RepositoryAlias,
-		RunnerRequestID: offer.RunnerRequestID,
-		Attempt:         0,
-	}, nil
 }
 
 type historyBudgetTotals struct {
@@ -491,6 +465,171 @@ func validateAdmissionProjection(projection AdmissionProjection) error {
 	return nil
 }
 
+const maxStoredUint32 = int64(1<<32 - 1)
+
+func decodeStoredUint32(field string, value int64) (uint32, error) {
+	if value < 0 || value > maxStoredUint32 {
+		return 0, fmt.Errorf("state: %s is outside uint32 range", field)
+	}
+	return uint32(value), nil
+}
+
+func decodeStoredBool(field string, value int64) (bool, error) {
+	switch value {
+	case 0:
+		return false, nil
+	case 1:
+		return true, nil
+	default:
+		return false, fmt.Errorf("state: %s is not a canonical boolean", field)
+	}
+}
+
+func decodeAdmissionMetadata(
+	phaseValue sql.NullInt64,
+	slotValue sql.NullInt64,
+	createdAtValue sql.NullString,
+	everUsedValue sql.NullInt64,
+) (bool, AdmissionPhase, uint32, bool, error) {
+	if !phaseValue.Valid {
+		if slotValue.Valid || createdAtValue.Valid || everUsedValue.Valid {
+			return false, 0, 0, false, fmt.Errorf("state: orphaned admission projection metadata")
+		}
+		return false, 0, 0, false, nil
+	}
+	if !everUsedValue.Valid {
+		return false, 0, 0, false, fmt.Errorf("state: incomplete admission ledger state")
+	}
+	everUsed, err := decodeStoredBool("admission ledger_ever_used", everUsedValue.Int64)
+	if err != nil {
+		return false, 0, 0, false, err
+	}
+
+	switch AdmissionPhase(phaseValue.Int64) {
+	case AdmissionQueued:
+		if slotValue.Valid || createdAtValue.Valid {
+			return false, 0, 0, false, fmt.Errorf("state: queued admission carries slot metadata")
+		}
+		return true, AdmissionQueued, 0, everUsed, nil
+	case AdmissionReserved, AdmissionActive:
+		if !slotValue.Valid || !createdAtValue.Valid {
+			return false, 0, 0, false, fmt.Errorf("state: occupied admission lacks slot metadata")
+		}
+		slotID, err := decodeStoredUint32("admission slot", slotValue.Int64)
+		if err != nil {
+			return false, 0, 0, false, err
+		}
+		if slotID == 0 {
+			return false, 0, 0, false, fmt.Errorf("state: occupied admission has zero slot")
+		}
+		return true, AdmissionPhase(phaseValue.Int64), slotID, everUsed, nil
+	default:
+		return false, 0, 0, false, fmt.Errorf(
+			"state: invalid admission phase %d",
+			phaseValue.Int64,
+		)
+	}
+}
+
+func validateMessageEnvelope(envelope controller.MessageEnvelope, persistedAt time.Time) error {
+	if envelope.RepositoryAlias == "" || envelope.MessageID <= 0 || persistedAt.IsZero() {
+		return ErrReplayEvidence
+	}
+	for _, value := range []int{
+		envelope.Statistics.TotalAvailableJobs,
+		envelope.Statistics.TotalAcquiredJobs,
+		envelope.Statistics.TotalAssignedJobs,
+		envelope.Statistics.TotalRunningJobs,
+		envelope.Statistics.TotalRegisteredRunners,
+		envelope.Statistics.TotalBusyRunners,
+		envelope.Statistics.TotalIdleRunners,
+	} {
+		if value < 0 {
+			return ErrReplayEvidence
+		}
+	}
+	return nil
+}
+
+func ackStateFromText(value string) (AckState, error) {
+	switch value {
+	case "persisted":
+		return AckPersisted, nil
+	case "ack_started":
+		return AckStarted, nil
+	case "redelivery_proven":
+		return AckRedeliveryProven, nil
+	case "ack_confirmed":
+		return AckConfirmed, nil
+	default:
+		return 0, ErrAckUncertain
+	}
+}
+
+// RecordMessageReceipt persists the complete message-intrinsic V2 digest
+// before any per-offer/event, broker, hosted-routing, or Ack work.
+func (s *SQLiteStore) RecordMessageReceipt(
+	ctx context.Context,
+	envelope controller.MessageEnvelope,
+	persistedAt time.Time,
+) (MessageReceipt, error) {
+	if err := validateMessageEnvelope(envelope, persistedAt); err != nil {
+		return MessageReceipt{}, err
+	}
+	if s.historyLimits == nil {
+		return MessageReceipt{}, ErrHistoryBudget
+	}
+	digest := CanonicalMessageEnvelopeDigest(envelope)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return MessageReceipt{}, fmt.Errorf("state: record message receipt: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var (
+		storedDigest []byte
+		stateText    string
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT payload_digest, ack_state
+		FROM message_receipts
+		WHERE repository_alias = ? AND message_id = ?
+	`, envelope.RepositoryAlias, envelope.MessageID).Scan(&storedDigest, &stateText)
+	switch {
+	case err == nil:
+		if len(storedDigest) != sha256.Size || !bytes.Equal(storedDigest, digest[:]) {
+			return MessageReceipt{}, ErrIdentityConflict
+		}
+		state, err := ackStateFromText(stateText)
+		if err != nil {
+			return MessageReceipt{}, err
+		}
+		return MessageReceipt{Digest: digest, State: state}, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return MessageReceipt{}, fmt.Errorf("state: record message receipt: read: %w", err)
+	}
+
+	logicalBytes, err := receiptLogicalBytes(envelope.RepositoryAlias)
+	if err != nil {
+		return MessageReceipt{}, err
+	}
+	if err := ensureReceiptHeadroom(ctx, tx, *s.historyLimits, logicalBytes); err != nil {
+		return MessageReceipt{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO message_receipts (
+			repository_alias, message_id, payload_digest, persisted_at,
+			ack_state, logical_bytes
+		) VALUES (?, ?, ?, ?, 'persisted', ?)
+	`, envelope.RepositoryAlias, envelope.MessageID, digest[:], formatTime(persistedAt), logicalBytes); err != nil {
+		return MessageReceipt{}, fmt.Errorf("state: record message receipt: insert: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return MessageReceipt{}, fmt.Errorf("state: record message receipt: commit: %w", err)
+	}
+	return MessageReceipt{Digest: digest, State: AckPersisted, Inserted: true}, nil
+}
+
 // PersistAdmissionProjection implements Store.
 func (s *SQLiteStore) PersistAdmissionProjection(
 	ctx context.Context,
@@ -537,6 +676,361 @@ func (s *SQLiteStore) PersistAdmissionProjection(
 	}
 	if n != 1 {
 		return fmt.Errorf("state: persist admission projection: assignment %+v unavailable", key)
+	}
+	return nil
+}
+
+func readAdmissionProjection(
+	ctx context.Context,
+	q queryRower,
+	assignmentID int64,
+) (AdmissionProjection, error) {
+	var (
+		phase                   sql.NullInt64
+		slotID                  sql.NullInt64
+		fullMilliCPU            sql.NullInt64
+		fullMemoryBytes         sql.NullInt64
+		fullPIDs                sql.NullInt64
+		fullFileDescriptors     sql.NullInt64
+		fullTmpfsBytes          sql.NullInt64
+		fullScratchBytes        sql.NullInt64
+		fullSocketStateBytes    sql.NullInt64
+		fullDurableStateBytes   sql.NullInt64
+		fullInodes              sql.NullInt64
+		ledgerMilliCPU          sql.NullInt64
+		ledgerMemoryBytes       sql.NullInt64
+		ledgerPIDs              sql.NullInt64
+		ledgerFileDescriptors   sql.NullInt64
+		ledgerTmpfsBytes        sql.NullInt64
+		ledgerScratchBytes      sql.NullInt64
+		ledgerSocketStateBytes  sql.NullInt64
+		ledgerDurableStateBytes sql.NullInt64
+		ledgerInodes            sql.NullInt64
+		ledgerCreatedAt         sql.NullString
+		ledgerEverUsed          sql.NullInt64
+	)
+	if err := q.QueryRowContext(ctx, `
+		SELECT
+			admission_phase, admission_slot_id,
+			full_milli_cpu, full_memory_bytes, full_pids,
+			full_file_descriptors, full_tmpfs_bytes, full_scratch_bytes,
+			full_socket_state_bytes, full_durable_state_bytes, full_inodes,
+			ledger_milli_cpu, ledger_memory_bytes, ledger_pids,
+			ledger_file_descriptors, ledger_tmpfs_bytes, ledger_scratch_bytes,
+			ledger_socket_state_bytes, ledger_durable_state_bytes, ledger_inodes,
+			ledger_created_at, ledger_ever_used
+		FROM assignments WHERE id = ?
+	`, assignmentID).Scan(
+		&phase, &slotID,
+		&fullMilliCPU, &fullMemoryBytes, &fullPIDs,
+		&fullFileDescriptors, &fullTmpfsBytes, &fullScratchBytes,
+		&fullSocketStateBytes, &fullDurableStateBytes, &fullInodes,
+		&ledgerMilliCPU, &ledgerMemoryBytes, &ledgerPIDs,
+		&ledgerFileDescriptors, &ledgerTmpfsBytes, &ledgerScratchBytes,
+		&ledgerSocketStateBytes, &ledgerDurableStateBytes, &ledgerInodes,
+		&ledgerCreatedAt, &ledgerEverUsed,
+	); err != nil {
+		return AdmissionProjection{}, fmt.Errorf("state: read admission projection: %w", err)
+	}
+	scalars := []sql.NullInt64{
+		fullMilliCPU, fullMemoryBytes, fullPIDs, fullFileDescriptors,
+		fullTmpfsBytes, fullScratchBytes, fullSocketStateBytes,
+		fullDurableStateBytes, fullInodes, ledgerMilliCPU, ledgerMemoryBytes,
+		ledgerPIDs, ledgerFileDescriptors, ledgerTmpfsBytes, ledgerScratchBytes,
+		ledgerSocketStateBytes, ledgerDurableStateBytes, ledgerInodes,
+	}
+	hasProjection, decodedPhase, decodedSlotID, decodedEverUsed, err := decodeAdmissionMetadata(
+		phase,
+		slotID,
+		ledgerCreatedAt,
+		ledgerEverUsed,
+	)
+	if err != nil {
+		return AdmissionProjection{}, fmt.Errorf("state: read admission projection metadata: %w", err)
+	}
+	if !hasProjection {
+		for _, value := range scalars {
+			if value.Valid {
+				return AdmissionProjection{}, fmt.Errorf("state: incomplete admission projection")
+			}
+		}
+		return AdmissionProjection{}, nil
+	}
+	for _, value := range scalars {
+		if !value.Valid {
+			return AdmissionProjection{}, fmt.Errorf("state: incomplete admission projection")
+		}
+	}
+	var createdAt time.Time
+	if ledgerCreatedAt.Valid {
+		createdAt, err = time.Parse(time.RFC3339Nano, ledgerCreatedAt.String)
+		if err != nil {
+			return AdmissionProjection{}, fmt.Errorf("state: parse admission ledger time: %w", err)
+		}
+	}
+	projection := AdmissionProjection{
+		Valid:  true,
+		Phase:  decodedPhase,
+		SlotID: decodedSlotID,
+		FullCharge: ResourceProjection{
+			MilliCPU:          fullMilliCPU.Int64,
+			MemoryBytes:       fullMemoryBytes.Int64,
+			PIDs:              fullPIDs.Int64,
+			FileDescriptors:   fullFileDescriptors.Int64,
+			TmpfsBytes:        fullTmpfsBytes.Int64,
+			ScratchBytes:      fullScratchBytes.Int64,
+			SocketStateBytes:  fullSocketStateBytes.Int64,
+			DurableStateBytes: fullDurableStateBytes.Int64,
+			Inodes:            fullInodes.Int64,
+		},
+		LedgerCharge: ResourceProjection{
+			MilliCPU:          ledgerMilliCPU.Int64,
+			MemoryBytes:       ledgerMemoryBytes.Int64,
+			PIDs:              ledgerPIDs.Int64,
+			FileDescriptors:   ledgerFileDescriptors.Int64,
+			TmpfsBytes:        ledgerTmpfsBytes.Int64,
+			ScratchBytes:      ledgerScratchBytes.Int64,
+			SocketStateBytes:  ledgerSocketStateBytes.Int64,
+			DurableStateBytes: ledgerDurableStateBytes.Int64,
+			Inodes:            ledgerInodes.Int64,
+		},
+		LedgerCreatedAt: createdAt,
+		LedgerEverUsed:  decodedEverUsed,
+	}
+	if err := validateAdmissionProjection(projection); err != nil {
+		return AdmissionProjection{}, err
+	}
+	return projection, nil
+}
+
+func updateAdmissionProjection(
+	ctx context.Context,
+	tx *sql.Tx,
+	assignmentID int64,
+	projection AdmissionProjection,
+	updatedAt string,
+) error {
+	if err := validateAdmissionProjection(projection); err != nil {
+		return err
+	}
+	slotID := any(projection.SlotID)
+	ledgerCreatedAt := any(formatTime(projection.LedgerCreatedAt))
+	if projection.Phase == AdmissionQueued {
+		slotID = nil
+		ledgerCreatedAt = nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE assignments SET
+			admission_phase = ?, admission_slot_id = ?,
+			full_milli_cpu = ?, full_memory_bytes = ?, full_pids = ?,
+			full_file_descriptors = ?, full_tmpfs_bytes = ?, full_scratch_bytes = ?,
+			full_socket_state_bytes = ?, full_durable_state_bytes = ?, full_inodes = ?,
+			ledger_milli_cpu = ?, ledger_memory_bytes = ?, ledger_pids = ?,
+			ledger_file_descriptors = ?, ledger_tmpfs_bytes = ?, ledger_scratch_bytes = ?,
+			ledger_socket_state_bytes = ?, ledger_durable_state_bytes = ?, ledger_inodes = ?,
+			ledger_created_at = ?, ledger_ever_used = ?, updated_at = ?
+		WHERE id = ?
+	`,
+		projection.Phase, slotID,
+		projection.FullCharge.MilliCPU, projection.FullCharge.MemoryBytes, projection.FullCharge.PIDs,
+		projection.FullCharge.FileDescriptors, projection.FullCharge.TmpfsBytes, projection.FullCharge.ScratchBytes,
+		projection.FullCharge.SocketStateBytes, projection.FullCharge.DurableStateBytes, projection.FullCharge.Inodes,
+		projection.LedgerCharge.MilliCPU, projection.LedgerCharge.MemoryBytes, projection.LedgerCharge.PIDs,
+		projection.LedgerCharge.FileDescriptors, projection.LedgerCharge.TmpfsBytes, projection.LedgerCharge.ScratchBytes,
+		projection.LedgerCharge.SocketStateBytes, projection.LedgerCharge.DurableStateBytes, projection.LedgerCharge.Inodes,
+		ledgerCreatedAt, boolToInt(projection.LedgerEverUsed), updatedAt, assignmentID,
+	); err != nil {
+		return fmt.Errorf("state: update admission projection: %w", err)
+	}
+	return nil
+}
+
+// ReserveActive atomically persists the exact active broker projection,
+// stable reservation and runner slot, and RECEIVED -> CAPACITY_RESERVED.
+func (s *SQLiteStore) ReserveActive(
+	ctx context.Context,
+	key controller.AssignmentKey,
+	projection AdmissionProjection,
+	opaqueName string,
+) error {
+	if projection.Phase != AdmissionActive || projection.SlotID == 0 ||
+		opaqueName == "" || len(opaqueName) > maxIdempotencyKeyBytes {
+		return ErrIdentityConflict
+	}
+	if err := validateAdmissionProjection(projection); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: reserve active: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	assignmentID, current, err := lookupAssignmentTx(ctx, tx, key)
+	if err != nil {
+		return err
+	}
+	existingProjection, err := readAdmissionProjection(ctx, tx, assignmentID)
+	if err != nil {
+		return err
+	}
+	if current == controller.StateCapacityReserved {
+		var existingName string
+		var existingSlot int64
+		if err := tx.QueryRowContext(ctx, `
+			SELECT opaque_name, capacity_slot_id
+			FROM runner_slots WHERE assignment_id = ?
+		`, assignmentID).Scan(&existingName, &existingSlot); err != nil {
+			return fmt.Errorf("state: reserve active: read replay slot: %w", err)
+		}
+		if existingProjection != projection || existingName != opaqueName ||
+			existingSlot != int64(projection.SlotID) {
+			return ErrIdentityConflict
+		}
+		return nil
+	}
+	if current != controller.StateReceived || !existingProjection.Valid ||
+		(existingProjection.Phase != AdmissionQueued && existingProjection.Phase != AdmissionReserved) {
+		return ErrIdentityConflict
+	}
+	if existingProjection.Phase == AdmissionReserved &&
+		(projection.SlotID != existingProjection.SlotID ||
+			projection.FullCharge != existingProjection.FullCharge ||
+			projection.LedgerCharge != existingProjection.LedgerCharge ||
+			!projection.LedgerCreatedAt.Equal(existingProjection.LedgerCreatedAt) ||
+			existingProjection.LedgerEverUsed ||
+			!projection.LedgerEverUsed) {
+		return ErrIdentityConflict
+	}
+
+	ts := now()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO reservations (assignment_id, capacity_slot_id, reserved_at) VALUES (?, ?, ?)`,
+		assignmentID, projection.SlotID, ts,
+	); err != nil {
+		return fmt.Errorf("state: reserve active: insert reservation: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO runner_slots (
+			assignment_id, opaque_name, capacity_slot_id, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?)
+	`, assignmentID, opaqueName, projection.SlotID, ts, ts); err != nil {
+		return fmt.Errorf("state: reserve active: insert runner slot: %w", err)
+	}
+	if err := updateAdmissionProjection(ctx, tx, assignmentID, projection, ts); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE assignments SET state = ?, released = 0, updated_at = ? WHERE id = ?
+	`, string(controller.StateCapacityReserved), ts, assignmentID); err != nil {
+		return fmt.Errorf("state: reserve active: advance: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: reserve active: commit: %w", err)
+	}
+	return nil
+}
+
+// ClearAdmissionProjection removes a non-active queued projection after a
+// normal broker refusal, or terminal projection state after broker retirement.
+func (s *SQLiteStore) ClearAdmissionProjection(
+	ctx context.Context,
+	key controller.AssignmentKey,
+) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: clear admission projection: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	assignmentID, current, err := lookupAssignmentTx(ctx, tx, key)
+	if err != nil {
+		return err
+	}
+	projection, err := readAdmissionProjection(ctx, tx, assignmentID)
+	if err != nil {
+		return err
+	}
+	if !projection.Valid {
+		return nil
+	}
+	if current != controller.StateReceived && current != controller.StateDestroyed {
+		return ErrIdentityConflict
+	}
+	if current == controller.StateReceived && projection.Phase != AdmissionQueued {
+		return ErrIdentityConflict
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE assignments SET
+			admission_phase = NULL, admission_slot_id = NULL,
+			full_milli_cpu = NULL, full_memory_bytes = NULL, full_pids = NULL,
+			full_file_descriptors = NULL, full_tmpfs_bytes = NULL, full_scratch_bytes = NULL,
+			full_socket_state_bytes = NULL, full_durable_state_bytes = NULL, full_inodes = NULL,
+			ledger_milli_cpu = NULL, ledger_memory_bytes = NULL, ledger_pids = NULL,
+			ledger_file_descriptors = NULL, ledger_tmpfs_bytes = NULL, ledger_scratch_bytes = NULL,
+			ledger_socket_state_bytes = NULL, ledger_durable_state_bytes = NULL, ledger_inodes = NULL,
+			ledger_created_at = NULL, ledger_ever_used = NULL, updated_at = ?
+		WHERE id = ?
+	`, now(), assignmentID); err != nil {
+		return fmt.Errorf("state: clear admission projection: update: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: clear admission projection: commit: %w", err)
+	}
+	return nil
+}
+
+// BindTerminalMessage immutably binds a DESTROYED assignment to a receipt.
+func (s *SQLiteStore) BindTerminalMessage(
+	ctx context.Context,
+	key controller.AssignmentKey,
+	messageID int,
+) error {
+	if messageID <= 0 {
+		return ErrReplayEvidence
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: bind terminal message: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	assignmentID, current, err := lookupAssignmentTx(ctx, tx, key)
+	if err != nil {
+		return err
+	}
+	if current != controller.StateDestroyed {
+		return ErrIdentityConflict
+	}
+	var existing sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT terminal_message_id FROM assignments WHERE id = ?`,
+		assignmentID,
+	).Scan(&existing); err != nil {
+		return fmt.Errorf("state: bind terminal message: read binding: %w", err)
+	}
+	if existing.Valid {
+		if existing.Int64 != int64(messageID) {
+			return ErrIdentityConflict
+		}
+		return nil
+	}
+	var receiptCount int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM message_receipts
+		WHERE repository_alias = ? AND message_id = ?
+	`, key.RepositoryAlias, messageID).Scan(&receiptCount); err != nil {
+		return fmt.Errorf("state: bind terminal message: read receipt: %w", err)
+	}
+	if receiptCount != 1 {
+		return ErrReplayEvidence
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE assignments SET terminal_message_id = ? WHERE id = ?`,
+		messageID, assignmentID,
+	); err != nil {
+		return fmt.Errorf("state: bind terminal message: update: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: bind terminal message: commit: %w", err)
 	}
 	return nil
 }
@@ -631,30 +1125,7 @@ func (s *SQLiteStore) BeginMessageAck(
 		WHERE repository_alias = ? AND message_id = ?
 	`, repositoryAlias, messageID).Scan(&digest, &ackState)
 	if errors.Is(err, sql.ErrNoRows) {
-		if s.historyLimits == nil {
-			return ErrHistoryBudget
-		}
-		messageDigest, err := messageDigestTx(ctx, tx, repositoryAlias, messageID)
-		if err != nil {
-			return err
-		}
-		logicalBytes, err := receiptLogicalBytes(repositoryAlias)
-		if err != nil {
-			return err
-		}
-		if err := ensureReceiptHeadroom(ctx, tx, *s.historyLimits, logicalBytes); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO message_receipts (
-				repository_alias, message_id, payload_digest, persisted_at,
-				ack_state, logical_bytes
-			) VALUES (?, ?, ?, ?, 'persisted', ?)
-		`, repositoryAlias, messageID, messageDigest[:], formatTime(startedAt), logicalBytes); err != nil {
-			return fmt.Errorf("state: begin message ack: persist receipt: %w", err)
-		}
-		digest = messageDigest[:]
-		ackState = "persisted"
+		return ErrReplayEvidence
 	} else if err != nil {
 		return fmt.Errorf("state: begin message ack: read receipt: %w", err)
 	}
@@ -784,6 +1255,52 @@ func (s *SQLiteStore) ObserveMessageRedelivery(
 		return fmt.Errorf("state: observe message redelivery: commit: %w", err)
 	}
 	return nil
+}
+
+// ListUncertainAcks returns protected ack_started receipts without exposing
+// message payloads or making any upstream-absence inference.
+func (s *SQLiteStore) ListUncertainAcks(ctx context.Context) ([]UncertainMessageReceipt, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT repository_alias, message_id, payload_digest, ack_started_at
+		FROM message_receipts
+		WHERE ack_state = 'ack_started'
+		ORDER BY repository_alias, message_id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("state: list uncertain acknowledgements: query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []UncertainMessageReceipt
+	for rows.Next() {
+		var (
+			record      UncertainMessageReceipt
+			digest      []byte
+			startedText sql.NullString
+		)
+		if err := rows.Scan(
+			&record.RepositoryAlias,
+			&record.MessageID,
+			&digest,
+			&startedText,
+		); err != nil {
+			return nil, fmt.Errorf("state: list uncertain acknowledgements: scan: %w", err)
+		}
+		if record.RepositoryAlias == "" || record.MessageID <= 0 ||
+			len(digest) != sha256.Size || !startedText.Valid || startedText.String == "" {
+			return nil, ErrAckUncertain
+		}
+		copy(record.Digest[:], digest)
+		record.StartedAt, err = time.Parse(time.RFC3339Nano, startedText.String)
+		if err != nil {
+			return nil, fmt.Errorf("state: list uncertain acknowledgements: parse started_at: %w", err)
+		}
+		out = append(out, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list uncertain acknowledgements: rows: %w", err)
+	}
+	return out, nil
 }
 
 // CompactTerminal implements Store.
@@ -1186,6 +1703,10 @@ func (s *SQLiteStore) Reserve(ctx context.Context, key controller.AssignmentKey,
 
 // BeginEffect implements Store.
 func (s *SQLiteStore) BeginEffect(ctx context.Context, key controller.AssignmentKey, idempotencyKey, kind string) (bool, error) {
+	if idempotencyKey == "" || len(idempotencyKey) > maxIdempotencyKeyBytes ||
+		kind == "" || len(kind) > maxEffectKindBytes {
+		return false, ErrIdentityConflict
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("state: begin effect: begin tx: %w", err)
@@ -1209,11 +1730,100 @@ func (s *SQLiteStore) BeginEffect(ctx context.Context, key controller.Assignment
 	if err != nil {
 		return false, fmt.Errorf("state: begin effect: rows affected: %w", err)
 	}
+	if n == 0 {
+		var (
+			repositoryAlias string
+			runnerRequestID int64
+			attempt         int64
+			existingKind    string
+		)
+		if err := tx.QueryRowContext(ctx, `
+			SELECT a.repository_alias, a.runner_request_id, a.attempt, e.kind
+			FROM effects e
+			JOIN assignments a ON a.id = e.assignment_id
+			WHERE e.idempotency_key = ?
+		`, idempotencyKey).Scan(
+			&repositoryAlias, &runnerRequestID, &attempt, &existingKind,
+		); err != nil {
+			return false, fmt.Errorf("state: begin effect: inspect replay: %w", err)
+		}
+		if repositoryAlias != key.RepositoryAlias ||
+			runnerRequestID != key.RunnerRequestID ||
+			attempt != int64(key.Attempt) ||
+			existingKind != kind {
+			return false, ErrIdentityConflict
+		}
+	}
 
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("state: begin effect: commit: %w", err)
 	}
 	return n == 1, nil
+}
+
+// LookupEffect returns the exact state for an immutable
+// assignment/idempotency-key/kind tuple.
+func (s *SQLiteStore) LookupEffect(
+	ctx context.Context,
+	key controller.AssignmentKey,
+	idempotencyKey string,
+	kind string,
+) (EffectRecord, error) {
+	if idempotencyKey == "" || len(idempotencyKey) > maxIdempotencyKeyBytes ||
+		kind == "" || len(kind) > maxEffectKindBytes {
+		return EffectRecord{}, ErrIdentityConflict
+	}
+	var (
+		repositoryAlias string
+		runnerRequestID int64
+		attempt         int64
+		existingKind    string
+		completedAt     sql.NullString
+		resultIdentity  sql.NullString
+		reasonCode      sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			a.repository_alias, a.runner_request_id, a.attempt, e.kind,
+			e.completed_at, e.result_identity, e.reason_code
+		FROM effects e
+		JOIN assignments a ON a.id = e.assignment_id
+		WHERE e.idempotency_key = ?
+	`, idempotencyKey).Scan(
+		&repositoryAlias, &runnerRequestID, &attempt, &existingKind,
+		&completedAt, &resultIdentity, &reasonCode,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EffectRecord{State: EffectAbsent}, nil
+	}
+	if err != nil {
+		return EffectRecord{}, fmt.Errorf("state: lookup effect: %w", err)
+	}
+	if repositoryAlias != key.RepositoryAlias ||
+		runnerRequestID != key.RunnerRequestID ||
+		attempt != int64(key.Attempt) ||
+		existingKind != kind {
+		return EffectRecord{}, ErrIdentityConflict
+	}
+	if len(resultIdentity.String) > maxEffectIdentityBytes ||
+		len(reasonCode.String) > maxEffectReasonBytes {
+		return EffectRecord{}, ErrIdentityConflict
+	}
+	if !completedAt.Valid {
+		if resultIdentity.Valid || reasonCode.Valid {
+			return EffectRecord{}, ErrIdentityConflict
+		}
+		return EffectRecord{State: EffectPending}, nil
+	}
+	record := EffectRecord{
+		State:          EffectCompleted,
+		ResultIdentity: resultIdentity.String,
+		ReasonCode:     reasonCode.String,
+	}
+	if reasonCode.String != "" {
+		record.State = EffectFailed
+	}
+	return record, nil
 }
 
 // identityColumnName maps an IdentityColumn to its fixed runner_slots
@@ -1237,30 +1847,72 @@ func identityColumnName(c IdentityColumn) (string, error) {
 
 // CompleteEffect implements Store.
 func (s *SQLiteStore) CompleteEffect(ctx context.Context, idempotencyKey string, result EffectResult) error {
+	if idempotencyKey == "" || len(idempotencyKey) > maxIdempotencyKeyBytes ||
+		len(result.ResultIdentity) > maxEffectIdentityBytes ||
+		len(result.ReasonCode) > maxEffectReasonBytes ||
+		(result.ResultIdentity != "" && result.ReasonCode != "") ||
+		(result.ReasonCode != "" && result.Column != IdentityNone) ||
+		(result.Column != IdentityNone && result.ResultIdentity == "") {
+		return ErrIdentityConflict
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("state: complete effect: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var assignmentID int64
-	if err := tx.QueryRowContext(ctx, `SELECT assignment_id FROM effects WHERE idempotency_key = ?`, idempotencyKey).Scan(&assignmentID); err != nil {
+	var (
+		assignmentID   int64
+		completedAt    sql.NullString
+		storedIdentity sql.NullString
+		storedReason   sql.NullString
+	)
+	if err := tx.QueryRowContext(ctx, `
+		SELECT assignment_id, completed_at, result_identity, reason_code
+		FROM effects WHERE idempotency_key = ?
+	`, idempotencyKey).Scan(
+		&assignmentID, &completedAt, &storedIdentity, &storedReason,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("state: complete effect: no effect begun for idempotency key %q", idempotencyKey)
 		}
 		return fmt.Errorf("state: complete effect: look up effect: %w", err)
 	}
+	if completedAt.Valid {
+		if storedIdentity.String != result.ResultIdentity ||
+			storedReason.String != result.ReasonCode {
+			return ErrIdentityConflict
+		}
+		if result.Column != IdentityNone {
+			column, err := identityColumnName(result.Column)
+			if err != nil {
+				return fmt.Errorf("state: complete effect: %w", err)
+			}
+			var stored sql.NullString
+			query := fmt.Sprintf(`SELECT %s FROM runner_slots WHERE assignment_id = ?`, column)
+			if err := tx.QueryRowContext(ctx, query, assignmentID).Scan(&stored); err != nil {
+				return fmt.Errorf("state: complete effect: verify replay identity: %w", err)
+			}
+			if !stored.Valid || stored.String != result.ResultIdentity {
+				return ErrIdentityConflict
+			}
+		}
+		return nil
+	}
 
 	ts := now()
-	// completed_at only ever gets its first-completion value: COALESCE
-	// keeps an idempotent replay (same idempotencyKey completed again,
-	// e.g. after a crash-and-retry) from rewriting the timestamp on every
-	// call, so it stays a stable "when did this effect actually finish"
-	// fact rather than drifting to the most recent replay's clock.
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE effects SET completed_at = COALESCE(completed_at, ?), result_identity = ?, reason_code = ? WHERE idempotency_key = ?`,
-		ts, result.ResultIdentity, result.ReasonCode, idempotencyKey); err != nil {
+	res, err := tx.ExecContext(ctx,
+		`UPDATE effects SET completed_at = ?, result_identity = ?, reason_code = ? WHERE idempotency_key = ? AND completed_at IS NULL`,
+		ts, result.ResultIdentity, result.ReasonCode, idempotencyKey)
+	if err != nil {
 		return fmt.Errorf("state: complete effect: update: %w", err)
+	}
+	updated, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("state: complete effect: update rows affected: %w", err)
+	}
+	if updated != 1 {
+		return ErrIdentityConflict
 	}
 
 	if result.Column != IdentityNone {
@@ -1269,8 +1921,16 @@ func (s *SQLiteStore) CompleteEffect(ctx context.Context, idempotencyKey string,
 			return fmt.Errorf("state: complete effect: %w", err)
 		}
 		stmt := fmt.Sprintf(`UPDATE runner_slots SET %s = ?, updated_at = ? WHERE assignment_id = ?`, column)
-		if _, err := tx.ExecContext(ctx, stmt, result.ResultIdentity, ts, assignmentID); err != nil {
+		res, err := tx.ExecContext(ctx, stmt, result.ResultIdentity, ts, assignmentID)
+		if err != nil {
 			return fmt.Errorf("state: complete effect: persist identity: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("state: complete effect: identity rows affected: %w", err)
+		}
+		if n != 1 {
+			return ErrIdentityConflict
 		}
 	}
 
@@ -1514,6 +2174,16 @@ func (s *SQLiteStore) ListRecoverable(ctx context.Context) ([]RecoverableAssignm
 		if err := json.Unmarshal([]byte(requestLabelsJSON), &requestLabels); err != nil {
 			return nil, fmt.Errorf("state: list recoverable: decode request_labels: %w", err)
 		}
+		hasAdmission, decodedAdmissionPhase, decodedAdmissionSlot, decodedLedgerEverUsed, err :=
+			decodeAdmissionMetadata(
+				admissionPhase,
+				admissionSlotID,
+				ledgerCreatedAtText,
+				ledgerEverUsed,
+			)
+		if err != nil {
+			return nil, fmt.Errorf("state: list recoverable: %w", err)
+		}
 		var ledgerCreatedAt time.Time
 		if ledgerCreatedAtText.Valid {
 			ledgerCreatedAt, err = parseOptionalTime(ledgerCreatedAtText.String)
@@ -1541,10 +2211,7 @@ func (s *SQLiteStore) ListRecoverable(ctx context.Context) ([]RecoverableAssignm
 			ledgerDurableStateBytes,
 			ledgerInodes,
 		}
-		if !admissionPhase.Valid {
-			if admissionSlotID.Valid || ledgerCreatedAtText.Valid || ledgerEverUsed.Valid {
-				return nil, fmt.Errorf("state: list recoverable: orphaned admission projection metadata")
-			}
+		if !hasAdmission {
 			for _, scalar := range projectionScalars {
 				if scalar.Valid {
 					return nil, fmt.Errorf("state: list recoverable: orphaned admission projection charge")
@@ -1559,25 +2226,13 @@ func (s *SQLiteStore) ListRecoverable(ctx context.Context) ([]RecoverableAssignm
 			if !ledgerEverUsed.Valid {
 				return nil, fmt.Errorf("state: list recoverable: incomplete admission ledger state")
 			}
-			switch AdmissionPhase(admissionPhase.Int64) {
-			case AdmissionQueued:
-				if admissionSlotID.Valid || ledgerCreatedAtText.Valid {
-					return nil, fmt.Errorf("state: list recoverable: queued admission carries slot metadata")
-				}
-			case AdmissionReserved, AdmissionActive:
-				if !admissionSlotID.Valid || !ledgerCreatedAtText.Valid {
-					return nil, fmt.Errorf("state: list recoverable: occupied admission lacks slot metadata")
-				}
-			default:
-				return nil, fmt.Errorf("state: list recoverable: invalid admission phase %d", admissionPhase.Int64)
-			}
 		}
 		projection := AdmissionProjection{}
-		if admissionPhase.Valid {
+		if hasAdmission {
 			projection = AdmissionProjection{
 				Valid:  true,
-				Phase:  AdmissionPhase(admissionPhase.Int64),
-				SlotID: uint32(admissionSlotID.Int64),
+				Phase:  decodedAdmissionPhase,
+				SlotID: decodedAdmissionSlot,
 				FullCharge: ResourceProjection{
 					MilliCPU:          fullMilliCPU.Int64,
 					MemoryBytes:       fullMemoryBytes.Int64,
@@ -1601,10 +2256,32 @@ func (s *SQLiteStore) ListRecoverable(ctx context.Context) ([]RecoverableAssignm
 					Inodes:            ledgerInodes.Int64,
 				},
 				LedgerCreatedAt: ledgerCreatedAt,
-				LedgerEverUsed:  ledgerEverUsed.Int64 != 0,
+				LedgerEverUsed:  decodedLedgerEverUsed,
 			}
 			if err := validateAdmissionProjection(projection); err != nil {
 				return nil, fmt.Errorf("state: list recoverable: %w", err)
+			}
+		}
+
+		decodedAttempt, err := decodeStoredUint32("assignment attempt", attempt)
+		if err != nil {
+			return nil, fmt.Errorf("state: list recoverable: %w", err)
+		}
+		decodedReleased, err := decodeStoredBool("assignment released", int64(releasedInt))
+		if err != nil {
+			return nil, fmt.Errorf("state: list recoverable: %w", err)
+		}
+		var decodedCapacitySlot uint32
+		if capacitySlotID.Valid {
+			decodedCapacitySlot, err = decodeStoredUint32(
+				"runner capacity slot",
+				capacitySlotID.Int64,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("state: list recoverable: %w", err)
+			}
+			if decodedCapacitySlot == 0 {
+				return nil, fmt.Errorf("state: list recoverable: runner capacity slot is zero")
 			}
 		}
 
@@ -1612,7 +2289,7 @@ func (s *SQLiteStore) ListRecoverable(ctx context.Context) ([]RecoverableAssignm
 			Key: controller.AssignmentKey{
 				RepositoryAlias: repositoryAlias,
 				RunnerRequestID: runnerRequestID,
-				Attempt:         uint32(attempt),
+				Attempt:         decodedAttempt,
 			},
 			State: controller.State(stateStr),
 			Offer: OfferIdentity{
@@ -1634,7 +2311,7 @@ func (s *SQLiteStore) ListRecoverable(ctx context.Context) ([]RecoverableAssignm
 				AcquireJobURL:      acquireJobURL,
 			},
 			Admission:       projection,
-			Released:        releasedInt != 0,
+			Released:        decodedReleased,
 			Ambiguous:       ambiguousReason.Valid && ambiguousReason.String != "",
 			AmbiguousReason: ambiguousReason.String,
 			Slot: controller.RunnerSlot{
@@ -1644,7 +2321,7 @@ func (s *SQLiteStore) ListRecoverable(ctx context.Context) ([]RecoverableAssignm
 				RunnerContainerID:  runnerContainer.String,
 				AdapterContainerID: adapterContainer.String,
 				BrokerContainerID:  brokerContainer.String,
-				CapacitySlotID:     uint32(capacitySlotID.Int64),
+				CapacitySlotID:     decodedCapacitySlot,
 			},
 			UpdatedAt: updatedAt,
 		})

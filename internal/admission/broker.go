@@ -176,6 +176,33 @@ func (b *brokerImpl) EnsureQueued(offer githubscale.Offer) error {
 	return err
 }
 
+// CheckOffer performs the single-offer identity and logical-size preflight
+// without allocating a slot, consuming a lease, or mutating live history.
+func (b *brokerImpl) CheckOffer(offer githubscale.Offer) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if _, ok := b.policies[offer.RepositoryName]; !ok {
+		return fmt.Errorf("%w: %q", ErrUnknownRepository, offer.RepositoryName)
+	}
+	if offer.RunnerRequestID <= 0 {
+		return fmt.Errorf("%w: RunnerRequestID must be positive", ErrInvalidOffer)
+	}
+	logicalBytes, err := LiveOfferLogicalBytesV1(offer)
+	if err != nil {
+		return err
+	}
+	if logicalBytes > b.maxOfferLogicalBytes {
+		return fmt.Errorf(
+			"%w: %s/%d",
+			ErrOfferTooLarge,
+			offer.RepositoryName,
+			offer.RunnerRequestID,
+		)
+	}
+	return nil
+}
+
 func (b *brokerImpl) EnsureQueuedBatch(offers []githubscale.Offer) ([]LiveReference, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -405,6 +432,29 @@ func (b *brokerImpl) HasLiveReference(key controller.AssignmentKey) bool {
 		runnerRequestID: key.RunnerRequestID,
 	}]
 	return ok
+}
+
+// Reference returns the exact queued/reserved/active projection currently
+// owned by the broker. It is used immediately after Admit so the controller can
+// persist the broker's authoritative charges and slot identity atomically.
+func (b *brokerImpl) Reference(key controller.AssignmentKey) (LiveReference, bool, error) {
+	if key.Attempt != 0 {
+		return LiveReference{}, false, fmt.Errorf("%w: unsupported attempt %d", ErrInvalidOffer, key.Attempt)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	identity := offerIdentity{
+		repositoryAlias: key.RepositoryAlias,
+		runnerRequestID: key.RunnerRequestID,
+	}
+	if _, ok := b.liveOffers[identity]; !ok {
+		return LiveReference{}, false, nil
+	}
+	ref, err := b.liveReferenceLocked(identity)
+	if err != nil {
+		return LiveReference{}, false, err
+	}
+	return ref, true, nil
 }
 
 type stagedQueuedOffer struct {
@@ -971,10 +1021,11 @@ func (b *brokerImpl) admitLocked(alias string, queued *queuedOffer, now time.Tim
 	key := controller.AssignmentKey{
 		RepositoryAlias: alias,
 		RunnerRequestID: queued.offer.RunnerRequestID,
-		// state.Store.UpsertOffer persists the initial acquisition offer as
-		// attempt zero. Admission must preserve that exact durable identity;
-		// a later retry mechanism may allocate a higher attempt explicitly,
-		// but the broker must never manufacture one independently.
+		// state.Store.RecordOffer persists the initial acquisition offer as
+		// attempt zero after replay evidence and bounded-history admission.
+		// Admission must preserve that exact durable identity; a later retry
+		// mechanism may allocate a higher attempt explicitly, but the broker
+		// must never manufacture one independently.
 		Attempt: 0,
 	}
 	slot.state = slotActive

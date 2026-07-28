@@ -79,6 +79,58 @@ func currentPollEvidence(messageID int, queuedAt, observedAt time.Time) OfferEvi
 	}
 }
 
+func messageEnvelopeForOffers(
+	repositoryAlias string,
+	messageID int,
+	offers ...OfferIdentity,
+) controller.MessageEnvelope {
+	envelope := controller.MessageEnvelope{
+		RepositoryAlias: repositoryAlias,
+		MessageID:       messageID,
+	}
+	for _, offer := range offers {
+		envelope.Offers = append(envelope.Offers, controller.MessageOffer{
+			Job: controller.MessageJobRef{
+				RunnerRequestID:    offer.RunnerRequestID,
+				JobID:              offer.JobID,
+				RepositoryName:     offer.RepositoryName,
+				OwnerName:          offer.OwnerName,
+				JobWorkflowRef:     offer.JobWorkflowRef,
+				JobDisplayName:     offer.JobDisplayName,
+				WorkflowRunID:      offer.WorkflowRunID,
+				EventName:          offer.EventName,
+				RequestLabels:      append([]string(nil), offer.RequestLabels...),
+				QueueTime:          offer.QueueTime,
+				ScaleSetAssignTime: offer.ScaleSetAssignTime,
+				RunnerAssignTime:   offer.RunnerAssignTime,
+				FinishTime:         offer.FinishTime,
+			},
+			AcquireJobURL: offer.AcquireJobURL,
+		})
+	}
+	return envelope
+}
+
+func recordMessageReceiptForOffers(
+	t *testing.T,
+	s *SQLiteStore,
+	repositoryAlias string,
+	messageID int,
+	at time.Time,
+	offers ...OfferIdentity,
+) MessageReceipt {
+	t.Helper()
+	receipt, err := s.RecordMessageReceipt(
+		context.Background(),
+		messageEnvelopeForOffers(repositoryAlias, messageID, offers...),
+		at,
+	)
+	if err != nil {
+		t.Fatalf("RecordMessageReceipt() = %v", err)
+	}
+	return receipt
+}
+
 func terminalMessage(t *testing.T, s *SQLiteStore, key controller.AssignmentKey, messageID int) {
 	t.Helper()
 	if _, err := s.DB().Exec(
@@ -124,6 +176,7 @@ func compactableOffer(
 	if err != nil {
 		t.Fatalf("RecordOffer() = %v", err)
 	}
+	recordMessageReceiptForOffers(t, s, offer.RepositoryAlias, messageID, queuedAt.Add(30*time.Second), offer)
 	if err := s.BeginMessageAck(ctx, offer.RepositoryAlias, messageID, queuedAt.Add(time.Minute)); err != nil {
 		t.Fatalf("BeginMessageAck() = %v", err)
 	}
@@ -161,6 +214,9 @@ func TestHistoryTypes(t *testing.T) {
 		if _, ok := storeType.MethodByName(method); !ok {
 			t.Errorf("Store.%s is missing", method)
 		}
+	}
+	if _, ok := storeType.MethodByName("UpsertOffer"); ok {
+		t.Fatal("Store.UpsertOffer compatibility path remains exposed")
 	}
 }
 
@@ -865,6 +921,7 @@ func TestHistoryUsageCountsFullAssignmentGraphs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecordOffer(terminal) = %v", err)
 	}
+	recordMessageReceiptForOffers(t, s, "repo-a", 107, now.Add(30*time.Second), terminalOffer)
 	if err := s.BeginMessageAck(ctx, "repo-a", 107, now.Add(time.Minute)); err != nil {
 		t.Fatalf("BeginMessageAck() = %v", err)
 	}
@@ -1095,12 +1152,15 @@ func TestMessageAckLifecycle(t *testing.T) {
 	s := newHistoryStore(t)
 	ctx := context.Background()
 	now := time.Date(2026, 7, 28, 15, 0, 0, 0, time.UTC)
+	var offers []OfferIdentity
 	for i := int64(0); i < 2; i++ {
 		offer := historyOffer("repo-a", 400+i, 1400+i, now.Add(time.Duration(i)*time.Second))
 		if _, err := s.RecordOffer(ctx, offer, currentPollEvidence(111, offer.QueueTime, now.Add(time.Minute))); err != nil {
 			t.Fatalf("RecordOffer(%d) = %v", i, err)
 		}
+		offers = append(offers, offer)
 	}
+	recordMessageReceiptForOffers(t, s, "repo-a", 111, now.Add(90*time.Second), offers...)
 
 	if err := s.BeginMessageAck(ctx, "repo-a", 111, now.Add(2*time.Minute)); err != nil {
 		t.Fatalf("BeginMessageAck() = %v", err)
@@ -1166,6 +1226,7 @@ func TestMessageAckCrashRecovery(t *testing.T) {
 	if _, err := s.RecordOffer(ctx, offer, currentPollEvidence(115, now, now)); err != nil {
 		t.Fatalf("RecordOffer() = %v", err)
 	}
+	recordMessageReceiptForOffers(t, s, "repo-a", 115, now.Add(30*time.Second), offer)
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close(before BeginMessageAck) = %v", err)
 	}
@@ -1226,6 +1287,7 @@ func TestCompactTerminalIsAtomicAndTombstoneReplaySafe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecordOffer() = %v", err)
 	}
+	recordMessageReceiptForOffers(t, s, "repo-a", 121, now.Add(30*time.Second), offer)
 	if err := s.BeginMessageAck(ctx, "repo-a", 121, now.Add(time.Minute)); err != nil {
 		t.Fatalf("BeginMessageAck() = %v", err)
 	}
@@ -1308,6 +1370,7 @@ func TestCompactTerminalRejectsUnconfirmedAckAndLiveDurableState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecordOffer() = %v", err)
 	}
+	recordMessageReceiptForOffers(t, s, "repo-a", 131, now.Add(30*time.Second), offer)
 	terminalMessage(t, s, receipt.Key, 131)
 	if err := s.Advance(ctx, receipt.Key, controller.StateDestroyed); err != nil {
 		t.Fatalf("Advance(RECEIVED->DESTROYED) = %v", err)
@@ -1332,6 +1395,7 @@ func TestCompactTerminalRejectsEveryLivePrecondition(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RecordOffer() = %v", err)
 		}
+		recordMessageReceiptForOffers(t, s, "repo-a", 141, baseTime.Add(30*time.Second), offer)
 		if err := s.BeginMessageAck(ctx, "repo-a", 141, baseTime.Add(time.Minute)); err != nil {
 			t.Fatalf("BeginMessageAck() = %v", err)
 		}
@@ -1676,6 +1740,7 @@ func TestRecordOfferTombstoneReplayUnderNewMessageCanAck(t *testing.T) {
 	if replay.Disposition != OfferTerminalReplay {
 		t.Fatalf("replay disposition = %v, want %v", replay.Disposition, OfferTerminalReplay)
 	}
+	recordMessageReceiptForOffers(t, s, offer.RepositoryAlias, 162, now.Add(4*time.Minute), offer)
 	if err := s.BeginMessageAck(ctx, offer.RepositoryAlias, 162, now.Add(5*time.Minute)); err != nil {
 		t.Fatalf("BeginMessageAck(new message) = %v", err)
 	}
@@ -1727,6 +1792,7 @@ func TestRecordOfferMessageAckCompactTerminalConcurrentStress(t *testing.T) {
 	if inserted != 1 || active != callers-1 {
 		t.Fatalf("concurrent results inserted=%d active=%d, want 1/%d", inserted, active, callers-1)
 	}
+	recordMessageReceiptForOffers(t, s, "repo-a", 171, now.Add(30*time.Second), offer)
 
 	ackErrors := make(chan error, callers)
 	for range callers {
