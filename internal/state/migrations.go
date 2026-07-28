@@ -4,54 +4,195 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/sumitake/portable-ghar/internal/controller"
 )
 
-// schema is the store's fixed table set. It is applied once, inside a
-// single transaction, by migrate.
-//
-// Design notes that matter for the crash-safety/idempotency contract this
-// package promises:
-//
-//   - assignments is keyed by (repository_alias, runner_request_id,
-//     attempt) -- the natural uniqueness boundary for an acquisition offer
-//     (see controller.AssignmentKey's doc). released and
-//     release_generation together record whether, and how many times,
-//     this assignment has crossed the StateListenerReleased boundary;
-//     release_generation increments exactly once per crossing so a
-//     reconciler can detect (rather than blindly repeat) a release.
-//   - runner_slots is 1:1 with assignments (one slot per assignment for
-//     Task 2's scope) and carries every identity RunnerSlot names:
-//     opaque_name and capacity_slot_id are written once, at Reserve time,
-//     and never change; the container identities and policy/socket digest
-//     are written as each checkpoint's effect completes.
-//     upstream_runner_id is unique among rows where it is set (a partial
-//     unique index, since most rows have it NULL until BindRunner runs),
-//     matching "an offer is never itself a binding."
-//   - reservations exists as the durable proof that the CAPACITY_RESERVED
-//     step took the BEGIN IMMEDIATE write-intent lock before writing;
-//     capacity_slot_id is UNIQUE here too so two assignments can never
-//     share a reservation.
-//   - effects is the idempotency journal: idempotency_key is UNIQUE, so a
-//     replayed BeginEffect for the same key can never create a second row
-//     (see BeginEffect's INSERT OR IGNORE ... changes()-based detection in
-//     sqlite.go).
-//   - acquisition_state is a singleton (id fixed to 1 by a CHECK
-//     constraint) seeded once at migration time so AcquisitionPolicy never
-//     has to special-case a missing row.
-//   - network_ledgers intentionally has NO cascading foreign key: its
-//     assignment_id reference uses ON DELETE SET NULL, so deleting (or
-//     never having) an assignment row never deletes a ledger row. The
-//     ledger is the controller's single-writer token/clock state and must
-//     outlive the assignment for at least the retention window T --
-//     retained_until records that window; GC of ledger rows past
-//     retained_until is a later task's job, not this schema's.
-//   - reconcile_cycles exists to satisfy the plan's exact table-set
-//     requirement for later tasks (the reconciler's CycleReceipt, which
-//     Task 2 deliberately does not define -- see internal/controller's
-//     package doc). No Store method in Task 2 writes to it.
-const schema = `
+const (
+	currentSchemaVersion        = 1
+	sqliteAutoVacuumNone        = 0
+	sqliteAutoVacuumFull        = 1
+	sqliteAutoVacuumIncremental = 2
+)
+
+// schemaV1 is the complete bootstrap schema. New databases select incremental
+// auto-vacuum before this table set is created. Existing version-zero
+// databases can migrate in place only when they were already created in that
+// mode; otherwise Open returns ErrOfflineMigration and performs no schema
+// write.
+const schemaV1 = `
+CREATE TABLE IF NOT EXISTS assignments (
+	id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+	repository_alias      TEXT    NOT NULL,
+	runner_request_id     INTEGER NOT NULL,
+	attempt               INTEGER NOT NULL DEFAULT 0,
+	workflow_job_id       INTEGER NOT NULL,
+	offer_digest          BLOB    NOT NULL CHECK (length(offer_digest) = 32),
+	offer_payload_digest  BLOB    NOT NULL CHECK (length(offer_payload_digest) = 32),
+	source_message_id     INTEGER,
+	terminal_message_id   INTEGER,
+	job_id                TEXT    NOT NULL,
+	repository_name       TEXT    NOT NULL,
+	owner_name            TEXT    NOT NULL,
+	job_workflow_ref      TEXT    NOT NULL,
+	job_display_name      TEXT    NOT NULL,
+	workflow_run_id       INTEGER NOT NULL,
+	event_name            TEXT    NOT NULL,
+	request_labels        TEXT    NOT NULL,
+	queue_time            TEXT    NOT NULL,
+	scale_set_assign_time TEXT    NOT NULL,
+	runner_assign_time    TEXT    NOT NULL,
+	finish_time           TEXT    NOT NULL,
+	acquire_job_url       TEXT    NOT NULL,
+	admission_phase       INTEGER CHECK (admission_phase IS NULL OR admission_phase IN (1, 2, 3)),
+	admission_slot_id     INTEGER CHECK (admission_slot_id IS NULL OR admission_slot_id BETWEEN 1 AND 4294967295),
+	full_milli_cpu          INTEGER,
+	full_memory_bytes       INTEGER,
+	full_pids               INTEGER,
+	full_file_descriptors   INTEGER,
+	full_tmpfs_bytes        INTEGER,
+	full_scratch_bytes      INTEGER,
+	full_socket_state_bytes INTEGER,
+	full_durable_state_bytes INTEGER,
+	full_inodes              INTEGER,
+	ledger_milli_cpu          INTEGER,
+	ledger_memory_bytes       INTEGER,
+	ledger_pids               INTEGER,
+	ledger_file_descriptors   INTEGER,
+	ledger_tmpfs_bytes        INTEGER,
+	ledger_scratch_bytes      INTEGER,
+	ledger_socket_state_bytes INTEGER,
+	ledger_durable_state_bytes INTEGER,
+	ledger_inodes              INTEGER,
+	ledger_created_at       TEXT,
+	ledger_ever_used        INTEGER CHECK (ledger_ever_used IS NULL OR ledger_ever_used IN (0, 1)),
+	history_logical_bytes   INTEGER NOT NULL CHECK (history_logical_bytes > 0),
+	state                 TEXT    NOT NULL,
+	released              INTEGER NOT NULL DEFAULT 0,
+	release_generation    INTEGER NOT NULL DEFAULT 0,
+	ambiguous_reason      TEXT,
+	ambiguous_at          TEXT,
+	created_at            TEXT    NOT NULL,
+	updated_at            TEXT    NOT NULL,
+	UNIQUE (repository_alias, runner_request_id, attempt)
+);
+
+CREATE INDEX IF NOT EXISTS assignments_source_message
+	ON assignments (repository_alias, source_message_id);
+CREATE INDEX IF NOT EXISTS assignments_terminal_message
+	ON assignments (repository_alias, terminal_message_id);
+
+CREATE TABLE IF NOT EXISTS runner_slots (
+	id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+	assignment_id         INTEGER NOT NULL UNIQUE REFERENCES assignments (id) ON DELETE CASCADE,
+	opaque_name           TEXT    NOT NULL UNIQUE,
+	capacity_slot_id      INTEGER NOT NULL UNIQUE,
+	upstream_runner_id    INTEGER,
+	bound_request_id      INTEGER,
+	runner_container_id   TEXT,
+	adapter_container_id  TEXT,
+	broker_container_id   TEXT,
+	policy_socket_digest  TEXT,
+	created_at            TEXT    NOT NULL,
+	updated_at            TEXT    NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS runner_slots_upstream_runner_id_unique
+	ON runner_slots (upstream_runner_id)
+	WHERE upstream_runner_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS reservations (
+	id                INTEGER PRIMARY KEY AUTOINCREMENT,
+	assignment_id     INTEGER NOT NULL UNIQUE REFERENCES assignments (id) ON DELETE CASCADE,
+	capacity_slot_id  INTEGER NOT NULL UNIQUE,
+	reserved_at       TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS effects (
+	id               INTEGER PRIMARY KEY AUTOINCREMENT,
+	assignment_id    INTEGER NOT NULL REFERENCES assignments (id) ON DELETE CASCADE,
+	idempotency_key  TEXT    NOT NULL UNIQUE,
+	kind             TEXT    NOT NULL,
+	began_at         TEXT    NOT NULL,
+	completed_at     TEXT,
+	result_identity  TEXT,
+	reason_code      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS acquisition_state (
+	id                          INTEGER PRIMARY KEY CHECK (id = 1),
+	mode                        TEXT    NOT NULL,
+	eligible_scale_sets         TEXT    NOT NULL,
+	max_capacity                INTEGER NOT NULL,
+	repository_policy_revision  INTEGER NOT NULL,
+	repository_policies         TEXT    NOT NULL,
+	acquisition_epoch           INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS network_ledgers (
+	id             INTEGER PRIMARY KEY AUTOINCREMENT,
+	ledger_key     TEXT NOT NULL UNIQUE,
+	assignment_id  INTEGER REFERENCES assignments (id) ON DELETE SET NULL,
+	state_digest   TEXT,
+	updated_at     TEXT NOT NULL,
+	retained_until TEXT,
+	logical_bytes  INTEGER NOT NULL DEFAULT 1 CHECK (logical_bytes > 0)
+);
+
+CREATE TABLE IF NOT EXISTS reconcile_cycles (
+	id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+	cycle_id            TEXT    NOT NULL UNIQUE,
+	started_at          TEXT    NOT NULL,
+	completed_at        TEXT,
+	assignment_count    INTEGER,
+	oldest_age_seconds  INTEGER,
+	note                TEXT
+);
+
+CREATE TABLE IF NOT EXISTS message_receipts (
+	id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+	repository_alias   TEXT    NOT NULL,
+	message_id         INTEGER NOT NULL,
+	payload_digest     BLOB    NOT NULL CHECK (length(payload_digest) = 32),
+	persisted_at       TEXT    NOT NULL,
+	ack_state          TEXT    NOT NULL CHECK (ack_state IN ('persisted', 'ack_started', 'redelivery_proven', 'ack_confirmed')),
+	ack_started_at     TEXT,
+	ack_confirmed_at   TEXT,
+	redelivered_at     TEXT,
+	retain_until       TEXT,
+	logical_bytes      INTEGER NOT NULL CHECK (logical_bytes > 0),
+	UNIQUE (repository_alias, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS message_receipts_retention
+	ON message_receipts (retain_until, id);
+
+CREATE TABLE IF NOT EXISTS history_tombstones (
+	id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+	repository_alias   TEXT    NOT NULL,
+	runner_request_id  INTEGER NOT NULL,
+	attempt            INTEGER NOT NULL,
+	offer_digest       BLOB    NOT NULL CHECK (length(offer_digest) = 32),
+	offer_payload_digest BLOB  NOT NULL CHECK (length(offer_payload_digest) = 32),
+	source_message_id  INTEGER,
+	terminal_at        TEXT    NOT NULL,
+	retain_until       TEXT    NOT NULL,
+	logical_bytes      INTEGER NOT NULL CHECK (logical_bytes > 0),
+	CHECK (retain_until >= terminal_at),
+	UNIQUE (repository_alias, runner_request_id, attempt)
+);
+
+CREATE INDEX IF NOT EXISTS history_tombstones_retention
+	ON history_tombstones (retain_until, id);
+CREATE INDEX IF NOT EXISTS history_tombstones_source_message
+	ON history_tombstones (repository_alias, source_message_id);
+`
+
+// schemaV0 is the exact pre-history schema. Keeping the source shape beside
+// its migration makes the compatibility contract executable in tests instead
+// of reconstructing an approximate legacy database.
+const schemaV0 = `
 CREATE TABLE IF NOT EXISTS assignments (
 	id                  INTEGER PRIMARY KEY AUTOINCREMENT,
 	repository_alias    TEXT    NOT NULL,
@@ -135,9 +276,6 @@ CREATE TABLE IF NOT EXISTS reconcile_cycles (
 );
 `
 
-// seedAcquisitionState is the default singleton row: acquisition disabled,
-// no eligible scale sets, zero capacity, epoch zero. CompareAndSetAcquisition
-// callers pass expectedEpoch=0 to make their first transition.
 const seedAcquisitionState = `
 INSERT OR IGNORE INTO acquisition_state
 	(id, mode, eligible_scale_sets, max_capacity, repository_policy_revision, repository_policies, acquisition_epoch)
@@ -145,25 +283,324 @@ VALUES
 	(1, ?, '[]', 0, 0, '[]', 0);
 `
 
-// migrate applies schema and seeds the acquisition_state singleton, inside
-// one transaction, so a crash mid-migration never leaves a partially
-// created schema.
+type migrationStepper struct {
+	ctx         context.Context
+	tx          *sql.Tx
+	beforeWrite func(step int, label string) error
+	step        int
+}
+
+func (m *migrationStepper) exec(label, statement string, args ...any) error {
+	m.step++
+	if m.beforeWrite != nil {
+		if err := m.beforeWrite(m.step, label); err != nil {
+			return err
+		}
+	}
+	_, err := m.tx.ExecContext(m.ctx, statement, args...)
+	return err
+}
+
+func (m *migrationStepper) execSchema(labelPrefix, schema string) error {
+	statementNumber := 0
+	for _, raw := range strings.Split(schema, ";") {
+		statement := strings.TrimSpace(raw)
+		if statement == "" {
+			continue
+		}
+		statementNumber++
+		if err := m.exec(
+			fmt.Sprintf("%s-%d", labelPrefix, statementNumber),
+			statement,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func migrate(ctx context.Context, db *sql.DB) error {
+	var version, autoVacuum, tableCount int
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("state: read schema version: %w", err)
+	}
+	if version > currentSchemaVersion {
+		return fmt.Errorf("%w: database schema %d is newer than supported %d", ErrOfflineMigration, version, currentSchemaVersion)
+	}
+	if err := db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&autoVacuum); err != nil {
+		return fmt.Errorf("state: read auto_vacuum: %w", err)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`,
+	).Scan(&tableCount); err != nil {
+		return fmt.Errorf("state: inspect schema: %w", err)
+	}
+
+	if version == currentSchemaVersion {
+		if autoVacuum != sqliteAutoVacuumIncremental {
+			return fmt.Errorf("%w: schema %d auto_vacuum=%d, want INCREMENTAL", ErrOfflineMigration, version, autoVacuum)
+		}
+		return nil
+	}
+
+	if tableCount == 0 {
+		if _, err := db.ExecContext(ctx, `PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+			return fmt.Errorf("state: enable incremental auto_vacuum: %w", err)
+		}
+		if err := db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&autoVacuum); err != nil {
+			return fmt.Errorf("state: verify auto_vacuum: %w", err)
+		}
+		if autoVacuum != sqliteAutoVacuumIncremental {
+			return fmt.Errorf("%w: fresh database auto_vacuum=%d", ErrOfflineMigration, autoVacuum)
+		}
+		return bootstrapV1(ctx, db)
+	}
+
+	if autoVacuum != sqliteAutoVacuumIncremental {
+		return fmt.Errorf("%w: existing schema auto_vacuum=%d", ErrOfflineMigration, autoVacuum)
+	}
+	return migrateV0ToV1(ctx, db)
+}
+
+func bootstrapV1(ctx context.Context, db *sql.DB) error {
+	return bootstrapV1WithHook(ctx, db, nil)
+}
+
+func bootstrapV1WithHook(
+	ctx context.Context,
+	db *sql.DB,
+	beforeWrite func(step int, label string) error,
+) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("state: begin migration: %w", err)
+		return fmt.Errorf("state: begin bootstrap migration: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck // no-op if already committed
+	defer tx.Rollback() //nolint:errcheck // no-op after commit
 
-	if _, err := tx.ExecContext(ctx, schema); err != nil {
-		return fmt.Errorf("state: apply schema: %w", err)
+	steps := migrationStepper{ctx: ctx, tx: tx, beforeWrite: beforeWrite}
+	if err := steps.execSchema("bootstrap-schema", schemaV1); err != nil {
+		return fmt.Errorf("state: apply schema v1: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, seedAcquisitionState, string(controller.AcquisitionDisabled)); err != nil {
-		return fmt.Errorf("state: seed acquisition_state: %w", err)
+	if err := steps.exec("bootstrap-seed-acquisition", seedAcquisitionState, string(controller.AcquisitionDisabled)); err != nil {
+		return fmt.Errorf("state: seed acquisition state: %w", err)
 	}
-
+	if err := steps.exec("bootstrap-set-user-version", fmt.Sprintf(`PRAGMA user_version=%d`, currentSchemaVersion)); err != nil {
+		return fmt.Errorf("state: set schema version: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("state: commit migration: %w", err)
+		return fmt.Errorf("state: commit bootstrap migration: %w", err)
+	}
+	return nil
+}
+
+func migrateV0ToV1(ctx context.Context, db *sql.DB) error {
+	return migrateV0ToV1WithHook(ctx, db, nil)
+}
+
+func migrateV0ToV1WithHook(
+	ctx context.Context,
+	db *sql.DB,
+	beforeWrite func(step int, label string) error,
+) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: begin v0 migration: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after commit
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT
+			id, repository_alias, runner_request_id, attempt, workflow_job_id,
+			state, released, release_generation, ambiguous_reason, ambiguous_at,
+			created_at, updated_at
+		FROM assignments ORDER BY id
+	`)
+	if err != nil {
+		return fmt.Errorf("state: read legacy offers: %w", err)
+	}
+	type legacyAssignment struct {
+		id                int64
+		identity          OfferIdentity
+		attempt           int64
+		state             string
+		released          int
+		releaseGeneration int64
+		ambiguousReason   sql.NullString
+		ambiguousAt       sql.NullString
+		createdAt         string
+		updatedAt         string
+	}
+	var assignments []legacyAssignment
+	for rows.Next() {
+		var item legacyAssignment
+		if err := rows.Scan(
+			&item.id,
+			&item.identity.RepositoryAlias,
+			&item.identity.RunnerRequestID,
+			&item.attempt,
+			&item.identity.WorkflowJobID,
+			&item.state,
+			&item.released,
+			&item.releaseGeneration,
+			&item.ambiguousReason,
+			&item.ambiguousAt,
+			&item.createdAt,
+			&item.updatedAt,
+		); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("state: scan legacy offer: %w", err)
+		}
+		assignments = append(assignments, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("state: scan legacy offers: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("state: close legacy offer rows: %w", err)
+	}
+
+	steps := migrationStepper{ctx: ctx, tx: tx, beforeWrite: beforeWrite}
+	for _, rename := range []struct {
+		label     string
+		statement string
+	}{
+		{"drop-v0-runner-slot-index", `DROP INDEX runner_slots_upstream_runner_id_unique`},
+		{"rename-v0-runner-slots", `ALTER TABLE runner_slots RENAME TO migration_v0_runner_slots`},
+		{"rename-v0-reservations", `ALTER TABLE reservations RENAME TO migration_v0_reservations`},
+		{"rename-v0-effects", `ALTER TABLE effects RENAME TO migration_v0_effects`},
+		{"rename-v0-network-ledgers", `ALTER TABLE network_ledgers RENAME TO migration_v0_network_ledgers`},
+		{"rename-v0-assignments", `ALTER TABLE assignments RENAME TO migration_v0_assignments`},
+	} {
+		if err := steps.exec(rename.label, rename.statement); err != nil {
+			return fmt.Errorf("state: rebuild v0 schema at %s: %w", rename.label, err)
+		}
+	}
+
+	if err := steps.execSchema("create-v1-schema", schemaV1); err != nil {
+		return fmt.Errorf("state: create v1 tables and indexes: %w", err)
+	}
+
+	for _, item := range assignments {
+		digest := CanonicalOfferDigest(item.identity)
+		payloadDigest := CanonicalOfferPayloadDigest(item.identity)
+		logicalBytes, err := offerLogicalBytesV1(item.identity)
+		if err != nil {
+			return fmt.Errorf("state: size legacy offer: %w", err)
+		}
+		if err := steps.exec(
+			fmt.Sprintf("copy-v0-assignment-%d", item.id),
+			`INSERT INTO assignments (
+				id, repository_alias, runner_request_id, attempt, workflow_job_id,
+				offer_digest, offer_payload_digest,
+				job_id, repository_name, owner_name, job_workflow_ref,
+				job_display_name, workflow_run_id, event_name, request_labels,
+				queue_time, scale_set_assign_time, runner_assign_time, finish_time,
+				acquire_job_url, history_logical_bytes,
+				state, released, release_generation, ambiguous_reason, ambiguous_at,
+				created_at, updated_at
+			) VALUES (
+				?, ?, ?, ?, ?, ?, ?,
+				'', '', '', '', '', 0, '', '[]',
+				'', '', '', '', '', ?,
+				?, ?, ?, ?, ?, ?, ?
+			)`,
+			item.id,
+			item.identity.RepositoryAlias,
+			item.identity.RunnerRequestID,
+			item.attempt,
+			item.identity.WorkflowJobID,
+			digest[:],
+			payloadDigest[:],
+			logicalBytes,
+			item.state,
+			item.released,
+			item.releaseGeneration,
+			item.ambiguousReason,
+			item.ambiguousAt,
+			item.createdAt,
+			item.updatedAt,
+		); err != nil {
+			return fmt.Errorf("state: copy legacy offer %d: %w", item.id, err)
+		}
+	}
+
+	for _, copyStep := range []struct {
+		label     string
+		statement string
+	}{
+		{
+			"copy-v0-runner-slots",
+			`INSERT INTO runner_slots (
+				id, assignment_id, opaque_name, capacity_slot_id,
+				upstream_runner_id, bound_request_id, runner_container_id,
+				adapter_container_id, broker_container_id, policy_socket_digest,
+				created_at, updated_at
+			)
+			SELECT
+				id, assignment_id, opaque_name, capacity_slot_id,
+				upstream_runner_id, bound_request_id, runner_container_id,
+				adapter_container_id, broker_container_id, policy_socket_digest,
+				created_at, updated_at
+			FROM migration_v0_runner_slots`,
+		},
+		{
+			"copy-v0-reservations",
+			`INSERT INTO reservations (id, assignment_id, capacity_slot_id, reserved_at)
+			SELECT id, assignment_id, capacity_slot_id, reserved_at
+			FROM migration_v0_reservations`,
+		},
+		{
+			"copy-v0-effects",
+			`INSERT INTO effects (
+				id, assignment_id, idempotency_key, kind, began_at,
+				completed_at, result_identity, reason_code
+			)
+			SELECT
+				id, assignment_id, idempotency_key, kind, began_at,
+				completed_at, result_identity, reason_code
+			FROM migration_v0_effects`,
+		},
+		{
+			"copy-v0-network-ledgers",
+			`INSERT INTO network_ledgers (
+				id, ledger_key, assignment_id, state_digest,
+				updated_at, retained_until, logical_bytes
+			)
+			SELECT
+				id, ledger_key, assignment_id, state_digest,
+				updated_at, retained_until, 1
+			FROM migration_v0_network_ledgers`,
+		},
+	} {
+		if err := steps.exec(copyStep.label, copyStep.statement); err != nil {
+			return fmt.Errorf("state: %s: %w", copyStep.label, err)
+		}
+	}
+
+	for _, drop := range []struct {
+		label     string
+		statement string
+	}{
+		{"drop-v0-runner-slots", `DROP TABLE migration_v0_runner_slots`},
+		{"drop-v0-reservations", `DROP TABLE migration_v0_reservations`},
+		{"drop-v0-effects", `DROP TABLE migration_v0_effects`},
+		{"drop-v0-network-ledgers", `DROP TABLE migration_v0_network_ledgers`},
+		{"drop-v0-assignments", `DROP TABLE migration_v0_assignments`},
+	} {
+		if err := steps.exec(drop.label, drop.statement); err != nil {
+			return fmt.Errorf("state: %s: %w", drop.label, err)
+		}
+	}
+
+	if err := steps.exec("seed-acquisition-state", seedAcquisitionState, string(controller.AcquisitionDisabled)); err != nil {
+		return fmt.Errorf("state: seed acquisition state: %w", err)
+	}
+	if err := steps.exec("set-user-version", fmt.Sprintf(`PRAGMA user_version=%d`, currentSchemaVersion)); err != nil {
+		return fmt.Errorf("state: set schema version: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: commit v0 migration: %w", err)
 	}
 	return nil
 }
