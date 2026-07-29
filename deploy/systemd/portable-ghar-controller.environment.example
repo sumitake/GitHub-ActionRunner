@@ -1,0 +1,4 @@
+# Placeholder-only environment file. No real path, identity, secret, sizing
+# value, or schedule belongs in public source.
+PORTABLE_GHAR_PRIVATE_OVERLAY=/ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json
+PORTABLE_GHAR_RUNTIME_MANIFEST=/ABSOLUTE/PORTABLE_GHAR/RELEASE/runtime-manifest.json

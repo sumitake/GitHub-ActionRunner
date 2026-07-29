@@ -1,0 +1,4 @@
+# Portable-GHAR watchdog schedule template.
+# Operator approval is required before selecting a cadence or installing a
+# cron entry. Replace every placeholder; this file is never installed as-is.
+<SCHEDULE> <ABSOLUTE_RELEASE_PATH>/portable-ghar-watchdog run --private <ABSOLUTE_PRIVATE_OVERLAY> --manifest <ABSOLUTE_RUNTIME_MANIFEST>

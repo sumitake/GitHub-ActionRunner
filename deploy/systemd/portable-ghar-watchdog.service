@@ -1,0 +1,23 @@
+[Unit]
+Description=Portable GHAR disabled-only watchdog cycle
+After=local-fs.target
+RequiresMountsFor=/ABSOLUTE/PORTABLE_GHAR/STATE
+ConditionPathIsRegular=/ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json
+ConditionPathIsRegular=/ABSOLUTE/PORTABLE_GHAR/RELEASE/runtime-manifest.json
+
+[Service]
+Type=oneshot
+ExecStart=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-watchdog run --private /ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json --manifest /ABSOLUTE/PORTABLE_GHAR/RELEASE/runtime-manifest.json
+TimeoutStartSec=30s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ReadWritePaths=/ABSOLUTE/PORTABLE_GHAR/STATE /ABSOLUTE/PORTABLE_GHAR/LOGS

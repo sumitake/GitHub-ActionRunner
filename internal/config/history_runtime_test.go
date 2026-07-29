@@ -29,6 +29,7 @@ func validControllerRuntimeDocument() map[string]any {
 			"vacuum_batch_pages":               uint64(4),
 			"maintenance_cadence":              "1m",
 		},
+		"controller": validControllerPrivateOverlay(),
 	}
 }
 

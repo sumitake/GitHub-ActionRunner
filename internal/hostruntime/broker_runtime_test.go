@@ -469,13 +469,13 @@ func TestPolicyArtifactRejectsFailOpenOrNoncanonicalRestorePrograms(t *testing.T
 		),
 		"deny after allow": []byte(
 			"*filter\n:INPUT DROP [0:0]\n:FORWARD DROP [0:0]\n" +
-					":OUTPUT DROP [0:0]\n-A INPUT -i lo -j ACCEPT\n" +
-					"-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n" +
-					"-A OUTPUT -o lo -j ACCEPT\n" +
-					"-A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n" +
-					"-A OUTPUT -p tcp --dport 443 -m conntrack --ctstate NEW -j ACCEPT\n" +
-					"-A OUTPUT -m conntrack --ctstate INVALID -j DROP\nCOMMIT\n",
-			),
+				":OUTPUT DROP [0:0]\n-A INPUT -i lo -j ACCEPT\n" +
+				"-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n" +
+				"-A OUTPUT -o lo -j ACCEPT\n" +
+				"-A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n" +
+				"-A OUTPUT -p tcp --dport 443 -m conntrack --ctstate NEW -j ACCEPT\n" +
+				"-A OUTPUT -m conntrack --ctstate INVALID -j DROP\nCOMMIT\n",
+		),
 		"missing established": []byte(
 			"*filter\n:INPUT DROP [0:0]\n:FORWARD DROP [0:0]\n" +
 				":OUTPUT DROP [0:0]\n-A INPUT -i lo -j ACCEPT\n" +

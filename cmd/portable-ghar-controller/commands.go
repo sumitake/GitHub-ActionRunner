@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -24,11 +25,16 @@ type controllerProcess interface {
 	Close() error
 }
 
+type controllerOwnershipLease interface {
+	Validate() error
+	Close() error
+}
+
 type commandDependencies struct {
 	Clock             func() time.Time
 	IsRoot            func() bool
-	AcquireOwnership  func(string) (io.Closer, error)
-	OpenController    func(context.Context, string, string) (controllerProcess, error)
+	AcquireOwnership  func(string) (controllerOwnershipLease, error)
+	OpenController    func(context.Context, string, string, controllerOwnershipLease) (controllerProcess, error)
 	DialAdmin         func(context.Context) (controller.LiveAdmin, io.Closer, error)
 	AdminTimeout      time.Duration
 	DrainTimeout      time.Duration
@@ -41,21 +47,19 @@ func productionCommandDependencies(clock func() time.Time) commandDependencies {
 		IsRoot:           func() bool { return os.Geteuid() == 0 },
 		AcquireOwnership: acquireFileOwnership,
 		OpenController: func(
-			context.Context,
-			string,
-			string,
+			ctx context.Context,
+			configPath string,
+			databasePath string,
+			ownership controllerOwnershipLease,
 		) (controllerProcess, error) {
-			// The Task 8 command boundary is complete, but the production
-			// composition remains deliberately unavailable until the fleet and
-			// host-authority loaders can construct the disabled observer without
-			// inventing configuration.
-			return nil, errCommandUnavailable
+			return openProductionDisabledObserver(
+				ctx,
+				configPath,
+				databasePath,
+				ownership,
+			)
 		},
-		DialAdmin: func(
-			context.Context,
-		) (controller.LiveAdmin, io.Closer, error) {
-			return nil, nil, errCommandUnavailable
-		},
+		DialAdmin:         dialProductionAdmin,
 		AdminTimeout:      10 * time.Second,
 		DrainTimeout:      10 * time.Minute,
 		StatusReadTimeout: 10 * time.Second,
@@ -198,10 +202,15 @@ func executeRun(
 	if err != nil || ownership == nil {
 		return commandFailure(stderr, "run")
 	}
+	if err := ownership.Validate(); err != nil {
+		_ = ownership.Close()
+		return commandFailure(stderr, "run")
+	}
 	process, openErr := deps.OpenController(
 		ctx,
 		flags["config"],
 		flags["database"],
+		ownership,
 	)
 	if openErr != nil || process == nil {
 		_ = ownership.Close()
@@ -209,8 +218,7 @@ func executeRun(
 	}
 	runErr := process.Run(ctx)
 	processCloseErr := process.Close()
-	ownershipCloseErr := ownership.Close()
-	if runErr != nil || processCloseErr != nil || ownershipCloseErr != nil {
+	if runErr != nil || processCloseErr != nil {
 		return commandFailure(stderr, "run")
 	}
 	return 0
@@ -323,7 +331,7 @@ func executeStatus(
 	if err != nil {
 		return commandFailure(stderr, "status")
 	}
-	runtime, loadErr := config.LoadControllerRuntime(configFile)
+	runtime, loadErr := config.LoadStatusRuntime(configFile)
 	closeErr := configFile.Close()
 	if loadErr != nil || closeErr != nil {
 		return commandFailure(stderr, "status")
@@ -433,10 +441,15 @@ func commandFailure(stderr io.Writer, command string) int {
 }
 
 type fileOwnership struct {
-	file *os.File
+	mu     sync.Mutex
+	file   *os.File
+	path   string
+	device uint64
+	inode  uint64
+	locked bool
 }
 
-func acquireFileOwnership(path string) (io.Closer, error) {
+func acquireFileOwnership(path string) (controllerOwnershipLease, error) {
 	if path == "" {
 		return nil, errCommandUnavailable
 	}
@@ -451,15 +464,85 @@ func acquireFileOwnership(path string) (io.Closer, error) {
 		_ = file.Close()
 		return nil, err
 	}
-	return &fileOwnership{file: file}, nil
+	device, inode, err := validateOwnershipIdentity(file, path)
+	if err != nil {
+		_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
+		_ = file.Close()
+		return nil, err
+	}
+	return &fileOwnership{
+		file:   file,
+		path:   path,
+		device: device,
+		inode:  inode,
+		locked: true,
+	}, nil
+}
+
+func (ownership *fileOwnership) Validate() error {
+	if ownership == nil {
+		return errCommandUnavailable
+	}
+	ownership.mu.Lock()
+	defer ownership.mu.Unlock()
+	if ownership.file == nil || !ownership.locked || ownership.path == "" {
+		return errCommandUnavailable
+	}
+	device, inode, err := validateOwnershipIdentity(
+		ownership.file,
+		ownership.path,
+	)
+	if err != nil ||
+		device != ownership.device ||
+		inode != ownership.inode {
+		return errCommandUnavailable
+	}
+	return nil
 }
 
 func (ownership *fileOwnership) Close() error {
-	if ownership == nil || ownership.file == nil {
+	if ownership == nil {
+		return errCommandUnavailable
+	}
+	ownership.mu.Lock()
+	defer ownership.mu.Unlock()
+	if ownership.file == nil || !ownership.locked {
 		return errCommandUnavailable
 	}
 	unlockErr := unix.Flock(int(ownership.file.Fd()), unix.LOCK_UN)
 	closeErr := ownership.file.Close()
 	ownership.file = nil
+	ownership.locked = false
 	return errors.Join(unlockErr, closeErr)
+}
+
+func validateOwnershipIdentity(
+	file *os.File,
+	path string,
+) (uint64, uint64, error) {
+	if file == nil || path == "" {
+		return 0, 0, errCommandUnavailable
+	}
+	var descriptor unix.Stat_t
+	if err := unix.Fstat(int(file.Fd()), &descriptor); err != nil {
+		return 0, 0, errCommandUnavailable
+	}
+	var current unix.Stat_t
+	if err := unix.Lstat(path, &current); err != nil {
+		return 0, 0, errCommandUnavailable
+	}
+	if uint32(descriptor.Mode)&unix.S_IFMT != unix.S_IFREG ||
+		uint32(current.Mode)&unix.S_IFMT != unix.S_IFREG ||
+		uint32(descriptor.Mode)&0o777 != 0o600 ||
+		uint32(current.Mode)&0o777 != 0o600 ||
+		descriptor.Uid != uint32(os.Geteuid()) ||
+		current.Uid != uint32(os.Geteuid()) ||
+		uint64(descriptor.Nlink) != 1 ||
+		uint64(current.Nlink) != 1 ||
+		uint64(descriptor.Dev) != uint64(current.Dev) ||
+		descriptor.Ino != current.Ino ||
+		descriptor.Ino == 0 {
+		return 0, 0, errCommandUnavailable
+	}
+	return uint64(descriptor.Dev), descriptor.Ino, nil
 }

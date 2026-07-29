@@ -19,6 +19,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/sumitake/portable-ghar/internal/hostruntime"
 	"github.com/sumitake/portable-ghar/internal/redaction"
 	"github.com/sumitake/portable-ghar/internal/state"
 )
@@ -58,6 +59,36 @@ type SecretRef struct {
 	// name). Must be one of secretSourceAllowlist.
 	Source string `json:"source"`
 	Ref    string `json:"ref"`
+}
+
+// ControllerRuntime is the production-only private runtime overlay. Its wire
+// representation is exactly hostruntime.PrivateOverlay; the wrapper keeps the
+// canonical revision alongside the decoded object without adding a second
+// looser schema.
+type ControllerRuntime struct {
+	overlay  hostruntime.PrivateOverlay
+	revision string
+}
+
+func (runtime *ControllerRuntime) UnmarshalJSON(data []byte) error {
+	if runtime == nil {
+		return errors.New("config: controller runtime is nil")
+	}
+	overlay, revision, err := hostruntime.ParsePrivateOverlay(data, len(data))
+	if err != nil {
+		return errors.New("config: controller runtime is invalid")
+	}
+	runtime.overlay = overlay
+	runtime.revision = revision
+	return nil
+}
+
+func (runtime ControllerRuntime) MarshalJSON() ([]byte, error) {
+	document, _, err := hostruntime.MarshalPrivateOverlay(runtime.overlay)
+	if err != nil || runtime.revision == "" {
+		return nil, errors.New("config: controller runtime is invalid")
+	}
+	return document, nil
 }
 
 // HistoryRuntime is the operator-authored, no-default wire representation of
@@ -182,6 +213,10 @@ type Runtime struct {
 	NetworkLedgerReserveRows         uint64         `json:"network_ledger_reserve_rows"`
 	NetworkLedgerReserveLogicalBytes uint64         `json:"network_ledger_reserve_logical_bytes"`
 	History                          HistoryRuntime `json:"history"`
+
+	// Controller is absent for the narrow transport/offline document and is
+	// mandatory for production startup through LoadControllerRuntime.
+	Controller *ControllerRuntime `json:"controller,omitempty"`
 }
 
 // LoadRuntime decodes and validates a Runtime document from r.
@@ -204,8 +239,12 @@ func LoadRuntime(r io.Reader) (Runtime, error) {
 	if err := dec.Decode(&rt); err != nil {
 		return Runtime{}, fmt.Errorf("config: decode runtime: %w", err)
 	}
-	if dec.More() {
-		return Runtime{}, errors.New("config: runtime document contains trailing data")
+	var trailing any
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return Runtime{}, errors.New("config: runtime document contains trailing data")
+		}
+		return Runtime{}, fmt.Errorf("config: decode runtime trailing data: %w", err)
 	}
 
 	if err := rt.validate(); err != nil {
@@ -227,6 +266,24 @@ func LoadControllerRuntime(r io.Reader) (Runtime, error) {
 	if err := rt.validateControllerHistory(); err != nil {
 		return Runtime{}, err
 	}
+	if err := rt.validateControllerRuntime(); err != nil {
+		return Runtime{}, err
+	}
+	return rt, nil
+}
+
+// LoadStatusRuntime validates the durable-history envelope needed by the
+// read-only status command without authorizing production startup. It does not
+// require the private controller overlay and therefore cannot be used to
+// construct a controller process.
+func LoadStatusRuntime(r io.Reader) (Runtime, error) {
+	rt, err := LoadRuntime(r)
+	if err != nil {
+		return Runtime{}, err
+	}
+	if err := rt.validateControllerHistory(); err != nil {
+		return Runtime{}, err
+	}
 	return rt, nil
 }
 
@@ -234,6 +291,33 @@ func LoadControllerRuntime(r io.Reader) (Runtime, error) {
 // must obtain Runtime through LoadControllerRuntime before using it.
 func (rt Runtime) HistoryLimits() state.HistoryLimits {
 	return rt.History.limits()
+}
+
+// ControllerPrivateOverlay returns an isolated validated copy plus its exact
+// canonical revision. The false result distinguishes the offline subset from
+// a production runtime.
+func (rt Runtime) ControllerPrivateOverlay() (
+	hostruntime.PrivateOverlay,
+	string,
+	bool,
+) {
+	if rt.Controller == nil {
+		return hostruntime.PrivateOverlay{}, "", false
+	}
+	document, revision, err := hostruntime.MarshalPrivateOverlay(
+		rt.Controller.overlay,
+	)
+	if err != nil || revision != rt.Controller.revision {
+		return hostruntime.PrivateOverlay{}, "", false
+	}
+	overlay, parsedRevision, err := hostruntime.ParsePrivateOverlay(
+		document,
+		len(document),
+	)
+	if err != nil || parsedRevision != revision {
+		return hostruntime.PrivateOverlay{}, "", false
+	}
+	return overlay, revision, true
 }
 
 func (rt Runtime) validateControllerHistory() error {
@@ -269,6 +353,64 @@ func (rt Runtime) validateControllerHistory() error {
 		return errors.New("config: network ledger byte reserve is inconsistent")
 	}
 	return nil
+}
+
+func (rt Runtime) validateControllerRuntime() error {
+	overlay, _, ok := rt.ControllerPrivateOverlay()
+	if !ok ||
+		string(rt.EgressBackend) != overlay.Docker.BrokerNetworkID ||
+		rt.FleetConcurrency != overlay.Resources.FleetConcurrency ||
+		rt.FleetConcurrency != overlay.Resources.MaxCapacity ||
+		rt.NetworkLedgerReserveRows !=
+			overlay.Resources.NetworkLedgerReserveRows ||
+		rt.NetworkLedgerReserveLogicalBytes !=
+			overlay.Resources.NetworkLedgerReserveBytes ||
+		!controllerHistoryMatchesOverlay(rt.History, overlay.Resources.History) ||
+		!controllerSecretMatchesOverlay(rt.Secret, overlay.Secrets) {
+		return errors.New("config: controller runtime binding is inconsistent")
+	}
+	return nil
+}
+
+func controllerHistoryMatchesOverlay(
+	history HistoryRuntime,
+	overlay hostruntime.HistoryOverlay,
+) bool {
+	minRetention, minErr := time.ParseDuration(overlay.MinRetention)
+	maintenance, maintenanceErr := time.ParseDuration(
+		overlay.MaintenanceCadence,
+	)
+	return minErr == nil &&
+		maintenanceErr == nil &&
+		history.MinRetention == minRetention &&
+		history.MaxHistoryRows == overlay.MaxHistoryRows &&
+		history.MaxHistoryLogicalBytes == overlay.MaxHistoryLogicalBytes &&
+		history.MaxNetworkLedgerRows == overlay.MaxNetworkLedgerRows &&
+		history.MaxNetworkLedgerLogicalBytes ==
+			overlay.MaxNetworkLedgerLogicalBytes &&
+		history.InflightReserveRows == overlay.InflightReserveRows &&
+		history.InflightReserveLogicalBytes ==
+			overlay.InflightReserveLogicalBytes &&
+		history.GCBatchRows == overlay.GCBatchRows &&
+		history.NetworkGCBatchRows == overlay.NetworkGCBatchRows &&
+		history.VacuumBatchPages == overlay.VacuumBatchPages &&
+		history.MaintenanceCadence == maintenance
+}
+
+func controllerSecretMatchesOverlay(
+	secret SecretRef,
+	overlay []hostruntime.NamedSecretRef,
+) bool {
+	if secret.Ref == "" {
+		return false
+	}
+	for _, candidate := range overlay {
+		if candidate.Ref.Source == secret.Source &&
+			candidate.Ref.Ref == secret.Ref {
+			return true
+		}
+	}
+	return false
 }
 
 func checkedMultiply(left, right uint64) (uint64, bool) {
