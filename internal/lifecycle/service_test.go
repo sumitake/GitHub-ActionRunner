@@ -24,6 +24,7 @@ type fakeLifecycleState struct {
 	resolvedEvidence [32]byte
 	resolvedOutcome  controller.PostReleaseOutcome
 	resolveCalls     int
+	acquisition      map[controller.AssignmentKey]state.AcquisitionAssignmentRecord
 }
 
 func (f *fakeLifecycleState) recordLocked(
@@ -53,6 +54,24 @@ func (f *fakeLifecycleState) ListRecoverable(context.Context) ([]state.Recoverab
 		}
 	}
 	return records, nil
+}
+
+func (f *fakeLifecycleState) AcquisitionAssignment(
+	_ context.Context,
+	key controller.AssignmentKey,
+) (state.AcquisitionAssignmentRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.recordLocked(key); !ok {
+		return state.AcquisitionAssignmentRecord{}, ErrInvalidState
+	}
+	if record, ok := f.acquisition[key]; ok {
+		return record, nil
+	}
+	return state.AcquisitionAssignmentRecord{
+		Key:     key,
+		Outcome: state.AcquisitionOutcomeAcquired,
+	}, nil
 }
 
 func (f *fakeLifecycleState) LookupAssignmentEffect(
@@ -140,6 +159,22 @@ func (f *fakeLifecycleState) Advance(
 	return nil
 }
 
+func (f *fakeLifecycleState) BindTerminalMessage(
+	_ context.Context,
+	key controller.AssignmentKey,
+	messageID int,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	record, ok := f.recordLocked(key)
+	if !ok || messageID <= 0 ||
+		(record.State != controller.StateJobFinished &&
+			record.State != controller.StateDestroyed) {
+		return ErrInvalidState
+	}
+	return nil
+}
+
 func (f *fakeLifecycleState) ResolvePostRelease(
 	_ context.Context,
 	key controller.AssignmentKey,
@@ -204,6 +239,32 @@ type fakeSessionProvider struct {
 	session githubscale.Session
 	calls   int
 	err     error
+}
+
+type fakeJITAuthorizer struct {
+	mu    sync.Mutex
+	calls []controller.JITAuthorizationRequest
+	err   error
+}
+
+func (f *fakeJITAuthorizer) GenerateJITAuthorized(
+	ctx context.Context,
+	request controller.JITAuthorizationRequest,
+) (githubscale.JITConfig, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, request)
+	err := f.err
+	f.mu.Unlock()
+	if err != nil {
+		return githubscale.JITConfig{}, err
+	}
+	return request.Session.GenerateJIT(ctx, request.Request)
+}
+
+func (f *fakeJITAuthorizer) Calls() []controller.JITAuthorizationRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]controller.JITAuthorizationRequest(nil), f.calls...)
 }
 
 func (f *fakeSessionProvider) Session(
@@ -475,6 +536,16 @@ func TestServiceReleaseRemovesStaleRegistrationBeforeOneJIT(t *testing.T) {
 		t.Fatalf("release calls = generate=%d removed=%v jail=%d",
 			fixture.session.generateCalls, fixture.session.removeCalls, fixture.jails.releaseCalls)
 	}
+	jitCalls := fixture.jit.Calls()
+	if len(jitCalls) != 1 ||
+		jitCalls[0].Assignment.Key != fixture.assignment.Key ||
+		jitCalls[0].ScaleSetName != "portable-ghar" ||
+		jitCalls[0].Session != fixture.session ||
+		jitCalls[0].RunnerName != fixture.assignment.Slot.OpaqueName ||
+		jitCalls[0].Request.RunnerName != fixture.assignment.Slot.OpaqueName ||
+		jitCalls[0].Request.WorkFolder != runnerWorkFolder {
+		t.Fatalf("JIT authorization binding = %+v", jitCalls)
+	}
 	if err := fixture.session.lastSecret.Use(func(io.Reader) error { return nil }); !errors.Is(err, redaction.ErrSecretScopeClosed) {
 		t.Fatalf("JIT after Release = %v, want destroyed", err)
 	}
@@ -484,6 +555,317 @@ func TestServiceReleaseRemovesStaleRegistrationBeforeOneJIT(t *testing.T) {
 	if fixture.session.generateCalls != 1 || fixture.jails.releaseCalls != 1 {
 		t.Fatalf("duplicate Release repeated effects: generate=%d release=%d",
 			fixture.session.generateCalls, fixture.jails.releaseCalls)
+	}
+}
+
+func TestServiceReleasePersistsAmbiguityWhenJITMayHaveActed(t *testing.T) {
+	fixture := newLifecycleFixture(t)
+	if _, err := fixture.service.Prepare(context.Background(), fixture.assignment); err != nil {
+		t.Fatalf("Prepare() = %v", err)
+	}
+	fixture.jit.err = errors.Join(
+		controller.ErrJITMayHaveActed,
+		errors.New("post-boundary failure"),
+	)
+
+	err := fixture.service.Release(context.Background(), fixture.assignment.Key)
+	if !errors.Is(err, ErrReleaseAmbiguous) ||
+		!errors.Is(err, controller.ErrJITMayHaveActed) {
+		t.Fatalf("Release() = %v, want JIT ambiguity", err)
+	}
+	if !fixture.state.record.Ambiguous ||
+		fixture.state.record.AmbiguousReason != "jit-effect-ambiguous" {
+		t.Fatalf("ambiguity = (%v,%q)",
+			fixture.state.record.Ambiguous,
+			fixture.state.record.AmbiguousReason,
+		)
+	}
+	if fixture.session.generateCalls != 0 {
+		t.Fatalf("fake authorizer unexpectedly delegated GenerateJIT: %d", fixture.session.generateCalls)
+	}
+}
+
+func TestServiceRevokePreRunningDestroysHeldAndReleasedAssignments(t *testing.T) {
+	t.Run("held pre-JIT", func(t *testing.T) {
+		fixture := newLifecycleFixture(t)
+		if _, err := fixture.service.Prepare(context.Background(), fixture.assignment); err != nil {
+			t.Fatalf("Prepare() = %v", err)
+		}
+		fixture.state.acquisition[fixture.assignment.Key] =
+			state.AcquisitionAssignmentRecord{
+				Key:          fixture.assignment.Key,
+				Outcome:      state.AcquisitionOutcomeAcquired,
+				RevokedEpoch: 19,
+			}
+
+		if err := fixture.service.RevokePreRunning(
+			context.Background(),
+			19,
+			[]controller.AssignmentKey{fixture.assignment.Key},
+		); err != nil {
+			t.Fatalf("RevokePreRunning() = %v", err)
+		}
+		if fixture.state.record.State != controller.StateDestroyed ||
+			fixture.jails.destroyHeld != 1 ||
+			fixture.jit.Calls() != nil {
+			t.Fatalf(
+				"held revocation = state %s destroyHeld %d jit %d",
+				fixture.state.record.State,
+				fixture.jails.destroyHeld,
+				len(fixture.jit.Calls()),
+			)
+		}
+	})
+
+	t.Run("released unbound listener", func(t *testing.T) {
+		fixture := newLifecycleFixture(t)
+		if _, err := fixture.service.Prepare(context.Background(), fixture.assignment); err != nil {
+			t.Fatalf("Prepare() = %v", err)
+		}
+		if err := fixture.service.Release(context.Background(), fixture.assignment.Key); err != nil {
+			t.Fatalf("Release() = %v", err)
+		}
+		fixture.state.acquisition[fixture.assignment.Key] =
+			state.AcquisitionAssignmentRecord{
+				Key:          fixture.assignment.Key,
+				Outcome:      state.AcquisitionOutcomeAcquired,
+				RevokedEpoch: 20,
+			}
+
+		if err := fixture.service.RevokePreRunning(
+			context.Background(),
+			20,
+			[]controller.AssignmentKey{fixture.assignment.Key},
+		); err != nil {
+			t.Fatalf("RevokePreRunning() = %v", err)
+		}
+		if fixture.state.record.State != controller.StateDestroyed ||
+			fixture.jails.destroyLive != 1 ||
+			len(fixture.session.removeCalls) != 1 {
+			t.Fatalf(
+				"released revocation = state %s destroyLive %d removals %v",
+				fixture.state.record.State,
+				fixture.jails.destroyLive,
+				fixture.session.removeCalls,
+			)
+		}
+	})
+}
+
+func TestServiceRevokePreRunningTerminalizesReceivedWithoutRuntime(
+	t *testing.T,
+) {
+	for _, outcome := range []state.AcquisitionOutcome{
+		state.AcquisitionOutcomeOffered,
+		state.AcquisitionOutcomeRequested,
+		state.AcquisitionOutcomeAcquired,
+		state.AcquisitionOutcomeRejected,
+	} {
+		t.Run(string(outcome), func(t *testing.T) {
+			fixture := newLifecycleFixture(t)
+			fixture.state.record.State = controller.StateReceived
+			fixture.state.record.Slot = controller.RunnerSlot{}
+			fixture.state.acquisition[fixture.assignment.Key] =
+				state.AcquisitionAssignmentRecord{
+					Key:          fixture.assignment.Key,
+					Outcome:      outcome,
+					RevokedEpoch: 23,
+				}
+
+			if err := fixture.service.RevokePreRunning(
+				context.Background(),
+				23,
+				[]controller.AssignmentKey{fixture.assignment.Key},
+			); err != nil {
+				t.Fatalf("RevokePreRunning(%s) = %v", outcome, err)
+			}
+			if fixture.state.record.State != controller.StateDestroyed {
+				t.Fatalf(
+					"RevokePreRunning(%s) state = %s, want DESTROYED",
+					outcome,
+					fixture.state.record.State,
+				)
+			}
+			if fixture.builderCalls() != 0 ||
+				fixture.jails.destroyHeld != 0 ||
+				fixture.jails.destroyLive != 0 {
+				t.Fatalf(
+					"RevokePreRunning(%s) built/cleaned nonexistent runtime: builder=%d held=%d live=%d",
+					outcome,
+					fixture.builderCalls(),
+					fixture.jails.destroyHeld,
+					fixture.jails.destroyLive,
+				)
+			}
+		})
+	}
+}
+
+func TestServiceRevokePreRunningRejectsNonAcquiredReservedAssignment(
+	t *testing.T,
+) {
+	fixture := newLifecycleFixture(t)
+	fixture.state.acquisition[fixture.assignment.Key] =
+		state.AcquisitionAssignmentRecord{
+			Key:          fixture.assignment.Key,
+			Outcome:      state.AcquisitionOutcomeOffered,
+			RevokedEpoch: 24,
+		}
+
+	if err := fixture.service.RevokePreRunning(
+		context.Background(),
+		24,
+		[]controller.AssignmentKey{fixture.assignment.Key},
+	); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("RevokePreRunning(non-acquired reserved) = %v, want ErrInvalidState", err)
+	}
+	if fixture.state.record.State == controller.StateDestroyed {
+		t.Fatal("non-acquired reserved assignment was silently destroyed")
+	}
+}
+
+func TestServiceOrdinaryRevocationPreservesRunningButExplicitCancelDestroys(
+	t *testing.T,
+) {
+	fixture := newLifecycleFixture(t)
+	if _, err := fixture.service.Prepare(
+		context.Background(),
+		fixture.assignment,
+	); err != nil {
+		t.Fatalf("Prepare() = %v", err)
+	}
+	if err := fixture.service.Release(
+		context.Background(),
+		fixture.assignment.Key,
+	); err != nil {
+		t.Fatalf("Release() = %v", err)
+	}
+	runner := fixture.session.runners[fixture.assignment.Slot.OpaqueName]
+	started, err := githubscale.NewStartedEvent(githubscale.StartedEvent{
+		JobRef: githubscale.JobRef{
+			RunnerRequestID:  fixture.assignment.Key.RunnerRequestID,
+			JobID:            fixture.assignment.Offer.JobID,
+			RunnerAssignTime: time.Now().Add(-time.Second),
+		},
+		RunnerID:   runner.ID,
+		RunnerName: runner.Name,
+	})
+	if err != nil {
+		t.Fatalf("NewStartedEvent() = %v", err)
+	}
+	if err := fixture.service.Observe(context.Background(), started); err != nil {
+		t.Fatalf("Observe(started) = %v", err)
+	}
+	fixture.state.acquisition[fixture.assignment.Key] =
+		state.AcquisitionAssignmentRecord{
+			Key:          fixture.assignment.Key,
+			Outcome:      state.AcquisitionOutcomeAcquired,
+			RevokedEpoch: 29,
+		}
+
+	if err := fixture.service.RevokePreRunning(
+		context.Background(),
+		29,
+		[]controller.AssignmentKey{fixture.assignment.Key},
+	); err != nil {
+		t.Fatalf("RevokePreRunning(running) = %v", err)
+	}
+	if fixture.state.record.State != controller.StateJobRunning ||
+		fixture.jails.destroyLive != 0 ||
+		len(fixture.session.removeCalls) != 0 {
+		t.Fatalf(
+			"ordinary revocation mutated running job: state=%s destroy=%d removals=%v",
+			fixture.state.record.State,
+			fixture.jails.destroyLive,
+			fixture.session.removeCalls,
+		)
+	}
+
+	if err := fixture.service.CancelRunning(context.Background()); err != nil {
+		t.Fatalf("CancelRunning() = %v", err)
+	}
+	if fixture.state.record.State != controller.StateDestroyed ||
+		fixture.jails.destroyLive != 1 ||
+		len(fixture.session.removeCalls) != 1 ||
+		fixture.session.removeCalls[0] != runner.ID {
+		t.Fatalf(
+			"explicit cancel = state=%s destroy=%d removals=%v",
+			fixture.state.record.State,
+			fixture.jails.destroyLive,
+			fixture.session.removeCalls,
+		)
+	}
+	if _, found := fixture.session.runners[fixture.assignment.Slot.OpaqueName]; found {
+		t.Fatal("explicit cancel left upstream runner registered")
+	}
+}
+
+func TestServiceExplicitCancelPersistsAmbiguityOnUnprovenCleanup(t *testing.T) {
+	fixture := newLifecycleFixture(t)
+	fixture.state.record.State = controller.StateJobRunning
+	fixture.state.record.Released = true
+	fixture.state.record.Slot.RunnerContainerID = "runner-id"
+	fixture.session.runners[fixture.assignment.Slot.OpaqueName] =
+		githubscale.RunnerRef{
+			ID:   991,
+			Name: fixture.assignment.Slot.OpaqueName,
+		}
+	fixture.session.removeErr = errors.New("injected removal failure")
+
+	if err := fixture.service.CancelRunning(
+		context.Background(),
+	); !errors.Is(err, ErrLifecycle) {
+		t.Fatalf("CancelRunning() = %v, want ErrLifecycle", err)
+	}
+	if fixture.state.record.State != controller.StateJobRunning ||
+		!fixture.state.record.Ambiguous ||
+		fixture.state.record.AmbiguousReason != "drain-cancel" {
+		t.Fatalf("failed cancel state = %+v", fixture.state.record)
+	}
+}
+
+func TestServiceStartedObservationCannotBindRevokedPreRunningListener(t *testing.T) {
+	fixture := newLifecycleFixture(t)
+	if _, err := fixture.service.Prepare(context.Background(), fixture.assignment); err != nil {
+		t.Fatalf("Prepare() = %v", err)
+	}
+	if err := fixture.service.Release(context.Background(), fixture.assignment.Key); err != nil {
+		t.Fatalf("Release() = %v", err)
+	}
+	runner := fixture.session.runners[fixture.assignment.Slot.OpaqueName]
+	fixture.state.acquisition[fixture.assignment.Key] =
+		state.AcquisitionAssignmentRecord{
+			Key:          fixture.assignment.Key,
+			Outcome:      state.AcquisitionOutcomeAcquired,
+			RevokedEpoch: 21,
+		}
+	event, err := githubscale.NewStartedEvent(githubscale.StartedEvent{
+		JobRef: githubscale.JobRef{
+			RunnerRequestID:  944,
+			JobID:            fixture.assignment.Offer.JobID,
+			RunnerAssignTime: time.Now().Add(-time.Second),
+		},
+		RunnerID:   runner.ID,
+		RunnerName: runner.Name,
+	})
+	if err != nil {
+		t.Fatalf("NewStartedEvent() = %v", err)
+	}
+
+	if err := fixture.service.Observe(context.Background(), event); err != nil {
+		t.Fatalf("Observe(revoked started) = %v", err)
+	}
+	if fixture.state.record.State != controller.StateDestroyed ||
+		fixture.state.record.Slot.UpstreamRunnerID != 0 ||
+		fixture.jails.destroyLive != 1 ||
+		len(fixture.session.removeCalls) != 1 {
+		t.Fatalf(
+			"revoked observation = state %s slot %+v destroyLive %d removals %v",
+			fixture.state.record.State,
+			fixture.state.record.Slot,
+			fixture.jails.destroyLive,
+			fixture.session.removeCalls,
+		)
 	}
 }
 
@@ -1330,6 +1712,7 @@ type lifecycleFixture struct {
 	state      *fakeLifecycleState
 	session    *fakeLifecycleSession
 	sessions   *fakeSessionProvider
+	jit        *fakeJITAuthorizer
 	jails      *fakeJailOrchestrator
 	recovery   *fakeManagedRecovery
 	assignment controller.Assignment
@@ -1353,6 +1736,7 @@ func newLifecycleFixture(t *testing.T) lifecycleFixture {
 	offer := githubscale.Offer{JobRef: githubscale.JobRef{
 		RunnerRequestID: key.RunnerRequestID,
 		JobID:           "job-a",
+		RequestLabels:   []string{"portable-ghar"},
 	}}
 	assignment, err := controller.NewAssignment(key, offer, slot)
 	if err != nil {
@@ -1365,6 +1749,7 @@ func newLifecycleFixture(t *testing.T) lifecycleFixture {
 			RepositoryAlias: key.RepositoryAlias,
 			RunnerRequestID: key.RunnerRequestID,
 			JobID:           offer.JobID,
+			RequestLabels:   append([]string(nil), offer.RequestLabels...),
 		},
 		Slot:      slot,
 		UpdatedAt: time.Now().Add(-time.Minute),
@@ -1372,12 +1757,19 @@ func newLifecycleFixture(t *testing.T) lifecycleFixture {
 	durable := &fakeLifecycleState{
 		record:  record,
 		effects: make(map[string]state.EffectRecord),
+		acquisition: map[controller.AssignmentKey]state.AcquisitionAssignmentRecord{
+			key: {
+				Key:     key,
+				Outcome: state.AcquisitionOutcomeAcquired,
+			},
+		},
 	}
 	session := &fakeLifecycleSession{
 		runners:      make(map[string]githubscale.RunnerRef),
 		nextRunnerID: 100,
 	}
 	sessions := &fakeSessionProvider{session: session}
+	jit := &fakeJITAuthorizer{}
 	adapterName, brokerName, runnerName, err := componentNames(slot.OpaqueName)
 	if err != nil {
 		t.Fatalf("componentNames() = %v", err)
@@ -1412,6 +1804,7 @@ func newLifecycleFixture(t *testing.T) lifecycleFixture {
 	service, err := NewService(
 		durable,
 		sessions,
+		jit,
 		builder,
 		jails,
 		recovery,
@@ -1425,6 +1818,7 @@ func newLifecycleFixture(t *testing.T) lifecycleFixture {
 		state:      durable,
 		session:    session,
 		sessions:   sessions,
+		jit:        jit,
 		jails:      jails,
 		recovery:   recovery,
 		assignment: assignment,
@@ -1440,6 +1834,7 @@ func projectedRecovery(record state.RecoverableAssignment) controller.Recoverabl
 			JobID:              record.Offer.JobID,
 			RepositoryName:     record.Offer.RepositoryName,
 			OwnerName:          record.Offer.OwnerName,
+			RequestLabels:      append([]string(nil), record.Offer.RequestLabels...),
 			ScaleSetAssignTime: record.Offer.ScaleSetAssignTime,
 		}},
 		Released:        record.Released,

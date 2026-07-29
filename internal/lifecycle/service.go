@@ -49,15 +49,22 @@ type Runtime interface {
 	Service
 	controller.BatchEventRecorder
 	controller.AssignmentReconciler
+	controller.AcquisitionRevoker
+	controller.RunningCanceler
 }
 
 type DurableState interface {
 	ListRecoverable(context.Context) ([]state.RecoverableAssignment, error)
+	AcquisitionAssignment(
+		context.Context,
+		controller.AssignmentKey,
+	) (state.AcquisitionAssignmentRecord, error)
 	LookupAssignmentEffect(context.Context, controller.AssignmentKey, string) (state.EffectRecord, error)
 	MarkAmbiguous(context.Context, controller.AssignmentKey, string) error
 	ApplyRunnerObservation(context.Context, controller.AssignmentKey, state.RunnerObservation) error
 	AdvancePreReleaseDestroyed(context.Context, controller.AssignmentKey) error
 	Advance(context.Context, controller.AssignmentKey, controller.State) error
+	BindTerminalMessage(context.Context, controller.AssignmentKey, int) error
 	ResolvePostRelease(
 		context.Context,
 		controller.AssignmentKey,
@@ -88,6 +95,7 @@ type JailOrchestrator interface {
 type service struct {
 	state    DurableState
 	sessions SessionProvider
+	jit      controller.JITAuthorizer
 	builder  SetupBuilder
 	jails    JailOrchestrator
 	recovery hostruntime.ManagedRecovery
@@ -114,18 +122,20 @@ type liveEntry struct {
 func NewService(
 	durable DurableState,
 	sessions SessionProvider,
+	jit controller.JITAuthorizer,
 	builder SetupBuilder,
 	jails JailOrchestrator,
 	recovery hostruntime.ManagedRecovery,
 	now func() time.Time,
 ) (Runtime, error) {
-	if durable == nil || sessions == nil || builder == nil ||
+	if durable == nil || sessions == nil || jit == nil || builder == nil ||
 		jails == nil || recovery == nil || now == nil {
 		return nil, fmt.Errorf("%w: dependencies required", ErrLifecycle)
 	}
 	return &service{
 		state:    durable,
 		sessions: sessions,
+		jit:      jit,
 		builder:  builder,
 		jails:    jails,
 		recovery: recovery,
@@ -240,11 +250,29 @@ func (s *service) releaseLocked(
 		_ = s.state.MarkAmbiguous(ctx, key, "upstream-pre-release-cleanup")
 		return fmt.Errorf("%w: stale runner cleanup: %w", ErrReleaseAmbiguous, err)
 	}
-	config, err := session.GenerateJIT(ctx, githubscale.JITRequest{
+	scaleSetName, err := assignmentScaleSet(entry.assignment)
+	if err != nil {
+		return err
+	}
+	jitRequest := githubscale.JITRequest{
 		RunnerName: entry.assignment.Slot.OpaqueName,
 		WorkFolder: runnerWorkFolder,
-	})
+	}
+	config, err := s.jit.GenerateJITAuthorized(
+		ctx,
+		controller.JITAuthorizationRequest{
+			Assignment:   entry.assignment,
+			ScaleSetName: scaleSetName,
+			Session:      session,
+			RunnerName:   entry.assignment.Slot.OpaqueName,
+			Request:      jitRequest,
+		},
+	)
 	if err != nil {
+		if errors.Is(err, controller.ErrJITMayHaveActed) {
+			_ = s.state.MarkAmbiguous(ctx, key, "jit-effect-ambiguous")
+			return fmt.Errorf("%w: generate JIT: %w", ErrReleaseAmbiguous, err)
+		}
 		return fmt.Errorf("%w: generate JIT", ErrReleaseFailed)
 	}
 	if config.Encoded != nil {
@@ -293,6 +321,14 @@ func (s *service) releaseLocked(
 	}
 	s.cacheMu.Unlock()
 	return nil
+}
+
+func assignmentScaleSet(assignment controller.Assignment) (string, error) {
+	if len(assignment.Offer.RequestLabels) != 1 ||
+		assignment.Offer.RequestLabels[0] == "" {
+		return "", ErrInvalidState
+	}
+	return assignment.Offer.RequestLabels[0], nil
 }
 
 func removeStaleRunner(
@@ -433,6 +469,15 @@ func (s *service) observeEvents(
 	repositoryAlias string,
 	events []githubscale.Event,
 ) error {
+	return s.observeEventsForMessage(ctx, repositoryAlias, events, 0)
+}
+
+func (s *service) observeEventsForMessage(
+	ctx context.Context,
+	repositoryAlias string,
+	events []githubscale.Event,
+	messageID int,
+) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -445,6 +490,18 @@ func (s *service) observeEvents(
 	for _, plan := range plans {
 		if err := s.applyObservationPlan(ctx, plan); err != nil {
 			return err
+		}
+		if plan.event.Kind() == githubscale.EventCompleted && messageID > 0 {
+			if len(plan.keys) != 1 {
+				return ErrInvalidState
+			}
+			if err := s.state.BindTerminalMessage(
+				ctx,
+				plan.keys[0],
+				messageID,
+			); err != nil {
+				return fmt.Errorf("%w: bind terminal message", ErrLifecycle)
+			}
 		}
 	}
 	return nil
@@ -461,6 +518,201 @@ func (s *service) Destroy(
 	unlock := s.locks.lock(key)
 	defer unlock()
 	return s.destroyLocked(ctx, key, reason)
+}
+
+// RevokePreRunning destroys the exact durable pre-running set marked by one
+// acquisition epoch. It shares the lifecycle's per-assignment exclusion with
+// Release, observation, and reconciliation.
+func (s *service) RevokePreRunning(
+	ctx context.Context,
+	epoch uint64,
+	keys []controller.AssignmentKey,
+) error {
+	if epoch == 0 || len(keys) == 0 {
+		if epoch == 0 && len(keys) != 0 {
+			return ErrInvalidState
+		}
+		return nil
+	}
+	ordered := canonicalAssignmentKeys(keys)
+	if len(ordered) != len(keys) {
+		return ErrInvalidState
+	}
+	for _, key := range ordered {
+		if key.RepositoryAlias == "" || key.RunnerRequestID <= 0 {
+			return ErrInvalidState
+		}
+	}
+	unlock := s.locks.lockMany(ordered)
+	defer unlock()
+	for _, key := range ordered {
+		acquisition, err := s.state.AcquisitionAssignment(ctx, key)
+		if err != nil ||
+			acquisition.Key != key ||
+			acquisition.RevokedEpoch != epoch {
+			return errors.Join(ErrInvalidState, err)
+		}
+		record, found, err := s.findRecord(ctx, key)
+		if err != nil {
+			return err
+		}
+		if !found {
+			continue
+		}
+		if record.State == controller.StateReceived {
+			if record.Slot != (controller.RunnerSlot{}) {
+				return ErrInvalidState
+			}
+			if err := s.state.AdvancePreReleaseDestroyed(ctx, key); err != nil {
+				return fmt.Errorf(
+					"%w: terminalize revoked pre-reservation assignment",
+					ErrLifecycle,
+				)
+			}
+			s.dropCache(key)
+			continue
+		}
+		if acquisition.Outcome != state.AcquisitionOutcomeAcquired {
+			return ErrInvalidState
+		}
+		if record.State == controller.StateJobRunning {
+			continue
+		}
+		if !isPreRunning(record.State) {
+			return ErrInvalidState
+		}
+		if err := s.revokePreRunningLocked(ctx, record); err != nil {
+			_ = s.state.MarkAmbiguous(ctx, key, "acquisition-revocation")
+			return err
+		}
+	}
+	return nil
+}
+
+// CancelRunning is the explicitly destructive drain path. It snapshots the
+// complete running set, takes every same-key lifecycle lock in canonical
+// order, revalidates each record, proves upstream and runtime cleanup, and
+// advances through both legal terminal checkpoints. Ordinary acquisition
+// revocation never calls this method.
+func (s *service) CancelRunning(ctx context.Context) error {
+	records, err := s.state.ListRecoverable(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: list running assignments", ErrLifecycle)
+	}
+	keys := make([]controller.AssignmentKey, 0, len(records))
+	for _, record := range records {
+		if record.State == controller.StateJobRunning {
+			keys = append(keys, record.Key)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	ordered := canonicalAssignmentKeys(keys)
+	if len(ordered) != len(keys) {
+		return ErrInvalidState
+	}
+	unlock := s.locks.lockMany(ordered)
+	defer unlock()
+
+	for _, key := range ordered {
+		record, found, err := s.findRecord(ctx, key)
+		if err != nil {
+			return err
+		}
+		if !found || record.State != controller.StateJobRunning {
+			continue
+		}
+		if err := s.cleanupBothSides(ctx, record); err != nil {
+			_ = s.state.MarkAmbiguous(ctx, key, "drain-cancel")
+			return fmt.Errorf("%w: drain-cancel cleanup: %w", ErrLifecycle, err)
+		}
+		if err := s.state.Advance(
+			ctx,
+			key,
+			controller.StateJobFinished,
+		); err != nil {
+			_ = s.state.MarkAmbiguous(ctx, key, "drain-cancel")
+			return fmt.Errorf("%w: drain-cancel finish checkpoint", ErrLifecycle)
+		}
+		if err := s.state.Advance(
+			ctx,
+			key,
+			controller.StateDestroyed,
+		); err != nil {
+			_ = s.state.MarkAmbiguous(ctx, key, "drain-cancel")
+			return fmt.Errorf("%w: drain-cancel destroy checkpoint", ErrLifecycle)
+		}
+		s.dropCache(key)
+	}
+	return nil
+}
+
+func (s *service) revokePreRunningLocked(
+	ctx context.Context,
+	record state.RecoverableAssignment,
+) error {
+	listener, err := s.state.LookupAssignmentEffect(
+		ctx,
+		record.Key,
+		state.LifecycleEffectListenerRelease,
+	)
+	if err != nil {
+		return fmt.Errorf("%w: listener effect read", ErrLifecycle)
+	}
+	if listener.State == state.EffectAbsent {
+		return s.destroyLocked(
+			ctx,
+			record.Key,
+			controller.ReasonAcquisitionRevoke,
+		)
+	}
+	if record.State != controller.StateReleaseArmed &&
+		record.State != controller.StateListenerReleased {
+		return ErrReleaseAmbiguous
+	}
+	return s.destroyRevokedPostReleaseLocked(
+		ctx,
+		record,
+		githubscale.RunnerRef{},
+	)
+}
+
+func (s *service) destroyRevokedPostReleaseLocked(
+	ctx context.Context,
+	record state.RecoverableAssignment,
+	expected githubscale.RunnerRef,
+) error {
+	session, upstream, found, snapshot, runtime, err := s.readBothSides(ctx, record)
+	if err != nil {
+		return err
+	}
+	if expected != (githubscale.RunnerRef{}) &&
+		(expected.ID <= 0 ||
+			expected.Name != record.Slot.OpaqueName ||
+			(found && upstream != expected)) {
+		return ErrInvalidState
+	}
+	if found {
+		if err := removeRunnerAndProve(ctx, session, upstream); err != nil {
+			return fmt.Errorf("%w: revoked upstream removal", ErrCleanupUnproven)
+		}
+	}
+	if err := s.removeRuntimeAndProve(ctx, record, &snapshot); err != nil {
+		return fmt.Errorf("%w: revoked runtime removal", ErrCleanupUnproven)
+	}
+	evidence := reconciliationEvidence(record, upstream, found, runtime, true)
+	if err := s.state.ResolvePostRelease(
+		ctx,
+		record.Key,
+		controller.PostReleaseDestroyed,
+		evidence,
+		s.now(),
+	); err != nil {
+		return fmt.Errorf("%w: revoked terminal checkpoint", ErrLifecycle)
+	}
+	s.dropCache(record.Key)
+	return nil
 }
 
 func (s *service) RecordBatch(
@@ -507,7 +759,12 @@ func (s *service) RecordBatch(
 		}
 		events = append(events, event)
 	}
-	return s.observeEvents(ctx, envelope.RepositoryAlias, events)
+	return s.observeEventsForMessage(
+		ctx,
+		envelope.RepositoryAlias,
+		events,
+		envelope.MessageID,
+	)
 }
 
 func (s *service) ReconcileAssignment(
@@ -525,6 +782,22 @@ func (s *service) ReconcileAssignment(
 	}
 	if !sameControllerRecovery(record, assignment) {
 		return ErrInvalidState
+	}
+	acquisition, err := s.state.AcquisitionAssignment(ctx, assignment.Key)
+	if err != nil || acquisition.Key != assignment.Key {
+		return errors.Join(ErrInvalidState, err)
+	}
+	if acquisition.RevokedEpoch != 0 {
+		if acquisition.Outcome != state.AcquisitionOutcomeAcquired {
+			return ErrInvalidState
+		}
+		if record.State == controller.StateJobRunning {
+			return s.verifyRunning(ctx, record)
+		}
+		if !isPreRunning(record.State) {
+			return ErrInvalidState
+		}
+		return s.revokePreRunningLocked(ctx, record)
 	}
 	return s.reconcileLocked(ctx, record)
 }
@@ -676,6 +949,34 @@ func (s *service) observeRunnerLocked(
 		!sameJob(current.Offer, job) ||
 		current.Slot.RunnerContainerID == "" {
 		return ErrInvalidState
+	}
+	acquisition, err := s.state.AcquisitionAssignment(ctx, key)
+	if err != nil || acquisition.Key != key {
+		return errors.Join(ErrInvalidState, err)
+	}
+	if acquisition.RevokedEpoch != 0 {
+		if acquisition.Outcome != state.AcquisitionOutcomeAcquired ||
+			!isPreRunning(current.State) {
+			return ErrInvalidState
+		}
+		listener, err := s.state.LookupAssignmentEffect(
+			ctx,
+			key,
+			state.LifecycleEffectListenerRelease,
+		)
+		if err != nil ||
+			(listener.State != state.EffectPending &&
+				listener.State != state.EffectCompleted) {
+			return errors.Join(ErrInvalidState, err)
+		}
+		return s.destroyRevokedPostReleaseLocked(
+			ctx,
+			current,
+			githubscale.RunnerRef{
+				ID:   event.RunnerID(),
+				Name: event.RunnerName(),
+			},
+		)
 	}
 	return s.state.ApplyRunnerObservation(ctx, key, state.RunnerObservation{
 		UpstreamRunnerID:  event.RunnerID(),
@@ -1225,6 +1526,8 @@ func destroyReason(reason controller.ReasonCode) string {
 		return "lifecycle-job-finished"
 	case controller.ReasonLifecycleReconcile:
 		return "lifecycle-reconcile"
+	case controller.ReasonAcquisitionRevoke:
+		return "acquisition-revoked"
 	default:
 		return "lifecycle-invalid"
 	}

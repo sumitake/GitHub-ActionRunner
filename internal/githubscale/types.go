@@ -156,11 +156,14 @@ type Batch struct {
 	// meaningless when Empty is true.
 	MessageID int
 
-	Statistics Statistics
-	Offers     []Offer
-	Assigned   []AssignedEvent
-	Started    []StartedEvent
-	Completed  []CompletedEvent
+	// StatisticsPresent preserves the upstream pointer's presence. A real
+	// nonempty message without statistics cannot authorize demand.
+	StatisticsPresent bool
+	Statistics        Statistics
+	Offers            []Offer
+	Assigned          []AssignedEvent
+	Started           []StartedEvent
+	Completed         []CompletedEvent
 }
 
 // JITRequest is this adapter's own shape for a just-in-time runner

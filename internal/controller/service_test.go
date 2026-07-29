@@ -14,6 +14,12 @@ import (
 	"github.com/sumitake/portable-ghar/internal/observability"
 )
 
+const (
+	testFleetAlias    = "portable-fleet"
+	testHostProfileID = "qts-capless-root"
+	testBuildID       = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+)
+
 func testDesiredPolicy() AcquisitionPolicy {
 	return AcquisitionPolicy{
 		Mode:                     AcquisitionEnabled,
@@ -104,18 +110,38 @@ func TestHistoryStartupRestoresExactProjectionBeforeReady(t *testing.T) {
 	transitions := newFakeTransitioner(trace, testDesiredPolicy())
 	terminator := &fakeTerminator{}
 	service, err := NewService(ServiceConfig{
-		State:                state,
-		Broker:               broker,
-		Transitions:          transitions,
-		Terminator:           terminator,
-		Events:               &fakeEventRecorder{},
-		Replay:               &fakeReplayVerifier{result: ReplayCurrent},
-		Hosted:               &fakeHostedRouter{},
-		HistoryPressure:      testHistoryPressureThresholds(),
-		HealthPublisher:      &fakeHealthPublisher{},
-		EventSink:            &fakeEventSink{},
-		AckTimeout:           time.Second,
-		ReplayEvidenceMaxAge: time.Hour,
+		State:                 state,
+		Broker:                broker,
+		Transitions:           transitions,
+		Revoker:               &fakeAcquisitionRevoker{},
+		RunningCanceler:       &fakeRunningCanceler{},
+		Terminator:            terminator,
+		Events:                &fakeEventRecorder{},
+		Replay:                &fakeReplayVerifier{result: ReplayCurrent},
+		Hosted:                &fakeHostedRouter{},
+		FleetGuards:           canonicalFleetGuardProviderStub{},
+		Permits:               canonicalPermitProviderStub{},
+		HistoryPressure:       testHistoryPressureThresholds(),
+		HealthPublisher:       &fakeHealthPublisher{},
+		EventSink:             &fakeEventSink{},
+		Reconciler:            &fakeCycleReconciler{},
+		FleetAlias:            testFleetAlias,
+		HostProfileID:         testHostProfileID,
+		BuildID:               testBuildID,
+		Degraded:              true,
+		EnabledPolicyTemplate: testDesiredPolicy(),
+		AckTimeout:            time.Second,
+		OperationTimeout:      time.Second,
+		PollCycleTimeout:      5 * time.Second,
+		ReconciliationTimeout: time.Second,
+		PollCadence:           time.Millisecond,
+		ReconciliationCadence: time.Millisecond,
+		DrainPollCadence:      time.Millisecond,
+		ShutdownTimeout:       time.Second,
+		SessionCloseTimeout:   time.Second,
+		TransitionJoinTimeout: time.Second,
+		DurableFinishTimeout:  time.Second,
+		ReplayEvidenceMaxAge:  time.Hour,
 		Now: func() time.Time {
 			return time.Date(2026, 7, 28, 16, 0, 0, 0, time.UTC)
 		},
@@ -138,21 +164,16 @@ func TestHistoryStartupRestoresExactProjectionBeforeReady(t *testing.T) {
 	}
 
 	gotTransitions := transitions.Transitions()
-	if len(gotTransitions) != 2 {
-		t.Fatalf("transitions = %+v, want zero then desired", gotTransitions)
+	if len(gotTransitions) != 1 {
+		t.Fatalf("transitions = %+v, want startup zero only", gotTransitions)
 	}
 	if gotTransitions[0].Mode != AcquisitionDisabled ||
 		gotTransitions[0].MaxCapacity != 0 ||
 		len(gotTransitions[0].EligibleScaleSets) != 0 {
 		t.Fatalf("first transition = %+v, want disabled/zero", gotTransitions[0])
 	}
-	if gotTransitions[1].Mode != AcquisitionEnabled ||
-		gotTransitions[1].MaxCapacity != 2 ||
-		!reflect.DeepEqual(gotTransitions[1].EligibleScaleSets, []string{"portable-ghar"}) {
-		t.Fatalf("second transition = %+v, want restored desired policy", gotTransitions[1])
-	}
-	if service.Policy().Epoch != 9 {
-		t.Fatalf("ready policy epoch = %d, want 9", service.Policy().Epoch)
+	if service.Policy().Epoch != 8 || service.Policy().Mode != AcquisitionDisabled {
+		t.Fatalf("ready policy = %+v, want disabled epoch 8", service.Policy())
 	}
 
 	restored := broker.Restored()
@@ -172,10 +193,10 @@ func TestHistoryStartupRestoresExactProjectionBeforeReady(t *testing.T) {
 	}
 	if got := trace.Snapshot(); !reflect.DeepEqual(got, []string{
 		"transition:disabled",
+		"broker:apply:disabled",
 		"state:list-recoverable",
 		"broker:restore",
 		"state:list-uncertain",
-		"transition:enabled",
 	}) {
 		t.Fatalf("startup order = %v", got)
 	}
@@ -187,19 +208,39 @@ func TestHistoryStartupCanRetryWhenZeroEpochWasNotPersisted(t *testing.T) {
 	transitions.err = errors.New("injected pre-zero persistence failure")
 	terminator := &fakeTerminator{}
 	service, err := NewService(ServiceConfig{
-		State:                &fakeDurableState{},
-		Broker:               &fakeAdmissionBroker{},
-		Transitions:          transitions,
-		Terminator:           terminator,
-		Events:               &fakeEventRecorder{},
-		Replay:               &fakeReplayVerifier{result: ReplayCurrent},
-		Hosted:               &fakeHostedRouter{},
-		HistoryPressure:      testHistoryPressureThresholds(),
-		HealthPublisher:      &fakeHealthPublisher{},
-		EventSink:            &fakeEventSink{},
-		AckTimeout:           time.Second,
-		ReplayEvidenceMaxAge: time.Hour,
-		Now:                  time.Now,
+		State:                 &fakeDurableState{},
+		Broker:                &fakeAdmissionBroker{},
+		Transitions:           transitions,
+		Revoker:               &fakeAcquisitionRevoker{},
+		RunningCanceler:       &fakeRunningCanceler{},
+		Terminator:            terminator,
+		Events:                &fakeEventRecorder{},
+		Replay:                &fakeReplayVerifier{result: ReplayCurrent},
+		Hosted:                &fakeHostedRouter{},
+		FleetGuards:           canonicalFleetGuardProviderStub{},
+		Permits:               canonicalPermitProviderStub{},
+		HistoryPressure:       testHistoryPressureThresholds(),
+		HealthPublisher:       &fakeHealthPublisher{},
+		EventSink:             &fakeEventSink{},
+		Reconciler:            &fakeCycleReconciler{},
+		FleetAlias:            testFleetAlias,
+		HostProfileID:         testHostProfileID,
+		BuildID:               testBuildID,
+		Degraded:              true,
+		EnabledPolicyTemplate: testDesiredPolicy(),
+		AckTimeout:            time.Second,
+		OperationTimeout:      time.Second,
+		PollCycleTimeout:      5 * time.Second,
+		ReconciliationTimeout: time.Second,
+		PollCadence:           time.Millisecond,
+		ReconciliationCadence: time.Millisecond,
+		DrainPollCadence:      time.Millisecond,
+		ShutdownTimeout:       time.Second,
+		SessionCloseTimeout:   time.Second,
+		TransitionJoinTimeout: time.Second,
+		DurableFinishTimeout:  time.Second,
+		ReplayEvidenceMaxAge:  time.Hour,
+		Now:                   time.Now,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -238,19 +279,39 @@ func TestHistoryStartupRejectsMissingProjectionAndTerminatesAfterFatalPersist(t 
 	transitions := newFakeTransitioner(trace, testDesiredPolicy())
 	terminator := &fakeTerminator{}
 	service, err := NewService(ServiceConfig{
-		State:                state,
-		Broker:               broker,
-		Transitions:          transitions,
-		Terminator:           terminator,
-		Events:               &fakeEventRecorder{},
-		Replay:               &fakeReplayVerifier{result: ReplayCurrent},
-		Hosted:               &fakeHostedRouter{},
-		HistoryPressure:      testHistoryPressureThresholds(),
-		HealthPublisher:      &fakeHealthPublisher{},
-		EventSink:            &fakeEventSink{},
-		AckTimeout:           time.Second,
-		ReplayEvidenceMaxAge: time.Hour,
-		Now:                  time.Now,
+		State:                 state,
+		Broker:                broker,
+		Transitions:           transitions,
+		Revoker:               &fakeAcquisitionRevoker{},
+		RunningCanceler:       &fakeRunningCanceler{},
+		Terminator:            terminator,
+		Events:                &fakeEventRecorder{},
+		Replay:                &fakeReplayVerifier{result: ReplayCurrent},
+		Hosted:                &fakeHostedRouter{},
+		FleetGuards:           canonicalFleetGuardProviderStub{},
+		Permits:               canonicalPermitProviderStub{},
+		HistoryPressure:       testHistoryPressureThresholds(),
+		HealthPublisher:       &fakeHealthPublisher{},
+		EventSink:             &fakeEventSink{},
+		Reconciler:            &fakeCycleReconciler{},
+		FleetAlias:            testFleetAlias,
+		HostProfileID:         testHostProfileID,
+		BuildID:               testBuildID,
+		Degraded:              true,
+		EnabledPolicyTemplate: testDesiredPolicy(),
+		AckTimeout:            time.Second,
+		OperationTimeout:      time.Second,
+		PollCycleTimeout:      5 * time.Second,
+		ReconciliationTimeout: time.Second,
+		PollCadence:           time.Millisecond,
+		ReconciliationCadence: time.Millisecond,
+		DrainPollCadence:      time.Millisecond,
+		ShutdownTimeout:       time.Second,
+		SessionCloseTimeout:   time.Second,
+		TransitionJoinTimeout: time.Second,
+		DurableFinishTimeout:  time.Second,
+		ReplayEvidenceMaxAge:  time.Hour,
+		Now:                   time.Now,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -278,7 +339,7 @@ func TestHistoryStartupRejectsMissingProjectionAndTerminatesAfterFatalPersist(t 
 	}
 }
 
-func TestHistoryStartupLatchQueuesPressureUntilRestoreAndDesiredEpochComplete(t *testing.T) {
+func TestHistoryStartupTransitionMutexQueuesExplicitEnableUntilRestoreCompletes(t *testing.T) {
 	trace := &callTrace{}
 	restoreEntered := make(chan struct{})
 	restoreRelease := make(chan struct{})
@@ -293,19 +354,39 @@ func TestHistoryStartupLatchQueuesPressureUntilRestoreAndDesiredEpochComplete(t 
 	}
 	transitions := newFakeTransitioner(trace, testDesiredPolicy())
 	service, err := NewService(ServiceConfig{
-		State:                state,
-		Broker:               broker,
-		Transitions:          transitions,
-		Terminator:           &fakeTerminator{},
-		Events:               &fakeEventRecorder{},
-		Replay:               &fakeReplayVerifier{result: ReplayCurrent},
-		Hosted:               &fakeHostedRouter{},
-		HistoryPressure:      testHistoryPressureThresholds(),
-		HealthPublisher:      &fakeHealthPublisher{},
-		EventSink:            &fakeEventSink{},
-		AckTimeout:           time.Second,
-		ReplayEvidenceMaxAge: time.Hour,
-		Now:                  time.Now,
+		State:                 state,
+		Broker:                broker,
+		Transitions:           transitions,
+		Revoker:               &fakeAcquisitionRevoker{},
+		RunningCanceler:       &fakeRunningCanceler{},
+		Terminator:            &fakeTerminator{},
+		Events:                &fakeEventRecorder{},
+		Replay:                &fakeReplayVerifier{result: ReplayCurrent},
+		Hosted:                &fakeHostedRouter{},
+		FleetGuards:           canonicalFleetGuardProviderStub{},
+		Permits:               canonicalPermitProviderStub{},
+		HistoryPressure:       testHistoryPressureThresholds(),
+		HealthPublisher:       &fakeHealthPublisher{},
+		EventSink:             &fakeEventSink{},
+		Reconciler:            &fakeCycleReconciler{},
+		FleetAlias:            testFleetAlias,
+		HostProfileID:         testHostProfileID,
+		BuildID:               testBuildID,
+		Degraded:              true,
+		EnabledPolicyTemplate: testDesiredPolicy(),
+		AckTimeout:            time.Second,
+		OperationTimeout:      time.Second,
+		PollCycleTimeout:      5 * time.Second,
+		ReconciliationTimeout: time.Second,
+		PollCadence:           time.Millisecond,
+		ReconciliationCadence: time.Millisecond,
+		DrainPollCadence:      time.Millisecond,
+		ShutdownTimeout:       time.Second,
+		SessionCloseTimeout:   time.Second,
+		TransitionJoinTimeout: time.Second,
+		DurableFinishTimeout:  time.Second,
+		ReplayEvidenceMaxAge:  time.Hour,
+		Now:                   time.Now,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -315,11 +396,18 @@ func TestHistoryStartupLatchQueuesPressureUntilRestoreAndDesiredEpochComplete(t 
 	go func() { startResult <- service.Start(context.Background()) }()
 	<-restoreEntered
 
-	pressureResult := make(chan error, 1)
-	go func() { pressureResult <- service.ApplyPressure(context.Background(), 1) }()
+	transitionResult := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		next := testDesiredPolicy()
+		next.Epoch = 8
+		_, err := service.Transition(ctx, 8, next)
+		transitionResult <- err
+	}()
 	select {
-	case err := <-pressureResult:
-		t.Fatalf("ApplyPressure escaped startup latch early: %v", err)
+	case err := <-transitionResult:
+		t.Fatalf("Transition escaped startup mutex early: %v", err)
 	case <-time.After(25 * time.Millisecond):
 	}
 	if len(transitions.Transitions()) != 1 {
@@ -330,18 +418,17 @@ func TestHistoryStartupLatchQueuesPressureUntilRestoreAndDesiredEpochComplete(t 
 	if err := <-startResult; err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := <-pressureResult; err != nil {
-		t.Fatalf("ApplyPressure: %v", err)
+	if err := <-transitionResult; err != nil {
+		t.Fatalf("Transition: %v", err)
 	}
 	gotTransitions := transitions.Transitions()
-	if len(gotTransitions) != 3 ||
+	if len(gotTransitions) != 2 ||
 		gotTransitions[1].Mode != AcquisitionEnabled ||
-		gotTransitions[1].MaxCapacity != 2 ||
-		gotTransitions[2].MaxCapacity != 1 {
+		gotTransitions[1].MaxCapacity != 2 {
 		t.Fatalf("queued transition order = %+v", gotTransitions)
 	}
-	if got := broker.PressureCalls(); !reflect.DeepEqual(got, []int{1}) {
-		t.Fatalf("broker pressure calls = %v, want [1]", got)
+	if got := broker.PressureCalls(); len(got) != 0 {
+		t.Fatalf("explicit transition used legacy pressure path: %v", got)
 	}
 }
 
@@ -434,8 +521,8 @@ func TestHistoryPressureCountsCompleteHistoryUncertaintyAndIndependentNetworkBud
 		snapshot.EffectiveCapacity != 2 {
 		t.Fatalf("snapshot = %+v, want complete aggregate budgets", snapshot)
 	}
-	if got := publisher.Snapshots(); !reflect.DeepEqual(got, []health.Snapshot{snapshot}) {
-		t.Fatalf("published snapshots = %+v, want exact result", got)
+	if got := publisher.Snapshots(); len(got) != 0 {
+		t.Fatalf("history evaluation published Worker heartbeat: %+v", got)
 	}
 	events := sink.Events()
 	if len(events) != 1 ||
@@ -466,8 +553,8 @@ func TestHistoryPressureWarningLowersThroughEpochBarrier(t *testing.T) {
 		service.Policy().Epoch != 10 {
 		t.Fatalf("warning result = snapshot %+v policy %+v", snapshot, service.Policy())
 	}
-	if got := broker.PressureCalls(); !reflect.DeepEqual(got, []int{1}) {
-		t.Fatalf("broker pressure calls = %v, want [1]", got)
+	if got := broker.PressureCalls(); len(got) != 0 {
+		t.Fatalf("history pressure used legacy broker pressure path: %v", got)
 	}
 	events := sink.Events()
 	if len(events) != 1 ||
@@ -510,8 +597,8 @@ func TestHistoryPressureStopZerosCapacityAndAllowsActiveDrain(t *testing.T) {
 		snapshot.InflightWork != 2 {
 		t.Fatalf("stop result = snapshot %+v policy %+v", snapshot, policy)
 	}
-	if got := broker.PressureCalls(); !reflect.DeepEqual(got, []int{0}) {
-		t.Fatalf("broker pressure calls = %v, want [0]", got)
+	if got := broker.PressureCalls(); len(got) != 0 {
+		t.Fatalf("history stop used legacy broker pressure path: %v", got)
 	}
 	if terminator.Count() != 0 {
 		t.Fatalf("safe stop terminated active drain: %d calls", terminator.Count())
@@ -553,8 +640,8 @@ func TestHistoryPressureNeverImplicitlyIncreasesCapacity(t *testing.T) {
 		service.Policy().MaxCapacity != 1 {
 		t.Fatalf("warning increased prior pressure: snapshot %+v policy %+v", snapshot, service.Policy())
 	}
-	if got := broker.PressureCalls(); !reflect.DeepEqual(got, []int{1}) {
-		t.Fatalf("broker pressure calls = %v, want only the explicit reduction", got)
+	if got := broker.PressureCalls(); len(got) != 0 {
+		t.Fatalf("history pressure used legacy broker pressure path: %v", got)
 	}
 }
 
@@ -614,8 +701,8 @@ func TestHistoryPressureUsageReadFailureSafeStopsBeforeReturning(t *testing.T) {
 	if policy := service.Policy(); policy.Mode != AcquisitionDisabled || policy.MaxCapacity != 0 {
 		t.Fatalf("usage failure policy = %+v, want disabled/zero", policy)
 	}
-	if got := broker.PressureCalls(); !reflect.DeepEqual(got, []int{0}) {
-		t.Fatalf("usage failure broker pressure calls = %v, want [0]", got)
+	if got := broker.PressureCalls(); len(got) != 0 {
+		t.Fatalf("usage failure used legacy broker pressure path: %v", got)
 	}
 	if len(publisher.Snapshots()) != 0 || len(sink.Events()) != 0 {
 		t.Fatalf("unmeasured usage published snapshot/event: %+v %+v", publisher.Snapshots(), sink.Events())
@@ -627,18 +714,38 @@ func TestHistoryPressureUsageReadFailureSafeStopsBeforeReturning(t *testing.T) {
 
 func TestHistoryPressureThresholdsHaveNoConstructorDefaults(t *testing.T) {
 	_, err := NewService(ServiceConfig{
-		State:                &fakeDurableState{},
-		Broker:               &fakeAdmissionBroker{},
-		Transitions:          newFakeTransitioner(nil, testDesiredPolicy()),
-		Terminator:           &fakeTerminator{},
-		Events:               &fakeEventRecorder{},
-		Replay:               &fakeReplayVerifier{result: ReplayCurrent},
-		Hosted:               &fakeHostedRouter{},
-		HealthPublisher:      &fakeHealthPublisher{},
-		EventSink:            &fakeEventSink{},
-		Now:                  time.Now,
-		AckTimeout:           time.Second,
-		ReplayEvidenceMaxAge: time.Hour,
+		State:                 &fakeDurableState{},
+		Broker:                &fakeAdmissionBroker{},
+		Transitions:           newFakeTransitioner(nil, testDesiredPolicy()),
+		Revoker:               &fakeAcquisitionRevoker{},
+		RunningCanceler:       &fakeRunningCanceler{},
+		Terminator:            &fakeTerminator{},
+		Events:                &fakeEventRecorder{},
+		Replay:                &fakeReplayVerifier{result: ReplayCurrent},
+		Hosted:                &fakeHostedRouter{},
+		FleetGuards:           canonicalFleetGuardProviderStub{},
+		Permits:               canonicalPermitProviderStub{},
+		HealthPublisher:       &fakeHealthPublisher{},
+		EventSink:             &fakeEventSink{},
+		Reconciler:            &fakeCycleReconciler{},
+		FleetAlias:            testFleetAlias,
+		HostProfileID:         testHostProfileID,
+		BuildID:               testBuildID,
+		Degraded:              true,
+		EnabledPolicyTemplate: testDesiredPolicy(),
+		Now:                   time.Now,
+		AckTimeout:            time.Second,
+		OperationTimeout:      time.Second,
+		PollCycleTimeout:      5 * time.Second,
+		ReconciliationTimeout: time.Second,
+		PollCadence:           time.Millisecond,
+		ReconciliationCadence: time.Millisecond,
+		DrainPollCadence:      time.Millisecond,
+		ShutdownTimeout:       time.Second,
+		SessionCloseTimeout:   time.Second,
+		TransitionJoinTimeout: time.Second,
+		DurableFinishTimeout:  time.Second,
+		ReplayEvidenceMaxAge:  time.Hour,
 	})
 	if !errors.Is(err, ErrServiceNotReady) {
 		t.Fatalf("NewService(zero thresholds) err = %v, want ErrServiceNotReady", err)
@@ -650,22 +757,45 @@ func TestPressureBrokerFailureDoesNotClaimAfterPersistTerminationWhenFatalPersis
 	transitions := newFakeTransitioner(nil, testDesiredPolicy())
 	transitions.errAt = 4 // startup zero, restore, pressure, then failed fatal.
 	transitions.err = errors.New("injected fatal persistence failure")
-	broker := &fakeAdmissionBroker{pressureErr: errors.New("injected broker pressure failure")}
+	broker := &fakeAdmissionBroker{
+		applyErr:   errors.New("injected broker policy failure"),
+		applyErrAt: 3,
+	}
 	terminator := &fakeTerminator{}
 	service, err := NewService(ServiceConfig{
-		State:                &fakeDurableState{},
-		Broker:               broker,
-		Transitions:          transitions,
-		Terminator:           terminator,
-		Events:               &fakeEventRecorder{},
-		Replay:               &fakeReplayVerifier{result: ReplayCurrent},
-		Hosted:               &fakeHostedRouter{},
-		HistoryPressure:      testHistoryPressureThresholds(),
-		HealthPublisher:      &fakeHealthPublisher{},
-		EventSink:            &fakeEventSink{},
-		Now:                  func() time.Time { return now },
-		AckTimeout:           time.Second,
-		ReplayEvidenceMaxAge: time.Hour,
+		State:                 &fakeDurableState{},
+		Broker:                broker,
+		Transitions:           transitions,
+		Revoker:               &fakeAcquisitionRevoker{},
+		RunningCanceler:       &fakeRunningCanceler{},
+		Terminator:            terminator,
+		Events:                &fakeEventRecorder{},
+		Replay:                &fakeReplayVerifier{result: ReplayCurrent},
+		Hosted:                &fakeHostedRouter{},
+		FleetGuards:           canonicalFleetGuardProviderStub{},
+		Permits:               canonicalPermitProviderStub{},
+		HistoryPressure:       testHistoryPressureThresholds(),
+		HealthPublisher:       &fakeHealthPublisher{},
+		EventSink:             &fakeEventSink{},
+		Reconciler:            &fakeCycleReconciler{},
+		FleetAlias:            testFleetAlias,
+		HostProfileID:         testHostProfileID,
+		BuildID:               testBuildID,
+		Degraded:              true,
+		EnabledPolicyTemplate: testDesiredPolicy(),
+		Now:                   func() time.Time { return now },
+		AckTimeout:            time.Second,
+		OperationTimeout:      time.Second,
+		PollCycleTimeout:      5 * time.Second,
+		ReconciliationTimeout: time.Second,
+		PollCadence:           time.Millisecond,
+		ReconciliationCadence: time.Millisecond,
+		DrainPollCadence:      time.Millisecond,
+		ShutdownTimeout:       time.Second,
+		SessionCloseTimeout:   time.Second,
+		TransitionJoinTimeout: time.Second,
+		DurableFinishTimeout:  time.Second,
+		ReplayEvidenceMaxAge:  time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -673,6 +803,7 @@ func TestPressureBrokerFailureDoesNotClaimAfterPersistTerminationWhenFatalPersis
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	enableServiceForTest(t, service)
 
 	err = service.ApplyPressure(context.Background(), 1)
 	if !errors.Is(err, ErrPressureTransition) {
@@ -704,9 +835,9 @@ func TestPollPersistAckOrdersEveryDurableBoundaryBeforeAck(t *testing.T) {
 		trace: trace,
 		lease: PollLease{
 			RepositoryAlias: "repo-a",
-			Epoch:           4,
+			Epoch:           9,
 			Reserved:        1,
-			MaxCapacity:     1,
+			PollCapacity:    1,
 			ExpiresAt:       now.Add(time.Minute),
 		},
 		ensureRefs: []AdmissionReference{queued},
@@ -745,7 +876,10 @@ func TestPollPersistAckOrdersEveryDurableBoundaryBeforeAck(t *testing.T) {
 		"events:record",
 		"state:offer",
 		"broker:check",
-		"state:persist:queued",
+		"state:begin-acquisition",
+		"session:acquire",
+		"state:complete-acquisition",
+		"broker:demand",
 		"broker:ensure",
 		"state:persist:queued",
 		"state:begin-ack",
@@ -767,8 +901,9 @@ func TestPollPersistAckHeadroomRefusalClearsQueuedProjectionWithoutAck(t *testin
 		trace: trace,
 		lease: PollLease{
 			RepositoryAlias: "repo-a",
-			Epoch:           4,
-			MaxCapacity:     1,
+			Epoch:           9,
+			Reserved:        1,
+			PollCapacity:    1,
 			ExpiresAt:       now.Add(time.Minute),
 		},
 		ensureErr: ErrAdmissionHeadroom,
@@ -795,7 +930,8 @@ func TestPollPersistAckHeadroomRefusalClearsQueuedProjectionWithoutAck(t *testin
 		t.Fatalf("normal headroom refusal called terminator %d times", terminator.Count())
 	}
 	assertTraceOrder(t, trace.Snapshot(),
-		"state:persist:queued",
+		"state:complete-acquisition",
+		"broker:demand",
 		"broker:ensure",
 		"state:clear-admission",
 	)
@@ -817,8 +953,9 @@ func TestPollPersistAckUnknownBrokerBatchErrorKeepsProjectionAndEntersFatalState
 		trace: trace,
 		lease: PollLease{
 			RepositoryAlias: "repo-a",
-			Epoch:           4,
-			MaxCapacity:     1,
+			Epoch:           9,
+			Reserved:        1,
+			PollCapacity:    1,
 			ExpiresAt:       now.Add(time.Minute),
 		},
 		ensureErr: ErrAdmissionUnavailable,
@@ -875,15 +1012,16 @@ func TestPollPersistAckPostBrokerProjectionFailurePersistsFatalAndNeverAcks(t *t
 	key := AssignmentKey{RepositoryAlias: "repo-a", RunnerRequestID: 3201}
 	state := &fakeDurableState{
 		trace:        trace,
-		persistErrAt: 2,
+		persistErrAt: 1,
 		persistErr:   errors.New("injected exact projection write failure"),
 	}
 	broker := &fakeAdmissionBroker{
 		trace: trace,
 		lease: PollLease{
 			RepositoryAlias: "repo-a",
-			Epoch:           4,
-			MaxCapacity:     1,
+			Epoch:           9,
+			Reserved:        1,
+			PollCapacity:    1,
 			ExpiresAt:       now.Add(time.Minute),
 		},
 		ensureRefs: []AdmissionReference{{
@@ -937,8 +1075,9 @@ func TestPollPersistAckExactRedeliveryReopensOnlyTheSameUncertainReceipt(t *test
 	broker := &fakeAdmissionBroker{
 		lease: PollLease{
 			RepositoryAlias: "repo-a",
-			Epoch:           4,
-			MaxCapacity:     1,
+			Epoch:           9,
+			Reserved:        1,
+			PollCapacity:    1,
 			ExpiresAt:       now.Add(time.Minute),
 		},
 		ensureRefs: []AdmissionReference{{Key: key, Offer: offer, Phase: AdmissionQueued}},
@@ -991,8 +1130,9 @@ func TestPollPersistAckNewMessageDoesNotResolveOlderUncertainReceipt(t *testing.
 	broker := &fakeAdmissionBroker{
 		lease: PollLease{
 			RepositoryAlias: "repo-a",
-			Epoch:           4,
-			MaxCapacity:     1,
+			Epoch:           9,
+			Reserved:        1,
+			PollCapacity:    1,
 			ExpiresAt:       now.Add(time.Minute),
 		},
 		ensureRefs: []AdmissionReference{{Key: key, Offer: offer, Phase: AdmissionQueued}},
@@ -1039,8 +1179,9 @@ func TestPollPersistAckConfirmationFailureKeepsProtectedUncertainty(t *testing.T
 	broker := &fakeAdmissionBroker{
 		lease: PollLease{
 			RepositoryAlias: "repo-a",
-			Epoch:           4,
-			MaxCapacity:     1,
+			Epoch:           9,
+			Reserved:        1,
+			PollCapacity:    1,
 			ExpiresAt:       now.Add(time.Minute),
 		},
 		ensureRefs: []AdmissionReference{{Key: key, Offer: offer, Phase: AdmissionQueued}},
@@ -1062,7 +1203,7 @@ func TestPollPersistAckConfirmationFailureKeepsProtectedUncertainty(t *testing.T
 	}
 }
 
-func TestPollPersistAckTimeoutBoundsTheGlobalLatch(t *testing.T) {
+func TestPollAckCancellationReleasesEpochCriticalBeforeTransitionReturns(t *testing.T) {
 	now := time.Date(2026, 7, 28, 20, 0, 0, 0, time.UTC)
 	offer := githubscale.Offer{JobRef: githubscale.JobRef{
 		RunnerRequestID: 3601,
@@ -1074,8 +1215,9 @@ func TestPollPersistAckTimeoutBoundsTheGlobalLatch(t *testing.T) {
 	broker := &fakeAdmissionBroker{
 		lease: PollLease{
 			RepositoryAlias: "repo-a",
-			Epoch:           4,
-			MaxCapacity:     1,
+			Epoch:           9,
+			Reserved:        1,
+			PollCapacity:    1,
 			ExpiresAt:       now.Add(time.Minute),
 		},
 		ensureRefs: []AdmissionReference{{Key: key, Offer: offer, Phase: AdmissionQueued}},
@@ -1101,11 +1243,6 @@ func TestPollPersistAckTimeoutBoundsTheGlobalLatch(t *testing.T) {
 	<-ackEntered
 	pressureResult := make(chan error, 1)
 	go func() { pressureResult <- service.ApplyPressure(context.Background(), 1) }()
-	select {
-	case err := <-pressureResult:
-		t.Fatalf("pressure escaped latch before Ack timeout: %v", err)
-	case <-time.After(10 * time.Millisecond):
-	}
 	if err := <-pollResult; !errors.Is(err, ErrAckUncertain) {
 		t.Fatalf("PollOnce err = %v, want ErrAckUncertain", err)
 	}
@@ -1113,10 +1250,13 @@ func TestPollPersistAckTimeoutBoundsTheGlobalLatch(t *testing.T) {
 		t.Fatalf("ApplyPressure after Ack timeout: %v", err)
 	}
 	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
-		t.Fatalf("Ack timeout held global latch for %v, want bounded below 250ms", elapsed)
+		t.Fatalf("Ack cancellation/join took %v, want bounded below 250ms", elapsed)
 	}
 	if service.UncertainAckCount() != 1 {
 		t.Fatalf("Ack timeout uncertain count = %d, want 1", service.UncertainAckCount())
+	}
+	if policy := service.Policy(); policy.MaxCapacity != 1 || policy.Epoch != 10 {
+		t.Fatalf("post-cancel transition policy = %+v", policy)
 	}
 }
 
@@ -1130,8 +1270,9 @@ func TestReplayHostedRoutingUsesStableAssignmentOnlyEffectIdentity(t *testing.T)
 	broker := &fakeAdmissionBroker{
 		lease: PollLease{
 			RepositoryAlias: "repo-a",
-			Epoch:           4,
-			MaxCapacity:     1,
+			Epoch:           9,
+			Reserved:        1,
+			PollCapacity:    1,
 			ExpiresAt:       now.Add(time.Minute),
 		},
 	}
@@ -1200,8 +1341,9 @@ func TestReplayHostedReadinessFailureLeavesMessageUnacknowledged(t *testing.T) {
 	broker := &fakeAdmissionBroker{
 		lease: PollLease{
 			RepositoryAlias: "repo-a",
-			Epoch:           4,
-			MaxCapacity:     1,
+			Epoch:           9,
+			Reserved:        1,
+			PollCapacity:    1,
 			ExpiresAt:       now.Add(time.Minute),
 		},
 	}
@@ -1246,8 +1388,9 @@ func TestReplayHostedExplicitRouteFailureIsDurableAndNeverAcknowledged(t *testin
 	broker := &fakeAdmissionBroker{
 		lease: PollLease{
 			RepositoryAlias: "repo-a",
-			Epoch:           4,
-			MaxCapacity:     1,
+			Epoch:           9,
+			Reserved:        1,
+			PollCapacity:    1,
 			ExpiresAt:       now.Add(time.Minute),
 		},
 	}
@@ -1466,6 +1609,7 @@ func TestHistoryFinalizeTerminalUsesReleaseRetireAbsenceClearBindCompactOrder(t 
 		"broker:release",
 		"broker:retire",
 		"broker:has-live",
+		"state:clear-terminal-runtime",
 		"state:clear-admission",
 		"state:bind-terminal",
 		"state:compact-terminal",
@@ -1515,19 +1659,39 @@ func startPollService(
 	transitions := newFakeTransitioner(trace, testDesiredPolicy())
 	terminator := &fakeTerminator{}
 	service, err := NewService(ServiceConfig{
-		State:                state,
-		Broker:               broker,
-		Transitions:          transitions,
-		Terminator:           terminator,
-		Events:               events,
-		Replay:               &fakeReplayVerifier{result: ReplayCurrent},
-		Hosted:               &fakeHostedRouter{},
-		HistoryPressure:      testHistoryPressureThresholds(),
-		HealthPublisher:      &fakeHealthPublisher{},
-		EventSink:            &fakeEventSink{},
-		Now:                  func() time.Time { return now },
-		AckTimeout:           time.Second,
-		ReplayEvidenceMaxAge: time.Hour,
+		State:                 state,
+		Broker:                broker,
+		Transitions:           transitions,
+		Revoker:               &fakeAcquisitionRevoker{},
+		RunningCanceler:       &fakeRunningCanceler{},
+		Terminator:            terminator,
+		Events:                events,
+		Replay:                &fakeReplayVerifier{result: ReplayCurrent},
+		Hosted:                &fakeHostedRouter{},
+		FleetGuards:           canonicalFleetGuardProviderStub{},
+		Permits:               canonicalPermitProviderStub{},
+		HistoryPressure:       testHistoryPressureThresholds(),
+		HealthPublisher:       &fakeHealthPublisher{},
+		EventSink:             &fakeEventSink{},
+		Reconciler:            &fakeCycleReconciler{},
+		FleetAlias:            testFleetAlias,
+		HostProfileID:         testHostProfileID,
+		BuildID:               testBuildID,
+		Degraded:              true,
+		EnabledPolicyTemplate: testDesiredPolicy(),
+		Now:                   func() time.Time { return now },
+		AckTimeout:            time.Second,
+		OperationTimeout:      time.Second,
+		PollCycleTimeout:      5 * time.Second,
+		ReconciliationTimeout: time.Second,
+		PollCadence:           time.Millisecond,
+		ReconciliationCadence: time.Millisecond,
+		DrainPollCadence:      time.Millisecond,
+		ShutdownTimeout:       time.Second,
+		SessionCloseTimeout:   time.Second,
+		TransitionJoinTimeout: time.Second,
+		DurableFinishTimeout:  time.Second,
+		ReplayEvidenceMaxAge:  time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -1535,6 +1699,7 @@ func startPollService(
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	enableServiceForTest(t, service)
 	return service, terminator
 }
 
@@ -1573,19 +1738,39 @@ func startPressureServiceWithTerminator(
 	transitions := newFakeTransitioner(nil, testDesiredPolicy())
 	terminator := &fakeTerminator{}
 	service, err := NewService(ServiceConfig{
-		State:                state,
-		Broker:               broker,
-		Transitions:          transitions,
-		Terminator:           terminator,
-		Events:               &fakeEventRecorder{},
-		Replay:               &fakeReplayVerifier{result: ReplayCurrent},
-		Hosted:               &fakeHostedRouter{},
-		HistoryPressure:      thresholds,
-		HealthPublisher:      publisher,
-		EventSink:            sink,
-		Now:                  func() time.Time { return now },
-		AckTimeout:           time.Second,
-		ReplayEvidenceMaxAge: time.Hour,
+		State:                 state,
+		Broker:                broker,
+		Transitions:           transitions,
+		Revoker:               &fakeAcquisitionRevoker{},
+		RunningCanceler:       &fakeRunningCanceler{},
+		Terminator:            terminator,
+		Events:                &fakeEventRecorder{},
+		Replay:                &fakeReplayVerifier{result: ReplayCurrent},
+		Hosted:                &fakeHostedRouter{},
+		FleetGuards:           canonicalFleetGuardProviderStub{},
+		Permits:               canonicalPermitProviderStub{},
+		HistoryPressure:       thresholds,
+		HealthPublisher:       publisher,
+		EventSink:             sink,
+		Reconciler:            &fakeCycleReconciler{},
+		FleetAlias:            testFleetAlias,
+		HostProfileID:         testHostProfileID,
+		BuildID:               testBuildID,
+		Degraded:              true,
+		EnabledPolicyTemplate: testDesiredPolicy(),
+		Now:                   func() time.Time { return now },
+		AckTimeout:            time.Second,
+		OperationTimeout:      time.Second,
+		PollCycleTimeout:      5 * time.Second,
+		ReconciliationTimeout: time.Second,
+		PollCadence:           time.Millisecond,
+		ReconciliationCadence: time.Millisecond,
+		DrainPollCadence:      time.Millisecond,
+		ShutdownTimeout:       time.Second,
+		SessionCloseTimeout:   time.Second,
+		TransitionJoinTimeout: time.Second,
+		DurableFinishTimeout:  time.Second,
+		ReplayEvidenceMaxAge:  time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -1593,7 +1778,22 @@ func startPressureServiceWithTerminator(
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	enableServiceForTest(t, service)
 	return service, terminator
+}
+
+func enableServiceForTest(t *testing.T, service *Service) AcquisitionPolicy {
+	t.Helper()
+	current := service.Policy()
+	next := testDesiredPolicy()
+	next.Epoch = current.Epoch
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	persisted, err := service.Transition(ctx, current.Epoch, next)
+	if err != nil {
+		t.Fatalf("enable service: %v", err)
+	}
+	return persisted
 }
 
 func assertTraceOrder(t *testing.T, trace []string, expected ...string) {
@@ -1646,7 +1846,7 @@ func newFakeTransitioner(trace *callTrace, current AcquisitionPolicy) *fakeTrans
 	return &fakeTransitioner{trace: trace, current: cloneAcquisitionPolicy(current)}
 }
 
-func (f *fakeTransitioner) Current(context.Context) (AcquisitionPolicy, error) {
+func (f *fakeTransitioner) Snapshot(context.Context) (AcquisitionPolicy, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return cloneAcquisitionPolicy(f.current), nil
@@ -1691,6 +1891,48 @@ type fakeTerminator struct {
 	reasons []ReasonCode
 }
 
+type fakeAcquisitionRevoker struct {
+	mu     sync.Mutex
+	trace  *callTrace
+	epochs []uint64
+	keys   [][]AssignmentKey
+	err    error
+}
+
+func (f *fakeAcquisitionRevoker) RevokePreRunning(
+	_ context.Context,
+	epoch uint64,
+	keys []AssignmentKey,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.trace != nil {
+		f.trace.Add("lifecycle:revoke")
+	}
+	f.epochs = append(f.epochs, epoch)
+	f.keys = append(f.keys, append([]AssignmentKey(nil), keys...))
+	return f.err
+}
+
+type fakeRunningCanceler struct {
+	mu    sync.Mutex
+	calls int
+	err   error
+}
+
+func (f *fakeRunningCanceler) CancelRunning(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.err
+}
+
+func (f *fakeRunningCanceler) Calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
 func (f *fakeTerminator) TerminateAfterPersist(reason ReasonCode) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1713,25 +1955,46 @@ func (f *fakeTerminator) LastReason() ReasonCode {
 }
 
 type fakeDurableState struct {
-	mu            sync.Mutex
-	trace         *callTrace
-	recoverable   []RecoverableAssignment
-	uncertain     []UncertainMessageReceipt
-	persistCalls  int
-	persistErrAt  int
-	persistErr    error
-	messageErr    error
-	offerErr      error
-	confirmErr    error
-	receipts      map[int]MessageReceiptRecord
-	observeCalls  int
-	effects       map[string]HostedEffectRecord
-	hostedBegins  int
-	lastHostedKey string
-	reserveErr    error
-	reservations  []fakeReservation
-	usage         HistoryUsage
-	usageErr      error
+	mu                      sync.Mutex
+	trace                   *callTrace
+	recoverable             []RecoverableAssignment
+	terminalFinalizations   []TerminalFinalization
+	terminalFinalizationErr error
+	compacted               []AssignmentKey
+	compactErr              error
+	uncertain               []UncertainMessageReceipt
+	persistCalls            int
+	persistErrAt            int
+	persistErr              error
+	messageErr              error
+	offerErr                error
+	confirmErr              error
+	receipts                map[int]MessageReceiptRecord
+	observeCalls            int
+	effects                 map[string]HostedEffectRecord
+	hostedBegins            int
+	lastHostedKey           string
+	reserveErr              error
+	reservations            []fakeReservation
+	clearTerminalRuntimeErr error
+	clearedTerminalRuntime  []AssignmentKey
+	clearAdmissionErr       error
+	clearedAdmissions       []AssignmentKey
+	usage                   HistoryUsage
+	usageErr                error
+	promoteErr              error
+	promoteCalls            int
+	revokeErr               error
+	revoked                 []AssignmentKey
+	summary                 OperationalSummary
+	summaryErr              error
+	acquisitionBatches      map[int]AcquisitionBatchRecord
+	acquisitionMembers      map[int][]AssignmentKey
+	acquisitionOutcomes     map[AssignmentKey]AssignmentAcquisitionRecord
+	acquisitionBeginErr     error
+	acquisitionAbortErr     error
+	acquisitionCompleteErr  error
+	acquisitionAmbiguousErr error
 }
 
 type fakeReservation struct {
@@ -1768,21 +2031,209 @@ func (f *fakeDurableState) RecordMessageReceipt(
 	f.receipts[envelope.MessageID] = record
 	return record, nil
 }
-func (f *fakeDurableState) RecordOffer(_ context.Context, alias string, offer githubscale.Offer, _ OfferEvidence) (OfferRecord, error) {
+func (f *fakeDurableState) RecordOffer(
+	_ context.Context,
+	alias string,
+	offer githubscale.Offer,
+	evidence OfferEvidence,
+) (OfferRecord, error) {
 	if f.trace != nil {
 		f.trace.Add("state:offer")
 	}
 	if f.offerErr != nil {
 		return OfferRecord{}, f.offerErr
 	}
+	key := AssignmentKey{
+		RepositoryAlias: alias,
+		RunnerRequestID: offer.RunnerRequestID,
+	}
+	f.mu.Lock()
+	if f.acquisitionOutcomes == nil {
+		f.acquisitionOutcomes = make(map[AssignmentKey]AssignmentAcquisitionRecord)
+	}
+	if _, exists := f.acquisitionOutcomes[key]; !exists {
+		f.acquisitionOutcomes[key] = AssignmentAcquisitionRecord{
+			Key:     key,
+			Outcome: AssignmentOffered,
+		}
+	}
+	f.mu.Unlock()
+	_ = evidence
 	return OfferRecord{
-		Key: AssignmentKey{
-			RepositoryAlias: alias,
-			RunnerRequestID: offer.RunnerRequestID,
-		},
+		Key:         key,
 		Disposition: OfferInserted,
 		State:       StateReceived,
 	}, nil
+}
+func (f *fakeDurableState) BeginAcquisition(
+	_ context.Context,
+	alias string,
+	messageID int,
+	keys []AssignmentKey,
+	at time.Time,
+) (AcquisitionBatchRecord, error) {
+	if f.trace != nil {
+		f.trace.Add("state:begin-acquisition")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.acquisitionBeginErr != nil {
+		return AcquisitionBatchRecord{}, f.acquisitionBeginErr
+	}
+	if f.acquisitionBatches == nil {
+		f.acquisitionBatches = make(map[int]AcquisitionBatchRecord)
+		f.acquisitionMembers = make(map[int][]AssignmentKey)
+	}
+	if existing, ok := f.acquisitionBatches[messageID]; ok {
+		existing.CallAuthorized = false
+		existing.Inserted = false
+		return existing, nil
+	}
+	record := AcquisitionBatchRecord{
+		RepositoryAlias: alias,
+		MessageID:       messageID,
+		Status:          AcquisitionBatchBegun,
+		RequestedCount:  len(keys),
+		BegunAt:         at,
+		UpdatedAt:       at,
+		Inserted:        true,
+		CallAuthorized:  true,
+	}
+	f.acquisitionBatches[messageID] = record
+	f.acquisitionMembers[messageID] = append([]AssignmentKey(nil), keys...)
+	for _, key := range keys {
+		f.acquisitionOutcomes[key] = AssignmentAcquisitionRecord{
+			Key:     key,
+			Outcome: AssignmentRequested,
+		}
+	}
+	return record, nil
+}
+func (f *fakeDurableState) AbortAcquisitionBeforeCall(
+	_ context.Context,
+	alias string,
+	messageID int,
+	at time.Time,
+) (AcquisitionBatchRecord, error) {
+	if f.trace != nil {
+		f.trace.Add("state:abort-acquisition")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.acquisitionAbortErr != nil {
+		return AcquisitionBatchRecord{}, f.acquisitionAbortErr
+	}
+	record := f.acquisitionBatches[messageID]
+	record.RepositoryAlias = alias
+	record.MessageID = messageID
+	record.Status = AcquisitionBatchNotAttempted
+	record.UpdatedAt = at
+	f.acquisitionBatches[messageID] = record
+	for _, key := range f.acquisitionMembers[messageID] {
+		f.acquisitionOutcomes[key] = AssignmentAcquisitionRecord{
+			Key:     key,
+			Outcome: AssignmentOffered,
+		}
+	}
+	return record, nil
+}
+func (f *fakeDurableState) CompleteAcquisition(
+	_ context.Context,
+	alias string,
+	messageID int,
+	acquired []AssignmentKey,
+	at time.Time,
+) (AcquisitionBatchRecord, error) {
+	if f.trace != nil {
+		f.trace.Add("state:complete-acquisition")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.acquisitionCompleteErr != nil {
+		return AcquisitionBatchRecord{}, f.acquisitionCompleteErr
+	}
+	record := f.acquisitionBatches[messageID]
+	record.RepositoryAlias = alias
+	record.MessageID = messageID
+	record.Status = AcquisitionBatchCompleted
+	record.AcquiredCount = len(acquired)
+	record.UpdatedAt = at
+	f.acquisitionBatches[messageID] = record
+	acquiredSet := make(map[AssignmentKey]struct{}, len(acquired))
+	for _, key := range acquired {
+		acquiredSet[key] = struct{}{}
+	}
+	for _, key := range f.acquisitionMembers[messageID] {
+		outcome := AssignmentRejected
+		if _, ok := acquiredSet[key]; ok {
+			outcome = AssignmentAcquired
+		}
+		f.acquisitionOutcomes[key] = AssignmentAcquisitionRecord{
+			Key:     key,
+			Outcome: outcome,
+		}
+	}
+	return record, nil
+}
+func (f *fakeDurableState) MarkAcquisitionAmbiguous(
+	_ context.Context,
+	alias string,
+	messageID int,
+	at time.Time,
+) (AcquisitionBatchRecord, error) {
+	if f.trace != nil {
+		f.trace.Add("state:ambiguous-acquisition")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.acquisitionAmbiguousErr != nil {
+		return AcquisitionBatchRecord{}, f.acquisitionAmbiguousErr
+	}
+	record := f.acquisitionBatches[messageID]
+	record.RepositoryAlias = alias
+	record.MessageID = messageID
+	record.Status = AcquisitionBatchAmbiguous
+	record.UpdatedAt = at
+	f.acquisitionBatches[messageID] = record
+	return record, nil
+}
+func (f *fakeDurableState) PromoteBegunAcquisitions(context.Context, time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.promoteCalls++
+	return 0, f.promoteErr
+}
+func (f *fakeDurableState) AcquisitionBatch(
+	_ context.Context,
+	_ string,
+	messageID int,
+) (AcquisitionBatchRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if record, ok := f.acquisitionBatches[messageID]; ok {
+		return record, nil
+	}
+	return AcquisitionBatchRecord{}, nil
+}
+func (f *fakeDurableState) AcquisitionAssignment(
+	_ context.Context,
+	key AssignmentKey,
+) (AssignmentAcquisitionRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if record, ok := f.acquisitionOutcomes[key]; ok {
+		return record, nil
+	}
+	return AssignmentAcquisitionRecord{Key: key, Outcome: AssignmentAcquired}, nil
+}
+func (f *fakeDurableState) MarkPreRunningRevoked(
+	context.Context,
+	uint64,
+	time.Time,
+) ([]AssignmentKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]AssignmentKey(nil), f.revoked...), f.revokeErr
 }
 func (f *fakeDurableState) PersistAdmission(_ context.Context, _ AssignmentKey, ref AdmissionReference) error {
 	f.mu.Lock()
@@ -1820,10 +2271,34 @@ func (f *fakeDurableState) ReserveActive(
 	})
 	return nil
 }
-func (f *fakeDurableState) ClearAdmission(context.Context, AssignmentKey) error {
+func (f *fakeDurableState) ClearAdmission(
+	_ context.Context,
+	key AssignmentKey,
+) error {
 	if f.trace != nil {
 		f.trace.Add("state:clear-admission")
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.clearAdmissionErr != nil {
+		return f.clearAdmissionErr
+	}
+	f.clearedAdmissions = append(f.clearedAdmissions, key)
+	return nil
+}
+func (f *fakeDurableState) ClearTerminalRuntime(
+	_ context.Context,
+	key AssignmentKey,
+) error {
+	if f.trace != nil {
+		f.trace.Add("state:clear-terminal-runtime")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.clearTerminalRuntimeErr != nil {
+		return f.clearTerminalRuntimeErr
+	}
+	f.clearedTerminalRuntime = append(f.clearedTerminalRuntime, key)
 	return nil
 }
 func (f *fakeDurableState) LookupHostedEffect(
@@ -1957,16 +2432,37 @@ func (f *fakeDurableState) ListRecoverable(context.Context) ([]RecoverableAssign
 	}
 	return append([]RecoverableAssignment(nil), f.recoverable...), nil
 }
-func (f *fakeDurableState) CompactTerminal(context.Context, AssignmentKey, time.Time) error {
+func (f *fakeDurableState) ListTerminalFinalizations(context.Context) ([]TerminalFinalization, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]TerminalFinalization(nil), f.terminalFinalizations...),
+		f.terminalFinalizationErr
+}
+func (f *fakeDurableState) CompactTerminal(
+	_ context.Context,
+	key AssignmentKey,
+	_ time.Time,
+) error {
 	if f.trace != nil {
 		f.trace.Add("state:compact-terminal")
 	}
-	return nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.compacted = append(f.compacted, key)
+	return f.compactErr
 }
 func (f *fakeDurableState) HistoryUsage(context.Context) (HistoryUsage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.usage, f.usageErr
+}
+func (f *fakeDurableState) OperationalSummary(
+	context.Context,
+	time.Time,
+) (OperationalSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.summary, f.summaryErr
 }
 func (f *fakeDurableState) ObserveCalls() int {
 	f.mu.Lock()
@@ -2007,8 +2503,86 @@ type fakeAdmissionBroker struct {
 	reference        AdmissionReference
 	referencePresent bool
 	live             bool
+	appliedPolicies  []AcquisitionPolicy
+	applyErr         error
+	applyErrAt       int
+	applyCalls       int
+	capacitySummary  CapacitySummary
+	demandCalls      []fakeDemandCall
+	demandErr        error
 }
 
+type fakeCycleReconciler struct {
+	mu      sync.Mutex
+	receipt CycleReceipt
+	err     error
+	calls   int
+}
+
+func (f *fakeCycleReconciler) Once(context.Context) (CycleReceipt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.receipt, f.err
+}
+
+func (f *fakeCycleReconciler) Calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+type fakeDemandCall struct {
+	repositoryAlias string
+	epoch           uint64
+	total           int
+}
+
+func (f *fakeAdmissionBroker) ApplyAcquisitionPolicy(policy AcquisitionPolicy) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.applyCalls++
+	f.appliedPolicies = append(f.appliedPolicies, cloneAcquisitionPolicy(policy))
+	if f.trace != nil {
+		f.trace.Add("broker:apply:" + string(policy.Mode))
+	}
+	f.capacitySummary.Epoch = policy.Epoch
+	f.capacitySummary.EffectiveCapacity = policy.MaxCapacity
+	available := policy.MaxCapacity - f.capacitySummary.Occupied
+	if available < 0 {
+		available = 0
+	}
+	f.capacitySummary.Available = available
+	if f.lease.RepositoryAlias != "" {
+		f.lease.Epoch = policy.Epoch
+	}
+	if f.applyErrAt != 0 && f.applyCalls != f.applyErrAt {
+		return nil
+	}
+	return f.applyErr
+}
+func (f *fakeAdmissionBroker) SetDemand(
+	repositoryAlias string,
+	epoch uint64,
+	total int,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.demandCalls = append(f.demandCalls, fakeDemandCall{
+		repositoryAlias: repositoryAlias,
+		epoch:           epoch,
+		total:           total,
+	})
+	if f.trace != nil {
+		f.trace.Add("broker:demand")
+	}
+	return f.demandErr
+}
+func (f *fakeAdmissionBroker) CapacitySummary() CapacitySummary {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.capacitySummary
+}
 func (f *fakeAdmissionBroker) CheckOffer(string, githubscale.Offer) error {
 	if f.trace != nil {
 		f.trace.Add("broker:check")
@@ -2021,12 +2595,20 @@ func (f *fakeAdmissionBroker) LeasePoll(string, time.Time) (PollLease, error) {
 	}
 	return f.lease, nil
 }
-func (f *fakeAdmissionBroker) EnsureQueuedBatch(string, []githubscale.Offer) ([]AdmissionReference, error) {
+func (f *fakeAdmissionBroker) EnsureQueuedBatch(
+	epoch uint64,
+	_ string,
+	_ []githubscale.Offer,
+) ([]AdmissionReference, error) {
 	f.mu.Lock()
 	f.ensureCalls++
+	currentEpoch := f.capacitySummary.Epoch
 	f.mu.Unlock()
 	if f.trace != nil {
 		f.trace.Add("broker:ensure")
+	}
+	if epoch != currentEpoch {
+		return nil, ErrAdmissionConflict
 	}
 	return append([]AdmissionReference(nil), f.ensureRefs...), f.ensureErr
 }
@@ -2047,9 +2629,15 @@ func (f *fakeAdmissionBroker) Restore(refs []AdmissionReference) error {
 	}
 	return nil
 }
-func (f *fakeAdmissionBroker) Admit(time.Time) ([]AdmissionDecision, error) {
+func (f *fakeAdmissionBroker) Admit(epoch uint64, _ time.Time) ([]AdmissionDecision, error) {
 	if f.trace != nil {
 		f.trace.Add("broker:admit")
+	}
+	f.mu.Lock()
+	currentEpoch := f.capacitySummary.Epoch
+	f.mu.Unlock()
+	if epoch != currentEpoch {
+		return nil, ErrAdmissionConflict
 	}
 	return append([]AdmissionDecision(nil), f.admitDecisions...), f.admitErr
 }
@@ -2101,6 +2689,12 @@ func (f *fakeAdmissionBroker) PressureCalls() []int {
 	defer f.mu.Unlock()
 	return append([]int(nil), f.pressure...)
 }
+
+func (f *fakeAdmissionBroker) DemandCalls() []fakeDemandCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeDemandCall(nil), f.demandCalls...)
+}
 func (f *fakeAdmissionBroker) EnsureCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -2121,8 +2715,10 @@ func admissionPhaseName(phase AdmissionPhase) string {
 }
 
 type fakeEventRecorder struct {
+	mu    sync.Mutex
 	trace *callTrace
 	err   error
+	calls int
 }
 
 type fakeHealthPublisher struct {
@@ -2170,10 +2766,19 @@ func (f *fakeEventSink) Events() []observability.Event {
 }
 
 func (f *fakeEventRecorder) RecordBatch(context.Context, MessageEnvelope) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
 	if f.trace != nil {
 		f.trace.Add("events:record")
 	}
 	return f.err
+}
+
+func (f *fakeEventRecorder) Calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 
 type fakeReplayVerifier struct {
@@ -2209,16 +2814,20 @@ func (*fakeHostedRouter) RouteHosted(
 }
 
 type fakeSession struct {
-	mu               sync.Mutex
-	trace            *callTrace
-	batch            githubscale.Batch
-	pollErr          error
-	ackErr           error
-	ackErrors        []error
-	ackWaitContext   bool
-	ackEntered       chan struct{}
-	ackCalls         int
-	lastPollCapacity int
+	mu                sync.Mutex
+	trace             *callTrace
+	batch             githubscale.Batch
+	pollErr           error
+	ackErr            error
+	ackErrors         []error
+	ackWaitContext    bool
+	ackEntered        chan struct{}
+	ackCalls          int
+	lastPollCapacity  int
+	acquiredIDs       []int64
+	acquireErr        error
+	acquireRequests   [][]int64
+	statisticsMissing bool
 }
 
 var _ githubscale.Session = (*fakeSession)(nil)
@@ -2233,11 +2842,15 @@ func (*fakeSession) Compatibility() githubscale.ScaleSetCompatibilityReport {
 func (f *fakeSession) Poll(_ context.Context, _ int, maxCapacity int) (githubscale.Batch, error) {
 	f.mu.Lock()
 	f.lastPollCapacity = maxCapacity
+	batch := f.batch
+	if !batch.Empty && !f.statisticsMissing {
+		batch.StatisticsPresent = true
+	}
 	f.mu.Unlock()
 	if f.trace != nil {
 		f.trace.Add("session:poll")
 	}
-	return f.batch, f.pollErr
+	return batch, f.pollErr
 }
 
 func (f *fakeSession) Ack(ctx context.Context, _ int) error {
@@ -2266,8 +2879,22 @@ func (f *fakeSession) Ack(ctx context.Context, _ int) error {
 	return err
 }
 
-func (*fakeSession) Acquire(context.Context, []int64) ([]int64, error) {
-	return nil, errors.New("unexpected Acquire")
+func (f *fakeSession) Acquire(_ context.Context, requestIDs []int64) ([]int64, error) {
+	f.mu.Lock()
+	f.acquireRequests = append(
+		f.acquireRequests,
+		append([]int64(nil), requestIDs...),
+	)
+	acquired := f.acquiredIDs
+	if acquired == nil {
+		acquired = requestIDs
+	}
+	err := f.acquireErr
+	f.mu.Unlock()
+	if f.trace != nil {
+		f.trace.Add("session:acquire")
+	}
+	return append([]int64(nil), acquired...), err
 }
 func (*fakeSession) GenerateJIT(context.Context, githubscale.JITRequest) (githubscale.JITConfig, error) {
 	return githubscale.JITConfig{}, errors.New("unexpected GenerateJIT")
@@ -2299,6 +2926,16 @@ func (f *fakeSession) SetBatch(batch githubscale.Batch) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.batch = batch
+}
+
+func (f *fakeSession) AcquireRequests() [][]int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([][]int64, len(f.acquireRequests))
+	for i := range f.acquireRequests {
+		out[i] = append([]int64(nil), f.acquireRequests[i]...)
+	}
+	return out
 }
 
 type recordingHostedRouter struct {

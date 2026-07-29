@@ -124,6 +124,8 @@ func TestHistoryStatusJSONContainsOnlyApprovedAggregateKeys(t *testing.T) {
 			ProtectedTerminalBytes:    200,
 			MessageReceiptRows:        3,
 			MessageReceiptBytes:       300,
+			AcquisitionRows:           7,
+			AcquisitionLogicalBytes:   700,
 			TombstoneRows:             4,
 			TombstoneLogicalBytes:     400,
 			NetworkLedgerRows:         5,
@@ -153,6 +155,14 @@ func TestHistoryStatusJSONContainsOnlyApprovedAggregateKeys(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("buildHistoryStatus: %v", err)
+	}
+	if status.HistoryRows != 1+2+3+7+4+6 ||
+		status.HistoryLogicalBytes != 100+200+300+700+400+600 {
+		t.Fatalf(
+			"status omitted bounded acquisition history: rows=%d bytes=%d",
+			status.HistoryRows,
+			status.HistoryLogicalBytes,
+		)
 	}
 	encoded, err := json.Marshal(status)
 	if err != nil {

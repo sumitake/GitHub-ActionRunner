@@ -309,9 +309,11 @@ func historyBudgetTotalsTx(ctx context.Context, tx *sql.Tx) (historyBudgetTotals
 			(SELECT COUNT(*) FROM reservations) +
 			(SELECT COUNT(*) FROM effects) +
 			(SELECT COUNT(*) FROM message_receipts) +
+			(SELECT COUNT(*) FROM message_acquisitions) +
 			(SELECT COUNT(*) FROM history_tombstones),
 			COALESCE((SELECT SUM(history_logical_bytes) FROM assignments), 0) +
 			COALESCE((SELECT SUM(logical_bytes) FROM message_receipts), 0) +
+			COALESCE((SELECT SUM(logical_bytes) FROM message_acquisitions), 0) +
 			COALESCE((SELECT SUM(logical_bytes) FROM history_tombstones), 0) +
 			((SELECT COUNT(*) FROM runner_slots) * ?) +
 			((SELECT COUNT(*) FROM reservations) * ?) +
@@ -1057,7 +1059,84 @@ func (s *SQLiteStore) ClearAdmissionProjection(
 	return nil
 }
 
-// BindTerminalMessage immutably binds a DESTROYED assignment to a receipt.
+// ClearTerminalRuntime implements Store.
+func (s *SQLiteStore) ClearTerminalRuntime(
+	ctx context.Context,
+	key controller.AssignmentKey,
+) error {
+	if key.RepositoryAlias == "" || key.RunnerRequestID <= 0 {
+		return ErrIdentityConflict
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: clear terminal runtime: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var (
+		assignmentID int64
+		stateText    string
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, state
+		FROM assignments
+		WHERE repository_alias = ? AND runner_request_id = ? AND attempt = ?
+	`, key.RepositoryAlias, key.RunnerRequestID, key.Attempt).Scan(
+		&assignmentID,
+		&stateText,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		var tombstones int64
+		if countErr := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM history_tombstones
+			WHERE repository_alias = ? AND runner_request_id = ? AND attempt = ?
+		`, key.RepositoryAlias, key.RunnerRequestID, key.Attempt).Scan(&tombstones); countErr != nil {
+			return fmt.Errorf("state: clear terminal runtime: inspect tombstone: %w", countErr)
+		}
+		if tombstones == 1 {
+			return nil
+		}
+		return ErrIdentityConflict
+	}
+	if err != nil {
+		return fmt.Errorf("state: clear terminal runtime: read assignment: %w", err)
+	}
+	if controller.State(stateText) != controller.StateDestroyed {
+		return ErrIdentityConflict
+	}
+
+	var incompleteEffects int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM effects
+		WHERE assignment_id = ? AND completed_at IS NULL
+	`, assignmentID).Scan(&incompleteEffects); err != nil {
+		return fmt.Errorf("state: clear terminal runtime: inspect effects: %w", err)
+	}
+	if incompleteEffects != 0 {
+		return ErrIdentityConflict
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM reservations WHERE assignment_id = ?`,
+		assignmentID,
+	); err != nil {
+		return fmt.Errorf("state: clear terminal runtime: delete reservation: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM runner_slots WHERE assignment_id = ?`,
+		assignmentID,
+	); err != nil {
+		return fmt.Errorf("state: clear terminal runtime: delete runner slot: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: clear terminal runtime: commit: %w", err)
+	}
+	return nil
+}
+
+// BindTerminalMessage immutably binds a completed or destroyed assignment to
+// the receipt that carried its terminal observation.
 func (s *SQLiteStore) BindTerminalMessage(
 	ctx context.Context,
 	key controller.AssignmentKey,
@@ -1075,7 +1154,8 @@ func (s *SQLiteStore) BindTerminalMessage(
 	if err != nil {
 		return err
 	}
-	if current != controller.StateDestroyed {
+	if current != controller.StateJobFinished &&
+		current != controller.StateDestroyed {
 		return ErrIdentityConflict
 	}
 	var existing sql.NullInt64
@@ -1616,6 +1696,12 @@ func historyUsageWithQuery(ctx context.Context, q queryRower, limits HistoryLimi
 	if err != nil {
 		return HistoryUsage{}, fmt.Errorf("state: history usage receipts: %w", err)
 	}
+	usage.AcquisitionRows, usage.AcquisitionLogicalBytes, err = scanUsagePair(ctx, q, `
+		SELECT COUNT(*), COALESCE(SUM(logical_bytes), 0) FROM message_acquisitions
+	`)
+	if err != nil {
+		return HistoryUsage{}, fmt.Errorf("state: history usage acquisitions: %w", err)
+	}
 	usage.TombstoneRows, usage.TombstoneLogicalBytes, err = scanUsagePair(ctx, q, `
 		SELECT COUNT(*), COALESCE(SUM(logical_bytes), 0) FROM history_tombstones
 	`)
@@ -1652,20 +1738,23 @@ func historyUsageWithQuery(ctx context.Context, q queryRower, limits HistoryLimi
 	}
 
 	var (
-		oldestAssignment sql.NullString
-		oldestReceipt    sql.NullString
-		oldestTombstone  sql.NullString
-		oldestLedger     sql.NullString
+		oldestAssignment  sql.NullString
+		oldestReceipt     sql.NullString
+		oldestAcquisition sql.NullString
+		oldestTombstone   sql.NullString
+		oldestLedger      sql.NullString
 	)
 	if err := q.QueryRowContext(ctx, `
 		SELECT
 			(SELECT MIN(created_at) FROM assignments),
 			(SELECT MIN(persisted_at) FROM message_receipts),
+			(SELECT MIN(begun_at) FROM message_acquisitions),
 			(SELECT MIN(terminal_at) FROM history_tombstones),
 			(SELECT MIN(updated_at) FROM network_ledgers)
 	`).Scan(
 		&oldestAssignment,
 		&oldestReceipt,
+		&oldestAcquisition,
 		&oldestTombstone,
 		&oldestLedger,
 	); err != nil {
@@ -1674,6 +1763,7 @@ func historyUsageWithQuery(ctx context.Context, q queryRower, limits HistoryLimi
 	for _, retained := range []sql.NullString{
 		oldestAssignment,
 		oldestReceipt,
+		oldestAcquisition,
 		oldestTombstone,
 		oldestLedger,
 	} {
@@ -3712,6 +3802,74 @@ func (s *SQLiteStore) ListRecoverable(ctx context.Context) ([]RecoverableAssignm
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("state: list recoverable: rows: %w", err)
+	}
+	return out, nil
+}
+
+// ListTerminalFinalizations implements Store.
+func (s *SQLiteStore) ListTerminalFinalizations(
+	ctx context.Context,
+) ([]TerminalFinalization, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			repository_alias,
+			runner_request_id,
+			attempt,
+			COALESCE(terminal_message_id, source_message_id),
+			updated_at
+		FROM assignments
+		WHERE state = ?
+		  AND COALESCE(terminal_message_id, source_message_id) IS NOT NULL
+		ORDER BY repository_alias, runner_request_id, attempt
+	`, string(controller.StateDestroyed))
+	if err != nil {
+		return nil, fmt.Errorf("state: list terminal finalizations: query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []TerminalFinalization
+	for rows.Next() {
+		var (
+			repositoryAlias string
+			runnerRequestID int64
+			attempt         int64
+			messageID       int64
+			atText          string
+		)
+		if err := rows.Scan(
+			&repositoryAlias,
+			&runnerRequestID,
+			&attempt,
+			&messageID,
+			&atText,
+		); err != nil {
+			return nil, fmt.Errorf("state: list terminal finalizations: scan: %w", err)
+		}
+		decodedAttempt, err := decodeStoredUint32("terminal attempt", attempt)
+		if err != nil {
+			return nil, fmt.Errorf("state: list terminal finalizations: %w", err)
+		}
+		at, err := time.Parse(time.RFC3339Nano, atText)
+		if repositoryAlias == "" ||
+			runnerRequestID <= 0 ||
+			messageID <= 0 ||
+			messageID > int64(^uint(0)>>1) ||
+			err != nil ||
+			at.IsZero() {
+			return nil, ErrIdentityConflict
+		}
+		out = append(out, TerminalFinalization{
+			Key: controller.AssignmentKey{
+				RepositoryAlias: repositoryAlias,
+				RunnerRequestID: runnerRequestID,
+				Attempt:         decodedAttempt,
+			},
+			MessageID: int(messageID),
+			At:        at,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list terminal finalizations: rows: %w", err)
 	}
 	return out, nil
 }

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/controller"
@@ -111,19 +110,32 @@ type Config struct {
 // PolicyRevision is the only input that may change repository eligibility.
 // Epoch must increase strictly.
 type PolicyRevision struct {
-	Epoch        uint64
-	Repositories []RepositoryPolicy
+	Epoch             uint64
+	EffectiveCapacity int
+	Repositories      []RepositoryPolicy
+}
+
+// CapacitySnapshot is the closed, identity-free broker capacity projection.
+type CapacitySnapshot struct {
+	Epoch              uint64
+	ConfiguredCapacity int
+	EffectiveCapacity  int
+	Occupied           int
+	Available          int
+	Queued             int
 }
 
 // CapacityLease is the broker-owned reservation returned before a GitHub
-// poll. Reserved is newly reserved capacity for this call; MaxCapacity is the
-// repository's total active-plus-reserved capacity after the call.
+// poll. Reserved is newly reserved capacity for this call and is the hard
+// acquisition budget. PollCapacity is the repository's total
+// active-plus-reserved ownership after the call, clamped to the current
+// repository and fleet acquisition ceilings before it is advertised upstream.
 type CapacityLease struct {
 	ID              uint64
 	RepositoryAlias string
 	Epoch           uint64
 	Reserved        int
-	MaxCapacity     int
+	PollCapacity    int
 	ExpiresAt       time.Time
 }
 
@@ -148,6 +160,10 @@ type Broker interface {
 type PolicyBroker interface {
 	Broker
 	ApplyPolicyRevision(PolicyRevision) error
+	SetDemand(repositoryAlias string, epoch uint64, totalAssignedJobs int) error
+	EnsureQueuedBatchAtEpoch(uint64, []githubscale.Offer) ([]LiveReference, error)
+	AdmitAtEpoch(uint64, time.Time) ([]Decision, error)
+	CapacitySnapshot() CapacitySnapshot
 }
 
 // LivePhase is the broker residency reconstructed from durable controller
@@ -198,6 +214,7 @@ var (
 	ErrStalePolicyRevision = errors.New("admission: policy revision is not newer")
 	ErrPolicyInUse         = errors.New("admission: removed policy still has live references")
 	ErrPressureIncrease    = errors.New("admission: pressure cannot increase capacity")
+	ErrDemandEpochMismatch = errors.New("admission: demand epoch mismatch")
 	ErrUnknownAssignment   = errors.New("admission: assignment is not active")
 	ErrLiveReferenceActive = errors.New("admission: live reference is still active")
 	ErrLiveSetFull         = errors.New("admission: live reference limit reached")
@@ -304,7 +321,6 @@ func validatePolicies(policies []RepositoryPolicy, mode TransientMode) (map[stri
 	byAlias := make(map[string]RepositoryPolicy, len(policies))
 	aliases := make([]string, 0, len(policies))
 	for i, candidate := range policies {
-		candidate.Alias = strings.TrimSpace(candidate.Alias)
 		if candidate.Alias == "" {
 			return nil, nil, fmt.Errorf("%w: repository policy %d has an empty alias", ErrInvalidConfig, i)
 		}

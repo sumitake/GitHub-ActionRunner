@@ -114,6 +114,44 @@ func TestControllerStateAdapterConvertsWithoutLosingMessageOrOfferFields(t *test
 		recorded.State != controller.StateReceived {
 		t.Fatalf("RecordOffer = %+v", recorded)
 	}
+	begun, err := adapter.BeginAcquisition(
+		ctx,
+		"repo-a",
+		801,
+		[]controller.AssignmentKey{recorded.Key},
+		at.Add(2*time.Second),
+	)
+	if err != nil {
+		t.Fatalf("BeginAcquisition: %v", err)
+	}
+	if begun.Status != controller.AcquisitionBatchBegun ||
+		!begun.Inserted ||
+		!begun.CallAuthorized ||
+		begun.RequestedCount != 1 {
+		t.Fatalf("BeginAcquisition = %+v", begun)
+	}
+	completedBatch, err := adapter.CompleteAcquisition(
+		ctx,
+		"repo-a",
+		801,
+		[]controller.AssignmentKey{recorded.Key},
+		at.Add(3*time.Second),
+	)
+	if err != nil {
+		t.Fatalf("CompleteAcquisition: %v", err)
+	}
+	if completedBatch.Status != controller.AcquisitionBatchCompleted ||
+		completedBatch.AcquiredCount != 1 {
+		t.Fatalf("CompleteAcquisition = %+v", completedBatch)
+	}
+	acquisition, err := adapter.AcquisitionAssignment(ctx, recorded.Key)
+	if err != nil {
+		t.Fatalf("AcquisitionAssignment: %v", err)
+	}
+	if acquisition.Outcome != controller.AssignmentAcquired ||
+		acquisition.RevokedEpoch != 0 {
+		t.Fatalf("AcquisitionAssignment = %+v", acquisition)
+	}
 
 	queued := controllerAdmission(controller.AdmissionQueued, 0)
 	if err := adapter.PersistAdmission(ctx, recorded.Key, queued); err != nil {

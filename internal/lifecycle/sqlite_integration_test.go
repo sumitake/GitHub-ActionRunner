@@ -195,6 +195,7 @@ func TestServiceRunsOneJobLifecycleAgainstSQLiteAttemptZero(t *testing.T) {
 		JobID:              "job-sqlite",
 		RepositoryName:     "repo-a",
 		OwnerName:          "owner-a",
+		RequestLabels:      []string{"portable-ghar"},
 		QueueTime:          baseTime,
 		ScaleSetAssignTime: baseTime.Add(time.Second),
 	}}
@@ -204,6 +205,7 @@ func TestServiceRunsOneJobLifecycleAgainstSQLiteAttemptZero(t *testing.T) {
 		JobID:              offer.JobID,
 		RepositoryName:     offer.RepositoryName,
 		OwnerName:          offer.OwnerName,
+		RequestLabels:      append([]string(nil), offer.RequestLabels...),
 		QueueTime:          offer.QueueTime,
 		ScaleSetAssignTime: offer.ScaleSetAssignTime,
 	}, state.OfferEvidence{
@@ -256,6 +258,7 @@ func TestServiceRunsOneJobLifecycleAgainstSQLiteAttemptZero(t *testing.T) {
 	service, err := NewService(
 		store,
 		&fakeSessionProvider{session: session},
+		&fakeJITAuthorizer{},
 		builder,
 		jail,
 		&fakeManagedRecovery{},

@@ -1,21 +1,16 @@
-// Command portable-ghar-controller exposes the controller's aggregate,
-// read-only history status entrypoint. Production orchestration wiring lands
-// in a later task; this command deliberately accepts no implicit sizing and
-// never runs maintenance or migration.
+// Command portable-ghar-controller exposes the controller's bounded runtime,
+// live-admin, and aggregate read-only status surfaces.
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"flag"
-	"fmt"
-	"io"
 	"math"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
-	"github.com/sumitake/portable-ghar/internal/config"
 	"github.com/sumitake/portable-ghar/internal/state"
 )
 
@@ -103,6 +98,7 @@ func buildHistoryStatus(
 		usage.LiveRows,
 		usage.ProtectedTerminalRows,
 		usage.MessageReceiptRows,
+		usage.AcquisitionRows,
 		usage.TombstoneRows,
 		usage.ReservedRows,
 	)
@@ -110,6 +106,7 @@ func buildHistoryStatus(
 		usage.LiveLogicalBytes,
 		usage.ProtectedTerminalBytes,
 		usage.MessageReceiptBytes,
+		usage.AcquisitionLogicalBytes,
 		usage.TombstoneLogicalBytes,
 		usage.ReservedLogicalBytes,
 	)
@@ -178,76 +175,18 @@ func buildHistoryStatus(
 	}, nil
 }
 
-func run(
-	args []string,
-	stdout io.Writer,
-	stderr io.Writer,
-	clock func() time.Time,
-) int {
-	if len(args) == 0 || args[0] != "status" || clock == nil {
-		_, _ = fmt.Fprintln(stderr, "portable-ghar-controller: status unavailable")
-		return 2
-	}
-	flags := flag.NewFlagSet("status", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "emit aggregate JSON")
-	configPath := flags.String("config", "", "runtime configuration")
-	databasePath := flags.String("database", "", "controller database")
-	if err := flags.Parse(args[1:]); err != nil ||
-		!*jsonOutput ||
-		*configPath == "" ||
-		*databasePath == "" ||
-		flags.NArg() != 0 {
-		_, _ = fmt.Fprintln(stderr, "portable-ghar-controller: status unavailable")
-		return 2
-	}
-	configFile, err := os.Open(*configPath)
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "portable-ghar-controller: status unavailable")
-		return 1
-	}
-	runtime, loadErr := config.LoadControllerRuntime(configFile)
-	closeErr := configFile.Close()
-	if loadErr != nil || closeErr != nil {
-		_, _ = fmt.Fprintln(stderr, "portable-ghar-controller: status unavailable")
-		return 1
-	}
-	store, err := state.OpenReadOnlyWithHistoryLimits(
-		*databasePath,
-		runtime.HistoryLimits(),
-	)
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "portable-ghar-controller: status unavailable")
-		return 1
-	}
-	now := clock().UTC()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	usage, err := store.HistoryUsage(ctx, runtime.HistoryLimits())
-	if err != nil {
-		_ = store.Close()
-		_, _ = fmt.Fprintln(stderr, "portable-ghar-controller: status unavailable")
-		return 1
-	}
-	if err := store.Close(); err != nil {
-		_, _ = fmt.Fprintln(stderr, "portable-ghar-controller: status unavailable")
-		return 1
-	}
-	document, err := buildHistoryStatus(
-		now,
-		usage,
-		runtime.HistoryLimits(),
-		runtime.FleetConcurrency,
-		runtime.NetworkLedgerReserveRows,
-		runtime.NetworkLedgerReserveLogicalBytes,
-	)
-	if err != nil || json.NewEncoder(stdout).Encode(document) != nil {
-		_, _ = fmt.Fprintln(stderr, "portable-ghar-controller: status unavailable")
-		return 1
-	}
-	return 0
-}
-
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now))
+	ctx, cancel := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer cancel()
+	os.Exit(runWithDependencies(
+		ctx,
+		os.Args[1:],
+		os.Stdout,
+		os.Stderr,
+		productionCommandDependencies(time.Now),
+	))
 }

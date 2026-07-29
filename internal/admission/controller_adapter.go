@@ -12,17 +12,113 @@ import (
 // ControllerAdapter is the checked translation boundary between the
 // controller-owned admission port and the Task-4 broker contracts.
 type ControllerAdapter struct {
-	broker  Broker
-	history LiveHistory
+	broker    PolicyBroker
+	history   LiveHistory
+	templates map[string]RepositoryPolicy
+	aliases   []string
 }
 
 var _ controller.AdmissionBroker = (*ControllerAdapter)(nil)
 
-func NewControllerAdapter(broker Broker, history LiveHistory) (*ControllerAdapter, error) {
+func NewControllerAdapter(
+	broker PolicyBroker,
+	history LiveHistory,
+	templates []RepositoryPolicy,
+	transientMode TransientMode,
+) (*ControllerAdapter, error) {
 	if broker == nil || history == nil {
 		return nil, fmt.Errorf("%w: nil admission dependency", controller.ErrAdmissionUnavailable)
 	}
-	return &ControllerAdapter{broker: broker, history: history}, nil
+	policies, aliases, err := validatePolicies(templates, transientMode)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: invalid immutable repository templates",
+			controller.ErrAdmissionConflict,
+		)
+	}
+	return &ControllerAdapter{
+		broker:    broker,
+		history:   history,
+		templates: policies,
+		aliases:   aliases,
+	}, nil
+}
+
+func (a *ControllerAdapter) ApplyAcquisitionPolicy(
+	policy controller.AcquisitionPolicy,
+) error {
+	canonical, err := controller.CanonicalizeAcquisitionPolicy(policy)
+	if err != nil {
+		return fmt.Errorf("%w: invalid acquisition policy", controller.ErrAdmissionConflict)
+	}
+	if len(canonical.RepositoryPolicies) != len(a.aliases) {
+		return fmt.Errorf(
+			"%w: repository policy set differs from immutable templates",
+			controller.ErrAdmissionConflict,
+		)
+	}
+	overlaid := make([]RepositoryPolicy, 0, len(canonical.RepositoryPolicies))
+	seen := make(map[string]struct{}, len(canonical.RepositoryPolicies))
+	for _, summary := range canonical.RepositoryPolicies {
+		template, ok := a.templates[summary.Alias]
+		if !ok {
+			return fmt.Errorf(
+				"%w: repository policy alias differs from immutable templates",
+				controller.ErrAdmissionConflict,
+			)
+		}
+		if _, duplicate := seen[summary.Alias]; duplicate {
+			return fmt.Errorf(
+				"%w: duplicate repository policy alias",
+				controller.ErrAdmissionConflict,
+			)
+		}
+		seen[summary.Alias] = struct{}{}
+		var eligibility Eligibility
+		switch summary.Eligibility {
+		case string(EligibilityActive):
+			eligibility = EligibilityActive
+		case string(EligibilityArchivedDisabled):
+			eligibility = EligibilityArchivedDisabled
+		case string(EligibilityPendingReactivation):
+			eligibility = EligibilityPendingReactivation
+		default:
+			return fmt.Errorf(
+				"%w: unknown repository eligibility",
+				controller.ErrAdmissionConflict,
+			)
+		}
+		template.MaxConcurrency = summary.MaxConcurrency
+		template.Eligibility = eligibility
+		overlaid = append(overlaid, template)
+	}
+	return mapControllerAdmissionError(a.broker.ApplyPolicyRevision(PolicyRevision{
+		Epoch:             canonical.Epoch,
+		EffectiveCapacity: canonical.MaxCapacity,
+		Repositories:      overlaid,
+	}))
+}
+
+func (a *ControllerAdapter) SetDemand(
+	repositoryAlias string,
+	epoch uint64,
+	totalAssignedJobs int,
+) error {
+	return mapControllerAdmissionError(
+		a.broker.SetDemand(repositoryAlias, epoch, totalAssignedJobs),
+	)
+}
+
+func (a *ControllerAdapter) CapacitySummary() controller.CapacitySummary {
+	snapshot := a.broker.CapacitySnapshot()
+	return controller.CapacitySummary{
+		Epoch:              snapshot.Epoch,
+		ConfiguredCapacity: snapshot.ConfiguredCapacity,
+		EffectiveCapacity:  snapshot.EffectiveCapacity,
+		Occupied:           snapshot.Occupied,
+		Available:          snapshot.Available,
+		Queued:             snapshot.Queued,
+	}
 }
 
 func (a *ControllerAdapter) CheckOffer(
@@ -48,12 +144,13 @@ func (a *ControllerAdapter) LeasePoll(
 		RepositoryAlias: lease.RepositoryAlias,
 		Epoch:           lease.Epoch,
 		Reserved:        lease.Reserved,
-		MaxCapacity:     lease.MaxCapacity,
+		PollCapacity:    lease.PollCapacity,
 		ExpiresAt:       lease.ExpiresAt,
 	}, nil
 }
 
 func (a *ControllerAdapter) EnsureQueuedBatch(
+	epoch uint64,
 	repositoryAlias string,
 	offers []githubscale.Offer,
 ) ([]controller.AdmissionReference, error) {
@@ -68,7 +165,7 @@ func (a *ControllerAdapter) EnsureQueuedBatch(
 			originals[offer.RunnerRequestID] = cloneControllerOffer(offer)
 		}
 	}
-	refs, err := a.history.EnsureQueuedBatch(copied)
+	refs, err := a.broker.EnsureQueuedBatchAtEpoch(epoch, copied)
 	if err != nil {
 		return nil, mapControllerAdmissionError(err)
 	}
@@ -98,8 +195,11 @@ func (a *ControllerAdapter) Restore(refs []controller.AdmissionReference) error 
 	return mapControllerAdmissionError(a.history.Restore(native))
 }
 
-func (a *ControllerAdapter) Admit(at time.Time) ([]controller.AdmissionDecision, error) {
-	decisions, err := a.broker.Admit(at)
+func (a *ControllerAdapter) Admit(
+	epoch uint64,
+	at time.Time,
+) ([]controller.AdmissionDecision, error) {
+	decisions, err := a.broker.AdmitAtEpoch(epoch, at)
 	if err != nil {
 		return nil, mapControllerAdmissionError(err)
 	}
@@ -277,6 +377,7 @@ func mapControllerAdmissionError(err error) error {
 		errors.Is(err, ErrStalePolicyRevision),
 		errors.Is(err, ErrPolicyInUse),
 		errors.Is(err, ErrPressureIncrease),
+		errors.Is(err, ErrDemandEpochMismatch),
 		errors.Is(err, ErrUnknownAssignment),
 		errors.Is(err, ErrLiveReferenceActive),
 		errors.Is(err, ErrRestoreNotEmpty),

@@ -112,6 +112,15 @@ func mustBroker(t *testing.T, config Config) PolicyBroker {
 	if err != nil {
 		t.Fatalf("NewBroker: %v", err)
 	}
+	for _, repository := range config.Repositories {
+		if err := broker.SetDemand(
+			repository.Alias,
+			config.PolicyRevision,
+			int(repository.MaxConcurrency),
+		); err != nil {
+			t.Fatalf("SetDemand(%q): %v", repository.Alias, err)
+		}
+	}
 	return broker
 }
 
@@ -486,7 +495,7 @@ func TestBrokerEligibilityBlocksLeaseAndAdmission(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LeasePoll: %v", err)
 			}
-			if lease.Reserved != 0 || lease.MaxCapacity != 0 {
+			if lease.Reserved != 0 || lease.PollCapacity != 0 {
 				t.Fatalf("inactive lease = %+v, want zero effective capacity", lease)
 			}
 			enqueueAll(t, broker, offer("repo-a", 1, clock.Now().Add(-24*time.Hour)))
@@ -516,7 +525,11 @@ func TestBrokerEligibilityRevisionDrainsAndDoesNotSelfClear(t *testing.T) {
 	disabled := []RepositoryPolicy{
 		policy("repo-a", 1, 2, EligibilityArchivedDisabled, memoryProfile(1)),
 	}
-	if err := broker.ApplyPolicyRevision(PolicyRevision{Epoch: 2, Repositories: disabled}); err != nil {
+	if err := broker.ApplyPolicyRevision(PolicyRevision{
+		Epoch:             2,
+		EffectiveCapacity: 2,
+		Repositories:      disabled,
+	}); err != nil {
 		t.Fatalf("ApplyPolicyRevision(disabled): %v", err)
 	}
 	// Mutating caller-owned policy memory is a bare live signal, not an
@@ -535,8 +548,9 @@ func TestBrokerEligibilityRevisionDrainsAndDoesNotSelfClear(t *testing.T) {
 		t.Fatalf("Release admitted slot after disable: %v", err)
 	}
 	if err := broker.ApplyPolicyRevision(PolicyRevision{
-		Epoch:        2,
-		Repositories: []RepositoryPolicy{policy("repo-a", 1, 2, EligibilityActive, memoryProfile(1))},
+		Epoch:             2,
+		EffectiveCapacity: 2,
+		Repositories:      []RepositoryPolicy{policy("repo-a", 1, 2, EligibilityActive, memoryProfile(1))},
 	}); !errors.Is(err, ErrStalePolicyRevision) {
 		t.Fatalf("same-epoch reactivation err = %v, want ErrStalePolicyRevision", err)
 	}
@@ -545,10 +559,14 @@ func TestBrokerEligibilityRevisionDrainsAndDoesNotSelfClear(t *testing.T) {
 	}
 
 	if err := broker.ApplyPolicyRevision(PolicyRevision{
-		Epoch:        3,
-		Repositories: []RepositoryPolicy{policy("repo-a", 1, 2, EligibilityActive, memoryProfile(1))},
+		Epoch:             3,
+		EffectiveCapacity: 2,
+		Repositories:      []RepositoryPolicy{policy("repo-a", 1, 2, EligibilityActive, memoryProfile(1))},
 	}); err != nil {
 		t.Fatalf("ApplyPolicyRevision(active): %v", err)
+	}
+	if err := broker.SetDemand("repo-a", 3, 2); err != nil {
+		t.Fatalf("SetDemand(active revision): %v", err)
 	}
 	reactivated, err := broker.Admit(clock.Now())
 	if err != nil || len(reactivated) != 1 || reactivated[0].Assignment.RunnerRequestID != 2 {
@@ -571,8 +589,9 @@ func TestBrokerPolicyRemovalCannotOrphanQueuedLiveReference(t *testing.T) {
 		t.Fatalf("EnsureQueued: %v", err)
 	}
 	removeA := PolicyRevision{
-		Epoch:        2,
-		Repositories: []RepositoryPolicy{policy("repo-b", 1, 1, EligibilityActive, memoryProfile(1))},
+		Epoch:             2,
+		EffectiveCapacity: 2,
+		Repositories:      []RepositoryPolicy{policy("repo-b", 1, 1, EligibilityActive, memoryProfile(1))},
 	}
 	if err := broker.ApplyPolicyRevision(removeA); !errors.Is(err, ErrPolicyInUse) {
 		t.Fatalf("ApplyPolicyRevision(remove queued repo) err = %v, want ErrPolicyInUse", err)
@@ -684,8 +703,8 @@ func TestBrokerPollLeaseTransfersWithoutDoubleChargeAndExpiresUnused(t *testing.
 	if err != nil {
 		t.Fatalf("LeasePoll(repo-a): %v", err)
 	}
-	if lease.Reserved != 2 || lease.MaxCapacity != 2 || lease.Epoch != 1 {
-		t.Fatalf("repo-a lease = %+v, want Reserved=2 MaxCapacity=2 Epoch=1", lease)
+	if lease.Reserved != 2 || lease.PollCapacity != 2 || lease.Epoch != 1 {
+		t.Fatalf("repo-a lease = %+v, want Reserved=2 PollCapacity=2 Epoch=1", lease)
 	}
 	enqueueAll(t, broker, offer("repo-a", 1, clock.Now()))
 	decisions, err := broker.Admit(clock.Now())
@@ -832,10 +851,14 @@ func TestBrokerStableSlotReuseNeverShrinksRetainedLedgerCharge(t *testing.T) {
 		t.Fatalf("Release first assignment: %v", err)
 	}
 	if err := broker.ApplyPolicyRevision(PolicyRevision{
-		Epoch:        2,
-		Repositories: []RepositoryPolicy{policy("repo-a", 1, 1, EligibilityActive, smallLedger)},
+		Epoch:             2,
+		EffectiveCapacity: 1,
+		Repositories:      []RepositoryPolicy{policy("repo-a", 1, 1, EligibilityActive, smallLedger)},
 	}); err != nil {
 		t.Fatalf("ApplyPolicyRevision(smaller ledger): %v", err)
+	}
+	if err := broker.SetDemand("repo-a", 2, 1); err != nil {
+		t.Fatalf("SetDemand(smaller ledger revision): %v", err)
 	}
 
 	enqueueAll(t, broker, offer("repo-a", 2, clock.Now()))
@@ -1701,6 +1724,9 @@ func TestBrokerRestoreQueuesInDeterministicDurableOrder(t *testing.T) {
 	if err := broker.(LiveHistory).Restore(refs); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
+	if err := broker.SetDemand("repo-a", 1, 3); err != nil {
+		t.Fatalf("SetDemand(after restore): %v", err)
+	}
 
 	decisions, err := broker.Admit(clock.Now())
 	if err != nil {
@@ -1744,6 +1770,9 @@ func TestBrokerRestoreRebuildsReservedAndActiveResourceAccounting(t *testing.T) 
 	live := broker.(LiveHistory)
 	if err := live.Restore(refs); err != nil {
 		t.Fatalf("Restore: %v", err)
+	}
+	if err := broker.SetDemand("repo-a", 1, 3); err != nil {
+		t.Fatalf("SetDemand(after restore): %v", err)
 	}
 	for _, key := range []controller.AssignmentKey{activeKey, reservedKey, queuedKey} {
 		if !live.HasLiveReference(key) {

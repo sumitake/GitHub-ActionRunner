@@ -72,6 +72,7 @@ type brokerImpl struct {
 	aliases     []string
 	queues      map[string][]*queuedOffer
 	deficits    map[string]int64
+	demands     map[string]int
 	cursor      int
 
 	used                  Resources
@@ -144,6 +145,7 @@ func NewBroker(config Config) (PolicyBroker, error) {
 		aliases:                  aliases,
 		queues:                   queues,
 		deficits:                 make(map[string]int64, len(aliases)),
+		demands:                  make(map[string]int, len(aliases)),
 		// MaxCapacity is permitted to span the complete CapacitySlotID
 		// domain. Do not turn that logical ceiling into an eager allocation.
 		slots:       make(map[CapacitySlotID]*capacitySlot),
@@ -207,6 +209,22 @@ func (b *brokerImpl) EnsureQueuedBatch(offers []githubscale.Offer) ([]LiveRefere
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	now := b.now()
+	if err := b.cleanupLocked(now); err != nil {
+		return nil, err
+	}
+	return b.enqueueBatchLocked(offers, true, true)
+}
+
+func (b *brokerImpl) EnsureQueuedBatchAtEpoch(
+	epoch uint64,
+	offers []githubscale.Offer,
+) ([]LiveReference, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if epoch != b.policyEpoch {
+		return nil, ErrDemandEpochMismatch
+	}
 	now := b.now()
 	if err := b.cleanupLocked(now); err != nil {
 		return nil, err
@@ -370,6 +388,7 @@ func (b *brokerImpl) Restore(refs []LiveReference) error {
 	b.assignments = assignments
 	b.used = used
 	b.deficits = make(map[string]int64, len(b.aliases))
+	b.demands = make(map[string]int, len(b.aliases))
 	b.cursor = 0
 	return nil
 }
@@ -530,6 +549,7 @@ func (b *brokerImpl) enqueueBatchLocked(
 
 	leasedByAlias := make(map[string][]*capacitySlot)
 	leaseCursor := make(map[string]int)
+	demandRemaining := make(map[string]int)
 	consumedLeases := 0
 	for i := range staged {
 		alias := staged[i].identity.repositoryAlias
@@ -537,11 +557,17 @@ func (b *brokerImpl) enqueueBatchLocked(
 		if !loaded {
 			slots = b.leasedSlotsLocked(alias)
 			leasedByAlias[alias] = slots
+			remaining := b.demands[alias] - b.activeAndReservedCountLocked(alias)
+			if remaining < 0 {
+				remaining = 0
+			}
+			demandRemaining[alias] = remaining
 		}
 		cursor := leaseCursor[alias]
-		if cursor < len(slots) {
+		if cursor < len(slots) && demandRemaining[alias] > 0 {
 			staged[i].slot = slots[cursor]
 			leaseCursor[alias] = cursor + 1
+			demandRemaining[alias]--
 			consumedLeases++
 		}
 	}
@@ -703,7 +729,13 @@ func (b *brokerImpl) LeasePoll(repo string, now time.Time) (CapacityLease, error
 		liveAvailable--
 		byteAvailable--
 	}
-	lease.MaxCapacity = b.ownedCountLocked(repo)
+	lease.PollCapacity = b.ownedCountLocked(repo)
+	if lease.PollCapacity > int(policy.MaxConcurrency) {
+		lease.PollCapacity = int(policy.MaxConcurrency)
+	}
+	if lease.PollCapacity > b.currentCapacity {
+		lease.PollCapacity = b.currentCapacity
+	}
 	return lease, nil
 }
 
@@ -714,6 +746,25 @@ func (b *brokerImpl) Admit(now time.Time) ([]Decision, error) {
 	if err := b.cleanupLocked(now); err != nil {
 		return nil, err
 	}
+	return b.admitAllLocked(now)
+}
+
+func (b *brokerImpl) AdmitAtEpoch(
+	epoch uint64,
+	now time.Time,
+) ([]Decision, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if epoch != b.policyEpoch {
+		return nil, ErrDemandEpochMismatch
+	}
+	if err := b.cleanupLocked(now); err != nil {
+		return nil, err
+	}
+	return b.admitAllLocked(now)
+}
+
+func (b *brokerImpl) admitAllLocked(now time.Time) ([]Decision, error) {
 	// currentCapacity spans the full CapacitySlotID domain and is a logical
 	// limit, not a safe allocation hint.
 	decisions := make([]Decision, 0)
@@ -831,6 +882,10 @@ func (b *brokerImpl) Release(key controller.AssignmentKey) error {
 }
 
 func (b *brokerImpl) ApplyPolicyRevision(revision PolicyRevision) error {
+	if revision.EffectiveCapacity < 0 ||
+		revision.EffectiveCapacity > b.configuredCapacity {
+		return fmt.Errorf("%w: effective capacity is outside configured ceiling", ErrInvalidConfig)
+	}
 	policies, aliases, err := validatePolicies(revision.Repositories, b.transientMode)
 	if err != nil {
 		return err
@@ -859,17 +914,103 @@ func (b *brokerImpl) ApplyPolicyRevision(revision PolicyRevision) error {
 		}
 	}
 
-	b.policies = policies
-	b.aliases = aliases
-	b.policyEpoch = revision.Epoch
-	b.deficits = make(map[string]int64, len(aliases))
-	b.cursor = 0
-	for _, alias := range aliases {
-		if _, ok := b.queues[alias]; !ok {
-			b.queues[alias] = nil
+	b.currentCapacity = revision.EffectiveCapacity
+	for id, slot := range b.slots {
+		if slot == nil {
+			continue
+		}
+		withinCapacity := int(id) <= b.currentCapacity
+		switch slot.state {
+		case slotActive:
+			slot.retireOnRelease = !withinCapacity
+		case slotFree, slotRetired:
+			if withinCapacity {
+				slot.state = slotFree
+				slot.retired = false
+				slot.retireOnRelease = false
+			} else {
+				slot.state = slotRetired
+				slot.retired = true
+				slot.retireOnRelease = true
+			}
 		}
 	}
+
+	queues := make(map[string][]*queuedOffer, len(aliases))
+	for _, alias := range aliases {
+		queues[alias] = b.queues[alias]
+	}
+	b.policies = policies
+	b.aliases = aliases
+	b.queues = queues
+	b.policyEpoch = revision.Epoch
+	b.deficits = make(map[string]int64, len(aliases))
+	b.demands = make(map[string]int, len(aliases))
+	b.cursor = 0
 	return nil
+}
+
+// SetDemand binds the latest upstream assigned-job count to exactly one
+// acquisition epoch and repository. It may release excess nonactive
+// reservations but never cancels an active assignment.
+func (b *brokerImpl) SetDemand(
+	repositoryAlias string,
+	epoch uint64,
+	totalAssignedJobs int,
+) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if totalAssignedJobs < 0 {
+		return fmt.Errorf("%w: negative repository demand", ErrInvalidConfig)
+	}
+	if epoch != b.policyEpoch {
+		return ErrDemandEpochMismatch
+	}
+	if _, ok := b.policies[repositoryAlias]; !ok {
+		return fmt.Errorf("%w: %q", ErrUnknownRepository, repositoryAlias)
+	}
+	now := b.now()
+	if err := b.cleanupLocked(now); err != nil {
+		return err
+	}
+	for b.activeAndReservedCountLocked(repositoryAlias) > totalAssignedJobs {
+		slot := b.highestReservedSlotLocked(repositoryAlias)
+		if slot == nil {
+			break
+		}
+		if err := b.cancelNonActiveSlotLocked(slot, now); err != nil {
+			return err
+		}
+	}
+	b.demands[repositoryAlias] = totalAssignedJobs
+	return nil
+}
+
+// CapacitySnapshot returns the closed identity-free in-memory capacity
+// projection. Expired commitments remain occupied until the next bounded
+// broker operation performs cleanup; the snapshot never mutates state.
+func (b *brokerImpl) CapacitySnapshot() CapacitySnapshot {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	occupied := b.occupiedCountLocked()
+	available := b.currentCapacity - occupied
+	if available < 0 {
+		available = 0
+	}
+	queued := 0
+	for _, queue := range b.queues {
+		queued += len(queue)
+	}
+	return CapacitySnapshot{
+		Epoch:              b.policyEpoch,
+		ConfiguredCapacity: b.configuredCapacity,
+		EffectiveCapacity:  b.currentCapacity,
+		Occupied:           occupied,
+		Available:          available,
+		Queued:             queued,
+	}
 }
 
 func (b *brokerImpl) selectAgedLocked(now time.Time) (string, *queuedOffer, bool) {
@@ -950,11 +1091,18 @@ func (b *brokerImpl) canAdmitLocked(alias string, queued *queuedOffer) bool {
 	if !ok || policy.Eligibility != EligibilityActive {
 		return false
 	}
+	demand := b.demands[alias]
+	activeAndReserved := b.activeAndReservedCountLocked(alias)
 	if queued.reservedSlot != 0 {
 		slot := b.slots[queued.reservedSlot]
 		return slot != nil &&
 			slot.state == slotReserved &&
-			slot.repositoryAlias == alias
+			slot.repositoryAlias == alias &&
+			demand > 0 &&
+			activeAndReserved <= demand
+	}
+	if activeAndReserved >= demand {
+		return false
 	}
 	if uint64(b.ownedCountLocked(alias)) >= uint64(policy.MaxConcurrency) {
 		return false
@@ -1314,6 +1462,33 @@ func (b *brokerImpl) leasedCountLocked() int {
 		}
 	}
 	return count
+}
+
+func (b *brokerImpl) activeAndReservedCountLocked(alias string) int {
+	count := 0
+	for _, slot := range b.slots {
+		if slot.repositoryAlias != alias {
+			continue
+		}
+		switch slot.state {
+		case slotReserved, slotActive:
+			count++
+		}
+	}
+	return count
+}
+
+func (b *brokerImpl) highestReservedSlotLocked(alias string) *capacitySlot {
+	var selected *capacitySlot
+	for _, slot := range b.slots {
+		if slot.repositoryAlias != alias || slot.state != slotReserved {
+			continue
+		}
+		if selected == nil || slot.id > selected.id {
+			selected = slot
+		}
+	}
+	return selected
 }
 
 func (b *brokerImpl) highestNonActiveOccupiedSlotLocked() *capacitySlot {

@@ -22,6 +22,7 @@ type ControllerAdapter struct {
 
 var _ controller.DurableState = (*ControllerAdapter)(nil)
 var _ controller.ReconcileState = (*ControllerAdapter)(nil)
+var _ controller.AcquisitionTransitioner = (*ControllerAdapter)(nil)
 
 func NewControllerAdapter(store Store, limits HistoryLimits) (*ControllerAdapter, error) {
 	if store == nil {
@@ -31,6 +32,36 @@ func NewControllerAdapter(store Store, limits HistoryLimits) (*ControllerAdapter
 		return nil, fmt.Errorf("%w: invalid history limits", controller.ErrHistoryUnavailable)
 	}
 	return &ControllerAdapter{store: store, limits: limits}, nil
+}
+
+// Snapshot implements controller.AcquisitionTransitioner.
+func (a *ControllerAdapter) Snapshot(
+	ctx context.Context,
+) (controller.AcquisitionPolicy, error) {
+	policy, err := a.store.AcquisitionPolicy(ctx)
+	if err != nil {
+		return controller.AcquisitionPolicy{}, mapControllerStateError(err)
+	}
+	return policy, nil
+}
+
+// Transition implements controller.AcquisitionTransitioner.
+func (a *ControllerAdapter) Transition(
+	ctx context.Context,
+	expectedEpoch uint64,
+	next controller.AcquisitionPolicy,
+) (controller.AcquisitionPolicy, error) {
+	policy, err := a.store.CompareAndSetAcquisition(ctx, expectedEpoch, next)
+	if errors.Is(err, ErrAcquisitionEpochMismatch) {
+		return policy, fmt.Errorf(
+			"%w: durable compare-and-set mismatch",
+			controller.ErrAcquisitionEpochMismatch,
+		)
+	}
+	if err != nil {
+		return controller.AcquisitionPolicy{}, mapControllerStateError(err)
+	}
+	return policy, nil
 }
 
 func (a *ControllerAdapter) RecordMessageReceipt(
@@ -51,6 +82,164 @@ func (a *ControllerAdapter) RecordMessageReceipt(
 		State:    state,
 		Inserted: record.Inserted,
 	}, nil
+}
+
+func controllerAcquisitionBatchState(
+	state AcquisitionBatchState,
+) (controller.AcquisitionBatchStatus, error) {
+	switch state {
+	case AcquisitionBatchBegun:
+		return controller.AcquisitionBatchBegun, nil
+	case AcquisitionBatchNotAttempted:
+		return controller.AcquisitionBatchNotAttempted, nil
+	case AcquisitionBatchCompleted:
+		return controller.AcquisitionBatchCompleted, nil
+	case AcquisitionBatchAmbiguous:
+		return controller.AcquisitionBatchAmbiguous, nil
+	default:
+		return 0, controller.ErrDurableIdentityConflict
+	}
+}
+
+func controllerAcquisitionOutcome(
+	outcome AcquisitionOutcome,
+) (controller.AssignmentAcquisitionOutcome, error) {
+	switch outcome {
+	case AcquisitionOutcomeOffered:
+		return controller.AssignmentOffered, nil
+	case AcquisitionOutcomeRequested:
+		return controller.AssignmentRequested, nil
+	case AcquisitionOutcomeAcquired:
+		return controller.AssignmentAcquired, nil
+	case AcquisitionOutcomeRejected:
+		return controller.AssignmentRejected, nil
+	default:
+		return 0, controller.ErrDurableIdentityConflict
+	}
+}
+
+func controllerAcquisitionBatch(
+	record AcquisitionBatchRecord,
+) (controller.AcquisitionBatchRecord, error) {
+	status, err := controllerAcquisitionBatchState(record.State)
+	if err != nil {
+		return controller.AcquisitionBatchRecord{}, err
+	}
+	return controller.AcquisitionBatchRecord{
+		RepositoryAlias: record.RepositoryAlias,
+		MessageID:       record.MessageID,
+		RequestDigest:   controller.MessageDigest(record.RequestDigest),
+		ResultDigest:    controller.MessageDigest(record.ResultDigest),
+		Status:          status,
+		RequestedCount:  record.RequestedCount,
+		AcquiredCount:   record.AcquiredCount,
+		BegunAt:         record.BegunAt,
+		UpdatedAt:       record.UpdatedAt,
+		Inserted:        record.Inserted,
+		CallAuthorized:  record.CallAuthorized,
+	}, nil
+}
+
+func (a *ControllerAdapter) BeginAcquisition(
+	ctx context.Context,
+	repositoryAlias string,
+	messageID int,
+	keys []controller.AssignmentKey,
+	at time.Time,
+) (controller.AcquisitionBatchRecord, error) {
+	record, err := a.store.BeginAcquisition(ctx, repositoryAlias, messageID, keys, at)
+	if err != nil {
+		return controller.AcquisitionBatchRecord{}, mapControllerStateError(err)
+	}
+	return controllerAcquisitionBatch(record)
+}
+
+func (a *ControllerAdapter) AbortAcquisitionBeforeCall(
+	ctx context.Context,
+	repositoryAlias string,
+	messageID int,
+	at time.Time,
+) (controller.AcquisitionBatchRecord, error) {
+	record, err := a.store.AbortAcquisitionBeforeCall(ctx, repositoryAlias, messageID, at)
+	if err != nil {
+		return controller.AcquisitionBatchRecord{}, mapControllerStateError(err)
+	}
+	return controllerAcquisitionBatch(record)
+}
+
+func (a *ControllerAdapter) CompleteAcquisition(
+	ctx context.Context,
+	repositoryAlias string,
+	messageID int,
+	acquired []controller.AssignmentKey,
+	at time.Time,
+) (controller.AcquisitionBatchRecord, error) {
+	record, err := a.store.CompleteAcquisition(ctx, repositoryAlias, messageID, acquired, at)
+	if err != nil {
+		return controller.AcquisitionBatchRecord{}, mapControllerStateError(err)
+	}
+	return controllerAcquisitionBatch(record)
+}
+
+func (a *ControllerAdapter) MarkAcquisitionAmbiguous(
+	ctx context.Context,
+	repositoryAlias string,
+	messageID int,
+	at time.Time,
+) (controller.AcquisitionBatchRecord, error) {
+	record, err := a.store.MarkAcquisitionAmbiguous(ctx, repositoryAlias, messageID, at)
+	if err != nil {
+		return controller.AcquisitionBatchRecord{}, mapControllerStateError(err)
+	}
+	return controllerAcquisitionBatch(record)
+}
+
+func (a *ControllerAdapter) PromoteBegunAcquisitions(
+	ctx context.Context,
+	at time.Time,
+) (int, error) {
+	count, err := a.store.PromoteBegunAcquisitions(ctx, at)
+	return count, mapControllerStateError(err)
+}
+
+func (a *ControllerAdapter) AcquisitionBatch(
+	ctx context.Context,
+	repositoryAlias string,
+	messageID int,
+) (controller.AcquisitionBatchRecord, error) {
+	record, err := a.store.AcquisitionBatch(ctx, repositoryAlias, messageID)
+	if err != nil {
+		return controller.AcquisitionBatchRecord{}, mapControllerStateError(err)
+	}
+	return controllerAcquisitionBatch(record)
+}
+
+func (a *ControllerAdapter) AcquisitionAssignment(
+	ctx context.Context,
+	key controller.AssignmentKey,
+) (controller.AssignmentAcquisitionRecord, error) {
+	record, err := a.store.AcquisitionAssignment(ctx, key)
+	if err != nil {
+		return controller.AssignmentAcquisitionRecord{}, mapControllerStateError(err)
+	}
+	outcome, err := controllerAcquisitionOutcome(record.Outcome)
+	if err != nil {
+		return controller.AssignmentAcquisitionRecord{}, err
+	}
+	return controller.AssignmentAcquisitionRecord{
+		Key:          record.Key,
+		Outcome:      outcome,
+		RevokedEpoch: record.RevokedEpoch,
+	}, nil
+}
+
+func (a *ControllerAdapter) MarkPreRunningRevoked(
+	ctx context.Context,
+	newEpoch uint64,
+	at time.Time,
+) ([]controller.AssignmentKey, error) {
+	keys, err := a.store.MarkPreRunningRevoked(ctx, newEpoch, at)
+	return keys, mapControllerStateError(err)
 }
 
 func (a *ControllerAdapter) RecordOffer(
@@ -105,6 +294,13 @@ func (a *ControllerAdapter) ReserveActive(
 
 func (a *ControllerAdapter) ClearAdmission(ctx context.Context, key controller.AssignmentKey) error {
 	return mapControllerStateError(a.store.ClearAdmissionProjection(ctx, key))
+}
+
+func (a *ControllerAdapter) ClearTerminalRuntime(
+	ctx context.Context,
+	key controller.AssignmentKey,
+) error {
+	return mapControllerStateError(a.store.ClearTerminalRuntime(ctx, key))
 }
 
 func (a *ControllerAdapter) LookupHostedEffect(
@@ -258,6 +454,24 @@ func (a *ControllerAdapter) ListRecoverable(
 	return out, nil
 }
 
+func (a *ControllerAdapter) ListTerminalFinalizations(
+	ctx context.Context,
+) ([]controller.TerminalFinalization, error) {
+	native, err := a.store.ListTerminalFinalizations(ctx)
+	if err != nil {
+		return nil, mapControllerStateError(err)
+	}
+	out := make([]controller.TerminalFinalization, len(native))
+	for index, item := range native {
+		out[index] = controller.TerminalFinalization{
+			Key:       item.Key,
+			MessageID: item.MessageID,
+			At:        item.At,
+		}
+	}
+	return out, nil
+}
+
 func (a *ControllerAdapter) BeginCycle(
 	ctx context.Context,
 	cycleID string,
@@ -310,6 +524,8 @@ func (a *ControllerAdapter) HistoryUsage(ctx context.Context) (controller.Histor
 		ProtectedTerminalBytes:    usage.ProtectedTerminalBytes,
 		MessageReceiptRows:        usage.MessageReceiptRows,
 		MessageReceiptBytes:       usage.MessageReceiptBytes,
+		AcquisitionRows:           usage.AcquisitionRows,
+		AcquisitionLogicalBytes:   usage.AcquisitionLogicalBytes,
 		TombstoneRows:             usage.TombstoneRows,
 		TombstoneLogicalBytes:     usage.TombstoneLogicalBytes,
 		NetworkLedgerRows:         usage.NetworkLedgerRows,
@@ -318,6 +534,23 @@ func (a *ControllerAdapter) HistoryUsage(ctx context.Context) (controller.Histor
 		ReservedRows:              usage.ReservedRows,
 		ReservedLogicalBytes:      usage.ReservedLogicalBytes,
 		OldestRetainedAt:          usage.OldestRetainedAt,
+	}, nil
+}
+
+func (a *ControllerAdapter) OperationalSummary(
+	ctx context.Context,
+	at time.Time,
+) (controller.OperationalSummary, error) {
+	summary, err := a.store.OperationalSummary(ctx, at)
+	if err != nil {
+		return controller.OperationalSummary{}, mapControllerStateError(err)
+	}
+	return controller.OperationalSummary{
+		AssignedJobs:                summary.AssignedJobs,
+		RunningJobs:                 summary.RunningJobs,
+		OldestLiveAssignmentAge:     summary.OldestLiveAssignmentAge,
+		UnassignedReleasedListeners: summary.UnassignedReleasedListeners,
+		LatestTerminalAt:            summary.LatestTerminalAt,
 	}, nil
 }
 

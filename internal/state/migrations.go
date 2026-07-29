@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	currentSchemaVersion        = 2
+	currentSchemaVersion        = 3
 	sqliteAutoVacuumNone        = 0
 	sqliteAutoVacuumFull        = 1
 	sqliteAutoVacuumIncremental = 2
@@ -223,6 +223,61 @@ CREATE INDEX IF NOT EXISTS network_ledgers_history_oldest
 CREATE INDEX IF NOT EXISTS network_ledgers_retention
 	ON network_ledgers (retained_until, id)
 	WHERE assignment_id IS NULL AND retained_until IS NOT NULL;
+`
+
+// schemaV3 adds the durable acquisition batch journal and the assignment-side
+// acquisition/revocation classifications used by Task 8. The batch row is
+// receipt-owned: once every linked assignment graph and its receipt satisfy
+// retention, deleting that receipt atomically removes the batch through the
+// foreign key. Existing queued assignments remain offered, while an existing
+// reserved/active admission projection proves that acquisition already
+// succeeded and is migrated to acquired.
+const schemaV3 = `
+ALTER TABLE assignments
+	ADD COLUMN acquisition_outcome TEXT NOT NULL DEFAULT 'offered'
+	CHECK (acquisition_outcome IN ('offered', 'requested', 'acquired', 'rejected'));
+ALTER TABLE assignments
+	ADD COLUMN pre_running_revoked_epoch INTEGER
+	CHECK (pre_running_revoked_epoch IS NULL OR pre_running_revoked_epoch > 0);
+
+CREATE TABLE message_acquisitions (
+	id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+	repository_alias   TEXT    NOT NULL,
+	message_id         INTEGER NOT NULL,
+	request_digest     BLOB    NOT NULL CHECK (length(request_digest) = 32),
+	result_digest      BLOB    CHECK (result_digest IS NULL OR length(result_digest) = 32),
+	state              TEXT    NOT NULL CHECK (state IN ('begun', 'not_attempted', 'completed', 'ambiguous')),
+	requested_count    INTEGER NOT NULL CHECK (requested_count > 0),
+	acquired_count     INTEGER CHECK (
+		acquired_count IS NULL OR
+		(acquired_count >= 0 AND acquired_count <= requested_count)
+	),
+	begun_at           TEXT    NOT NULL,
+	updated_at         TEXT    NOT NULL,
+	logical_bytes      INTEGER NOT NULL CHECK (logical_bytes > 0),
+	UNIQUE (repository_alias, message_id),
+	FOREIGN KEY (repository_alias, message_id)
+		REFERENCES message_receipts (repository_alias, message_id)
+		ON DELETE CASCADE,
+	CHECK (
+		(state = 'completed' AND result_digest IS NOT NULL AND acquired_count IS NOT NULL) OR
+		(state != 'completed' AND result_digest IS NULL AND acquired_count IS NULL)
+	)
+);
+
+CREATE INDEX message_acquisitions_state_updated
+	ON message_acquisitions (state, updated_at, id);
+CREATE INDEX assignments_acquisition_source
+	ON assignments (repository_alias, source_message_id, acquisition_outcome, id);
+CREATE INDEX assignments_pre_running_revoked
+	ON assignments (pre_running_revoked_epoch, state, id)
+	WHERE pre_running_revoked_epoch IS NOT NULL;
+
+UPDATE assignments
+SET acquisition_outcome = CASE
+	WHEN admission_phase IN (2, 3) THEN 'acquired'
+	ELSE 'offered'
+END;
 `
 
 // schemaV0 is the exact pre-history schema. Keeping the source shape beside
@@ -586,6 +641,8 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		return migrateV0ToCurrent(ctx, db)
 	case 1:
 		return migrateV1ToV2(ctx, db)
+	case 2:
+		return migrateV2ToV3(ctx, db)
 	default:
 		return fmt.Errorf("%w: unsupported schema version %d", ErrOfflineMigration, version)
 	}
@@ -612,6 +669,9 @@ func bootstrapCurrentWithHook(
 	}
 	if err := steps.execSchema("bootstrap-schema-v2", schemaV2); err != nil {
 		return fmt.Errorf("state: apply schema v2: %w", err)
+	}
+	if err := steps.execSchema("bootstrap-schema-v3", schemaV3); err != nil {
+		return fmt.Errorf("state: apply schema v3: %w", err)
 	}
 	if err := steps.exec("bootstrap-seed-acquisition", seedAcquisitionState, string(controller.AcquisitionDisabled)); err != nil {
 		return fmt.Errorf("state: seed acquisition state: %w", err)
@@ -816,6 +876,9 @@ func migrateV0ToCurrentWithHook(
 	if err := normalizeHistoryMigrationTimestamps(&steps); err != nil {
 		return fmt.Errorf("state: normalize v0 history timestamps: %w", err)
 	}
+	if err := steps.execSchema("create-v3-schema", schemaV3); err != nil {
+		return fmt.Errorf("state: create v3 tables: %w", err)
+	}
 
 	for _, drop := range []struct {
 		label     string
@@ -866,6 +929,9 @@ func migrateV1ToV2WithHook(
 	if err := normalizeHistoryMigrationTimestamps(&steps); err != nil {
 		return fmt.Errorf("state: normalize v1 history timestamps: %w", err)
 	}
+	if err := steps.execSchema("create-v3-schema", schemaV3); err != nil {
+		return fmt.Errorf("state: create v3 tables: %w", err)
+	}
 	if err := steps.exec(
 		"set-v2-user-version",
 		fmt.Sprintf(`PRAGMA user_version=%d`, currentSchemaVersion),
@@ -874,6 +940,37 @@ func migrateV1ToV2WithHook(
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("state: commit v1 migration: %w", err)
+	}
+	return nil
+}
+
+func migrateV2ToV3(ctx context.Context, db *sql.DB) error {
+	return migrateV2ToV3WithHook(ctx, db, nil)
+}
+
+func migrateV2ToV3WithHook(
+	ctx context.Context,
+	db *sql.DB,
+	beforeWrite func(step int, label string) error,
+) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: begin v2 migration: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after commit
+
+	steps := migrationStepper{ctx: ctx, tx: tx, beforeWrite: beforeWrite}
+	if err := steps.execSchema("create-v3-schema", schemaV3); err != nil {
+		return fmt.Errorf("state: create v3 tables: %w", err)
+	}
+	if err := steps.exec(
+		"set-v3-user-version",
+		fmt.Sprintf(`PRAGMA user_version=%d`, currentSchemaVersion),
+	); err != nil {
+		return fmt.Errorf("state: set v3 schema version: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: commit v2 migration: %w", err)
 	}
 	return nil
 }

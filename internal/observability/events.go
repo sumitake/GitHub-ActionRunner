@@ -43,7 +43,7 @@ const pressureReasonAll = PressureReasonHistoryRows |
 type Event struct {
 	Kind     EventKind
 	Reasons  PressureReason
-	Snapshot health.Snapshot
+	Snapshot health.HistorySnapshot
 }
 
 // Validate enforces the closed kind/reason grammar and the embedded aggregate

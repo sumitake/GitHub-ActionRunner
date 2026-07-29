@@ -128,6 +128,8 @@ type HistoryUsage struct {
 	ProtectedTerminalBytes    uint64
 	MessageReceiptRows        uint64
 	MessageReceiptBytes       uint64
+	AcquisitionRows           uint64
+	AcquisitionLogicalBytes   uint64
 	TombstoneRows             uint64
 	TombstoneLogicalBytes     uint64
 	NetworkLedgerRows         uint64
@@ -140,6 +142,16 @@ type HistoryUsage struct {
 	FreelistBytes             uint64
 	WALBytes                  uint64
 	Maintenance               HistoryMaintenanceResult
+}
+
+// OperationalSummary is the identity-free live-assignment aggregate consumed
+// by health and quiescence checks.
+type OperationalSummary struct {
+	AssignedJobs                uint64
+	RunningJobs                 uint64
+	OldestLiveAssignmentAge     time.Duration
+	UnassignedReleasedListeners uint64
+	LatestTerminalAt            time.Time
 }
 
 // AdmissionPhase is the durable, state-owned representation of the broker's
@@ -200,6 +212,7 @@ const (
 	historyRunnerSlotFixedBytes  = uint64(128)
 	historyReservationFixedBytes = uint64(96)
 	historyEffectFixedBytes      = uint64(160)
+	historyAcquisitionFixedBytes = uint64(256 + 2*sha256.Size)
 
 	maxEffectIdentityBytes = 4096
 	maxEffectReasonBytes   = 128
@@ -418,6 +431,10 @@ func tombstoneLogicalBytes(repositoryAlias string) (uint64, error) {
 
 func receiptLogicalBytes(repositoryAlias string) (uint64, error) {
 	return addHistoryBytes(historyReceiptFixedBytes, uint64(len(repositoryAlias)))
+}
+
+func acquisitionLogicalBytes(repositoryAlias string) (uint64, error) {
+	return addHistoryBytes(historyAcquisitionFixedBytes, uint64(len(repositoryAlias)))
 }
 
 func addHistoryBytes(total uint64, values ...uint64) (uint64, error) {

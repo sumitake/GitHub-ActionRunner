@@ -18,9 +18,8 @@ func TestHistoryPressureEventValidateRequiresClosedReasonContract(t *testing.T) 
 		Kind: EventHistoryPressureEvaluated,
 		Reasons: PressureReasonHistoryRows |
 			PressureReasonNetworkLedgerBytes,
-		Snapshot: health.Snapshot{
+		Snapshot: health.HistorySnapshot{
 			ObservedAt:          time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC),
-			Readiness:           health.ReadinessReady,
 			Pressure:            health.PressureWarning,
 			OldestRetainedAge:   time.Minute,
 			EffectiveCapacity:   1,

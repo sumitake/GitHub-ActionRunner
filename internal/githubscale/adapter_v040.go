@@ -294,8 +294,9 @@ func translateBatch(msg *scaleset.RunnerScaleSetMessage) Batch {
 	}
 
 	b := Batch{
-		MessageID:  msg.MessageID,
-		Statistics: translateStatistics(msg.Statistics),
+		MessageID:         msg.MessageID,
+		StatisticsPresent: msg.Statistics != nil,
+		Statistics:        translateStatistics(msg.Statistics),
 	}
 
 	for _, m := range msg.JobAvailableMessages {

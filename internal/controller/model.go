@@ -4,16 +4,10 @@
 // runner slot, and the acquisition-policy value types the controller's
 // local fleet-generation fence persists and compare-and-sets.
 //
-// Scope for Task 2 is deliberately narrow. This file defines the State
-// enum, AssignmentKey, RunnerSlot, and the acquisition-policy value types
-// consumed by internal/state.Store.AcquisitionPolicy and
-// CompareAndSetAcquisition. It intentionally does NOT define
-// AcquisitionTransitioner, AcquisitionGuard, FleetGuardProvider,
-// AcquisitionPermitProvider, AcquisitionPermitRequest, or CycleReceipt --
-// those belong to later tasks (7/8) that drive the fleet-generation fence
-// and acquisition transitions. Defining them here, ahead of the code that
-// consumes them, would be premature per the plan's Canonical Runtime
-// Contracts (docs/superpowers/plans/2026-07-11-controller-runtime.md).
+// This file defines the State enum, AssignmentKey, RunnerSlot, and the
+// acquisition-policy value types consumed by the state and controller layers.
+// Task 8's guarded transition interfaces and canonical digest live beside the
+// service implementation in acquisition.go.
 package controller
 
 // State is one checkpoint in the fixed, ordered assignment lifecycle. The

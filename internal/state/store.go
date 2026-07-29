@@ -103,6 +103,14 @@ type RecoverableAssignment struct {
 	UpdatedAt       time.Time
 }
 
+// TerminalFinalization is one destroyed assignment whose broker reference,
+// message binding, and bounded compaction still belong to the controller.
+type TerminalFinalization struct {
+	Key       controller.AssignmentKey
+	MessageID int
+	At        time.Time
+}
+
 // Store is the controller's crash-safe assignment persistence boundary.
 // Every method's parameters and return types are opaque names, IDs,
 // digests, reason codes, timestamps, or the domain value types in package
@@ -120,6 +128,42 @@ type Store interface {
 	// available; an equal active or terminal replay is classified without a
 	// second row, while a same-key/different-digest replay fails closed.
 	RecordOffer(ctx context.Context, offer OfferIdentity, evidence OfferEvidence) (OfferReceipt, error)
+
+	// BeginAcquisition atomically binds an exact, non-empty assignment set to
+	// one persisted message and changes each member from offered to requested
+	// before an upstream Acquire call is authorized. An exact not_attempted
+	// batch may reopen; changed membership fails closed.
+	BeginAcquisition(ctx context.Context, repositoryAlias string, messageID int, keys []controller.AssignmentKey, begunAt time.Time) (AcquisitionBatchRecord, error)
+
+	// AbortAcquisitionBeforeCall records that no Acquire request crossed the
+	// network boundary and atomically returns the exact requested set to
+	// offered. It is the only state from which an exact batch may reopen.
+	AbortAcquisitionBeforeCall(ctx context.Context, repositoryAlias string, messageID int, abortedAt time.Time) (AcquisitionBatchRecord, error)
+
+	// CompleteAcquisition atomically classifies the requested set as acquired
+	// or rejected from the exact returned subset. Empty returned subsets are
+	// valid and mean every requested assignment was rejected.
+	CompleteAcquisition(ctx context.Context, repositoryAlias string, messageID int, acquired []controller.AssignmentKey, completedAt time.Time) (AcquisitionBatchRecord, error)
+
+	// MarkAcquisitionAmbiguous preserves a begun batch and its requested
+	// assignment classifications when the caller cannot prove whether the
+	// Acquire call crossed the effect boundary.
+	MarkAcquisitionAmbiguous(ctx context.Context, repositoryAlias string, messageID int, observedAt time.Time) (AcquisitionBatchRecord, error)
+
+	// PromoteBegunAcquisitions moves only surviving begun batches to
+	// ambiguous during cold-start recovery. Completed and provably
+	// not-attempted batches remain unchanged.
+	PromoteBegunAcquisitions(ctx context.Context, observedAt time.Time) (int, error)
+
+	// AcquisitionBatch and AcquisitionAssignment expose bounded, secret-free
+	// journal state for recovery and exact replay decisions.
+	AcquisitionBatch(ctx context.Context, repositoryAlias string, messageID int) (AcquisitionBatchRecord, error)
+	AcquisitionAssignment(ctx context.Context, key controller.AssignmentKey) (AcquisitionAssignmentRecord, error)
+
+	// MarkPreRunningRevoked applies a monotonic policy epoch only to
+	// assignments that have not reached JOB_RUNNING. It returns the exact,
+	// stably ordered set newly marked by this call.
+	MarkPreRunningRevoked(ctx context.Context, newEpoch uint64, observedAt time.Time) ([]controller.AssignmentKey, error)
 
 	// PersistAdmissionProjection writes the exact queued/reserved/active
 	// projection returned by the broker before Ack or any acquisition effect.
@@ -155,8 +199,14 @@ type Store interface {
 	// all-or-nothing broker refusal or after terminal broker retirement.
 	ClearAdmissionProjection(ctx context.Context, key controller.AssignmentKey) error
 
-	// BindTerminalMessage durably binds a DESTROYED assignment to an existing
-	// message receipt. The first binding is immutable.
+	// ClearTerminalRuntime removes only the durable reservation and runner-slot
+	// rows for a DESTROYED assignment after lifecycle cleanup has completed.
+	// It rejects pre-terminal assignments and incomplete effects, and is
+	// idempotent after the assignment has already been compacted.
+	ClearTerminalRuntime(ctx context.Context, key controller.AssignmentKey) error
+
+	// BindTerminalMessage durably binds a JOB_FINISHED or DESTROYED assignment
+	// to an existing message receipt. The first binding is immutable.
 	BindTerminalMessage(ctx context.Context, key controller.AssignmentKey, messageID int) error
 
 	// CompactTerminal atomically inserts a digest-bound tombstone, detaches
@@ -168,6 +218,11 @@ type Store interface {
 	// Collection behavior is implemented by the later maintenance slice.
 	HistoryUsage(ctx context.Context, limits HistoryLimits) (HistoryUsage, error)
 	CollectHistory(ctx context.Context, limits HistoryLimits, now time.Time) (HistoryUsage, error)
+
+	// OperationalSummary returns only aggregate live/terminal counts and
+	// clocks. It never returns repository, assignment, runner, or message
+	// identities.
+	OperationalSummary(ctx context.Context, observedAt time.Time) (OperationalSummary, error)
 
 	// Reserve performs the RECEIVED -> CAPACITY_RESERVED transition inside
 	// a single BEGIN IMMEDIATE transaction: it takes the write-intent lock,
@@ -249,6 +304,7 @@ type Store interface {
 	// including one whose held broker (or adapter, or runner) was never
 	// torn down before the crash.
 	ListRecoverable(ctx context.Context) ([]RecoverableAssignment, error)
+	ListTerminalFinalizations(ctx context.Context) ([]TerminalFinalization, error)
 
 	// AcquisitionPolicy returns the controller's current persisted
 	// acquisition policy.
