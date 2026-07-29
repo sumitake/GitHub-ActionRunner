@@ -554,6 +554,7 @@ type ServiceConfig struct {
 	Hosted                HostedRouter
 	FleetGuards           FleetGuardProvider
 	Permits               AcquisitionPermitProvider
+	HostCapacity          HostCapacityProvider
 	HistoryPressure       HistoryPressureThresholds
 	HealthPublisher       HealthPublisher
 	EventSink             EventSink
@@ -577,6 +578,7 @@ type ServiceConfig struct {
 	TransitionJoinTimeout time.Duration
 	DurableFinishTimeout  time.Duration
 	ReplayEvidenceMaxAge  time.Duration
+	HostCapacityMaxAge    time.Duration
 }
 
 type messageReceiptKey struct {
@@ -620,6 +622,7 @@ type Service struct {
 	hosted                HostedRouter
 	fleetGuards           FleetGuardProvider
 	permits               AcquisitionPermitProvider
+	hostCapacity          HostCapacityProvider
 	pressure              HistoryPressureThresholds
 	health                HealthPublisher
 	eventSink             EventSink
@@ -643,6 +646,7 @@ type Service struct {
 	transitionJoinTimeout time.Duration
 	durableFinishTimeout  time.Duration
 	replayAge             time.Duration
+	hostCapacityMaxAge    time.Duration
 	sequencer             *keySequencer
 
 	started   bool
@@ -665,6 +669,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		config.Hosted == nil ||
 		config.FleetGuards == nil ||
 		config.Permits == nil ||
+		config.HostCapacity == nil ||
 		config.HealthPublisher == nil ||
 		config.EventSink == nil ||
 		config.Reconciler == nil ||
@@ -681,6 +686,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		config.TransitionJoinTimeout <= 0 ||
 		config.DurableFinishTimeout <= 0 ||
 		config.ReplayEvidenceMaxAge <= 0 ||
+		config.HostCapacityMaxAge <= 0 ||
 		!validServiceHealthIdentity(config) ||
 		!validServiceRuntimeConfig(config) ||
 		!validHistoryPressureThresholds(config.HistoryPressure) {
@@ -698,6 +704,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		hosted:                config.Hosted,
 		fleetGuards:           config.FleetGuards,
 		permits:               config.Permits,
+		hostCapacity:          config.HostCapacity,
 		pressure:              config.HistoryPressure,
 		health:                config.HealthPublisher,
 		eventSink:             config.EventSink,
@@ -721,6 +728,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		transitionJoinTimeout: config.TransitionJoinTimeout,
 		durableFinishTimeout:  config.DurableFinishTimeout,
 		replayAge:             config.ReplayEvidenceMaxAge,
+		hostCapacityMaxAge:    config.HostCapacityMaxAge,
 		sequencer:             newKeySequencer(),
 		uncertain:             make(map[messageReceiptKey]UncertainMessageReceipt),
 		lastID:                make(map[string]int),
@@ -1345,6 +1353,19 @@ func (s *Service) EvaluateHistoryPressure(ctx context.Context) (health.HistorySn
 // exactly one closed Worker heartbeat. Any failure returns a zero receipt and
 // publishes no heartbeat.
 func (s *Service) ReconcileOnce(ctx context.Context) (CycleReceipt, error) {
+	if _, err := s.EvaluateHostPressure(ctx); err != nil {
+		return CycleReceipt{}, fmt.Errorf(
+			"%w: host pressure: %w",
+			ErrReconciliation,
+			err,
+		)
+	}
+	return s.reconcileOnceAfterHostPressure(ctx)
+}
+
+func (s *Service) reconcileOnceAfterHostPressure(
+	ctx context.Context,
+) (CycleReceipt, error) {
 	policy, ready := s.policySnapshot()
 	if !ready {
 		return CycleReceipt{}, ErrServiceNotReady
@@ -1547,6 +1568,17 @@ func healthCapacitySummary(capacity CapacitySummary) health.CapacitySummary {
 // epoch and joins this section rather than waiting on one global network-call
 // mutex shared by unrelated repositories.
 func (s *Service) PollOnce(
+	ctx context.Context,
+	fleet githubscale.Fleet,
+	session githubscale.Session,
+) error {
+	if _, err := s.EvaluateHostPressure(ctx); err != nil {
+		return fmt.Errorf("%w: host pressure: %w", ErrPollCycle, err)
+	}
+	return s.pollOnceAfterHostPressure(ctx, fleet, session)
+}
+
+func (s *Service) pollOnceAfterHostPressure(
 	ctx context.Context,
 	fleet githubscale.Fleet,
 	session githubscale.Session,
@@ -2392,6 +2424,19 @@ func selectAcquiredOffers(
 // commits each exact active projection, stable slot identity, and
 // RECEIVED-to-CAPACITY_RESERVED transition in one durable transaction.
 func (s *Service) AdmitOnce(ctx context.Context) ([]AdmissionDecision, error) {
+	if _, err := s.EvaluateHostPressure(ctx); err != nil {
+		return nil, fmt.Errorf(
+			"%w: host pressure: %w",
+			ErrAdmissionUnavailable,
+			err,
+		)
+	}
+	return s.admitOnceAfterHostPressure(ctx)
+}
+
+func (s *Service) admitOnceAfterHostPressure(
+	ctx context.Context,
+) ([]AdmissionDecision, error) {
 	if _, ready := s.policySnapshot(); !ready {
 		return nil, ErrServiceNotReady
 	}

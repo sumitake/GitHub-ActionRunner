@@ -206,10 +206,13 @@ func (s *Service) runCentralLoop(ctx context.Context) error {
 		if _, err := s.EvaluateHistoryPressure(ctx); err != nil {
 			return fmt.Errorf("%w: history pressure: %w", ErrRuntimeUnavailable, err)
 		}
-		if _, err := s.AdmitOnce(ctx); err != nil {
+		if _, err := s.EvaluateHostPressure(ctx); err != nil {
+			return fmt.Errorf("%w: host pressure: %w", ErrRuntimeUnavailable, err)
+		}
+		if _, err := s.admitOnceAfterHostPressure(ctx); err != nil {
 			return fmt.Errorf("%w: admission: %w", ErrRuntimeUnavailable, err)
 		}
-		if _, err := s.ReconcileOnce(ctx); err != nil {
+		if _, err := s.reconcileOnceAfterHostPressure(ctx); err != nil {
 			return fmt.Errorf("%w: reconciliation: %w", ErrRuntimeUnavailable, err)
 		}
 		select {

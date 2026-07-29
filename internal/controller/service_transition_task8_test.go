@@ -65,6 +65,8 @@ func newTask8TransitionFixture(
 		Hosted:                &fakeHostedRouter{},
 		FleetGuards:           canonicalFleetGuardProviderStub{},
 		Permits:               canonicalPermitProviderStub{},
+		HostCapacity:          testNormalHostCapacityProvider{},
+		HostCapacityMaxAge:    48 * time.Hour,
 		HistoryPressure:       testHistoryPressureThresholds(),
 		HealthPublisher:       &fakeHealthPublisher{},
 		EventSink:             &fakeEventSink{},
