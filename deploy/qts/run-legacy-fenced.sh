@@ -20,21 +20,21 @@ separator="$4"
 shift 4
 
 case "$fence_binary" in
-  /*) ;;
-  *) unavailable 64 ;;
+/*) ;;
+*) unavailable 64 ;;
 esac
 case "$state_dir" in
-  /*) ;;
-  *) unavailable 64 ;;
+/*) ;;
+*) unavailable 64 ;;
 esac
 case "$generation" in
-  0 | *[!0-9]* | '') unavailable 64 ;;
+0 | *[!0-9]* | '') unavailable 64 ;;
 esac
 [ "$separator" = "--" ] || unavailable 64
 [ "$#" -ge 1 ] || unavailable 64
 case "$1" in
-  /*) ;;
-  *) unavailable 64 ;;
+/*) ;;
+*) unavailable 64 ;;
 esac
 
 exec "$fence_binary" guard \
