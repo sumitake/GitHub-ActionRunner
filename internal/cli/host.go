@@ -214,7 +214,9 @@ type HostCommandDependencies struct {
 		string,
 		error,
 	)
-	Transport HostTransport
+	TransportForOverlay func(
+		hostruntime.PrivateOverlay,
+	) (HostTransport, error)
 }
 
 type PublicHostResult struct {
@@ -292,7 +294,7 @@ func RunHostCommand(
 	if ctx == nil ||
 		dependencies.LoadPrivateOverlay == nil ||
 		dependencies.LoadRuntimeManifest == nil ||
-		dependencies.Transport == nil {
+		dependencies.TransportForOverlay == nil {
 		return PublicHostResult{}, ErrHostCommandFailed
 	}
 	request, err := ParseHostCommand(args)
@@ -307,7 +309,11 @@ func RunHostCommand(
 		!validLoadedOverlayIdentity(overlay) {
 		return PublicHostResult{}, ErrHostCommandFailed
 	}
-	target, err := dependencies.Transport.ProveTarget(ctx, overlay)
+	transport, err := dependencies.TransportForOverlay(overlay)
+	if err != nil || transport == nil {
+		return PublicHostResult{}, ErrHostCommandFailed
+	}
+	target, err := transport.ProveTarget(ctx, overlay)
 	if err != nil ||
 		validateTargetProof(target) != nil ||
 		!targetMatchesOverlay(target, overlay, revision) {
@@ -358,7 +364,7 @@ func RunHostCommand(
 			manifestDigest:         manifestDigest,
 			privateOverlayRevision: revision,
 		}
-		stage, stageErr := dependencies.Transport.Stage(
+		stage, stageErr := transport.Stage(
 			ctx,
 			target,
 			release,
@@ -372,7 +378,7 @@ func RunHostCommand(
 		}
 		arguments.stageProofDigest = stage.ProofDigest
 	}
-	actionResult, err := dependencies.Transport.Invoke(
+	actionResult, err := transport.Invoke(
 		ctx,
 		target,
 		request.Action,
@@ -398,11 +404,15 @@ func RunHostCommand(
 	}, nil
 }
 
-func DefaultHostCommandDependencies(transport HostTransport) HostCommandDependencies {
+func DefaultHostCommandDependencies(
+	transportForOverlay func(
+		hostruntime.PrivateOverlay,
+	) (HostTransport, error),
+) HostCommandDependencies {
 	return HostCommandDependencies{
 		LoadPrivateOverlay:  LoadPrivateOverlayFile,
 		LoadRuntimeManifest: LoadRuntimeManifestFile,
-		Transport:           transport,
+		TransportForOverlay: transportForOverlay,
 	}
 }
 

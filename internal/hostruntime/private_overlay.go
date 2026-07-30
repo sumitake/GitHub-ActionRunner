@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"sort"
@@ -21,23 +22,24 @@ const (
 var ErrInvalidPrivateOverlay = errors.New("hostruntime: invalid private overlay")
 
 type PrivateOverlay struct {
-	SchemaVersion  uint32                  `json:"schema_version"`
-	Target         TargetIdentityOverlay   `json:"target"`
-	Manifest       ManifestOverlay         `json:"manifest"`
-	Paths          PathOverlay             `json:"paths"`
-	Commands       CommandOverlay          `json:"commands"`
-	Docker         DockerOverlay           `json:"docker"`
-	Resources      ResourceOverlay         `json:"resources"`
-	Repositories   []RepositoryOverlay     `json:"repositories"`
-	Policy         PolicyOverlay           `json:"policy"`
-	Controller     ControllerTimingOverlay `json:"controller"`
-	Fence          FenceTimingOverlay      `json:"fence"`
-	Health         HealthOverlay           `json:"health"`
-	Profile        ProfileOverlay          `json:"profile"`
-	Watchdog       WatchdogOverlay         `json:"watchdog"`
-	Secrets        []NamedSecretRef        `json:"secrets"`
-	Legacy         *LegacyOverlay          `json:"legacy"`
-	AllowedActions []string                `json:"allowed_actions"`
+	SchemaVersion       uint32                     `json:"schema_version"`
+	Target              TargetIdentityOverlay      `json:"target"`
+	Manifest            ManifestOverlay            `json:"manifest"`
+	Paths               PathOverlay                `json:"paths"`
+	Commands            CommandOverlay             `json:"commands"`
+	Docker              DockerOverlay              `json:"docker"`
+	Resources           ResourceOverlay            `json:"resources"`
+	Repositories        []RepositoryOverlay        `json:"repositories"`
+	Policy              PolicyOverlay              `json:"policy"`
+	Controller          ControllerTimingOverlay    `json:"controller"`
+	Fence               FenceTimingOverlay         `json:"fence"`
+	Health              HealthOverlay              `json:"health"`
+	Profile             ProfileOverlay             `json:"profile"`
+	Watchdog            WatchdogOverlay            `json:"watchdog"`
+	ManagementTransport ManagementTransportOverlay `json:"management_transport"`
+	Secrets             []NamedSecretRef           `json:"secrets"`
+	Legacy              *LegacyOverlay             `json:"legacy"`
+	AllowedActions      []string                   `json:"allowed_actions"`
 }
 
 type TargetIdentityOverlay struct {
@@ -333,6 +335,20 @@ type WatchdogOverlay struct {
 	Logs            LogPolicyOverlay `json:"logs"`
 }
 
+type ManagementTransportOverlay struct {
+	Mode              string `json:"mode"`
+	OpenSSHBinary     string `json:"openssh_binary"`
+	Host              string `json:"host"`
+	Port              uint16 `json:"port"`
+	User              string `json:"user"`
+	KnownHostsFile    string `json:"known_hosts_file"`
+	CredentialName    string `json:"credential_name"`
+	ControlUID        uint32 `json:"control_uid"`
+	Subsystem         string `json:"subsystem"`
+	ConnectionTimeout string `json:"connection_timeout"`
+	OperationTimeout  string `json:"operation_timeout"`
+}
+
 type NamedSecretRef struct {
 	Name string           `json:"name"`
 	Ref  SecretRefOverlay `json:"ref"`
@@ -421,6 +437,11 @@ func validatePrivateOverlay(overlay PrivateOverlay) error {
 		!validLifecycleScalar(overlay.Profile.PlatformEvidenceRevision) ||
 		!validWatchdogOverlay(overlay.Watchdog) ||
 		!validSecretRefs(overlay.Secrets) ||
+		!validManagementTransport(
+			overlay.ManagementTransport,
+			overlay.Secrets,
+			overlay.Repositories,
+		) ||
 		!validLegacyOverlay(overlay.Legacy) ||
 		!validAllowedActions(overlay.AllowedActions) {
 		return ErrInvalidPrivateOverlay
@@ -803,6 +824,134 @@ func validWatchdogOverlay(watchdog WatchdogOverlay) bool {
 		watchdog.Logs.MaxBytes > 0 &&
 		watchdog.Logs.MaxFiles > 0 &&
 		validCanonicalDuration(watchdog.Logs.MaxAge)
+}
+
+func validManagementTransport(
+	transport ManagementTransportOverlay,
+	secrets []NamedSecretRef,
+	repositories []RepositoryOverlay,
+) bool {
+	connectionTimeout, connectionOK := canonicalDuration(
+		transport.ConnectionTimeout,
+	)
+	operationTimeout, operationOK := canonicalDuration(
+		transport.OperationTimeout,
+	)
+	if transport.Mode != "openssh-subsystem-v1" ||
+		!validManagementPath(transport.OpenSSHBinary) ||
+		!validManagementHost(transport.Host) ||
+		transport.Port == 0 ||
+		!validManagementUser(transport.User) ||
+		!validManagementPath(transport.KnownHostsFile) ||
+		!validLifecycleScalar(transport.CredentialName) ||
+		transport.ControlUID == 0 ||
+		transport.Subsystem != "portable-ghar-v1" ||
+		!connectionOK ||
+		!operationOK ||
+		connectionTimeout%time.Second != 0 ||
+		operationTimeout%time.Second != 0 ||
+		operationTimeout <= connectionTimeout {
+		return false
+	}
+	credentialPath := ""
+	for _, secret := range secrets {
+		if secret.Name != transport.CredentialName {
+			continue
+		}
+		if credentialPath != "" ||
+			secret.Ref.Source != "file" ||
+			!validManagementPath(secret.Ref.Ref) {
+			return false
+		}
+		credentialPath = secret.Ref.Ref
+	}
+	if credentialPath == "" ||
+		transport.OpenSSHBinary == transport.KnownHostsFile ||
+		transport.OpenSSHBinary == credentialPath ||
+		transport.KnownHostsFile == credentialPath {
+		return false
+	}
+	for _, repository := range repositories {
+		if repository.CredentialName == transport.CredentialName {
+			return false
+		}
+	}
+	return true
+}
+
+func validManagementPath(value string) bool {
+	if !validCanonicalAbsolutePath(value) {
+		return false
+	}
+	for index := range len(value) {
+		character := value[index]
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') &&
+			character != '/' &&
+			character != '.' &&
+			character != '_' &&
+			character != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func validManagementHost(value string) bool {
+	if address, err := netip.ParseAddr(value); err == nil {
+		return address.Zone() == "" && address.String() == value
+	}
+	if value == "" || len(value) > 253 {
+		return false
+	}
+	allNumeric := true
+	for _, character := range value {
+		if character != '.' &&
+			(character < '0' || character > '9') {
+			allNumeric = false
+			break
+		}
+	}
+	if allNumeric {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) == 0 || len(label) > 63 ||
+			!asciiLetterOrDigit(label[0]) ||
+			!asciiLetterOrDigit(label[len(label)-1]) {
+			return false
+		}
+		for index := range len(label) {
+			character := label[index]
+			if !asciiLetterOrDigit(character) && character != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validManagementUser(value string) bool {
+	if len(value) == 0 || len(value) > 32 ||
+		!((value[0] >= 'a' && value[0] <= 'z') || value[0] == '_') {
+		return false
+	}
+	for index := 1; index < len(value); index++ {
+		character := value[index]
+		if (character < 'a' || character > 'z') &&
+			(character < '0' || character > '9') &&
+			character != '_' &&
+			character != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiLetterOrDigit(value byte) bool {
+	return value >= 'a' && value <= 'z' ||
+		value >= '0' && value <= '9'
 }
 
 func validSecretRefs(secrets []NamedSecretRef) bool {

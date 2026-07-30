@@ -12,16 +12,27 @@ import (
 
 	"github.com/sumitake/portable-ghar/internal/cli"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
+	"github.com/sumitake/portable-ghar/internal/productionruntime"
+	"golang.org/x/term"
 )
 
 type commandDependencies struct {
-	RunHost   func(context.Context, []string) (cli.PublicHostResult, error)
-	RunTarget func(context.Context, []string) (hostruntime.HostActionResult, error)
+	RunHost      func(context.Context, []string) (cli.PublicHostResult, error)
+	RunTarget    func(context.Context, []string) (hostruntime.HostActionResult, error)
+	RunTransport func(context.Context, io.Reader, io.Writer, bool) error
 }
 
 func productionCommandDependencies() commandDependencies {
-	transport := unavailableHostTransport{}
-	dependencies := cli.DefaultHostCommandDependencies(transport)
+	dependencies := cli.DefaultHostCommandDependencies(
+		func(
+			overlay hostruntime.PrivateOverlay,
+		) (cli.HostTransport, error) {
+			return productionruntime.NewSSHTransport(
+				overlay,
+				hostruntime.NewExecCommandRunner(),
+			)
+		},
+	)
 	return commandDependencies{
 		RunHost: func(
 			ctx context.Context,
@@ -39,21 +50,45 @@ func productionCommandDependencies() commandDependencies {
 				unavailableTargetHostExecutor{},
 			)
 		},
+		RunTransport: func(
+			ctx context.Context,
+			stdin io.Reader,
+			stdout io.Writer,
+			tty bool,
+		) error {
+			return productionruntime.Serve(
+				ctx,
+				stdin,
+				stdout,
+				tty,
+				unavailableProductionHandler{},
+			)
+		},
 	}
 }
 
 func run(
 	ctx context.Context,
 	args []string,
+	stdin io.Reader,
 	stdout io.Writer,
 	stderr io.Writer,
+	tty bool,
 	dependencies commandDependencies,
 ) int {
 	if ctx == nil ||
+		stdin == nil ||
 		stdout == nil ||
 		stderr == nil ||
 		len(args) == 0 {
 		return writeUsage(stderr)
+	}
+	if transportServeRequested(args) {
+		if dependencies.RunTransport == nil ||
+			dependencies.RunTransport(ctx, stdin, stdout, tty) != nil {
+			return 1
+		}
+		return 0
 	}
 	if args[0] == "host-runtime" {
 		return runTarget(
@@ -80,6 +115,10 @@ func run(
 		return 1
 	}
 	return 0
+}
+
+func transportServeRequested(args []string) bool {
+	return len(args) == 1 && args[0] == "transport-serve"
 }
 
 func runTarget(
@@ -143,49 +182,30 @@ func writeTargetUsage(stderr io.Writer) int {
 	return 2
 }
 
-type unavailableHostTransport struct{}
-
-func (unavailableHostTransport) ProveTarget(
-	context.Context,
-	hostruntime.PrivateOverlay,
-) (cli.TargetProof, error) {
-	return cli.TargetProof{}, cli.ErrHostCommandFailed
-}
-
-func (unavailableHostTransport) Stage(
-	context.Context,
-	cli.TargetProof,
-	cli.StagedRelease,
-) (cli.StageProof, error) {
-	return cli.StageProof{}, cli.ErrHostCommandFailed
-}
-
-func (unavailableHostTransport) Invoke(
-	context.Context,
-	cli.TargetProof,
-	cli.HostAction,
-	cli.FixedArguments,
-) (cli.ActionResult, error) {
-	return cli.ActionResult{}, cli.ErrHostCommandFailed
-}
-
 func main() {
 	ctx, cancel := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
 		syscall.SIGTERM,
 	)
-	defer cancel()
-	os.Exit(run(
+	args := os.Args[1:]
+	tty := false
+	if transportServeRequested(args) {
+		tty = term.IsTerminal(int(os.Stdin.Fd()))
+		os.Clearenv()
+	}
+	exit := run(
 		ctx,
-		os.Args[1:],
+		args,
+		os.Stdin,
 		os.Stdout,
 		os.Stderr,
+		tty,
 		productionCommandDependencies(),
-	))
+	)
+	cancel()
+	os.Exit(exit)
 }
-
-var _ cli.HostTransport = unavailableHostTransport{}
 
 type unavailableTargetHostExecutor struct{}
 
@@ -197,3 +217,37 @@ func (unavailableTargetHostExecutor) ExecuteTargetHost(
 }
 
 var _ hostruntime.TargetHostExecutor = unavailableTargetHostExecutor{}
+
+type unavailableProductionHandler struct{}
+
+func (unavailableProductionHandler) ProveTarget(
+	context.Context,
+	hostruntime.PrivateOverlay,
+	string,
+) (cli.TargetProof, error) {
+	return cli.TargetProof{}, productionruntime.ErrProtocol
+}
+
+func (unavailableProductionHandler) StageRelease(
+	context.Context,
+	hostruntime.PrivateOverlay,
+	string,
+	cli.TargetProof,
+	hostruntime.RuntimeManifest,
+	string,
+) (cli.StageProof, error) {
+	return cli.StageProof{}, productionruntime.ErrProtocol
+}
+
+func (unavailableProductionHandler) Invoke(
+	context.Context,
+	hostruntime.PrivateOverlay,
+	string,
+	cli.TargetProof,
+	cli.HostAction,
+	productionruntime.InvokeArguments,
+) (hostruntime.HostActionResult, error) {
+	return hostruntime.HostActionResult{}, productionruntime.ErrProtocol
+}
+
+var _ productionruntime.TargetHandler = unavailableProductionHandler{}

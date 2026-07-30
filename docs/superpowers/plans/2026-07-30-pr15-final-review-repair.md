@@ -343,6 +343,12 @@ GOTOOLCHAIN=go1.26.5 go test -race ./cmd/portable-ghar-task11-listener -count=1
   absolute local OpenSSH binary, exact host locator, port, remote user,
   absolute known-hosts file, one named credential reference, fixed subsystem
   name `portable-ghar-v1`, and explicit connection/operation durations.
+- Port is a typed nonzero `uint16`. Both durations are positive, canonical,
+  integral seconds; operation timeout is strictly greater than connection
+  timeout. The parent applies operation timeout as a wall-clock context
+  deadline whose command runner kills and waits for the entire OpenSSH process
+  group on expiry. OpenSSH's connection timeout is additive, not the outer
+  liveness bound.
 - The credential reference must resolve to one absolute regular-file path.
   Open it with `O_NOFOLLOW`, pin device/inode/owner/mode, require the declared
   control UID and mode `0600`, revalidate after use, and reject relative paths,
@@ -351,22 +357,98 @@ GOTOOLCHAIN=go1.26.5 go test -race ./cmd/portable-ghar-task11-listener -count=1
   password prompting, multiplexed control masters, proxy commands, and
   unknown fields are rejected. Apply the same pinned-file discipline to the
   OpenSSH binary and known-hosts file.
+- The host is either a canonical `netip` address without a zone or strict
+  lowercase ASCII DNS labels. The remote user is a strict closed local-name
+  scalar. Both reject option-like, path-like, whitespace, control, and Unicode
+  forms before constructing argv.
+- Open the binary, identity, and known-hosts files nonblocking with
+  `O_NOFOLLOW`, prove regular files, then clear nonblocking mode. Identity is
+  exactly control-UID-owned mode `0600`; known-hosts is root/control-UID-owned
+  and not group/other writable. OpenSSH plus every ancestor is root-owned and
+  not group/other writable, with no symlink component. Identity and
+  known-hosts ancestors are root/control-UID-owned and not group/other
+  writable, also with no symlink component. Pin and revalidate all identities
+  after every outcome. This excludes `/tmp`, runner workspaces, and any other
+  group/other-writable placement without adding a second configured root.
+- A positive Darwin probe showed that `/usr/bin/ssh` closes inherited
+  descriptors above stderr before resolving `IdentityFile`: a correctly passed
+  `/dev/fd/3` produced `Identity file /dev/fd/3 not accessible: Bad file
+  descriptor`, while the same inherited descriptor was visible to `/bin/ls`.
+  Therefore execute the pinned root-immutable OpenSSH binary and supply the
+  pinned identity and known-hosts file by their canonical absolute paths.
+  Require management paths to use a narrow no-whitespace ASCII path grammar so
+  OpenSSH's `-o` parser has no second interpretation. Canonical means absolute,
+  `filepath.Clean(path) == path`, no empty, `.` or `..` segment, no trailing
+  slash except root, and only ASCII letters, digits, slash, dot, underscore,
+  and hyphen. The control UID and root are trusted configuration authorities;
+  compromise of either is outside this transport's threat model because either
+  can already replace the overlay or executable. A descriptor shim, copied-key
+  cache, helper daemon, shell, custom launcher, agent, or SSH library is
+  deliberately excluded.
 
 **Protocol contract:**
 
 - Invoke OpenSSH with fixed argv and `-s`; never construct a remote shell
   command. Disable config discovery and interactive authentication, require
   strict host-key checking and the exact known-hosts file, and clear the child
-  environment except a fixed minimal allowlist.
+  environment. Every keyword uses an exact two-element `-o`, `Key=value`
+  pair—including `GlobalKnownHostsFile=/dev/null` and
+  `UserKnownHostsFile=<validated-path>`—rather than a bare option token. Use a
+  literal `--` before the validated host. Pass no extra descriptors. The exact
+  suffix is `-i <identity> -p <port> -l <user> -s -- <host>
+  portable-ghar-v1`; the only variable argv values are the already validated
+  canonical binary, identity and known-hosts paths, host, port, user, and fixed
+  timeout values.
+- The fixed option vector is exactly:
+  `BatchMode=yes`, `IdentityFile=none`, `CertificateFile=none`,
+  `IdentitiesOnly=yes`, `IdentityAgent=none`,
+  `PubkeyAuthentication=yes`, `HostbasedAuthentication=no`,
+  `GSSAPIAuthentication=no`, `PasswordAuthentication=no`,
+  `KbdInteractiveAuthentication=no`,
+  `PreferredAuthentications=publickey`, `AddKeysToAgent=no`,
+  `PKCS11Provider=none`, `SecurityKeyProvider=none`,
+  `CanonicalizeHostname=no`, `CheckHostIP=no`,
+  `VerifyHostKeyDNS=no`, `StrictHostKeyChecking=yes`,
+  `UpdateHostKeys=no`, `HashKnownHosts=no`,
+  `KnownHostsCommand=none`, `GlobalKnownHostsFile=/dev/null`,
+  `UserKnownHostsFile=<validated-path>`, `ControlMaster=no`,
+  `ControlPath=none`, `ProxyCommand=none`, `ProxyJump=none`,
+  `RequestTTY=no`, `StdinNull=no`, `ClearAllForwardings=yes`,
+  `ExitOnForwardFailure=yes`, `PermitLocalCommand=no`,
+  `EnableEscapeCommandline=no`, `ForwardAgent=no`, `ForwardX11=no`,
+  `NumberOfPasswordPrompts=0`, `ConnectionAttempts=1`, and
+  `ConnectTimeout=<validated-seconds>`. `IdentityFile=none` precedes the sole
+  `-i <identity>` argument so compiled default identity paths cannot join the
+  candidate set. A non-default port requires the operator's pinned known-hosts
+  file to use OpenSSH's exact `[host]:port` key; a mismatch fails closed.
 - Over stdin/stdout exchange one bounded canonical JSON request/result frame
   with schema, action enum (`prove-target`, `stage-release`, `invoke`), request
   digest, overlay revision, target proof digest, and action-specific closed
-  payload. No frame carries a raw credential.
+  payload. The document maximum is 3 MiB and the wire maximum is exactly that
+  plus one LF; the command runner uses the same stream bound. No frame carries
+  a raw credential.
+- Each direction is exactly `canonical_json + LF`, with no leading bytes,
+  embedded raw LF, second frame, or trailing bytes. The client fully writes and
+  closes request stdin; stdout is fully consumed under the same exact bound;
+  any stderr byte fails.
+- Construct the production transport only after loading and rehashing the
+  overlay. The factory returns an immutable transport bound to the exact
+  canonical document and revision. It byte-compares the prove argument and
+  validates every target/stage binding before any runner call; no mutable
+  prove/stage/invoke cache or global registry exists.
+- The full private overlay crosses the authenticated channel as the single
+  operation configuration identity. It contains references, never credential
+  values. The management object is inert in the target handler except for the
+  server operation deadline. A second projected overlay/revision is excluded
+  because it adds a parallel configuration identity without adding a trust
+  boundary.
 - `prove-target` revalidates local target OS/arch/EUID, host/control identity,
   manifest/current fence, and disposition. `stage-release` writes only the
   manifest-bound release beneath the declared staging root and returns an
   exact stage proof. `invoke` maps only the four public actions to the closed
-  target executor.
+  target executor. Its wire arguments contain only public action inputs and
+  manifest/stage/target binding digests; control-local paths and expected
+  operation/fence/fleet values remain client-side.
 - Any extra output, truncation, nonzero/signal, schema drift, digest mismatch,
   target change, or timeout fails. No action is retried after an ambiguous
   transport result.
@@ -392,6 +474,36 @@ GOTOOLCHAIN=go1.26.5 go test -race ./cmd/portable-ghar-task11-listener -count=1
 - Production command dependency tests prove a valid injected subsystem
   transport can complete while invalid/missing configuration fails before
   invocation.
+
+**Converged review:**
+
+- xAI/Grok 4.5 at high effort returned `PROCEED` after adversarially reviewing
+  the root-immutable Darwin path-exec exception and the single-overlay
+  identity. It found no material gap and confirmed that a daemon, SSH library,
+  retry layer, connection pool, projection, or generic executor is not needed.
+- Implementation preflight then disproved the inherited-descriptor premise for
+  the OpenSSH client. The revised canonical-path contract above must receive a
+  fresh high-effort distinct-family adversarial review before implementation;
+  the earlier `PROCEED` does not approve this changed transport detail.
+- The fresh xAI/Grok 4.5 high-effort pass agreed that the revised one-process
+  path is at the simplicity floor and requested four specification
+  tightenings: literal `-o` argv grammar, an explicit canonical-path
+  definition, typed port/timeouts, and an explicit parent process-group
+  deadline. All four are integrated above; no helper, copy, agent, daemon,
+  lock, library, fallback, or second protocol was added. A changed-plan
+  confirm-only pass remains required.
+- The confirm-only pass closed those four points but surfaced additional
+  detail. Accepted: fully enumerate identity/config options, make exact framing
+  explicit, call out non-default-port known-host syntax, and state the existing
+  new-process-group kill/wait behavior. Existing ancestor checks already
+  exclude job-writable paths; existing descriptor `fstat` plus exact-path
+  `lstat` is Darwin-compatible. Rejected as outside the declared authority
+  boundary or needless duplication: a second configured credential root,
+  filesystem-type allowlist, killing a successfully reaped root-immutable
+  OpenSSH group, a global transport lock, and defense against control-UID/root
+  mutation. The two-cycle cross-check cap is reached with no unresolved
+  in-scope mechanism change; implementation proceeds against this integrated
+  simple contract.
 
 ## Task 8: Concrete target lifecycle, disabled observer, and watchdog
 

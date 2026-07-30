@@ -100,6 +100,7 @@ func TestRunHostCommandDeployProvesStagesThenInvokesExactBinding(t *testing.T) {
 		t.Fatalf("SealTargetProof() error = %v", err)
 	}
 	transport := &cliTransportFixture{target: target}
+	factoryCalls := 0
 	deps := HostCommandDependencies{
 		LoadPrivateOverlay: func(string) (
 			hostruntime.PrivateOverlay,
@@ -116,7 +117,17 @@ func TestRunHostCommandDeployProvesStagesThenInvokesExactBinding(t *testing.T) {
 		) {
 			return manifest, manifestDocument, manifestDigest, nil
 		},
-		Transport: transport,
+		TransportForOverlay: func(got hostruntime.PrivateOverlay) (
+			HostTransport,
+			error,
+		) {
+			factoryCalls++
+			if got.Target.HostIdentityDigest !=
+				overlay.Target.HostIdentityDigest {
+				t.Fatalf("transport factory received wrong overlay")
+			}
+			return transport, nil
+		},
 	}
 	result, err := RunHostCommand(
 		context.Background(),
@@ -134,6 +145,7 @@ func TestRunHostCommandDeployProvesStagesThenInvokesExactBinding(t *testing.T) {
 		transport.proveCalls != 1 ||
 		transport.stageCalls != 1 ||
 		transport.invokeCalls != 1 ||
+		factoryCalls != 1 ||
 		transport.lastAction != ActionInstall ||
 		transport.lastArguments.Acquisition() != "disabled" ||
 		transport.lastArguments.ExpectedOperationID() == "" {
@@ -178,7 +190,12 @@ func TestRunHostCommandRejectsTargetStageAndTerminalDrift(t *testing.T) {
 			) {
 				return manifest, manifestDocument, manifestDigest, nil
 			},
-			Transport: transport,
+			TransportForOverlay: func(hostruntime.PrivateOverlay) (
+				HostTransport,
+				error,
+			) {
+				return transport, nil
+			},
 		}
 	}
 	args := []string{
@@ -219,6 +236,51 @@ func TestRunHostCommandRejectsTargetStageAndTerminalDrift(t *testing.T) {
 				t.Fatalf("RunHostCommand() error = %v", err)
 			}
 		})
+	}
+}
+
+func TestRunHostCommandRejectsTransportFactoryFailureBeforeInvocation(t *testing.T) {
+	t.Parallel()
+
+	overlay, revision := cliTestOverlay()
+	factoryCalls := 0
+	dependencies := HostCommandDependencies{
+		LoadPrivateOverlay: func(string) (
+			hostruntime.PrivateOverlay,
+			string,
+			error,
+		) {
+			return overlay, revision, nil
+		},
+		LoadRuntimeManifest: func(string) (
+			hostruntime.RuntimeManifest,
+			[]byte,
+			string,
+			error,
+		) {
+			t.Fatal("manifest loader called after transport factory failure")
+			return hostruntime.RuntimeManifest{}, nil, "", nil
+		},
+		TransportForOverlay: func(hostruntime.PrivateOverlay) (
+			HostTransport,
+			error,
+		) {
+			factoryCalls++
+			return nil, errors.New("unavailable")
+		},
+	}
+	if _, err := RunHostCommand(
+		context.Background(),
+		[]string{
+			"verify", "host", "--private", "/private/runtime.json",
+			"--require-zero-listeners",
+		},
+		dependencies,
+	); !errors.Is(err, ErrHostCommandFailed) {
+		t.Fatalf("RunHostCommand() error = %v", err)
+	}
+	if factoryCalls != 1 {
+		t.Fatalf("transport factory calls = %d, want 1", factoryCalls)
 	}
 }
 

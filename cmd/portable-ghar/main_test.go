@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -36,8 +37,10 @@ func TestCommandEmitsOneClosedSuccessDocument(t *testing.T) {
 	exit := run(
 		context.Background(),
 		[]string{"verify", "host"},
+		bytes.NewReader(nil),
 		&stdout,
 		&stderr,
+		false,
 		dependencies,
 	)
 	if exit != 0 || stderr.Len() != 0 ||
@@ -94,8 +97,10 @@ func TestCommandSeparatesUsageFromSanitizedFailure(t *testing.T) {
 			exit := run(
 				context.Background(),
 				[]string{"verify", "host"},
+				bytes.NewReader(nil),
 				&stdout,
 				&stderr,
+				false,
 				dependencies,
 			)
 			if exit != test.exit ||
@@ -144,8 +149,10 @@ func TestCommandDispatchesTargetRuntimeWithoutPublicJSONShape(t *testing.T) {
 			"/release/manifest.json",
 			"--require-zero-listeners",
 		},
+		bytes.NewReader(nil),
 		&stdout,
 		&stderr,
+		false,
 		dependencies,
 	)
 	if exit != 0 ||
@@ -159,6 +166,110 @@ func TestCommandDispatchesTargetRuntimeWithoutPublicJSONShape(t *testing.T) {
 				"\n" {
 		t.Fatalf(
 			"run() = exit %d stdout=%q stderr=%q",
+			exit,
+			stdout.String(),
+			stderr.String(),
+		)
+	}
+}
+
+func TestCommandAcceptsOnlyExactTransportServeToken(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	dependencies := commandDependencies{
+		RunTransport: func(
+			_ context.Context,
+			stdin io.Reader,
+			stdout io.Writer,
+			tty bool,
+		) error {
+			calls++
+			if tty {
+				t.Fatal("RunTransport() tty = true")
+			}
+			input, err := io.ReadAll(stdin)
+			if err != nil || string(input) != "request\n" {
+				t.Fatalf("RunTransport() input=%q error=%v", input, err)
+			}
+			_, err = io.WriteString(stdout, "response\n")
+			return err
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	exit := run(
+		context.Background(),
+		[]string{"transport-serve"},
+		strings.NewReader("request\n"),
+		&stdout,
+		&stderr,
+		false,
+		dependencies,
+	)
+	if exit != 0 ||
+		calls != 1 ||
+		stdout.String() != "response\n" ||
+		stderr.Len() != 0 {
+		t.Fatalf(
+			"run() exit=%d calls=%d stdout=%q stderr=%q",
+			exit,
+			calls,
+			stdout.String(),
+			stderr.String(),
+		)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	exit = run(
+		context.Background(),
+		[]string{"transport-serve", "extra"},
+		bytes.NewReader(nil),
+		&stdout,
+		&stderr,
+		false,
+		dependencies,
+	)
+	if exit != 2 || calls != 1 || stdout.Len() != 0 {
+		t.Fatalf(
+			"extra run() exit=%d calls=%d stdout=%q stderr=%q",
+			exit,
+			calls,
+			stdout.String(),
+			stderr.String(),
+		)
+	}
+	if !transportServeRequested([]string{"transport-serve"}) ||
+		transportServeRequested([]string{"transport-serve", "extra"}) {
+		t.Fatal("transportServeRequested() accepted wrong grammar")
+	}
+}
+
+func TestTransportServeFailureIsSilent(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	exit := run(
+		context.Background(),
+		[]string{"transport-serve"},
+		bytes.NewReader(nil),
+		&stdout,
+		&stderr,
+		true,
+		commandDependencies{
+			RunTransport: func(
+				context.Context,
+				io.Reader,
+				io.Writer,
+				bool,
+			) error {
+				return errors.New("private detail")
+			},
+		},
+	)
+	if exit != 1 || stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf(
+			"run() exit=%d stdout=%q stderr=%q",
 			exit,
 			stdout.String(),
 			stderr.String(),

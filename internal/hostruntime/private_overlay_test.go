@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const goldenPrivateOverlayRevision = "c1928601d1d138747f72b3c977c900906464f8514cb6df7901b3d3982c92cdc4"
+const goldenPrivateOverlayRevision = "1e0755006f66749efedb618696dcc589832bb9f2ba3920f14466a7a5fda1bb75"
 
 func TestPrivateOverlayGolden(t *testing.T) {
 	t.Parallel()
@@ -32,6 +32,7 @@ func TestPrivateOverlayGolden(t *testing.T) {
 	if decoded.Target.OS != "linux" ||
 		decoded.Target.ExpectedEUID != 0 ||
 		decoded.Manifest.Digest != strings.Repeat("a", 64) ||
+		decoded.ManagementTransport.Mode != "openssh-subsystem-v1" ||
 		decoded.Legacy != nil ||
 		decodedRevision != revision {
 		t.Fatalf("ParsePrivateOverlay() = %#v, revision=%q", decoded, decodedRevision)
@@ -98,6 +99,71 @@ func TestPrivateOverlayRejectsNoncanonicalAndIncompleteInputs(t *testing.T) {
 		"runner swap total overflow": func(overlay *PrivateOverlay) {
 			overlay.Resources.RunnerSizing.SwapLimitBytes = math.MaxUint64
 		},
+		"missing management transport": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport = ManagementTransportOverlay{}
+		},
+		"unknown management mode": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.Mode = "ssh-v2"
+		},
+		"relative OpenSSH binary": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.OpenSSHBinary = "ssh"
+		},
+		"ambiguous OpenSSH path": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.OpenSSHBinary = "/usr/bin/ssh wrapper"
+		},
+		"option-like host": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.Host = "-oProxyCommand=id"
+		},
+		"noncanonical IP host": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.Host = "127.000.000.001"
+		},
+		"uppercase DNS host": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.Host = "RhoNAS.example"
+		},
+		"invalid remote user": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.User = "../root"
+		},
+		"zero port": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.Port = 0
+		},
+		"relative known hosts": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.KnownHostsFile = "known_hosts"
+		},
+		"unicode known hosts path": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.KnownHostsFile =
+				"/Users/control/.ssh/known_h\u00f6sts"
+		},
+		"missing management credential": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.CredentialName = "missing"
+		},
+		"environment management credential": func(overlay *PrivateOverlay) {
+			overlay.Secrets[1].Ref.Source = "env"
+			overlay.Secrets[1].Ref.Ref = "SSH_AUTH_SOCK"
+		},
+		"ambiguous management credential path": func(overlay *PrivateOverlay) {
+			overlay.Secrets[1].Ref.Ref =
+				"/Users/control/.ssh/id ed25519"
+		},
+		"shared management credential": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.CredentialName = "github"
+		},
+		"zero control uid": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.ControlUID = 0
+		},
+		"unknown subsystem": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.Subsystem = "shell"
+		},
+		"fractional connection timeout": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.ConnectionTimeout = "500ms"
+		},
+		"operation timeout not greater": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.OperationTimeout =
+				overlay.ManagementTransport.ConnectionTimeout
+		},
+		"reused transport path": func(overlay *PrivateOverlay) {
+			overlay.ManagementTransport.KnownHostsFile =
+				overlay.ManagementTransport.OpenSSHBinary
+		},
 	}
 	for name, mutate := range tests {
 		name, mutate := name, mutate
@@ -128,6 +194,12 @@ func TestParsePrivateOverlayRejectsUnknownWhitespaceAndNullSection(t *testing.T)
 			string(encoded),
 			`"adapter":{"configured":true`,
 			`"adapter":{"unknown":0,"configured":true`,
+			1,
+		)),
+		"unknown management field": []byte(strings.Replace(
+			string(encoded),
+			`"management_transport":{"mode":`,
+			`"management_transport":{"unknown":0,"mode":`,
 			1,
 		)),
 		"malformed swap configured": []byte(strings.Replace(
@@ -435,12 +507,32 @@ func goldenPrivateOverlay() PrivateOverlay {
 				MaxAge:   "1h0m0s",
 			},
 		},
+		ManagementTransport: ManagementTransportOverlay{
+			Mode:              "openssh-subsystem-v1",
+			OpenSSHBinary:     "/usr/bin/ssh",
+			Host:              "rhonas.example",
+			Port:              22,
+			User:              "portable_ghar",
+			KnownHostsFile:    "/Users/control/.ssh/known_hosts",
+			CredentialName:    "ssh-control",
+			ControlUID:        501,
+			Subsystem:         "portable-ghar-v1",
+			ConnectionTimeout: "5s",
+			OperationTimeout:  "30s",
+		},
 		Secrets: []NamedSecretRef{
 			{
 				Name: "github",
 				Ref: SecretRefOverlay{
 					Source: "file",
 					Ref:    "/run/secrets/github",
+				},
+			},
+			{
+				Name: "ssh-control",
+				Ref: SecretRefOverlay{
+					Source: "file",
+					Ref:    "/Users/control/.ssh/id_ed25519",
 				},
 			},
 		},

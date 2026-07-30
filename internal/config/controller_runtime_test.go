@@ -387,13 +387,35 @@ func validControllerPrivateOverlay() hostruntime.PrivateOverlay {
 				MaxAge:   "1h0m0s",
 			},
 		},
-		Secrets: []hostruntime.NamedSecretRef{{
-			Name: "github",
-			Ref: hostruntime.SecretRefOverlay{
-				Source: "env",
-				Ref:    "PORTABLE_GHAR_TEST_SECRET",
+		ManagementTransport: hostruntime.ManagementTransportOverlay{
+			Mode:              "openssh-subsystem-v1",
+			OpenSSHBinary:     "/usr/bin/ssh",
+			Host:              "rhonas.example",
+			Port:              22,
+			User:              "portable_ghar",
+			KnownHostsFile:    "/Users/control/.ssh/known_hosts",
+			CredentialName:    "ssh-control",
+			ControlUID:        501,
+			Subsystem:         "portable-ghar-v1",
+			ConnectionTimeout: "5s",
+			OperationTimeout:  "30s",
+		},
+		Secrets: []hostruntime.NamedSecretRef{
+			{
+				Name: "github",
+				Ref: hostruntime.SecretRefOverlay{
+					Source: "env",
+					Ref:    "PORTABLE_GHAR_TEST_SECRET",
+				},
 			},
-		}},
+			{
+				Name: "ssh-control",
+				Ref: hostruntime.SecretRefOverlay{
+					Source: "file",
+					Ref:    "/Users/control/.ssh/id_ed25519",
+				},
+			},
+		},
 		Legacy: nil,
 		AllowedActions: []string{
 			"install",
