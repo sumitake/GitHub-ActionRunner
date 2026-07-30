@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sumitake/portable-ghar/internal/conformance"
 	"github.com/sumitake/portable-ghar/internal/githubscale"
 	"github.com/sumitake/portable-ghar/internal/health"
 	"github.com/sumitake/portable-ghar/internal/observability"
@@ -554,6 +555,7 @@ type ServiceConfig struct {
 	Hosted                HostedRouter
 	FleetGuards           FleetGuardProvider
 	Permits               AcquisitionPermitProvider
+	Conformance           conformance.AcquisitionConformance
 	HostCapacity          HostCapacityProvider
 	HistoryPressure       HistoryPressureThresholds
 	HealthPublisher       HealthPublisher
@@ -562,6 +564,7 @@ type ServiceConfig struct {
 	FleetAlias            string
 	HostProfileID         string
 	BuildID               string
+	FleetGeneration       uint64
 	Degraded              bool
 	EnabledPolicyTemplate AcquisitionPolicy
 	PollTargets           []PollTarget
@@ -622,6 +625,7 @@ type Service struct {
 	hosted                HostedRouter
 	fleetGuards           FleetGuardProvider
 	permits               AcquisitionPermitProvider
+	conformance           conformance.AcquisitionConformance
 	hostCapacity          HostCapacityProvider
 	pressure              HistoryPressureThresholds
 	health                HealthPublisher
@@ -630,6 +634,7 @@ type Service struct {
 	fleetAlias            string
 	hostProfileID         string
 	buildID               string
+	fleetGeneration       uint64
 	degraded              bool
 	enabledTemplate       AcquisitionPolicy
 	pollTargets           []PollTarget
@@ -669,6 +674,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		config.Hosted == nil ||
 		config.FleetGuards == nil ||
 		config.Permits == nil ||
+		config.Conformance == nil ||
 		config.HostCapacity == nil ||
 		config.HealthPublisher == nil ||
 		config.EventSink == nil ||
@@ -687,6 +693,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		config.DurableFinishTimeout <= 0 ||
 		config.ReplayEvidenceMaxAge <= 0 ||
 		config.HostCapacityMaxAge <= 0 ||
+		config.FleetGeneration == 0 ||
 		!validServiceHealthIdentity(config) ||
 		!validServiceRuntimeConfig(config) ||
 		!validHistoryPressureThresholds(config.HistoryPressure) {
@@ -704,6 +711,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		hosted:                config.Hosted,
 		fleetGuards:           config.FleetGuards,
 		permits:               config.Permits,
+		conformance:           config.Conformance,
 		hostCapacity:          config.HostCapacity,
 		pressure:              config.HistoryPressure,
 		health:                config.HealthPublisher,
@@ -712,6 +720,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		fleetAlias:            config.FleetAlias,
 		hostProfileID:         config.HostProfileID,
 		buildID:               config.BuildID,
+		fleetGeneration:       config.FleetGeneration,
 		degraded:              config.Degraded,
 		enabledTemplate:       cloneAcquisitionPolicy(config.EnabledPolicyTemplate),
 		pollTargets:           clonePollTargets(config.PollTargets),
@@ -772,6 +781,7 @@ func (s *Service) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("%w: invalid acquisition policy: %w", ErrStartupRestore, err)
 	}
+	startupConformanceErr := s.verifyAcquisitionConformance(ctx, desired.Mode)
 	zeroRequest := cloneAcquisitionPolicy(desired)
 	zeroRequest.Mode = AcquisitionDisabled
 	zeroRequest.MaxCapacity = 0
@@ -840,6 +850,14 @@ func (s *Service) Start(ctx context.Context) error {
 			zeroed,
 			ReasonRestoreInvalid,
 			ErrAcquisitionQuiescence,
+		)
+	}
+	if startupConformanceErr != nil {
+		return s.failStartupLocked(
+			ctx,
+			zeroed,
+			ReasonRestoreInvalid,
+			startupConformanceErr,
 		)
 	}
 	if err := barrier.open(zeroed.Epoch); err != nil {
@@ -943,20 +961,40 @@ func (s *Service) Transition(
 			ErrAcquisitionEpochMismatch,
 		)
 	}
-
 	s.transitionMu.Lock()
-	defer s.transitionMu.Unlock()
 	current, ready := s.policySnapshot()
 	if !ready {
+		s.transitionMu.Unlock()
 		return AcquisitionPolicy{}, ErrServiceNotReady
 	}
 	if current.Epoch != expectedEpoch {
+		s.transitionMu.Unlock()
 		return AcquisitionPolicy{}, fmt.Errorf(
 			"%w: current epoch: %w",
 			ErrAcquisitionTransition,
 			ErrAcquisitionEpochMismatch,
 		)
 	}
+	if canonical.Mode == AcquisitionCanaryOnly ||
+		canonical.Mode == AcquisitionEnabled {
+		if err := s.verifyAcquisitionConformance(ctx, canonical.Mode); err != nil {
+			wasActive := current.Mode == AcquisitionCanaryOnly ||
+				current.Mode == AcquisitionEnabled
+			s.transitionMu.Unlock()
+			if wasActive {
+				return AcquisitionPolicy{}, s.enterFatal(
+					ReasonAcquisitionResult,
+					err,
+				)
+			}
+			return AcquisitionPolicy{}, fmt.Errorf(
+				"%w: %w",
+				ErrAcquisitionTransition,
+				err,
+			)
+		}
+	}
+	defer s.transitionMu.Unlock()
 	barrier := s.barrierSnapshot()
 	if barrier == nil {
 		return AcquisitionPolicy{}, ErrServiceNotReady
@@ -2439,6 +2477,9 @@ func (s *Service) admitOnceAfterHostPressure(
 ) ([]AdmissionDecision, error) {
 	if _, ready := s.policySnapshot(); !ready {
 		return nil, ErrServiceNotReady
+	}
+	if err := s.recheckActiveConformance(ctx); err != nil {
+		return nil, err
 	}
 	admitCtx, cancel := boundedContext(ctx, s.durableFinishTimeout)
 	defer cancel()

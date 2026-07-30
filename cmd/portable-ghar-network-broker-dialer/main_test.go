@@ -160,6 +160,75 @@ func TestRunRoutesOnlyClosedOperations(t *testing.T) {
 	}
 }
 
+func TestRunHeldSocketAuditIsInputFreeAndCanonical(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(
+		context.Background(),
+		[]string{"socket-audit"},
+		nil,
+		&stdout,
+		&stderr,
+		brokerRuntime{
+			hold: func(context.Context) error { return nil },
+			forward: func(
+				context.Context,
+				brokerOperation,
+				io.Reader,
+				io.Writer,
+			) error {
+				return nil
+			},
+			authorityID: func() ([]byte, error) {
+				return nil, nil
+			},
+			socketAudit: func() (heldSocketAuditReport, error) {
+				return heldSocketAuditReport{Version: 1}, nil
+			},
+		},
+	)
+	if code != 0 ||
+		stdout.String() != `{"version":1,"tcp4":0,"tcp6":0,"udp4":0,"udp6":0,"raw4":0,"raw6":0}`+"\n" ||
+		stderr.Len() != 0 {
+		t.Fatalf(
+			"code=%d stdout=%q stderr=%q",
+			code,
+			stdout.String(),
+			stderr.String(),
+		)
+	}
+	var rejectedOut, rejectedErr bytes.Buffer
+	if code := run(
+		context.Background(),
+		[]string{"socket-audit"},
+		bytes.NewBufferString("x"),
+		&rejectedOut,
+		&rejectedErr,
+		brokerRuntime{
+			hold: func(context.Context) error { return nil },
+			forward: func(
+				context.Context,
+				brokerOperation,
+				io.Reader,
+				io.Writer,
+			) error {
+				return nil
+			},
+			authorityID: func() ([]byte, error) { return nil, nil },
+			socketAudit: func() (heldSocketAuditReport, error) {
+				t.Fatal("socket audit ran with input")
+				return heldSocketAuditReport{}, nil
+			},
+		},
+	); code != 1 || rejectedOut.Len() != 0 {
+		t.Fatalf(
+			"rejected code=%d stdout=%q stderr=%q",
+			code,
+			rejectedOut.String(),
+			rejectedErr.String(),
+		)
+	}
+}
+
 func brokerArmFrame(digest [32]byte) []byte {
 	frame := make([]byte, 44)
 	copy(frame[:8], "PGHBRARM")

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
+	"github.com/sumitake/portable-ghar/internal/linuxcap"
 )
 
 func TestRunApplyRestoresAndReadsBackBothFamiliesBeforeProof(t *testing.T) {
@@ -22,6 +23,9 @@ func TestRunApplyRestoresAndReadsBackBothFamiliesBeforeProof(t *testing.T) {
 	runtime := helperRuntime{
 		ioTimeout:   time.Second,
 		xtablesLock: func() string { return "/run/xtables.lock" },
+		capabilities: func() (linuxcap.Wire, error) {
+			return helperNetAdminCapabilities(), nil
+		},
 		restore: func(_ context.Context, family policyFamily, program []byte) error {
 			events = append(events, "restore:"+family.String())
 			want := artifact.IPv4Program()
@@ -60,8 +64,11 @@ func TestRunApplyRestoresAndReadsBackBothFamiliesBeforeProof(t *testing.T) {
 	}) {
 		t.Fatalf("events=%q", events)
 	}
-	want := `{"version":1,"policy_digest":"` + artifact.Digest() +
-		`","ipv6_posture":"deny-via-ip6tables"}` + "\n"
+	want := `{"version":2,"policy_digest":"` + artifact.Digest() +
+		`","ipv6_posture":"deny-via-ip6tables","capabilities":{` +
+		`"effective":"0000000000001000","permitted":"0000000000001000",` +
+		`"inheritable":"0000000000000000","bounding":"0000000000001000",` +
+		`"ambient":"0000000000000000"}}` + "\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
@@ -77,6 +84,9 @@ func TestRunApplyKernelDisabledProvesPostureAndOmitsIP6Tables(t *testing.T) {
 	runtime := helperRuntime{
 		ioTimeout:   time.Second,
 		xtablesLock: func() string { return "/run/xtables.lock" },
+		capabilities: func() (linuxcap.Wire, error) {
+			return helperNetAdminCapabilities(), nil
+		},
 		restore: func(_ context.Context, family policyFamily, _ []byte) error {
 			if family != familyIPv4 {
 				t.Fatal("kernel-disabled policy invoked IPv6 restore")
@@ -107,6 +117,66 @@ func TestRunApplyKernelDisabledProvesPostureAndOmitsIP6Tables(t *testing.T) {
 	if ipv6Disabled != 1 ||
 		!strings.Contains(stdout.String(), `"ipv6_posture":"kernel-disabled"`) {
 		t.Fatalf("disable calls=%d stdout=%q", ipv6Disabled, stdout.String())
+	}
+}
+
+func TestRunApplyRejectsCapabilityProfilesOtherThanNetAdminOnly(t *testing.T) {
+	artifact := helperTestArtifact(t, hostruntime.PolicyIPv6DenyViaIP6Tables)
+	frame, err := hostruntime.EncodePolicyArtifact(artifact)
+	if err != nil {
+		t.Fatalf("EncodePolicyArtifact: %v", err)
+	}
+	for name, capabilities := range map[string]linuxcap.Wire{
+		"empty": {},
+		"extra effective bit": func() linuxcap.Wire {
+			wire := helperNetAdminCapabilities()
+			wire.Effective = "0000000000001001"
+			return wire
+		}(),
+		"ambient bit": func() linuxcap.Wire {
+			wire := helperNetAdminCapabilities()
+			wire.Ambient = "0000000000001000"
+			return wire
+		}(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			called := false
+			runtime := helperRuntime{
+				ioTimeout:   time.Second,
+				xtablesLock: func() string { return "/run/xtables.lock" },
+				capabilities: func() (linuxcap.Wire, error) {
+					return capabilities, nil
+				},
+				restore: func(context.Context, policyFamily, []byte) error {
+					called = true
+					return nil
+				},
+				save: func(context.Context, policyFamily) ([]byte, error) {
+					called = true
+					return nil, nil
+				},
+				disableIPv6: func() error {
+					called = true
+					return nil
+				},
+			}
+			var stdout, stderr bytes.Buffer
+			if code := run(
+				[]string{"apply"},
+				bytes.NewReader(frame),
+				&stdout,
+				&stderr,
+				runtime,
+			); code != 1 || called || stdout.Len() != 0 {
+				t.Fatalf(
+					"code=%d called=%v stdout=%q stderr=%q",
+					code,
+					called,
+					stdout.String(),
+					stderr.String(),
+				)
+			}
+		})
 	}
 }
 
@@ -253,4 +323,14 @@ func helperTestProgram() []byte {
 			"-A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n" +
 			"COMMIT\n",
 	)
+}
+
+func helperNetAdminCapabilities() linuxcap.Wire {
+	return linuxcap.Wire{
+		Effective:   "0000000000001000",
+		Permitted:   "0000000000001000",
+		Inheritable: "0000000000000000",
+		Bounding:    "0000000000001000",
+		Ambient:     "0000000000000000",
+	}
 }

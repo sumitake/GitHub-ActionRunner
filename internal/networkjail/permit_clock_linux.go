@@ -75,10 +75,7 @@ func readLinuxBootID(path string) (BootID, error) {
 	if err != nil {
 		return BootID{}, err
 	}
-	value := string(raw)
-	if strings.HasSuffix(value, "\n") {
-		value = strings.TrimSuffix(value, "\n")
-	}
+	value := strings.TrimSuffix(string(raw), "\n")
 	if strings.ContainsAny(value, "\r\n\t ") {
 		return BootID{}, errors.New("networkjail: boot identity invalid")
 	}

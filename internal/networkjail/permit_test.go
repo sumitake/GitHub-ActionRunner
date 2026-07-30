@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/sumitake/portable-ghar/internal/hostruntime"
 )
 
 func TestDialPermitRequestFrameIsExactAndTimeFree(t *testing.T) {
@@ -282,6 +285,248 @@ func TestPermitAuthorityClassBudgetsAreIndependent(t *testing.T) {
 	if permit.class != DialClassDoH || permit.number != 1 {
 		t.Fatalf("DoH permit = %#v, want class DoH number 1", permit)
 	}
+}
+
+func TestPermitAuthorityAuditActiveUsageRequiresBothCurrentClasses(
+	t *testing.T,
+) {
+	fixture := newPermitFixture(t, 3)
+	fixture.activate(7)
+	if _, err := fixture.consume(7, DialClassJob, 1); err != nil {
+		t.Fatalf("job Consume: %v", err)
+	}
+	if _, err := fixture.authority.AuditActiveUsage(
+		context.Background(),
+		fixture.slot,
+		7,
+	); !errors.Is(err, ErrPermitUsageProofInvalid) {
+		t.Fatalf("one-class audit error = %v", err)
+	}
+	if _, err := fixture.consume(7, DialClassDoH, 1); err != nil {
+		t.Fatalf("DoH Consume: %v", err)
+	}
+	proof, err := fixture.authority.AuditActiveUsage(
+		context.Background(),
+		fixture.slot,
+		7,
+	)
+	if err != nil {
+		t.Fatalf("AuditActiveUsage: %v", err)
+	}
+	if len(proof.Digest()) != 64 ||
+		proof.Digest() != strings.ToLower(proof.Digest()) ||
+		!proof.Matches(fixture.slot, 7) ||
+		proof.Matches(fixture.slot+1, 7) ||
+		proof.Matches(fixture.slot, 8) {
+		t.Fatalf("usage proof identity/digest invalid: %q", proof.Digest())
+	}
+	repeated, err := fixture.authority.AuditActiveUsage(
+		context.Background(),
+		fixture.slot,
+		7,
+	)
+	if err != nil || repeated.Digest() != proof.Digest() {
+		t.Fatalf(
+			"stable re-audit = %q/%v, want %q",
+			repeated.Digest(),
+			err,
+			proof.Digest(),
+		)
+	}
+}
+
+func TestPermitAuthorityAuditActiveUsageRejectsChangedUseAfterSeal(
+	t *testing.T,
+) {
+	fixture := newPermitFixture(t, 3)
+	fixture.activate(7)
+	if _, err := fixture.consume(7, DialClassJob, 1); err != nil {
+		t.Fatalf("job Consume: %v", err)
+	}
+	if _, err := fixture.consume(7, DialClassDoH, 1); err != nil {
+		t.Fatalf("DoH Consume: %v", err)
+	}
+	if _, err := fixture.authority.AuditActiveUsage(
+		context.Background(),
+		fixture.slot,
+		7,
+	); err != nil {
+		t.Fatalf("first AuditActiveUsage: %v", err)
+	}
+	if _, err := fixture.consume(7, DialClassJob, 2); err != nil {
+		t.Fatalf("second job Consume: %v", err)
+	}
+	if _, err := fixture.authority.AuditActiveUsage(
+		context.Background(),
+		fixture.slot,
+		7,
+	); !errors.Is(err, ErrPermitUsageProofInvalid) {
+		t.Fatalf("changed-use re-audit error = %v", err)
+	}
+}
+
+func TestPermitAuthorityAuditActiveUsageRejectsPriorGenerationAndRecovery(
+	t *testing.T,
+) {
+	fixture := newPermitFixture(t, 3)
+	fixture.activate(7)
+	if _, err := fixture.consume(7, DialClassJob, 1); err != nil {
+		t.Fatalf("job Consume: %v", err)
+	}
+	if _, err := fixture.consume(7, DialClassDoH, 1); err != nil {
+		t.Fatalf("DoH Consume: %v", err)
+	}
+	restarted := fixture.restart(t)
+	if _, err := restarted.authority.AuditActiveUsage(
+		context.Background(),
+		fixture.slot,
+		7,
+	); !errors.Is(err, ErrPermitUsageProofInvalid) {
+		t.Fatalf("recovery-burned audit error = %v", err)
+	}
+	if err := restarted.authority.Activate(
+		context.Background(),
+		fixture.slot,
+		7,
+	); err != nil {
+		t.Fatalf("same-generation Activate after restart: %v", err)
+	}
+	if _, err := restarted.authority.AuditActiveUsage(
+		context.Background(),
+		fixture.slot,
+		7,
+	); !errors.Is(err, ErrPermitUsageProofInvalid) {
+		t.Fatalf("empty restarted receipt audit error = %v", err)
+	}
+	if err := restarted.authority.Deactivate(
+		context.Background(),
+		fixture.slot,
+		7,
+	); err != nil {
+		t.Fatalf("Deactivate generation 7: %v", err)
+	}
+	restarted.activate(8)
+	restarted.clock.advance(1_000_000_000)
+	if _, err := restarted.consume(8, DialClassJob, 1); err != nil {
+		t.Fatalf("generation 8 job Consume: %v", err)
+	}
+	if _, err := restarted.authority.AuditActiveUsage(
+		context.Background(),
+		fixture.slot,
+		8,
+	); !errors.Is(err, ErrPermitUsageProofInvalid) {
+		t.Fatalf("prior-generation DoH reuse audit error = %v", err)
+	}
+}
+
+func TestPermitAuthorityAuditActiveUsageRejectsDurableDrift(t *testing.T) {
+	fixture := newPermitFixture(t, 3)
+	fixture.activate(7)
+	if _, err := fixture.consume(7, DialClassJob, 1); err != nil {
+		t.Fatalf("job Consume: %v", err)
+	}
+	if _, err := fixture.consume(7, DialClassDoH, 1); err != nil {
+		t.Fatalf("DoH Consume: %v", err)
+	}
+	fixture.store.mu.Lock()
+	drifted := fixture.store.records[fixture.slot]
+	drifted.Job.ReservedSequence++
+	fixture.store.records[fixture.slot] = drifted
+	fixture.store.mu.Unlock()
+	if _, err := fixture.authority.AuditActiveUsage(
+		context.Background(),
+		fixture.slot,
+		7,
+	); !errors.Is(err, ErrPermitUsageProofInvalid) {
+		t.Fatalf("durable-drift audit error = %v", err)
+	}
+}
+
+func TestPermitUsageProofBindsExactAuthorityActivationRevision(t *testing.T) {
+	fixture := newPermitFixture(t, 3)
+	fixture.activate(7)
+	activationRevision, err := fixture.authority.ActiveRevision(
+		context.Background(),
+		fixture.slot,
+		7,
+	)
+	if err != nil {
+		t.Fatalf("ActiveRevision: %v", err)
+	}
+	if _, err := fixture.consume(7, DialClassJob, 1); err != nil {
+		t.Fatalf("job Consume: %v", err)
+	}
+	if _, err := fixture.consume(7, DialClassDoH, 1); err != nil {
+		t.Fatalf("DoH Consume: %v", err)
+	}
+	usage, err := fixture.authority.AuditActiveUsage(
+		context.Background(),
+		fixture.slot,
+		7,
+	)
+	if err != nil {
+		t.Fatalf("AuditActiveUsage: %v", err)
+	}
+	authorityProof := testPermitAuthorityProof(
+		t,
+		uint32(fixture.slot),
+		7,
+		activationRevision,
+	)
+	bindingDigest, err := usage.BindAuthority(authorityProof)
+	if err != nil || len(bindingDigest) != 64 {
+		t.Fatalf("BindAuthority = %q/%v", bindingDigest, err)
+	}
+	wrong := testPermitAuthorityProof(
+		t,
+		uint32(fixture.slot),
+		7,
+		activationRevision+1,
+	)
+	if _, err := usage.BindAuthority(wrong); !errors.Is(
+		err,
+		ErrPermitUsageProofInvalid,
+	) {
+		t.Fatalf("mismatched activation revision error = %v", err)
+	}
+}
+
+func testPermitAuthorityProof(
+	t *testing.T,
+	slot uint32,
+	generation uint64,
+	revision uint64,
+) hostruntime.AuthorityProof {
+	t.Helper()
+	proof, err := hostruntime.NewAuthorityProof(hostruntime.AuthorityBinding{
+		Version:        1,
+		CapacitySlotID: slot,
+		JobGeneration:  generation,
+		LedgerRevision: revision,
+		Directory: hostruntime.DirectoryIdentity{
+			Device: 11,
+			Inode:  12,
+			UID:    1001,
+			GID:    1001,
+			Mode:   0o700,
+		},
+		Socket: hostruntime.SocketIdentity{
+			Name:   "dial-authority.sock",
+			Device: 11,
+			Inode:  13,
+			UID:    1001,
+			GID:    1001,
+			Mode:   0o600,
+		},
+		Peer: hostruntime.ProcessIdentity{
+			PID:       71,
+			StartTime: 72,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewAuthorityProof: %v", err)
+	}
+	return proof
 }
 
 func TestPermitAuthorityRejectsGenerationAndPeerMismatch(t *testing.T) {

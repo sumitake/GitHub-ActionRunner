@@ -51,6 +51,7 @@ type runnerInspect struct {
 		UTSMode         string            `json:"UTSMode"`
 		Tmpfs           map[string]string `json:"Tmpfs"`
 		Memory          int64             `json:"Memory"`
+		MemorySwap      int64             `json:"MemorySwap"`
 		NanoCPUs        int64             `json:"NanoCpus"`
 		PidsLimit       int64             `json:"PidsLimit"`
 		Ulimits         []struct {
@@ -192,6 +193,7 @@ func validateHeldRunnerInspect(document runnerInspect, record *runnerRecord) err
 		host.PidMode != "" || host.IpcMode != "" || host.UTSMode != "" ||
 		!equalStringMap(host.Tmpfs, wantTmpfs) ||
 		host.Memory != int64(spec.Limits.MemoryBytes) ||
+		host.MemorySwap != int64(spec.Limits.MemorySwapBytes) ||
 		host.NanoCPUs != int64(spec.Limits.MilliCPU)*1_000_000 ||
 		host.PidsLimit != int64(spec.Limits.PIDs) ||
 		len(host.Ulimits) != 1 ||

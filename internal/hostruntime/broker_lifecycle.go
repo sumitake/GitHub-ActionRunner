@@ -12,6 +12,8 @@ import (
 	"io"
 	"math"
 	"strconv"
+
+	"github.com/sumitake/portable-ghar/internal/linuxcap"
 )
 
 const (
@@ -20,9 +22,20 @@ const (
 )
 
 type policyApplicationWire struct {
-	Version     uint8  `json:"version"`
-	Digest      string `json:"policy_digest"`
-	IPv6Posture string `json:"ipv6_posture"`
+	Version      uint8         `json:"version"`
+	Digest       string        `json:"policy_digest"`
+	IPv6Posture  string        `json:"ipv6_posture"`
+	Capabilities linuxcap.Wire `json:"capabilities"`
+}
+
+type heldSocketAuditWire struct {
+	Version uint8  `json:"version"`
+	TCP4    uint64 `json:"tcp4"`
+	TCP6    uint64 `json:"tcp6"`
+	UDP4    uint64 `json:"udp4"`
+	UDP6    uint64 `json:"udp6"`
+	Raw4    uint64 `json:"raw4"`
+	Raw6    uint64 `json:"raw6"`
 }
 
 // ApplyNetworkPolicy runs the only NET_ADMIN process in the broker namespace.
@@ -103,6 +116,7 @@ func (c *DockerCLI) policyHelperArgv(record *brokerRecord) []string {
 		"--user", "0:0",
 		"--cpus", formatMilliCPU(spec.HelperLimits.MilliCPU),
 		"--memory", strconv.FormatUint(spec.HelperLimits.MemoryBytes, 10),
+		"--memory-swap", strconv.FormatUint(spec.HelperLimits.MemorySwapBytes, 10),
 		"--pids-limit", strconv.FormatUint(spec.HelperLimits.PIDs, 10),
 		"--ulimit", fmt.Sprintf(
 			"nofile=%d:%d",
@@ -155,7 +169,8 @@ func parsePolicyApplication(data []byte) (policyApplicationWire, error) {
 	var wire policyApplicationWire
 	if err := decoder.Decode(&wire); err != nil ||
 		decoder.Decode(&struct{}{}) != io.EOF ||
-		wire.Version != 1 || !isLowerHex64(wire.Digest) ||
+		wire.Version != 2 || !isLowerHex64(wire.Digest) ||
+		linuxcap.ValidateNetAdmin(wire.Capabilities) != nil ||
 		!validPolicyPostureName(wire.IPv6Posture) {
 		return policyApplicationWire{}, errors.New("hostruntime: policy application proof invalid")
 	}
@@ -163,6 +178,35 @@ func parsePolicyApplication(data []byte) (policyApplicationWire, error) {
 	canonical = append(canonical, '\n')
 	if !bytes.Equal(canonical, data) {
 		return policyApplicationWire{}, errors.New("hostruntime: policy application proof noncanonical")
+	}
+	return wire, nil
+}
+
+func parseHeldSocketAudit(data []byte) (heldSocketAuditWire, error) {
+	if len(data) == 0 || len(data) > maxPolicyResultBytes {
+		return heldSocketAuditWire{},
+			errors.New("hostruntime: held socket audit invalid")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var wire heldSocketAuditWire
+	if err := decoder.Decode(&wire); err != nil ||
+		decoder.Decode(&struct{}{}) != io.EOF ||
+		wire.Version != 1 ||
+		wire.TCP4 != 0 ||
+		wire.TCP6 != 0 ||
+		wire.UDP4 != 0 ||
+		wire.UDP6 != 0 ||
+		wire.Raw4 != 0 ||
+		wire.Raw6 != 0 {
+		return heldSocketAuditWire{},
+			errors.New("hostruntime: held socket audit invalid")
+	}
+	canonical, _ := json.Marshal(wire)
+	canonical = append(canonical, '\n')
+	if !bytes.Equal(canonical, data) {
+		return heldSocketAuditWire{},
+			errors.New("hostruntime: held socket audit noncanonical")
 	}
 	return wire, nil
 }
@@ -279,6 +323,11 @@ func (c *DockerCLI) ReleaseNetworkBroker(
 			errors.New("hostruntime: broker namespace owner unrepresentable"),
 		)
 	}
+	heldSocketZero, err := c.auditHeldBrokerSockets(ctx, record)
+	if err != nil {
+		return BrokerPeerProof{},
+			c.failBrokerOperation(ctx, record, err)
+	}
 	payload, err := encodeBrokerRelease(record)
 	if err != nil {
 		return BrokerPeerProof{}, c.failBrokerOperation(ctx, record, err)
@@ -313,6 +362,7 @@ func (c *DockerCLI) ReleaseNetworkBroker(
 		adapter,
 		c.issuer,
 		record.handle.fleetGeneration,
+		heldSocketZero,
 		brokerDirectoryIdentity{
 			Device: readiness.RelayDirectory.Device,
 			Inode:  readiness.RelayDirectory.Inode,
@@ -345,6 +395,7 @@ func (c *DockerCLI) ReleaseNetworkBroker(
 		return BrokerPeerProof{}, errors.New("hostruntime: broker release state lost")
 	}
 	record.peer = peer
+	record.heldSocketZero = heldSocketZero
 	record.phase = brokerPhaseReleased
 	record.busy = false
 	zeroToken(&record.token)
@@ -352,6 +403,51 @@ func (c *DockerCLI) ReleaseNetworkBroker(
 	record.policyRuntime = nil
 	c.mu.Unlock()
 	return peer, nil
+}
+
+func (c *DockerCLI) auditHeldBrokerSockets(
+	ctx context.Context,
+	record *brokerRecord,
+) ([sha256.Size]byte, error) {
+	if c == nil || ctx == nil || record == nil {
+		return [sha256.Size]byte{},
+			errors.New("hostruntime: held socket audit unavailable")
+	}
+	result, runErr := c.runner.Run(
+		ctx,
+		[]string{
+			c.cfg.DockerPath,
+			"exec",
+			record.handle.id,
+			brokerEntrypoint,
+			"socket-audit",
+		},
+		nil,
+		nil,
+	)
+	if runErr != nil ||
+		result.ExitCode != 0 ||
+		result.Signaled ||
+		result.StdoutTruncated ||
+		result.StderrTruncated ||
+		len(result.Stderr) != 0 {
+		return [sha256.Size]byte{},
+			errors.New("hostruntime: held socket audit failed")
+	}
+	if _, err := parseHeldSocketAudit(result.Stdout); err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	if _, err := c.inspectBrokerHeld(ctx, record); err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	return digestVerifierEvidence(
+		"portable-ghar.held-socket-zero.v1",
+		record.handle.id,
+		record.spec.BuildID,
+		record.spec.SlotIdentity,
+		strconv.FormatUint(record.spec.FleetGeneration, 10),
+		string(result.Stdout),
+	), nil
 }
 
 func encodeBrokerRelease(record *brokerRecord) ([]byte, error) {

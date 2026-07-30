@@ -309,6 +309,7 @@ func (c *DockerCLI) adapterCreateArgv(spec AdapterSpec) []string {
 		"--user", spec.User,
 		"--cpus", formatMilliCPU(spec.Limits.MilliCPU),
 		"--memory", strconv.FormatUint(spec.Limits.MemoryBytes, 10),
+		"--memory-swap", strconv.FormatUint(spec.Limits.MemorySwapBytes, 10),
 		"--pids-limit", strconv.FormatUint(spec.Limits.PIDs, 10),
 		"--ulimit", fmt.Sprintf("nofile=%d:%d", spec.Limits.FileDescriptors, spec.Limits.FileDescriptors),
 		"--tmpfs", fmt.Sprintf("/run/portable-ghar/state:rw,noexec,nosuid,nodev,size=%d,uid=%d,gid=%d,mode=0700", spec.Limits.TmpfsBytes, uid, gid),
@@ -342,6 +343,7 @@ func (c *DockerCLI) runnerCreateArgv(spec RunnerSpec) []string {
 		"--user", spec.User,
 		"--cpus", formatMilliCPU(spec.Limits.MilliCPU),
 		"--memory", strconv.FormatUint(spec.Limits.MemoryBytes, 10),
+		"--memory-swap", strconv.FormatUint(spec.Limits.MemorySwapBytes, 10),
 		"--pids-limit", strconv.FormatUint(spec.Limits.PIDs, 10),
 		"--ulimit", fmt.Sprintf("nofile=%d:%d", spec.Limits.FileDescriptors, spec.Limits.FileDescriptors),
 		"--tmpfs", fmt.Sprintf("/runner:rw,exec,nosuid,nodev,size=%d,uid=%d,gid=%d,mode=0700", spec.Limits.RunnerTmpfsBytes, uid, gid),
@@ -413,6 +415,7 @@ func (c *DockerCLI) reinspectAdapter(ctx context.Context, handle AdapterHandle) 
 		host.PidMode != "" || host.IpcMode != "" || host.UTSMode != "" ||
 		!equalStringMap(host.Tmpfs, adapterTmpfs(spec)) ||
 		host.Memory != int64(spec.Limits.MemoryBytes) ||
+		host.MemorySwap != int64(spec.Limits.MemorySwapBytes) ||
 		host.NanoCPUs != int64(spec.Limits.MilliCPU)*1_000_000 ||
 		host.PidsLimit != int64(spec.Limits.PIDs) ||
 		len(host.Ulimits) != 1 ||
@@ -471,6 +474,7 @@ type adapterInspect struct {
 		UTSMode         string            `json:"UTSMode"`
 		Tmpfs           map[string]string `json:"Tmpfs"`
 		Memory          int64             `json:"Memory"`
+		MemorySwap      int64             `json:"MemorySwap"`
 		NanoCPUs        int64             `json:"NanoCpus"`
 		PidsLimit       int64             `json:"PidsLimit"`
 		Ulimits         []struct {
@@ -511,7 +515,10 @@ func validateContainerLimits(limits ContainerLimits) error {
 		return errors.New("hostruntime: adapter limits must all be nonzero")
 	}
 	if limits.MilliCPU > maxDockerMilliCPU ||
-		limits.MemoryBytes > math.MaxInt64 || limits.PIDs > math.MaxInt64 || limits.FileDescriptors > math.MaxInt64 {
+		limits.MemoryBytes > math.MaxInt64 ||
+		limits.MemorySwapBytes < limits.MemoryBytes ||
+		limits.MemorySwapBytes > math.MaxInt64 ||
+		limits.PIDs > math.MaxInt64 || limits.FileDescriptors > math.MaxInt64 {
 		return errors.New("hostruntime: adapter limit exceeds docker range")
 	}
 	sum, ok := checkedAdd(limits.TmpfsBytes, limits.ScratchBytes)
@@ -530,7 +537,10 @@ func validateRunnerLimits(limits RunnerLimits) error {
 		return errors.New("hostruntime: runner limits must all be nonzero")
 	}
 	if limits.MilliCPU > maxDockerMilliCPU ||
-		limits.MemoryBytes > math.MaxInt64 || limits.PIDs > math.MaxInt64 || limits.FileDescriptors > math.MaxInt64 {
+		limits.MemoryBytes > math.MaxInt64 ||
+		limits.MemorySwapBytes < limits.MemoryBytes ||
+		limits.MemorySwapBytes > math.MaxInt64 ||
+		limits.PIDs > math.MaxInt64 || limits.FileDescriptors > math.MaxInt64 {
 		return errors.New("hostruntime: runner limit exceeds docker range")
 	}
 	return nil

@@ -30,6 +30,7 @@ func execListenerProcess(file *os.File, path string, argv, env []string) error {
 	if err := unix.Exec(path, argv, env); err != nil {
 		_, _, _ = unix.RawSyscall(unix.SYS_EXIT_GROUP, 127, 0, 0)
 		for {
+			_, _, _ = unix.RawSyscall(unix.SYS_PAUSE, 0, 0, 0)
 		}
 	}
 	return nil

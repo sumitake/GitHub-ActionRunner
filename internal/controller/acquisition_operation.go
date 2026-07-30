@@ -33,6 +33,9 @@ func (s *Service) acquireGuardedOperation(
 	scaleSetName string,
 	revalidate func(AcquisitionPolicy, CapacitySummary) error,
 ) (*guardedAcquisitionOperation, error) {
+	if err := s.recheckActiveConformance(ctx); err != nil {
+		return nil, err
+	}
 	barrier := s.barrierSnapshot()
 	if barrier == nil {
 		return nil, ErrServiceNotReady

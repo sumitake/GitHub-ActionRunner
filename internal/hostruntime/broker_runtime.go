@@ -52,6 +52,7 @@ type brokerRecord struct {
 	authority        AuthorityProof
 	readiness        brokerReadinessWire
 	peer             BrokerPeerProof
+	heldSocketZero   [sha256.Size]byte
 }
 
 type brokerReservation struct {
@@ -290,6 +291,7 @@ func (c *DockerCLI) brokerCreateArgv(spec BrokerSpec) []string {
 		"--user", spec.User,
 		"--cpus", formatMilliCPU(spec.Limits.MilliCPU),
 		"--memory", strconv.FormatUint(spec.Limits.MemoryBytes, 10),
+		"--memory-swap", strconv.FormatUint(spec.Limits.MemorySwapBytes, 10),
 		"--pids-limit", strconv.FormatUint(spec.Limits.PIDs, 10),
 		"--ulimit", fmt.Sprintf("nofile=%d:%d", spec.Limits.FileDescriptors, spec.Limits.FileDescriptors),
 		"--tmpfs", fmt.Sprintf("/run/portable-ghar/state:rw,noexec,nosuid,nodev,size=%d,uid=%d,gid=%d,mode=0700", spec.Limits.StateBytes, uid, gid),
@@ -326,6 +328,8 @@ func validateBrokerLimits(limits BrokerLimits) error {
 	}
 	if limits.MilliCPU > maxDockerMilliCPU ||
 		limits.MemoryBytes > math.MaxInt64 ||
+		limits.MemorySwapBytes < limits.MemoryBytes ||
+		limits.MemorySwapBytes > math.MaxInt64 ||
 		limits.PIDs > math.MaxInt64 ||
 		limits.FileDescriptors > math.MaxInt64 {
 		return errors.New("hostruntime: broker limit exceeds docker range")
@@ -344,6 +348,8 @@ func validateOneShotLimits(limits OneShotLimits) error {
 	}
 	if limits.MilliCPU > maxDockerMilliCPU ||
 		limits.MemoryBytes > math.MaxInt64 ||
+		limits.MemorySwapBytes < limits.MemoryBytes ||
+		limits.MemorySwapBytes > math.MaxInt64 ||
 		limits.PIDs > math.MaxInt64 ||
 		limits.FileDescriptors > math.MaxInt64 ||
 		limits.MemoryBytes < helperRunTmpfsBytes {

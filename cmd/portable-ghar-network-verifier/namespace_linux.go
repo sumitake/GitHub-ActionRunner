@@ -14,6 +14,12 @@ import (
 )
 
 func inspectCurrentNamespace() (networkjail.NamespaceSnapshot, error) {
+	return inspectCurrentNamespaceTopology(true)
+}
+
+func inspectCurrentNamespaceTopology(
+	requireEmptyConntrack bool,
+) (networkjail.NamespaceSnapshot, error) {
 	identity, err := inspectNamespaceIdentity()
 	if err != nil {
 		return networkjail.NamespaceSnapshot{}, err
@@ -51,20 +57,24 @@ func inspectCurrentNamespace() (networkjail.NamespaceSnapshot, error) {
 		return networkjail.NamespaceSnapshot{},
 			errors.New("network-verifier: ipv6 tables not empty")
 	}
-	conntrack, err := readVerifierProc(
-		"/proc/net/nf_conntrack",
-		1<<20,
-		true,
-	)
-	if err != nil || len(bytes.TrimSpace(conntrack)) != 0 {
-		return networkjail.NamespaceSnapshot{},
-			errors.New("network-verifier: namespace conntrack not empty")
+	if requireEmptyConntrack {
+		conntrack, err := readVerifierProc(
+			"/proc/net/nf_conntrack",
+			1<<20,
+			true,
+		)
+		if err != nil || len(bytes.TrimSpace(conntrack)) != 0 {
+			return networkjail.NamespaceSnapshot{},
+				errors.New(
+					"network-verifier: namespace conntrack not empty",
+				)
+		}
 	}
 	return networkjail.NamespaceSnapshot{
 		Identity:       identity,
 		LoopbackOnly:   true,
 		TablesEmpty:    true,
-		ConntrackEmpty: true,
+		ConntrackEmpty: requireEmptyConntrack,
 	}, nil
 }
 

@@ -144,6 +144,7 @@ func validateBrokerInspect(
 		host.IpcMode != "" || host.UTSMode != "" ||
 		!equalStringMap(host.Tmpfs, brokerTmpfs(spec)) ||
 		host.Memory != int64(spec.Limits.MemoryBytes) ||
+		host.MemorySwap != int64(spec.Limits.MemorySwapBytes) ||
 		host.NanoCPUs != int64(spec.Limits.MilliCPU)*1_000_000 ||
 		host.PidsLimit != int64(spec.Limits.PIDs) ||
 		len(host.Ulimits) != 1 ||

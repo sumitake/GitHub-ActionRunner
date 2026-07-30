@@ -23,6 +23,9 @@ images/network-broker-dialer/build/
 images/network-broker-dialer/.build.*
 images/trust/.build.*
 images/.task6-prepare.lock/
+images/synthetic-listener/build/
+images/synthetic-listener/.build.*
+images/.task11-prepare.lock/
 
 # Environment, keys, private overlay, state, databases, caches (never committed)
 .env

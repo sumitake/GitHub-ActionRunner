@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+
+	"github.com/sumitake/portable-ghar/internal/linuxcap"
 )
 
 const (
@@ -19,8 +21,9 @@ const (
 )
 
 type verifierNamespaceWire struct {
-	Version   uint8 `json:"version"`
-	Namespace struct {
+	Version      uint8         `json:"version"`
+	Capabilities linuxcap.Wire `json:"capabilities"`
+	Namespace    struct {
 		Identity       NetworkNamespaceIdentity `json:"identity"`
 		LoopbackOnly   bool                     `json:"loopback_only"`
 		TablesEmpty    bool                     `json:"tables_empty"`
@@ -29,12 +32,14 @@ type verifierNamespaceWire struct {
 }
 
 type verifierIdentityWire struct {
-	Version  uint8                    `json:"version"`
-	Identity NetworkNamespaceIdentity `json:"identity"`
+	Version      uint8                    `json:"version"`
+	Capabilities linuxcap.Wire            `json:"capabilities"`
+	Identity     NetworkNamespaceIdentity `json:"identity"`
 }
 
 type verifierProxyWire struct {
 	Version              uint8                    `json:"version"`
+	Capabilities         linuxcap.Wire            `json:"capabilities"`
 	PolicyDigest         string                   `json:"policy_digest"`
 	EgressBackend        string                   `json:"egress_backend"`
 	RunnerNetNSID        NetworkNamespaceIdentity `json:"runner_netns_id"`
@@ -45,10 +50,101 @@ type verifierProxyWire struct {
 	NegativeOK           bool                     `json:"negative_ok"`
 }
 
+type verifierFloodRequestWire struct {
+	Version  uint8  `json:"version"`
+	Attempts uint64 `json:"attempts"`
+}
+
+type verifierFloodWire struct {
+	Version      uint8         `json:"version"`
+	Attempts     uint64        `json:"attempts"`
+	Completed    bool          `json:"completed"`
+	Capabilities linuxcap.Wire `json:"capabilities"`
+	Namespace    struct {
+		Identity       NetworkNamespaceIdentity `json:"identity"`
+		LoopbackOnly   bool                     `json:"loopback_only"`
+		TablesEmpty    bool                     `json:"tables_empty"`
+		ConntrackEmpty bool                     `json:"conntrack_empty"`
+	} `json:"namespace"`
+	RoutesComplete bool `json:"routes_complete"`
+}
+
 type runtimePolicyIdentityWire struct {
 	Version       uint8  `json:"version"`
 	PolicyDigest  string `json:"policy_digest"`
 	EgressBackend string `json:"egress_backend"`
+}
+
+// VerifyLoopbackFlood performs exactly one closed, serial loopback flood in
+// the already-bound adapter namespace and accepts only a capability-less
+// canonical post-flood report. It deliberately does not widen Engine.
+func (c *DockerCLI) VerifyLoopbackFlood(
+	ctx context.Context,
+	handle AdapterHandle,
+	spec VerifierSpec,
+	attempts uint64,
+) (LoopbackFloodEvidence, error) {
+	if attempts == 0 {
+		return LoopbackFloodEvidence{},
+			errors.New("hostruntime: loopback flood attempts invalid")
+	}
+	record, err := c.beginAdapterVerification(handle, spec, true)
+	if err != nil {
+		return LoopbackFloodEvidence{}, err
+	}
+	defer c.finishAdapterVerification(record)
+
+	if err := c.reinspectAdapter(ctx, handle); err != nil {
+		return LoopbackFloodEvidence{}, err
+	}
+	request, err := json.Marshal(verifierFloodRequestWire{
+		Version:  1,
+		Attempts: attempts,
+	})
+	if err != nil {
+		return LoopbackFloodEvidence{},
+			errors.New("hostruntime: loopback flood request invalid")
+	}
+	request = append(request, '\n')
+	output, err := c.runNetworkVerifier(
+		ctx,
+		handle.nonce,
+		handle.id,
+		spec,
+		"loopback-flood",
+		bytes.NewReader(request),
+	)
+	zeroBytes(request)
+	if err != nil {
+		return LoopbackFloodEvidence{}, err
+	}
+	report, err := parseVerifierFlood(output, attempts)
+	if err != nil {
+		return LoopbackFloodEvidence{}, err
+	}
+	if err := c.reinspectAdapter(ctx, handle); err != nil {
+		return LoopbackFloodEvidence{}, err
+	}
+	if !c.adapterVerificationStillCurrent(record, true) {
+		return LoopbackFloodEvidence{},
+			errors.New("hostruntime: loopback flood state lost")
+	}
+	digest := digestVerifierEvidence(
+		"portable-ghar.loopback-flood.v1",
+		handle.id,
+		spec.Image,
+		spec.BuildID,
+		strconv.FormatUint(spec.FleetGeneration, 10),
+		strconv.FormatUint(attempts, 10),
+		string(output),
+	)
+	return LoopbackFloodEvidence{
+		adapterID: handle.id,
+		report:    report,
+		issuer:    c.issuer,
+		nonce:     handle.nonce,
+		digest:    digest,
+	}, nil
 }
 
 func (c *DockerCLI) VerifyNetworkAdapterEmpty(
@@ -425,6 +521,7 @@ func (c *DockerCLI) networkVerifierArgv(
 		"--user", spec.User,
 		"--cpus", formatMilliCPU(spec.Limits.MilliCPU),
 		"--memory", strconv.FormatUint(spec.Limits.MemoryBytes, 10),
+		"--memory-swap", strconv.FormatUint(spec.Limits.MemorySwapBytes, 10),
 		"--pids-limit", strconv.FormatUint(spec.Limits.PIDs, 10),
 		"--ulimit", fmt.Sprintf(
 			"nofile=%d:%d",
@@ -491,8 +588,41 @@ func verifierContainerName(nonce [32]byte, operation string) string {
 		suffix = "probe"
 	case "namespace-id":
 		suffix = "identity"
+	case "loopback-flood":
+		suffix = "flood"
 	}
 	return "pghar-verifier-" + hex.EncodeToString(nonce[:16]) + "-" + suffix
+}
+
+func parseVerifierFlood(
+	data []byte,
+	expectedAttempts uint64,
+) (LoopbackFloodReport, error) {
+	var wire verifierFloodWire
+	if expectedAttempts == 0 ||
+		parseCanonicalVerifierJSON(data, &wire) != nil ||
+		wire.Version != 2 ||
+		wire.Attempts != expectedAttempts ||
+		!wire.Completed ||
+		linuxcap.ValidateEmpty(wire.Capabilities) != nil ||
+		wire.Namespace.Identity.Device == 0 ||
+		wire.Namespace.Identity.Inode == 0 ||
+		!wire.Namespace.LoopbackOnly ||
+		!wire.Namespace.TablesEmpty ||
+		!wire.Namespace.ConntrackEmpty ||
+		!wire.RoutesComplete {
+		return LoopbackFloodReport{},
+			errors.New("hostruntime: verifier flood proof invalid")
+	}
+	return LoopbackFloodReport{
+		Attempts:       wire.Attempts,
+		Completed:      true,
+		Namespace:      wire.Namespace.Identity,
+		LoopbackOnly:   true,
+		TablesEmpty:    true,
+		ConntrackEmpty: true,
+		RoutesComplete: true,
+	}, nil
 }
 
 func parseVerifierNamespace(
@@ -500,7 +630,8 @@ func parseVerifierNamespace(
 ) (NetworkNamespaceIdentity, error) {
 	var wire verifierNamespaceWire
 	if parseCanonicalVerifierJSON(data, &wire) != nil ||
-		wire.Version != 1 ||
+		wire.Version != 2 ||
+		linuxcap.ValidateEmpty(wire.Capabilities) != nil ||
 		wire.Namespace.Identity.Device == 0 ||
 		wire.Namespace.Identity.Inode == 0 ||
 		!wire.Namespace.LoopbackOnly ||
@@ -517,7 +648,8 @@ func parseVerifierIdentity(
 ) (NetworkNamespaceIdentity, error) {
 	var wire verifierIdentityWire
 	if parseCanonicalVerifierJSON(data, &wire) != nil ||
-		wire.Version != 1 ||
+		wire.Version != 2 ||
+		linuxcap.ValidateEmpty(wire.Capabilities) != nil ||
 		wire.Identity.Device == 0 ||
 		wire.Identity.Inode == 0 {
 		return NetworkNamespaceIdentity{},
@@ -529,7 +661,8 @@ func parseVerifierIdentity(
 func parseVerifierProxy(data []byte) (verifierProxyWire, error) {
 	var wire verifierProxyWire
 	if parseCanonicalVerifierJSON(data, &wire) != nil ||
-		wire.Version != 1 ||
+		wire.Version != 2 ||
+		linuxcap.ValidateEmpty(wire.Capabilities) != nil ||
 		!isLowerHex64(wire.PolicyDigest) ||
 		wire.EgressBackend != "restricted-broker-v1" ||
 		wire.RunnerNetNSID.Device == 0 ||

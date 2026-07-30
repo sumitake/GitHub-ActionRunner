@@ -3,6 +3,8 @@ package hostruntime
 import (
 	"errors"
 	"strings"
+
+	"github.com/sumitake/portable-ghar/internal/conformance"
 )
 
 // EvidenceBinding identifies one exact build, profile, and evidence
@@ -45,11 +47,31 @@ func recordSourceVerification(binding EvidenceBinding, digest string) (SourceVer
 	return SourceVerification{binding: binding, digest: strings.ToLower(digest)}, nil
 }
 
-func recordTargetConformance(binding EvidenceBinding, digest string) (TargetConformance, error) {
-	if err := validateEvidence(binding, digest); err != nil {
+// NewTargetConformanceFromReport accepts only the same fully passing report
+// contract that can authorize active acquisition. A report digest, report
+// path, source-only check, or pending actual-GitHub case cannot mint target
+// evidence.
+func NewTargetConformanceFromReport(
+	report conformance.Report,
+) (TargetConformance, error) {
+	if _, err := conformance.NewAcquisitionGate(report); err != nil {
+		return TargetConformance{}, errors.New(
+			"hostruntime: full target conformance missing",
+		)
+	}
+	reportBinding := report.Binding()
+	binding := EvidenceBinding{
+		BuildID:    reportBinding.BuildID(),
+		Profile:    reportBinding.ProfileID(),
+		Generation: reportBinding.FleetGeneration(),
+	}
+	if err := validateEvidence(binding, report.Digest()); err != nil {
 		return TargetConformance{}, err
 	}
-	return TargetConformance{binding: binding, digest: strings.ToLower(digest)}, nil
+	return TargetConformance{
+		binding: binding,
+		digest:  report.Digest(),
+	}, nil
 }
 
 // NewDeploymentEligibility rejects every source-only, target-only, zero, or

@@ -21,6 +21,7 @@ var (
 	ErrPermitAuthorityUnavailable = errors.New("networkjail: permit authority unavailable")
 	ErrPermitPeerInvalid          = errors.New("networkjail: permit peer invalid")
 	ErrPermitArithmetic           = errors.New("networkjail: permit arithmetic overflow")
+	ErrPermitUsageProofInvalid    = errors.New("networkjail: permit usage proof invalid")
 )
 
 type Permit struct {
@@ -39,6 +40,7 @@ type PermitAuthority struct {
 	rebase     EmptyConntrackValidator
 	blockSize  uint64
 	ledgers    map[CapacitySlotID]permitLedger
+	usage      map[CapacitySlotID]permitUsageReceipt
 }
 
 func newPermitAuthority(
@@ -70,6 +72,7 @@ func newPermitAuthority(
 		rebase:     rebase,
 		blockSize:  blockSize,
 		ledgers:    make(map[CapacitySlotID]permitLedger),
+		usage:      make(map[CapacitySlotID]permitUsageReceipt),
 	}, nil
 }
 
@@ -101,6 +104,10 @@ func (authority *PermitAuthority) Activate(
 			return err
 		}
 		authority.ledgers[slot] = next
+		authority.usage[slot] = newPermitUsageReceipt(
+			generation,
+			next.Revision,
+		)
 		return nil
 	}
 	if err := validateObservation(current, observation); err != nil {
@@ -109,6 +116,13 @@ func (authority *PermitAuthority) Activate(
 	if current.ActiveJobGeneration == generation {
 		current.LastMonotonicNanos = observation.MonotonicNanos
 		authority.ledgers[slot] = current
+		receipt, found := authority.usage[slot]
+		if !found || receipt.generation != generation {
+			authority.usage[slot] = newPermitUsageReceipt(
+				generation,
+				current.Revision,
+			)
+		}
 		return nil
 	}
 	if current.ActiveJobGeneration != 0 {
@@ -128,6 +142,10 @@ func (authority *PermitAuthority) Activate(
 		return err
 	}
 	authority.ledgers[slot] = next
+	authority.usage[slot] = newPermitUsageReceipt(
+		generation,
+		next.Revision,
+	)
 	return nil
 }
 
@@ -201,11 +219,19 @@ func (authority *PermitAuthority) Consume(
 		class.IssuedSequence = request.Sequence
 		current.LastMonotonicNanos = observation.MonotonicNanos
 		authority.ledgers[request.SlotID] = current
-		return Permit{
+		permit := Permit{
 			slot:   request.SlotID,
 			class:  request.Class,
 			number: class.IssuedHighWater,
-		}, nil
+		}
+		authority.recordPermitUsage(
+			request.SlotID,
+			request.JobGeneration,
+			request.Class,
+			request.Sequence,
+			permit.number,
+		)
+		return permit, nil
 	}
 
 	// A sequence jump outside the reserved fence invalidates every unissued
@@ -259,11 +285,19 @@ func (authority *PermitAuthority) Consume(
 	nextClass.IssuedHighWater++
 	nextClass.IssuedSequence = request.Sequence
 	authority.ledgers[request.SlotID] = next
-	return Permit{
+	permit := Permit{
 		slot:   request.SlotID,
 		class:  request.Class,
 		number: nextClass.IssuedHighWater,
-	}, nil
+	}
+	authority.recordPermitUsage(
+		request.SlotID,
+		request.JobGeneration,
+		request.Class,
+		request.Sequence,
+		permit.number,
+	)
+	return permit, nil
 }
 
 func (authority *PermitAuthority) Deactivate(
@@ -313,6 +347,7 @@ func (authority *PermitAuthority) Deactivate(
 		return err
 	}
 	authority.ledgers[slot] = next
+	delete(authority.usage, slot)
 	return nil
 }
 
@@ -363,6 +398,7 @@ func (authority *PermitAuthority) Rebase(
 		return err
 	}
 	authority.ledgers[slot] = next
+	delete(authority.usage, slot)
 	return nil
 }
 
@@ -405,6 +441,7 @@ func (authority *PermitAuthority) Collect(
 		return err
 	}
 	delete(authority.ledgers, slot)
+	delete(authority.usage, slot)
 	return nil
 }
 

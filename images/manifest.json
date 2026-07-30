@@ -30,6 +30,11 @@
       "name": "runner",
       "context": "images/runner",
       "dockerfile": "images/runner/Dockerfile"
+    },
+    {
+      "name": "synthetic-listener",
+      "context": "images/synthetic-listener",
+      "dockerfile": "images/synthetic-listener/Dockerfile"
     }
   ]
 }

@@ -85,6 +85,8 @@ jobs:
         run: scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID"
       - name: Prepare Task 6 image contexts
         run: scripts/prepare-task6-images.sh
+      - name: Prepare Task 11 image context
+        run: scripts/prepare-task11-images.sh --generation "$GITHUB_RUN_ID"
       - name: Check image manifest
         run: bash scripts/ci/check-images.sh
       - name: Trivy source scan

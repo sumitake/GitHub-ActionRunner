@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
+	"github.com/sumitake/portable-ghar/internal/linuxcap"
 )
 
 const (
@@ -45,26 +46,29 @@ func (family policyFamily) String() string {
 }
 
 type helperRuntime struct {
-	ioTimeout   time.Duration
-	xtablesLock func() string
-	restore     func(context.Context, policyFamily, []byte) error
-	save        func(context.Context, policyFamily) ([]byte, error)
-	disableIPv6 func() error
+	ioTimeout    time.Duration
+	xtablesLock  func() string
+	capabilities func() (linuxcap.Wire, error)
+	restore      func(context.Context, policyFamily, []byte) error
+	save         func(context.Context, policyFamily) ([]byte, error)
+	disableIPv6  func() error
 }
 
 type applicationProof struct {
-	Version     uint8  `json:"version"`
-	Digest      string `json:"policy_digest"`
-	IPv6Posture string `json:"ipv6_posture"`
+	Version      uint8         `json:"version"`
+	Digest       string        `json:"policy_digest"`
+	IPv6Posture  string        `json:"ipv6_posture"`
+	Capabilities linuxcap.Wire `json:"capabilities"`
 }
 
 func defaultHelperRuntime() helperRuntime {
 	return helperRuntime{
-		ioTimeout:   10 * time.Second,
-		xtablesLock: func() string { return os.Getenv("XTABLES_LOCKFILE") },
-		restore:     restorePolicy,
-		save:        savePolicy,
-		disableIPv6: disableIPv6,
+		ioTimeout:    10 * time.Second,
+		xtablesLock:  func() string { return os.Getenv("XTABLES_LOCKFILE") },
+		capabilities: linuxcap.ReadSelf,
+		restore:      restorePolicy,
+		save:         savePolicy,
+		disableIPv6:  disableIPv6,
 	}
 }
 
@@ -80,8 +84,13 @@ func run(
 		runtime.ioTimeout <= 0 ||
 		runtime.xtablesLock == nil ||
 		runtime.xtablesLock() != xtablesLockPath ||
+		runtime.capabilities == nil ||
 		runtime.restore == nil || runtime.save == nil ||
 		runtime.disableIPv6 == nil {
+		return unavailable(stderr)
+	}
+	capabilities, err := runtime.capabilities()
+	if err != nil || linuxcap.ValidateNetAdmin(capabilities) != nil {
 		return unavailable(stderr)
 	}
 	artifact, err := hostruntime.DecodePolicyArtifact(stdin)
@@ -128,9 +137,10 @@ func run(
 	}
 
 	document, err := json.Marshal(applicationProof{
-		Version:     1,
-		Digest:      artifact.Digest(),
-		IPv6Posture: posture,
+		Version:      2,
+		Digest:       artifact.Digest(),
+		IPv6Posture:  posture,
+		Capabilities: capabilities,
 	})
 	if err != nil {
 		return unavailable(stderr)

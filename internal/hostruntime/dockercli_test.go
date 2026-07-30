@@ -97,6 +97,38 @@ func TestValidateSeccompJSONRequiresClosedNamespaceBPFRawSocketDenials(t *testin
 	}
 }
 
+func TestValidateSeccompProfileReturnsExactRawDigest(t *testing.T) {
+	t.Parallel()
+
+	document := validSeccompJSON()
+	digest, err := ValidateSeccompProfile(document, len(document))
+	if err != nil {
+		t.Fatalf("ValidateSeccompProfile: %v", err)
+	}
+	expected := sha256.Sum256(document)
+	if digest != hex.EncodeToString(expected[:]) {
+		t.Fatalf("digest = %q, want %x", digest, expected)
+	}
+	if _, err := ValidateSeccompProfile(
+		document,
+		len(document)-1,
+	); err == nil {
+		t.Fatal("ValidateSeccompProfile accepted an oversized document")
+	}
+	invalid := bytes.Replace(
+		document,
+		[]byte(`"unshare"`),
+		[]byte(`"getpid"`),
+		1,
+	)
+	if _, err := ValidateSeccompProfile(
+		invalid,
+		len(invalid),
+	); err == nil {
+		t.Fatal("ValidateSeccompProfile accepted a weakened profile")
+	}
+}
+
 func TestRepositorySeccompProfileMatchesClosedSourcePolicy(t *testing.T) {
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -134,6 +166,7 @@ func validAdapterSpec(t *testing.T) (AdapterSpec, DockerCLIConfig) {
 			Limits: ContainerLimits{
 				MilliCPU:        250,
 				MemoryBytes:     256 << 20,
+				MemorySwapBytes: 320 << 20,
 				PIDs:            64,
 				FileDescriptors: 256,
 				TmpfsBytes:      16 << 20,
@@ -181,6 +214,7 @@ func TestCreateNetworkAdapterUsesClosedIsolationArgv(t *testing.T) {
 	requireArgPair(t, argv, "--user", spec.User)
 	requireArgPair(t, argv, "--pids-limit", "64")
 	requireArgPair(t, argv, "--memory", fmt.Sprint(spec.Limits.MemoryBytes))
+	requireArgPair(t, argv, "--memory-swap", fmt.Sprint(spec.Limits.MemorySwapBytes))
 	requireArgPair(t, argv, "--ulimit", "nofile=256:256")
 	requireArgPair(t, argv, "--log-driver", "local")
 	requireArgPair(t, argv, "--mount", "type=bind,src="+spec.BrokerParent+",dst=/run/portable-ghar/broker,readonly")
@@ -321,6 +355,79 @@ func TestResourceLimitsRejectMilliCPUThatOverflowsDockerNanoCPUs(t *testing.T) {
 	}
 }
 
+func TestDockerMemorySwapTotalsRejectOmissionUnderflowAndOverflow(t *testing.T) {
+	adapter, _ := validAdapterSpec(t)
+	runner := validRunnerSpec(AdapterHandle{}, adapter.Seccomp)
+	broker := BrokerLimits{
+		MilliCPU:        1,
+		MemoryBytes:     4,
+		MemorySwapBytes: 4,
+		PIDs:            1,
+		FileDescriptors: 1,
+		StateBytes:      1,
+		ScratchBytes:    1,
+		LogBytes:        1,
+		LogFiles:        1,
+	}
+	oneShot := OneShotLimits{
+		MilliCPU:        1,
+		MemoryBytes:     helperRunTmpfsBytes,
+		MemorySwapBytes: helperRunTmpfsBytes,
+		PIDs:            1,
+		FileDescriptors: 1,
+	}
+
+	tests := map[string]struct {
+		validate func() error
+	}{
+		"adapter omitted": {
+			validate: func() error {
+				value := adapter.Limits
+				value.MemorySwapBytes = 0
+				return validateContainerLimits(value)
+			},
+		},
+		"adapter below memory": {
+			validate: func() error {
+				value := adapter.Limits
+				value.MemorySwapBytes = value.MemoryBytes - 1
+				return validateContainerLimits(value)
+			},
+		},
+		"runner above docker range": {
+			validate: func() error {
+				value := runner.Limits
+				value.MemorySwapBytes = uint64(math.MaxInt64) + 1
+				return validateRunnerLimits(value)
+			},
+		},
+		"broker below memory": {
+			validate: func() error {
+				value := broker
+				value.MemorySwapBytes = value.MemoryBytes - 1
+				return validateBrokerLimits(value)
+			},
+		},
+		"one shot omitted": {
+			validate: func() error {
+				value := oneShot
+				value.MemorySwapBytes = 0
+				return validateOneShotLimits(value)
+			},
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := test.validate(); err == nil {
+				t.Fatal("invalid memory-plus-swap total accepted")
+			}
+		})
+	}
+	if err := validateOneShotLimits(oneShot); err != nil {
+		t.Fatalf("explicit zero-swap one-shot total rejected: %v", err)
+	}
+}
+
 func TestCreateNetworkAdapterRejectsUnverifiedSeccompIdentity(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -447,6 +554,7 @@ func TestCreateRunnerReinspectsOpaqueAdapterAndUsesNoMountOrSecretMetadata(t *te
 	requireArgPair(t, argv, "--security-opt", "no-new-privileges=true")
 	requireArgPair(t, argv, "--restart", "no")
 	requireArgPair(t, argv, "--entrypoint", "/usr/local/bin/portable-ghar-runner-gate")
+	requireArgPair(t, argv, "--memory-swap", fmt.Sprint(runnerSpec.Limits.MemorySwapBytes))
 	requireArgPair(t, argv, "--tmpfs", fmt.Sprintf("/runner:rw,exec,nosuid,nodev,size=%d,uid=65532,gid=65532,mode=0700", runnerSpec.Limits.RunnerTmpfsBytes))
 	requireArgPair(t, argv, "--tmpfs", fmt.Sprintf("/tmp:rw,exec,nosuid,nodev,size=%d,uid=65532,gid=65532,mode=0700", runnerSpec.Limits.TmpTmpfsBytes))
 
@@ -572,6 +680,7 @@ func TestCreateRunnerRejectsAdapterInspectDrift(t *testing.T) {
 		{"restart policy", `"Name":"no"`, `"Name":"always"`},
 		{"readonly root", `"ReadonlyRootfs":true`, `"ReadonlyRootfs":false`},
 		{"cap drop", `"CapDrop":["ALL"]`, `"CapDrop":[]`},
+		{"memory swap", `"MemorySwap":335544320`, `"MemorySwap":335544319`},
 		{"mount writable", `"RW":false`, `"RW":true`},
 	}
 
@@ -651,6 +760,7 @@ func TestCreateRunnerCarriesCompleteBoundedResourceVector(t *testing.T) {
 	for _, pair := range [][2]string{
 		{"--cpus", "1.5"},
 		{"--memory", fmt.Sprint(spec.Limits.MemoryBytes)},
+		{"--memory-swap", fmt.Sprint(spec.Limits.MemorySwapBytes)},
 		{"--pids-limit", "512"},
 		{"--ulimit", "nofile=1024:1024"},
 		{"--tmpfs", fmt.Sprintf("/scratch:rw,exec,nosuid,nodev,size=%d,uid=65532,gid=65532,mode=0700", spec.Limits.ScratchBytes)},
@@ -714,6 +824,7 @@ func validRunnerSpec(adapter AdapterHandle, seccomp SeccompBinding) RunnerSpec {
 		Limits: RunnerLimits{
 			MilliCPU:           1500,
 			MemoryBytes:        5 << 30,
+			MemorySwapBytes:    6 << 30,
 			PIDs:               512,
 			FileDescriptors:    1024,
 			ScratchBytes:       1 << 30,
@@ -791,6 +902,7 @@ func managedAdapterInspectJSON(id string, spec AdapterSpec) string {
 			"UTSMode":         "",
 			"Tmpfs":           adapterTmpfs(spec),
 			"Memory":          int64(spec.Limits.MemoryBytes),
+			"MemorySwap":      int64(spec.Limits.MemorySwapBytes),
 			"NanoCpus":        int64(spec.Limits.MilliCPU) * 1_000_000,
 			"PidsLimit":       int64(spec.Limits.PIDs),
 			"Ulimits": []map[string]any{{
@@ -857,6 +969,7 @@ func managedRunnerInspectJSON(id string, spec RunnerSpec, pid int64) string {
 			"UTSMode":         "",
 			"Tmpfs":           runnerTmpfs(spec),
 			"Memory":          int64(spec.Limits.MemoryBytes),
+			"MemorySwap":      int64(spec.Limits.MemorySwapBytes),
 			"NanoCpus":        int64(spec.Limits.MilliCPU) * 1_000_000,
 			"PidsLimit":       int64(spec.Limits.PIDs),
 			"Ulimits": []map[string]any{{

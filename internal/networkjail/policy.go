@@ -123,6 +123,10 @@ func (g DecisionGraph) Digest() Digest {
 	return g.digest
 }
 
+func (g DecisionGraph) IPFamily() IPFamily {
+	return g.manifest.IPFamily
+}
+
 func (g DecisionGraph) BrokerIPv6Posture() BrokerIPv6Posture {
 	return g.manifest.BrokerIPv6Posture
 }

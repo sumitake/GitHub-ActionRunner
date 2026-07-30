@@ -33,42 +33,44 @@ const (
 type listenerExecutor func(*os.File, string, []string, []string) error
 
 type gateRuntime struct {
-	runnerRoot      string
-	workRoot        string
-	socketDirectory string
-	socketPath      string
-	runtimeLockPath string
-	treeLockPath    string
-	seedCacheRoot   string
-	seedManifest    string
-	seedTreeLock    string
-	seedReady       string
-	seedUID         uint32
-	seedGID         uint32
-	ioTimeout       time.Duration
-	namespace       func() ([]byte, error)
-	execListener    listenerExecutor
-	verifyImage     func() error
+	runnerRoot         string
+	workRoot           string
+	socketDirectory    string
+	socketPath         string
+	runtimeLockPath    string
+	treeLockPath       string
+	seedCacheRoot      string
+	seedManifest       string
+	seedTreeLock       string
+	seedReady          string
+	seedUID            uint32
+	seedGID            uint32
+	ioTimeout          time.Duration
+	namespace          func() ([]byte, error)
+	execListener       listenerExecutor
+	verifyImage        func() error
+	observeConformance func() (runnerConformanceWire, error)
 }
 
 func defaultGateRuntime() gateRuntime {
 	return gateRuntime{
-		runnerRoot:      defaultRunnerRoot,
-		workRoot:        defaultRunnerWork,
-		socketDirectory: defaultGateDirectory,
-		socketPath:      defaultGateSocket,
-		runtimeLockPath: defaultRuntimeLockPath,
-		treeLockPath:    defaultTreeLockPath,
-		seedCacheRoot:   defaultSeedCacheRoot,
-		seedManifest:    defaultSeedManifest,
-		seedTreeLock:    defaultSeedTreeLock,
-		seedReady:       defaultSeedReady,
-		seedUID:         0,
-		seedGID:         0,
-		ioTimeout:       5 * time.Second,
-		namespace:       currentNetworkNamespace,
-		execListener:    execListenerProcess,
-		verifyImage:     imageverify.VerifyInstalledRunnerImage,
+		runnerRoot:         defaultRunnerRoot,
+		workRoot:           defaultRunnerWork,
+		socketDirectory:    defaultGateDirectory,
+		socketPath:         defaultGateSocket,
+		runtimeLockPath:    defaultRuntimeLockPath,
+		treeLockPath:       defaultTreeLockPath,
+		seedCacheRoot:      defaultSeedCacheRoot,
+		seedManifest:       defaultSeedManifest,
+		seedTreeLock:       defaultSeedTreeLock,
+		seedReady:          defaultSeedReady,
+		seedUID:            0,
+		seedGID:            0,
+		ioTimeout:          5 * time.Second,
+		namespace:          currentNetworkNamespace,
+		execListener:       execListenerProcess,
+		verifyImage:        imageverify.VerifyInstalledRunnerImage,
+		observeConformance: defaultRunnerConformance,
 	}
 }
 
@@ -91,6 +93,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, runtime gateR
 			return gateUnavailable(stderr, 1)
 		}
 		if _, err := fmt.Fprintln(stdout, version); err != nil {
+			return gateUnavailable(stderr, 1)
+		}
+		return 0
+	}
+	if args[0] == "conformance-observe" {
+		if requireEmptyInput(stdin) != nil ||
+			runtime.observeConformance == nil {
+			return gateUnavailable(stderr, 1)
+		}
+		wire, err := runtime.observeConformance()
+		if err != nil ||
+			!validRunnerConformanceWire(wire) ||
+			writeRunnerConformance(stdout, wire) != nil {
 			return gateUnavailable(stderr, 1)
 		}
 		return 0

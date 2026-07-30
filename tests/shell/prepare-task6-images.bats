@@ -90,10 +90,10 @@ setup() {
   grep -F 'legacy.sha256' "$REPO_ROOT/scripts/_prepare_task6_context.py"
 }
 
-@test "the image manifest registers all Task 5 and Task 6 contexts once" {
+@test "the image manifest registers all prepared contexts once" {
   run jq -r '.images[].name' "$REPO_ROOT/images/manifest.json"
   [ "$status" -eq 0 ]
-  [ "$output" = $'network-adapter\nnetwork-broker-dialer\nnetwork-broker-parser\nnetwork-helper\nnetwork-verifier\nrunner' ]
+  [ "$output" = $'network-adapter\nnetwork-broker-dialer\nnetwork-broker-parser\nnetwork-helper\nnetwork-verifier\nrunner\nsynthetic-listener' ]
 }
 
 @test "CI and release prepare Task 6 contexts before building the image manifest" {

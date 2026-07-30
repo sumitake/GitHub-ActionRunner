@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/url"
 	"path/filepath"
 	"sort"
@@ -108,12 +109,26 @@ type ResourceVectorOverlay struct {
 }
 
 type SlotResourcesOverlay struct {
-	Runner        ResourceVectorOverlay `json:"runner"`
-	Adapter       ResourceVectorOverlay `json:"adapter"`
-	Broker        ResourceVectorOverlay `json:"broker"`
-	DialAuthority ResourceVectorOverlay `json:"dial_authority"`
-	Helper        ResourceVectorOverlay `json:"helper"`
-	Verifier      ResourceVectorOverlay `json:"verifier"`
+	Runner            ResourceVectorOverlay `json:"runner"`
+	Adapter           ResourceVectorOverlay `json:"adapter"`
+	Broker            ResourceVectorOverlay `json:"broker"`
+	DialAuthority     ResourceVectorOverlay `json:"dial_authority"`
+	Helper            ResourceVectorOverlay `json:"helper"`
+	Verifier          ResourceVectorOverlay `json:"verifier"`
+	WorkflowToolProbe ResourceVectorOverlay `json:"workflow_tool_probe"`
+}
+
+type SwapLimitOverlay struct {
+	Configured bool   `json:"configured"`
+	Bytes      uint64 `json:"bytes"`
+}
+
+type ContainerSwapOverlay struct {
+	Adapter           SwapLimitOverlay `json:"adapter"`
+	Broker            SwapLimitOverlay `json:"broker"`
+	Helper            SwapLimitOverlay `json:"helper"`
+	Verifier          SwapLimitOverlay `json:"verifier"`
+	WorkflowToolProbe SwapLimitOverlay `json:"workflow_tool_probe"`
 }
 
 type HistoryOverlay struct {
@@ -234,6 +249,7 @@ type StorageSizingOverlay struct {
 type ResourceOverlay struct {
 	AdmissionCeiling          ResourceVectorOverlay `json:"admission_ceiling"`
 	SlotResources             SlotResourcesOverlay  `json:"slot_resources"`
+	ContainerSwap             ContainerSwapOverlay  `json:"container_swap"`
 	MaxCapacity               uint64                `json:"max_capacity"`
 	MaxLiveReferences         uint64                `json:"max_live_references"`
 	MaxOfferLogicalBytes      uint64                `json:"max_offer_logical_bytes"`
@@ -476,6 +492,7 @@ func validDockerOverlay(docker DockerOverlay) bool {
 func validResourceOverlay(resources ResourceOverlay) bool {
 	if !validResourceVector(resources.AdmissionCeiling) ||
 		!validSlotResources(resources.SlotResources) ||
+		!validContainerSwap(resources) ||
 		resources.MaxCapacity == 0 ||
 		resources.MaxLiveReferences == 0 ||
 		resources.MaxOfferLogicalBytes == 0 ||
@@ -585,7 +602,46 @@ func validSlotResources(resources SlotResourcesOverlay) bool {
 		validResourceVector(resources.Broker) &&
 		validResourceVector(resources.DialAuthority) &&
 		validResourceVector(resources.Helper) &&
-		validResourceVector(resources.Verifier)
+		validResourceVector(resources.Verifier) &&
+		validResourceVector(resources.WorkflowToolProbe)
+}
+
+func validContainerSwap(resources ResourceOverlay) bool {
+	return validSwapTotal(
+		resources.SlotResources.Adapter.MemoryBytes,
+		resources.ContainerSwap.Adapter,
+	) &&
+		validSwapTotal(
+			resources.SlotResources.Broker.MemoryBytes,
+			resources.ContainerSwap.Broker,
+		) &&
+		validSwapTotal(
+			resources.SlotResources.Helper.MemoryBytes,
+			resources.ContainerSwap.Helper,
+		) &&
+		validSwapTotal(
+			resources.SlotResources.Verifier.MemoryBytes,
+			resources.ContainerSwap.Verifier,
+		) &&
+		validSwapTotal(
+			resources.SlotResources.WorkflowToolProbe.MemoryBytes,
+			resources.ContainerSwap.WorkflowToolProbe,
+		) &&
+		validSwapTotal(
+			resources.RunnerSizing.RunnerMemoryBytes,
+			SwapLimitOverlay{
+				Configured: resources.RunnerSizing.SwapLimitConfigured,
+				Bytes:      resources.RunnerSizing.SwapLimitBytes,
+			},
+		)
+}
+
+func validSwapTotal(memoryBytes uint64, swap SwapLimitOverlay) bool {
+	if !swap.Configured || memoryBytes == 0 || memoryBytes > math.MaxInt64 {
+		return false
+	}
+	total, ok := checkedAdd(memoryBytes, swap.Bytes)
+	return ok && total <= math.MaxInt64
 }
 
 func validHistoryOverlay(history HistoryOverlay) bool {

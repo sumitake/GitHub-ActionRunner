@@ -121,12 +121,13 @@ func validControllerPrivateOverlay() hostruntime.PrivateOverlay {
 		Inodes:            16,
 	}
 	slot := hostruntime.SlotResourcesOverlay{
-		Runner:        vector,
-		Adapter:       vector,
-		Broker:        vector,
-		DialAuthority: vector,
-		Helper:        vector,
-		Verifier:      vector,
+		Runner:            vector,
+		Adapter:           vector,
+		Broker:            vector,
+		DialAuthority:     vector,
+		Helper:            vector,
+		Verifier:          vector,
+		WorkflowToolProbe: vector,
 	}
 	roles := []string{
 		"docker-root",
@@ -230,8 +231,25 @@ func validControllerPrivateOverlay() hostruntime.PrivateOverlay {
 			ImmutableBuildMode: "attested-pull",
 		},
 		Resources: hostruntime.ResourceOverlay{
-			AdmissionCeiling:          vector,
-			SlotResources:             slot,
+			AdmissionCeiling: vector,
+			SlotResources:    slot,
+			ContainerSwap: hostruntime.ContainerSwapOverlay{
+				Adapter: hostruntime.SwapLimitOverlay{
+					Configured: true,
+				},
+				Broker: hostruntime.SwapLimitOverlay{
+					Configured: true,
+				},
+				Helper: hostruntime.SwapLimitOverlay{
+					Configured: true,
+				},
+				Verifier: hostruntime.SwapLimitOverlay{
+					Configured: true,
+				},
+				WorkflowToolProbe: hostruntime.SwapLimitOverlay{
+					Configured: true,
+				},
+			},
 			MaxCapacity:               6,
 			MaxLiveReferences:         16,
 			MaxOfferLogicalBytes:      1024,

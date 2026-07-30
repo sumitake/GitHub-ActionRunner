@@ -122,6 +122,41 @@ type NetworkVerifierReport struct {
 	NegativeOK           bool
 }
 
+// LoopbackFloodReport is the closed, post-flood namespace observation emitted
+// by the capability-less verifier. It contains no address, port, process, or
+// raw command output.
+type LoopbackFloodReport struct {
+	Attempts       uint64
+	Completed      bool
+	Namespace      NetworkNamespaceIdentity
+	LoopbackOnly   bool
+	TablesEmpty    bool
+	ConntrackEmpty bool
+	RoutesComplete bool
+}
+
+// LoopbackFloodEvidence binds one exact post-flood report to the engine-issued
+// adapter and immutable verifier identity.
+type LoopbackFloodEvidence struct {
+	adapterID string
+	report    LoopbackFloodReport
+	issuer    [32]byte
+	nonce     [32]byte
+	digest    [32]byte
+}
+
+func (e LoopbackFloodEvidence) AdapterID() string {
+	return e.adapterID
+}
+
+func (e LoopbackFloodEvidence) Report() LoopbackFloodReport {
+	return e.report
+}
+
+func (e LoopbackFloodEvidence) Digest() string {
+	return hex.EncodeToString(e.digest[:])
+}
+
 // AdapterEmptinessEvidence can be issued only after the engine re-inspects the
 // same held adapter on both sides of a capability-less one-shot verifier.
 type AdapterEmptinessEvidence struct {
@@ -203,6 +238,7 @@ type SeccompBinding struct {
 type ContainerLimits struct {
 	MilliCPU        uint64
 	MemoryBytes     uint64
+	MemorySwapBytes uint64
 	PIDs            uint64
 	FileDescriptors uint64
 	TmpfsBytes      uint64
@@ -216,6 +252,7 @@ type ContainerLimits struct {
 type RunnerLimits struct {
 	MilliCPU           uint64
 	MemoryBytes        uint64
+	MemorySwapBytes    uint64
 	PIDs               uint64
 	FileDescriptors    uint64
 	ScratchBytes       uint64
@@ -231,6 +268,7 @@ type RunnerLimits struct {
 type BrokerLimits struct {
 	MilliCPU        uint64
 	MemoryBytes     uint64
+	MemorySwapBytes uint64
 	PIDs            uint64
 	FileDescriptors uint64
 	StateBytes      uint64
@@ -244,6 +282,7 @@ type BrokerLimits struct {
 type OneShotLimits struct {
 	MilliCPU        uint64
 	MemoryBytes     uint64
+	MemorySwapBytes uint64
 	PIDs            uint64
 	FileDescriptors uint64
 }

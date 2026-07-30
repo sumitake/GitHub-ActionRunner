@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 
 	"github.com/sumitake/portable-ghar/internal/relaycontract"
@@ -61,6 +62,7 @@ type BrokerPeerProof struct {
 	adapterNonce     [32]byte
 	issuer           [32]byte
 	brokerGeneration uint64
+	heldSocketZero   [32]byte
 	directory        brokerDirectoryProof
 	socket           brokerSocketProof
 	peer             brokerProcessProof
@@ -70,6 +72,7 @@ func newBrokerPeerProof(
 	adapter AdapterHandle,
 	issuer [32]byte,
 	brokerGeneration uint64,
+	heldSocketZero [32]byte,
 	directory brokerDirectoryIdentity,
 	socket brokerSocketIdentity,
 	peer brokerProcessIdentity,
@@ -78,6 +81,7 @@ func newBrokerPeerProof(
 		adapterNonce:     adapter.nonce,
 		issuer:           issuer,
 		brokerGeneration: brokerGeneration,
+		heldSocketZero:   heldSocketZero,
 		directory: brokerDirectoryProof{
 			device: directory.Device,
 			inode:  directory.Inode,
@@ -100,12 +104,19 @@ func newBrokerPeerProof(
 	}
 }
 
+// HeldSocketZeroDigest returns the nonsecret receipt for the exact pre-release
+// AF_INET/AF_INET6 TCP, UDP, and raw zero-count audit.
+func (proof BrokerPeerProof) HeldSocketZeroDigest() string {
+	return hex.EncodeToString(proof.heldSocketZero[:])
+}
+
 func validBrokerPeerProof(proof BrokerPeerProof, adapter AdapterHandle, issuer [32]byte, spec AdapterSpec) bool {
 	uid, gid, err := parseUser(spec.User)
 	return err == nil &&
 		subtle.ConstantTimeCompare(proof.issuer[:], issuer[:]) == 1 &&
 		subtle.ConstantTimeCompare(proof.adapterNonce[:], adapter.nonce[:]) == 1 &&
 		proof.brokerGeneration == adapter.fleetGeneration &&
+		nonzero32(proof.heldSocketZero) &&
 		proof.directory.device != 0 && proof.directory.inode != 0 &&
 		proof.directory.uid == uint32(uid) && proof.directory.gid == uint32(gid) &&
 		proof.directory.mode == 0o700 &&

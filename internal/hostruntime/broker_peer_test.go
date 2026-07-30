@@ -30,6 +30,7 @@ func TestBindBrokerPeerUsesOpaqueOneUseProofAndClosedExec(t *testing.T) {
 		adapter,
 		cli.issuer,
 		spec.FleetGeneration,
+		[32]byte{1},
 		brokerDirectoryIdentity{Device: 101, Inode: 102, UID: 65532, GID: 65532, Mode: 0o700},
 		brokerSocketIdentity{Name: "https.sock", Device: 101, Inode: 103, UID: 65532, GID: 65532, Mode: 0o600},
 		brokerProcessIdentity{PID: 7001, StartTime: 7002},
@@ -82,6 +83,10 @@ func TestBindBrokerPeerRejectsForgedStaleOrRepeatedProof(t *testing.T) {
 			value.peer.pid = 0
 			return value
 		}},
+		{"missing held socket audit", func(value BrokerPeerProof) BrokerPeerProof {
+			value.heldSocketZero = [32]byte{}
+			return value
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -100,6 +105,7 @@ func TestBindBrokerPeerRejectsForgedStaleOrRepeatedProof(t *testing.T) {
 				adapter,
 				cli.issuer,
 				spec.FleetGeneration,
+				[32]byte{1},
 				brokerDirectoryIdentity{Device: 101, Inode: 102, UID: 65532, GID: 65532, Mode: 0o700},
 				brokerSocketIdentity{Name: "https.sock", Device: 101, Inode: 103, UID: 65532, GID: 65532, Mode: 0o600},
 				brokerProcessIdentity{PID: 7001, StartTime: 7002},
@@ -134,6 +140,7 @@ func TestBindBrokerPeerRejectsForgedStaleOrRepeatedProof(t *testing.T) {
 			adapter,
 			cli.issuer,
 			spec.FleetGeneration,
+			[32]byte{1},
 			brokerDirectoryIdentity{Device: 101, Inode: 102, UID: 65532, GID: 65532, Mode: 0o700},
 			brokerSocketIdentity{Name: "https.sock", Device: 101, Inode: 103, UID: 65532, GID: 65532, Mode: 0o600},
 			brokerProcessIdentity{PID: 7001, StartTime: 7002},

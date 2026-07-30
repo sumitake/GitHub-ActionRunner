@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/sumitake/portable-ghar/internal/linuxcap"
 )
 
 func validVerifierSpec(adapter AdapterHandle, spec AdapterSpec) VerifierSpec {
@@ -20,6 +22,7 @@ func validVerifierSpec(adapter AdapterHandle, spec AdapterSpec) VerifierSpec {
 		Limits: OneShotLimits{
 			MilliCPU:        250,
 			MemoryBytes:     128 << 20,
+			MemorySwapBytes: 160 << 20,
 			PIDs:            16,
 			FileDescriptors: 64,
 		},
@@ -30,17 +33,20 @@ func TestVerifyNetworkAdapterEmptyUsesClosedOneShotVerifier(t *testing.T) {
 	adapterSpec, cfg := validAdapterSpec(t)
 	adapterID := strings.Repeat("c", 64)
 	namespace := NetworkNamespaceIdentity{Device: 11, Inode: 12}
-	report := fmt.Sprintf(
-		`{"version":1,"namespace":{"identity":{"device":%d,"inode":%d},`+
-			`"loopback_only":true,"tables_empty":true,"conntrack_empty":true}}`+"\n",
-		namespace.Device,
-		namespace.Inode,
-	)
+	reportWire := verifierNamespaceWire{
+		Version:      2,
+		Capabilities: emptyVerifierCapabilities(),
+	}
+	reportWire.Namespace.Identity = namespace
+	reportWire.Namespace.LoopbackOnly = true
+	reportWire.Namespace.TablesEmpty = true
+	reportWire.Namespace.ConntrackEmpty = true
+	report := canonicalJSONLine(t, reportWire)
 	inspect := managedAdapterInspectJSON(adapterID, adapterSpec)
 	commands := &scriptedCommandRunner{results: []Result{
 		{Stdout: []byte(adapterID + "\n")},
 		{Stdout: []byte(inspect)},
-		{Stdout: []byte(report)},
+		{Stdout: report},
 		{},
 		{Stdout: []byte(inspect)},
 	}}
@@ -79,6 +85,7 @@ func TestVerifyNetworkAdapterEmptyUsesClosedOneShotVerifier(t *testing.T) {
 	requireArgPair(t, argv, "--security-opt", "no-new-privileges=true")
 	requireArgPair(t, argv, "--security-opt", "seccomp="+verifier.Seccomp.Path)
 	requireArgPair(t, argv, "--user", verifier.User)
+	requireArgPair(t, argv, "--memory-swap", fmt.Sprint(verifier.Limits.MemorySwapBytes))
 	requireArgPair(t, argv, "--log-driver", "none")
 	requireArgPair(t, argv, "--entrypoint", verifierEntrypoint)
 	if !slices.Equal(argv[len(argv)-2:], []string{
@@ -101,17 +108,20 @@ func TestVerifyNetworkAdapterEmptyRemovesAmbiguousLingeringVerifier(t *testing.T
 	adapterSpec, cfg := validAdapterSpec(t)
 	adapterID := strings.Repeat("c", 64)
 	namespace := NetworkNamespaceIdentity{Device: 11, Inode: 12}
-	report := fmt.Sprintf(
-		`{"version":1,"namespace":{"identity":{"device":%d,"inode":%d},`+
-			`"loopback_only":true,"tables_empty":true,"conntrack_empty":true}}`+"\n",
-		namespace.Device,
-		namespace.Inode,
-	)
+	reportWire := verifierNamespaceWire{
+		Version:      2,
+		Capabilities: emptyVerifierCapabilities(),
+	}
+	reportWire.Namespace.Identity = namespace
+	reportWire.Namespace.LoopbackOnly = true
+	reportWire.Namespace.TablesEmpty = true
+	reportWire.Namespace.ConntrackEmpty = true
+	report := canonicalJSONLine(t, reportWire)
 	inspect := managedAdapterInspectJSON(adapterID, adapterSpec)
 	commands := &scriptedCommandRunner{results: []Result{
 		{Stdout: []byte(adapterID + "\n")},
 		{Stdout: []byte(inspect)},
-		{Stdout: []byte(report)},
+		{Stdout: report},
 		{Stdout: []byte("lingering-verifier-id\n")},
 		{Stdout: []byte("lingering-verifier-id\n")},
 		{},
@@ -222,20 +232,29 @@ func TestVerifyNetworkEgressBindsBothNamespacesParserAndPolicy(t *testing.T) {
 		cfg,
 		nil,
 	)
-	proxyReport := fmt.Sprintf(
-		`{"version":1,"policy_digest":"%s","egress_backend":"restricted-broker-v1",`+
-			`"runner_netns_id":{"device":11,"inode":12},`+
-			`"runner_loopback_only":true,"runner_tables_empty":true,`+
-			`"runner_conntrack_empty":true,"positive_ok":true,"negative_ok":true}`+"\n",
-		graphDigest,
-	)
-	brokerNamespace := `{"version":1,"identity":{"device":21,"inode":22}}` + "\n"
+	proxyReport := canonicalJSONLine(t, verifierProxyWire{
+		Version:              2,
+		Capabilities:         emptyVerifierCapabilities(),
+		PolicyDigest:         graphDigest,
+		EgressBackend:        "restricted-broker-v1",
+		RunnerNetNSID:        NetworkNamespaceIdentity{Device: 11, Inode: 12},
+		RunnerLoopbackOnly:   true,
+		RunnerTablesEmpty:    true,
+		RunnerConntrackEmpty: true,
+		PositiveOK:           true,
+		NegativeOK:           true,
+	})
+	brokerNamespace := canonicalJSONLine(t, verifierIdentityWire{
+		Version:      2,
+		Capabilities: emptyVerifierCapabilities(),
+		Identity:     NetworkNamespaceIdentity{Device: 21, Inode: 22},
+	})
 	commands.results = []Result{
 		{Stdout: []byte(adapterInspect)},
 		{Stdout: []byte(brokerInspect)},
-		{Stdout: []byte(proxyReport)},
+		{Stdout: proxyReport},
 		{},
-		{Stdout: []byte(brokerNamespace)},
+		{Stdout: brokerNamespace},
 		{},
 		{Stdout: []byte(adapterInspect)},
 		{Stdout: []byte(brokerInspect)},
@@ -288,9 +307,177 @@ func TestVerifyNetworkEgressBindsBothNamespacesParserAndPolicy(t *testing.T) {
 	)
 }
 
+func TestVerifierParsersRequireClosedEmptyCapabilityWire(t *testing.T) {
+	namespace := verifierNamespaceWire{
+		Version:      2,
+		Capabilities: emptyVerifierCapabilities(),
+	}
+	namespace.Namespace.Identity = NetworkNamespaceIdentity{Device: 11, Inode: 12}
+	namespace.Namespace.LoopbackOnly = true
+	namespace.Namespace.TablesEmpty = true
+	namespace.Namespace.ConntrackEmpty = true
+	if _, err := parseVerifierNamespace(
+		canonicalJSONLine(t, namespace),
+	); err != nil {
+		t.Fatalf("parseVerifierNamespace(valid): %v", err)
+	}
+
+	for name, mutate := range map[string]func(*verifierNamespaceWire){
+		"old version": func(wire *verifierNamespaceWire) {
+			wire.Version = 1
+		},
+		"nonempty effective": func(wire *verifierNamespaceWire) {
+			wire.Capabilities.Effective = "0000000000001000"
+		},
+		"missing mask": func(wire *verifierNamespaceWire) {
+			wire.Capabilities.Ambient = ""
+		},
+		"mixed case": func(wire *verifierNamespaceWire) {
+			wire.Capabilities.Bounding = "000000000000000A"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := namespace
+			mutate(&candidate)
+			if _, err := parseVerifierNamespace(
+				canonicalJSONLine(t, candidate),
+			); err == nil {
+				t.Fatal("parseVerifierNamespace accepted invalid capability proof")
+			}
+		})
+	}
+}
+
 func validBrokerParent(t *testing.T, root string) string {
 	t.Helper()
 	return strings.TrimSuffix(root, "/") + "/slot-000007/broker"
+}
+
+func TestParseVerifierFloodRequiresExactCompletedPostFloodProof(t *testing.T) {
+	wire := verifierFloodWire{
+		Version:        2,
+		Attempts:       7,
+		Completed:      true,
+		Capabilities:   emptyVerifierCapabilities(),
+		RoutesComplete: true,
+	}
+	wire.Namespace.Identity = NetworkNamespaceIdentity{Device: 51, Inode: 52}
+	wire.Namespace.LoopbackOnly = true
+	wire.Namespace.TablesEmpty = true
+	wire.Namespace.ConntrackEmpty = true
+	report, err := parseVerifierFlood(canonicalJSONLine(t, wire), 7)
+	if err != nil {
+		t.Fatalf("parseVerifierFlood(valid): %v", err)
+	}
+	if report.Attempts != 7 ||
+		report.Namespace != wire.Namespace.Identity ||
+		!report.Completed ||
+		!report.LoopbackOnly ||
+		!report.TablesEmpty ||
+		!report.ConntrackEmpty ||
+		!report.RoutesComplete {
+		t.Fatalf("report=%+v", report)
+	}
+	for name, mutate := range map[string]func(*verifierFloodWire){
+		"attempt drift": func(value *verifierFloodWire) {
+			value.Attempts++
+		},
+		"incomplete": func(value *verifierFloodWire) {
+			value.Completed = false
+		},
+		"capability": func(value *verifierFloodWire) {
+			value.Capabilities.Bounding = "0000000000001000"
+		},
+		"identity": func(value *verifierFloodWire) {
+			value.Namespace.Identity = NetworkNamespaceIdentity{}
+		},
+		"routes": func(value *verifierFloodWire) {
+			value.RoutesComplete = false
+		},
+		"tables": func(value *verifierFloodWire) {
+			value.Namespace.TablesEmpty = false
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := wire
+			mutate(&candidate)
+			if _, err := parseVerifierFlood(
+				canonicalJSONLine(t, candidate),
+				7,
+			); err == nil {
+				t.Fatal("parseVerifierFlood accepted invalid report")
+			}
+		})
+	}
+}
+
+func TestVerifyLoopbackFloodUsesOneClosedVerifierAndBindsAdapter(t *testing.T) {
+	adapterSpec, cfg := validAdapterSpec(t)
+	adapterID := strings.Repeat("c", 64)
+	namespace := NetworkNamespaceIdentity{Device: 61, Inode: 62}
+	wire := verifierFloodWire{
+		Version:        2,
+		Attempts:       9,
+		Completed:      true,
+		Capabilities:   emptyVerifierCapabilities(),
+		RoutesComplete: true,
+	}
+	wire.Namespace.Identity = namespace
+	wire.Namespace.LoopbackOnly = true
+	wire.Namespace.TablesEmpty = true
+	wire.Namespace.ConntrackEmpty = true
+	inspect := managedAdapterInspectJSON(adapterID, adapterSpec)
+	commands := &scriptedCommandRunner{results: []Result{
+		{Stdout: []byte(adapterID + "\n")},
+		{Stdout: []byte(inspect)},
+		{Stdout: canonicalJSONLine(t, wire)},
+		{},
+		{Stdout: []byte(inspect)},
+	}}
+	cli, err := NewDockerCLI(cfg, commands)
+	if err != nil {
+		t.Fatalf("NewDockerCLI: %v", err)
+	}
+	adapter, err := cli.CreateNetworkAdapter(context.Background(), adapterSpec)
+	if err != nil {
+		t.Fatalf("CreateNetworkAdapter: %v", err)
+	}
+	cli.adapters[adapter.nonce].bound = true
+	verifier := validVerifierSpec(adapter, adapterSpec)
+
+	evidence, err := cli.VerifyLoopbackFlood(
+		context.Background(),
+		adapter,
+		verifier,
+		9,
+	)
+	if err != nil {
+		t.Fatalf("VerifyLoopbackFlood: %v", err)
+	}
+	report := evidence.Report()
+	if evidence.AdapterID() != adapterID ||
+		report.Attempts != 9 ||
+		report.Namespace != namespace ||
+		!report.Completed ||
+		!report.LoopbackOnly ||
+		!report.TablesEmpty ||
+		!report.ConntrackEmpty ||
+		!report.RoutesComplete ||
+		len(evidence.Digest()) != 64 {
+		t.Fatalf("evidence=%+v report=%+v", evidence, report)
+	}
+	if got := commands.commands[2].stdin; !slices.Equal(
+		got,
+		[]byte("{\"version\":1,\"attempts\":9}\n"),
+	) {
+		t.Fatalf("flood stdin=%q", got)
+	}
+	if got := commands.commands[2].argv; !slices.Equal(
+		got[len(got)-2:],
+		[]string{verifier.Image, "loopback-flood"},
+	) {
+		t.Fatalf("flood argv tail=%q", got[len(got)-2:])
+	}
 }
 
 func validVerifierBrokerReadiness(
@@ -335,5 +522,15 @@ func validVerifierBrokerReadiness(
 		UnexpectedFDs:       0,
 		ParserTaskCount:     4,
 		ParserTasksVerified: 4,
+	}
+}
+
+func emptyVerifierCapabilities() linuxcap.Wire {
+	return linuxcap.Wire{
+		Effective:   "0000000000000000",
+		Permitted:   "0000000000000000",
+		Inheritable: "0000000000000000",
+		Bounding:    "0000000000000000",
+		Ambient:     "0000000000000000",
 	}
 }

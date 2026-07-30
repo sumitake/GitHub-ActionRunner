@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -144,6 +145,7 @@ type brokerRuntime struct {
 	hold        func(context.Context) error
 	forward     func(context.Context, brokerOperation, io.Reader, io.Writer) error
 	authorityID func() ([]byte, error)
+	socketAudit func() (heldSocketAuditReport, error)
 }
 
 func defaultBrokerRuntime() brokerRuntime {
@@ -159,6 +161,7 @@ func defaultBrokerRuntime() brokerRuntime {
 			return forwardBroker(ctx, operation, input, output)
 		},
 		authorityID: inspectAuthorityFilesystem,
+		socketAudit: inspectHeldInternetSockets,
 	}
 }
 
@@ -191,6 +194,26 @@ func run(
 			zero(document)
 			return brokerUnavailable(stderr, 1)
 		}
+		if _, err := stdout.Write(document); err != nil {
+			zero(document)
+			return brokerUnavailable(stderr, 1)
+		}
+		zero(document)
+		return 0
+	case "socket-audit":
+		if runtime.socketAudit == nil || requireEmptyInput(stdin) != nil {
+			return brokerUnavailable(stderr, 1)
+		}
+		report, err := runtime.socketAudit()
+		if err != nil || report.Version != 1 {
+			return brokerUnavailable(stderr, 1)
+		}
+		document, err := json.Marshal(report)
+		if err != nil || len(document)+1 > maxBrokerCommandResponse {
+			zero(document)
+			return brokerUnavailable(stderr, 1)
+		}
+		document = append(document, '\n')
 		if _, err := stdout.Write(document); err != nil {
 			zero(document)
 			return brokerUnavailable(stderr, 1)

@@ -35,6 +35,26 @@ func TestCompilePolicyIsDeterministicAndOwnsInput(t *testing.T) {
 	}
 }
 
+func TestDecisionGraphExposesExactFamilyWithoutConflatingIPv6Posture(
+	t *testing.T,
+) {
+	manifest := validPolicyManifest()
+	manifest.IPFamily = PublicDualStack
+	manifest.BrokerIPv6Posture = DenyViaIP6Tables
+	graph, _, err := Compile(manifest)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if graph.IPFamily() != PublicDualStack ||
+		graph.BrokerIPv6Posture() != DenyViaIP6Tables {
+		t.Fatalf(
+			"family/posture = %q/%q",
+			graph.IPFamily(),
+			graph.BrokerIPv6Posture(),
+		)
+	}
+}
+
 func TestCompileRejectsIncompleteOrNoncanonicalPolicy(t *testing.T) {
 	tests := []struct {
 		name   string

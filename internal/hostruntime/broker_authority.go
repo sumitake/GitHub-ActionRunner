@@ -68,6 +68,20 @@ func NewAuthorityProof(binding AuthorityBinding) (AuthorityProof, error) {
 	return AuthorityProof{binding: binding}, nil
 }
 
+// MatchesPermitActivation reveals only whether this opaque proof binds the
+// exact assignment tuple and activation revision. It exposes no filesystem,
+// socket, peer, or raw authority metadata.
+func (proof AuthorityProof) MatchesPermitActivation(
+	slot uint32,
+	generation uint64,
+	activationRevision uint64,
+) bool {
+	return slot != 0 && generation != 0 && activationRevision != 0 &&
+		proof.binding.CapacitySlotID == slot &&
+		proof.binding.JobGeneration == generation &&
+		proof.binding.LedgerRevision == activationRevision
+}
+
 func DecodeAuthorityBinding(reader io.Reader) (AuthorityBinding, error) {
 	if reader == nil {
 		return AuthorityBinding{}, errors.New("hostruntime: authority identity unavailable")

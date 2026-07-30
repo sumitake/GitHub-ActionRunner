@@ -135,6 +135,22 @@ func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 			return unavailable(stderr, 1)
 		}
 		return 0
+	case "stage-synthetic-listener":
+		options, err := parseSyntheticListenerOptions(args[1:])
+		if err != nil {
+			return unavailable(stderr, 2)
+		}
+		if err := stageSyntheticListener(options, nil); err != nil {
+			return unavailable(stderr, 1)
+		}
+		ready, err := os.ReadFile(filepath.Join(options.outputDirectory, readyName))
+		if err != nil {
+			return unavailable(stderr, 1)
+		}
+		if _, err := stdout.Write(ready); err != nil {
+			return unavailable(stderr, 1)
+		}
+		return 0
 	case "stage-seeds":
 		options, err := parseStageSeedOptions(args[1:])
 		if err != nil {
@@ -243,13 +259,32 @@ func extractRunnerRuntimeWith(options extractOptions, hook extractHook, extracto
 	if err != nil {
 		return errors.New("runtime-lock: runner extraction failed")
 	}
+	if err := finalizeRunnerRuntime(
+		options.outputDirectory,
+		publishedRoot,
+		published,
+		options.evidenceGeneration,
+		hook,
+	); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
 
+func finalizeRunnerRuntime(
+	outputDirectory string,
+	publishedRoot string,
+	published seedarchive.VerifiedRunnerDirectory,
+	evidenceGeneration uint64,
+	hook extractHook,
+) error {
 	var manifest bytes.Buffer
 	if err := seedarchive.WriteRunnerManifest(&manifest, published); err != nil ||
 		shaHex(manifest.Bytes()) != published.ManifestDigest() {
 		return errors.New("runtime-lock: runner manifest generation failed")
 	}
-	if err := writeVerifiedFile(filepath.Join(options.outputDirectory, runnerManifestName), manifest.Bytes(), 0o444); err != nil {
+	if err := writeVerifiedFile(filepath.Join(outputDirectory, runnerManifestName), manifest.Bytes(), 0o444); err != nil {
 		return err
 	}
 
@@ -258,7 +293,7 @@ func extractRunnerRuntimeWith(options extractOptions, hook extractHook, extracto
 		shaHex(treeLock.Bytes()) != published.TreeLockDigest() {
 		return errors.New("runtime-lock: tree lock generation failed")
 	}
-	if err := writeVerifiedFile(filepath.Join(options.outputDirectory, treeLockName), treeLock.Bytes(), 0o444); err != nil {
+	if err := writeVerifiedFile(filepath.Join(outputDirectory, treeLockName), treeLock.Bytes(), 0o444); err != nil {
 		return err
 	}
 
@@ -273,42 +308,41 @@ func extractRunnerRuntimeWith(options extractOptions, hook extractHook, extracto
 	if _, err := runtimelock.Load(bytes.NewReader(lockDocument)); err != nil {
 		return errors.New("runtime-lock: runner lock readback failed")
 	}
-	if err := writeVerifiedFile(filepath.Join(options.outputDirectory, runtimeLockName), lockDocument, 0o444); err != nil {
+	if err := writeVerifiedFile(filepath.Join(outputDirectory, runtimeLockName), lockDocument, 0o444); err != nil {
 		return err
 	}
 
-	loadedManifest, err := seedarchive.LoadRunnerManifest(bytes.NewReader(manifest.Bytes()))
-	if err != nil {
-		return errors.New("runtime-lock: runner manifest readback failed")
-	}
-	finalPublished, err := seedarchive.VerifyRunnerDirectory(publishedRoot, loadedManifest, options.evidenceGeneration)
-	if err != nil ||
-		finalPublished.ManifestDigest() != published.ManifestDigest() ||
-		finalPublished.TreeLockDigest() != published.TreeLockDigest() {
-		return errors.New("runtime-lock: published runner changed")
-	}
 	if hook != nil {
 		if err := hook("before-ready"); err != nil {
 			return errors.New("runtime-lock: readiness hook failed")
 		}
+	}
+	loadedManifest, err := seedarchive.LoadRunnerManifest(bytes.NewReader(manifest.Bytes()))
+	if err != nil {
+		return errors.New("runtime-lock: runner manifest readback failed")
+	}
+	finalPublished, err := seedarchive.VerifyRunnerDirectory(publishedRoot, loadedManifest, evidenceGeneration)
+	if err != nil ||
+		finalPublished.ManifestDigest() != published.ManifestDigest() ||
+		finalPublished.TreeLockDigest() != published.TreeLockDigest() {
+		return errors.New("runtime-lock: published runner changed")
 	}
 	readyDocument, err := encodeCanonical(readiness{
 		SchemaVersion:      1,
 		RuntimeLockSHA256:  shaHex(lockDocument),
 		TreeLockSHA256:     published.TreeLockDigest(),
 		ManifestSHA256:     published.ManifestDigest(),
-		EvidenceGeneration: options.evidenceGeneration,
+		EvidenceGeneration: evidenceGeneration,
 	})
 	if err != nil {
 		return errors.New("runtime-lock: readiness encoding failed")
 	}
-	if err := writeVerifiedFile(filepath.Join(options.outputDirectory, readyName), readyDocument, 0o444); err != nil {
+	if err := writeVerifiedFile(filepath.Join(outputDirectory, readyName), readyDocument, 0o444); err != nil {
 		return err
 	}
-	if err := syncDirectory(options.outputDirectory); err != nil || syncDirectory(outputParent) != nil {
+	if err := syncDirectory(outputDirectory); err != nil || syncDirectory(filepath.Dir(outputDirectory)) != nil {
 		return errors.New("runtime-lock: publication sync failed")
 	}
-	committed = true
 	return nil
 }
 

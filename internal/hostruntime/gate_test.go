@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -134,6 +135,65 @@ func TestAuditHeldRunnerRejectsExtraProcessAndDestroysRunner(t *testing.T) {
 	}
 	if got := commands.commands[len(commands.commands)-1].argv; !slices.Contains(got, "rm") || !slices.Contains(got, "-f") {
 		t.Fatalf("failed held audit did not remove runner: %q", got)
+	}
+}
+
+func TestAuditHeldRunnerRejectsMemorySwapReadbackDrift(t *testing.T) {
+	cli, runner, commands := gateTestEngine(t,
+		Result{Stdout: namespaceJSON(11, 22)},
+		Result{Stdout: namespaceJSON(11, 22)},
+	)
+	if err := cli.HydrateSeeds(context.Background(), runner, nil); err != nil {
+		t.Fatalf("HydrateSeeds: %v", err)
+	}
+	if _, err := cli.ProbeRunnerNetworkNamespace(
+		context.Background(),
+		runner,
+		GateNetNSIDPreArm,
+	); err != nil {
+		t.Fatalf("pre-arm namespace: %v", err)
+	}
+	if err := cli.ArmRunner(context.Background(), runner); err != nil {
+		t.Fatalf("ArmRunner: %v", err)
+	}
+	if _, err := cli.ProbeRunnerNetworkNamespace(
+		context.Background(),
+		runner,
+		GateNetNSIDFinal,
+	); err != nil {
+		t.Fatalf("final namespace: %v", err)
+	}
+	record := cli.runners[runner.nonce]
+	const pid = int64(4242)
+	inspect := managedRunnerInspectJSON(runner.id, record.spec, pid)
+	want := `"MemorySwap":` +
+		strconv.FormatUint(record.spec.Limits.MemorySwapBytes, 10)
+	drifted := strings.Replace(
+		inspect,
+		want,
+		`"MemorySwap":`+
+			strconv.FormatUint(record.spec.Limits.MemorySwapBytes-1, 10),
+		1,
+	)
+	if drifted == inspect {
+		t.Fatal("runner MemorySwap fixture mutation did not match")
+	}
+	commands.results = append(commands.results,
+		Result{Stdout: []byte(managedAdapterInspectJSON(
+			record.adapter.id,
+			adapterSpecFromRecord(record),
+		))},
+		Result{Stdout: []byte(drifted)},
+		Result{},
+	)
+	if _, err := cli.AuditHeldRunner(
+		context.Background(),
+		runner,
+	); err == nil {
+		t.Fatal("AuditHeldRunner accepted MemorySwap readback drift")
+	}
+	if got := commands.commands[len(commands.commands)-1].argv; !slices.Contains(got, "rm") || !slices.Contains(got, "-f") {
+		t.Fatalf("failed MemorySwap audit did not remove runner: %q", got)
 	}
 }
 

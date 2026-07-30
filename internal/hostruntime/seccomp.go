@@ -2,6 +2,8 @@ package hostruntime
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -42,6 +44,28 @@ type seccompArg struct {
 	Value    uint64 `json:"value"`
 	ValueTwo uint64 `json:"valueTwo"`
 	Op       string `json:"op"`
+}
+
+// ValidateSeccompProfile applies the production seccomp parser to one bounded
+// immutable document and returns its exact raw SHA-256 digest. It is a
+// read-only parser surface: it neither reads a path nor claims that Docker or
+// the target kernel applied the profile.
+func ValidateSeccompProfile(
+	document []byte,
+	maxBytes int,
+) (string, error) {
+	if maxBytes <= 0 ||
+		len(document) == 0 ||
+		len(document) > maxBytes {
+		return "", errors.New("hostruntime: seccomp document invalid")
+	}
+	private := append([]byte(nil), document...)
+	defer zeroBytes(private)
+	if err := validateSeccompJSON(private); err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(private)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func validateSeccompJSON(data []byte) error {

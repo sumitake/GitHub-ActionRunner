@@ -2,11 +2,12 @@ package hostruntime
 
 import (
 	"errors"
+	"math"
 	"strings"
 	"testing"
 )
 
-const goldenPrivateOverlayRevision = "c88c1a5ad6755453ee879b17d25de286accb10c2d6d6f4096aa18ecedb9e7a14"
+const goldenPrivateOverlayRevision = "c1928601d1d138747f72b3c977c900906464f8514cb6df7901b3d3982c92cdc4"
 
 func TestPrivateOverlayGolden(t *testing.T) {
 	t.Parallel()
@@ -71,6 +72,32 @@ func TestPrivateOverlayRejectsNoncanonicalAndIncompleteInputs(t *testing.T) {
 		"nil resources": func(overlay *PrivateOverlay) {
 			overlay.Resources.Storage.Observations = nil
 		},
+		"missing workflow tool vector": func(overlay *PrivateOverlay) {
+			overlay.Resources.SlotResources.WorkflowToolProbe =
+				ResourceVectorOverlay{}
+		},
+		"adapter swap omitted": func(overlay *PrivateOverlay) {
+			overlay.Resources.ContainerSwap.Adapter.Configured = false
+		},
+		"broker swap omitted": func(overlay *PrivateOverlay) {
+			overlay.Resources.ContainerSwap.Broker.Configured = false
+		},
+		"helper swap omitted": func(overlay *PrivateOverlay) {
+			overlay.Resources.ContainerSwap.Helper.Configured = false
+		},
+		"verifier swap omitted": func(overlay *PrivateOverlay) {
+			overlay.Resources.ContainerSwap.Verifier.Configured = false
+		},
+		"workflow tool swap omitted": func(overlay *PrivateOverlay) {
+			overlay.Resources.ContainerSwap.WorkflowToolProbe.Configured =
+				false
+		},
+		"adapter swap total overflow": func(overlay *PrivateOverlay) {
+			overlay.Resources.ContainerSwap.Adapter.Bytes = math.MaxUint64
+		},
+		"runner swap total overflow": func(overlay *PrivateOverlay) {
+			overlay.Resources.RunnerSizing.SwapLimitBytes = math.MaxUint64
+		},
 	}
 	for name, mutate := range tests {
 		name, mutate := name, mutate
@@ -97,6 +124,18 @@ func TestParsePrivateOverlayRejectsUnknownWhitespaceAndNullSection(t *testing.T)
 		"trailing newline":   append(append([]byte(nil), encoded...), '\n'),
 		"unknown field": []byte(strings.TrimSuffix(string(encoded), "}") +
 			`,"unknown":true}`),
+		"unknown swap field": []byte(strings.Replace(
+			string(encoded),
+			`"adapter":{"configured":true`,
+			`"adapter":{"unknown":0,"configured":true`,
+			1,
+		)),
+		"malformed swap configured": []byte(strings.Replace(
+			string(encoded),
+			`"helper":{"configured":true`,
+			`"helper":{"configured":"true"`,
+			1,
+		)),
 		"null target": []byte(strings.Replace(
 			string(encoded),
 			`"target":{"os":`,
@@ -131,12 +170,13 @@ func goldenPrivateOverlay() PrivateOverlay {
 		Inodes:            16,
 	}
 	slot := SlotResourcesOverlay{
-		Runner:        vector,
-		Adapter:       vector,
-		Broker:        vector,
-		DialAuthority: vector,
-		Helper:        vector,
-		Verifier:      vector,
+		Runner:            vector,
+		Adapter:           vector,
+		Broker:            vector,
+		DialAuthority:     vector,
+		Helper:            vector,
+		Verifier:          vector,
+		WorkflowToolProbe: vector,
 	}
 	observations := make([]StorageObservationOverlay, 0, len(lifecycleFilesystemRoles))
 	requirements := make([]StorageRequirementOverlay, 0, len(lifecycleFilesystemRoles))
@@ -232,8 +272,30 @@ func goldenPrivateOverlay() PrivateOverlay {
 			ImmutableBuildMode: "attested-pull",
 		},
 		Resources: ResourceOverlay{
-			AdmissionCeiling:          vector,
-			SlotResources:             slot,
+			AdmissionCeiling: vector,
+			SlotResources:    slot,
+			ContainerSwap: ContainerSwapOverlay{
+				Adapter: SwapLimitOverlay{
+					Configured: true,
+					Bytes:      64,
+				},
+				Broker: SwapLimitOverlay{
+					Configured: true,
+					Bytes:      64,
+				},
+				Helper: SwapLimitOverlay{
+					Configured: true,
+					Bytes:      0,
+				},
+				Verifier: SwapLimitOverlay{
+					Configured: true,
+					Bytes:      0,
+				},
+				WorkflowToolProbe: SwapLimitOverlay{
+					Configured: true,
+					Bytes:      64,
+				},
+			},
 			MaxCapacity:               2,
 			MaxLiveReferences:         8,
 			MaxOfferLogicalBytes:      1024,

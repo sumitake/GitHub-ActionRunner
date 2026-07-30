@@ -17,6 +17,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/sumitake/portable-ghar/internal/task11synthetic"
 )
 
 const (
@@ -30,8 +32,9 @@ const (
 type Kind string
 
 const (
-	KindAction Kind = "action"
-	KindTool   Kind = "tool"
+	KindAction    Kind = "action"
+	KindTool      Kind = "tool"
+	KindSynthetic Kind = "synthetic"
 )
 
 // Manifest is a closed, deterministic seed manifest.
@@ -172,6 +175,11 @@ func validateManifest(manifest Manifest) error {
 	if manifest.SchemaVersion != 1 || len(manifest.Seeds) > maxSeeds {
 		return errors.New("archive: manifest version or seed count invalid")
 	}
+	for _, seed := range manifest.Seeds {
+		if seed.Kind == KindSynthetic && len(manifest.Seeds) != 1 {
+			return errors.New("archive: synthetic seed catalog invalid")
+		}
+	}
 	if !sort.SliceIsSorted(manifest.Seeds, func(i, j int) bool { return manifest.Seeds[i].ID < manifest.Seeds[j].ID }) {
 		return errors.New("archive: seeds are not sorted")
 	}
@@ -189,6 +197,12 @@ func validateManifest(manifest Manifest) error {
 			return errors.New("archive: seed id collision")
 		}
 		seenSeed[foldedID] = struct{}{}
+		if seed.Kind == KindSynthetic {
+			if err := validateSyntheticSeed(seed); err != nil {
+				return err
+			}
+			continue
+		}
 		repository, err := validateSource(seed)
 		if err != nil {
 			return err
@@ -240,6 +254,30 @@ func validateManifest(manifest Manifest) error {
 		if !licenseFound {
 			return errors.New("archive: license file is not manifest-bound")
 		}
+	}
+	return nil
+}
+
+func validateSyntheticSeed(seed Seed) error {
+	source := task11synthetic.SeedSourceBytes()
+	expected := File{
+		Path:   task11synthetic.SeedSourceRelativePath,
+		Target: task11synthetic.SeedTargetPath,
+		SHA256: task11synthetic.SeedSourceSHA256,
+		Size:   uint64(len(source)),
+		Mode:   0o644,
+	}
+	for index := range source {
+		source[index] = 0
+	}
+	if seed.ID != task11synthetic.SeedID ||
+		seed.Kind != KindSynthetic ||
+		seed.Source != "" ||
+		seed.Revision != "" ||
+		seed.License != (LicenseEvidence{}) ||
+		len(seed.Files) != 1 ||
+		seed.Files[0] != expected {
+		return errors.New("archive: synthetic seed identity invalid")
 	}
 	return nil
 }

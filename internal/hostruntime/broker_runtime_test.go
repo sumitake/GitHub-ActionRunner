@@ -11,7 +11,161 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/sumitake/portable-ghar/internal/linuxcap"
 )
+
+func helperNetAdminCapabilityWire() linuxcap.Wire {
+	return linuxcap.Wire{
+		Effective:   "0000000000001000",
+		Permitted:   "0000000000001000",
+		Inheritable: "0000000000000000",
+		Bounding:    "0000000000001000",
+		Ambient:     "0000000000000000",
+	}
+}
+
+func TestParsePolicyApplicationRequiresNetAdminOnlyCapabilityWire(t *testing.T) {
+	valid := policyApplicationWire{
+		Version:      2,
+		Digest:       strings.Repeat("a", 64),
+		IPv6Posture:  "deny-via-ip6tables",
+		Capabilities: helperNetAdminCapabilityWire(),
+	}
+	if _, err := parsePolicyApplication(
+		canonicalJSONLine(t, valid),
+	); err != nil {
+		t.Fatalf("parsePolicyApplication(valid): %v", err)
+	}
+	for name, mutate := range map[string]func(*policyApplicationWire){
+		"old version": func(wire *policyApplicationWire) {
+			wire.Version = 1
+		},
+		"missing capability": func(wire *policyApplicationWire) {
+			wire.Capabilities.Ambient = ""
+		},
+		"empty effective": func(wire *policyApplicationWire) {
+			wire.Capabilities.Effective = "0000000000000000"
+		},
+		"extra permitted": func(wire *policyApplicationWire) {
+			wire.Capabilities.Permitted = "0000000000001001"
+		},
+		"ambient nonzero": func(wire *policyApplicationWire) {
+			wire.Capabilities.Ambient = "0000000000001000"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := valid
+			mutate(&candidate)
+			if _, err := parsePolicyApplication(
+				canonicalJSONLine(t, candidate),
+			); err == nil {
+				t.Fatal("parsePolicyApplication accepted invalid capabilities")
+			}
+		})
+	}
+}
+
+func TestParseHeldSocketAuditRequiresEveryInternetSocketCountZero(t *testing.T) {
+	valid := heldSocketAuditWire{Version: 1}
+	if _, err := parseHeldSocketAudit(
+		canonicalJSONLine(t, valid),
+	); err != nil {
+		t.Fatalf("parseHeldSocketAudit(valid): %v", err)
+	}
+	for name, mutate := range map[string]func(*heldSocketAuditWire){
+		"old version": func(wire *heldSocketAuditWire) {
+			wire.Version = 2
+		},
+		"tcp4": func(wire *heldSocketAuditWire) {
+			wire.TCP4 = 1
+		},
+		"tcp6": func(wire *heldSocketAuditWire) {
+			wire.TCP6 = 1
+		},
+		"udp4": func(wire *heldSocketAuditWire) {
+			wire.UDP4 = 1
+		},
+		"udp6": func(wire *heldSocketAuditWire) {
+			wire.UDP6 = 1
+		},
+		"raw4": func(wire *heldSocketAuditWire) {
+			wire.Raw4 = 1
+		},
+		"raw6": func(wire *heldSocketAuditWire) {
+			wire.Raw6 = 1
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := valid
+			mutate(&candidate)
+			if _, err := parseHeldSocketAudit(
+				canonicalJSONLine(t, candidate),
+			); err == nil {
+				t.Fatal("parseHeldSocketAudit accepted nonzero socket count")
+			}
+		})
+	}
+}
+
+func TestAuthorityProofMatchesOnlyExactPermitActivation(t *testing.T) {
+	t.Parallel()
+
+	proof, err := NewAuthorityProof(AuthorityBinding{
+		Version:        1,
+		CapacitySlotID: 7,
+		JobGeneration:  19,
+		LedgerRevision: 23,
+		Directory: DirectoryIdentity{
+			Device: 11,
+			Inode:  12,
+			UID:    1001,
+			GID:    1001,
+			Mode:   0o700,
+		},
+		Socket: SocketIdentity{
+			Name:   dialAuthoritySocketName,
+			Device: 11,
+			Inode:  13,
+			UID:    1001,
+			GID:    1001,
+			Mode:   0o600,
+		},
+		Peer: ProcessIdentity{
+			PID:       71,
+			StartTime: 72,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewAuthorityProof: %v", err)
+	}
+	if !proof.MatchesPermitActivation(7, 19, 23) {
+		t.Fatal("exact permit activation did not match")
+	}
+	for _, candidate := range []struct {
+		slot       uint32
+		generation uint64
+		revision   uint64
+	}{
+		{slot: 0, generation: 19, revision: 23},
+		{slot: 7, generation: 0, revision: 23},
+		{slot: 7, generation: 19, revision: 0},
+		{slot: 8, generation: 19, revision: 23},
+		{slot: 7, generation: 20, revision: 23},
+		{slot: 7, generation: 19, revision: 24},
+	} {
+		if proof.MatchesPermitActivation(
+			candidate.slot,
+			candidate.generation,
+			candidate.revision,
+		) {
+			t.Fatalf("mismatched permit activation matched: %+v", candidate)
+		}
+	}
+	if (AuthorityProof{}).MatchesPermitActivation(7, 19, 23) {
+		t.Fatal("zero authority proof matched")
+	}
+}
 
 func validBrokerSpec(t *testing.T, adapter AdapterHandle, adapterSpec AdapterSpec, cfg DockerCLIConfig) BrokerSpec {
 	t.Helper()
@@ -42,6 +196,7 @@ func validBrokerSpec(t *testing.T, adapter AdapterHandle, adapterSpec AdapterSpe
 		Limits: BrokerLimits{
 			MilliCPU:        500,
 			MemoryBytes:     512 << 20,
+			MemorySwapBytes: 640 << 20,
 			PIDs:            64,
 			FileDescriptors: 512,
 			StateBytes:      32 << 20,
@@ -52,6 +207,7 @@ func validBrokerSpec(t *testing.T, adapter AdapterHandle, adapterSpec AdapterSpe
 		HelperLimits: OneShotLimits{
 			MilliCPU:        250,
 			MemoryBytes:     128 << 20,
+			MemorySwapBytes: 160 << 20,
 			PIDs:            16,
 			FileDescriptors: 64,
 		},
@@ -106,6 +262,7 @@ func TestCreateNetworkBrokerHeldUsesClosedArgvAndOpaqueHandle(t *testing.T) {
 	requireArgPair(t, argv, "--restart", "no")
 	requireArgPair(t, argv, "--user", spec.User)
 	requireArgPair(t, argv, "--memory", fmt.Sprint(spec.Limits.MemoryBytes))
+	requireArgPair(t, argv, "--memory-swap", fmt.Sprint(spec.Limits.MemorySwapBytes))
 	requireArgPair(t, argv, "--pids-limit", fmt.Sprint(spec.Limits.PIDs))
 	requireArgPair(t, argv, "--ulimit", "nofile=512:512")
 	requireArgPair(t, argv, "--mount", "type=bind,src="+spec.RelayParent+",dst="+brokerRelayMountDst)
@@ -311,10 +468,12 @@ func TestBrokerPolicyAuthorityReleaseAndAuditAreExactlyOrdered(t *testing.T) {
 		t.Fatalf("encodeBrokerReadiness: %v", err)
 	}
 	policyBytes := canonicalJSONLine(t, policyApplicationWire{
-		Version:     1,
-		Digest:      artifact.Digest(),
-		IPv6Posture: "deny-via-ip6tables",
+		Version:      2,
+		Digest:       artifact.Digest(),
+		IPv6Posture:  "deny-via-ip6tables",
+		Capabilities: helperNetAdminCapabilityWire(),
 	})
+	socketBytes := canonicalJSONLine(t, heldSocketAuditWire{Version: 1})
 	authorityBytes := canonicalJSONLine(t, authorityFilesystemWire{
 		Version:   1,
 		Directory: authorityBinding.Directory,
@@ -342,6 +501,9 @@ func TestBrokerPolicyAuthorityReleaseAndAuditAreExactlyOrdered(t *testing.T) {
 		{Stdout: authorityBytes},
 		{Stdout: slices.Clone(inspect)},
 		{Stdout: heldTop},
+		{Stdout: slices.Clone(inspect)},
+		{Stdout: heldTop},
+		{Stdout: socketBytes},
 		{Stdout: slices.Clone(inspect)},
 		{Stdout: heldTop},
 		{Stdout: readinessBytes},
@@ -375,6 +537,7 @@ func TestBrokerPolicyAuthorityReleaseAndAuditAreExactlyOrdered(t *testing.T) {
 	requireArgPair(t, helperArgv, "--cap-add", "NET_ADMIN")
 	requireArgPair(t, helperArgv, "--env", "XTABLES_LOCKFILE=/run/xtables.lock")
 	requireArgPair(t, helperArgv, "--tmpfs", "/run:rw,noexec,nosuid,nodev,size=65536,uid=0,gid=0,mode=0700")
+	requireArgPair(t, helperArgv, "--memory-swap", fmt.Sprint(spec.HelperLimits.MemorySwapBytes))
 	requireArgPair(t, helperArgv, "--log-driver", "none")
 	if countArg(helperArgv, "--env") != 1 {
 		t.Fatalf("policy helper env count = %d, want 1", countArg(helperArgv, "--env"))
@@ -394,6 +557,12 @@ func TestBrokerPolicyAuthorityReleaseAndAuditAreExactlyOrdered(t *testing.T) {
 	if !validBrokerPeerProof(peer, adapter, cli.issuer, adapterSpec) {
 		t.Fatal("ReleaseNetworkBroker returned an invalid peer proof")
 	}
+	if !isLowerHex64(peer.HeldSocketZeroDigest()) {
+		t.Fatalf(
+			"held socket zero digest=%q",
+			peer.HeldSocketZeroDigest(),
+		)
+	}
 	audit, err := cli.AuditNetworkBroker(context.Background(), handle)
 	if err != nil {
 		t.Fatalf("AuditNetworkBroker: %v", err)
@@ -411,11 +580,16 @@ func TestBrokerPolicyAuthorityReleaseAndAuditAreExactlyOrdered(t *testing.T) {
 		t.Fatalf("commands executed = %d, scripted = %d", len(commands.commands), len(commands.results))
 	}
 	if got := commands.commands[16].argv; !slices.Equal(got, []string{
+		cfg.DockerPath, "exec", brokerID, brokerEntrypoint, "socket-audit",
+	}) {
+		t.Fatalf("socket audit argv = %q", got)
+	}
+	if got := commands.commands[19].argv; !slices.Equal(got, []string{
 		cfg.DockerPath, "exec", "-i", brokerID, brokerEntrypoint, "release",
 	}) {
 		t.Fatalf("release argv = %q", got)
 	}
-	releaseInput := commands.commands[16].stdin
+	releaseInput := commands.commands[19].stdin
 	if len(releaseInput) <= brokerReleasePrefix+releaseTokenBytes ||
 		!strings.HasPrefix(string(releaseInput[:8]), "PGHBRREL") {
 		t.Fatalf("release frame invalid: length=%d", len(releaseInput))
@@ -546,6 +720,7 @@ func TestCreateNetworkBrokerHeldRejectsEveryReadbackDriftAndCleans(t *testing.T)
 		{"network", `"NetworkMode":"pghar-egress"`, `"NetworkMode":"bridge"`},
 		{"cap add", `"CapAdd":[]`, `"CapAdd":["NET_ADMIN"]`},
 		{"readonly root", `"ReadonlyRootfs":true`, `"ReadonlyRootfs":false`},
+		{"memory swap", `"MemorySwap":671088640`, `"MemorySwap":671088639`},
 		{"restart", `"Name":"no"`, `"Name":"always"`},
 		{"relay writable", `"Destination":"/run/portable-ghar/relay","Mode":"","Propagation":"rprivate","RW":true`, `"Destination":"/run/portable-ghar/relay","Mode":"ro","Propagation":"rprivate","RW":false`},
 		{"authority readonly", `"Destination":"/run/portable-ghar/authority","Mode":"ro","Propagation":"rprivate","RW":false`, `"Destination":"/run/portable-ghar/authority","Mode":"","Propagation":"rprivate","RW":true`},
@@ -692,6 +867,7 @@ func managedBrokerInspectJSON(
 		Limits: BrokerLimits{
 			MilliCPU:        500,
 			MemoryBytes:     512 << 20,
+			MemorySwapBytes: 640 << 20,
 			PIDs:            64,
 			FileDescriptors: 512,
 			StateBytes:      32 << 20,
@@ -735,6 +911,7 @@ func managedBrokerInspectJSON(
 			"UTSMode":         "",
 			"Tmpfs":           brokerTmpfs(spec),
 			"Memory":          int64(spec.Limits.MemoryBytes),
+			"MemorySwap":      int64(spec.Limits.MemorySwapBytes),
 			"NanoCpus":        int64(spec.Limits.MilliCPU) * 1_000_000,
 			"PidsLimit":       int64(spec.Limits.PIDs),
 			"Ulimits": []map[string]any{{
