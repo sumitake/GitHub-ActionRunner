@@ -535,6 +535,7 @@ func TestBrokerPolicyAuthorityReleaseAndAuditAreExactlyOrdered(t *testing.T) {
 	requireArgPair(t, helperArgv, "--network", "container:"+brokerID)
 	requireArgPair(t, helperArgv, "--cap-drop", "ALL")
 	requireArgPair(t, helperArgv, "--cap-add", "NET_ADMIN")
+	requireArgPair(t, helperArgv, "--user", "0:0")
 	requireArgPair(t, helperArgv, "--env", "XTABLES_LOCKFILE=/run/xtables.lock")
 	requireArgPair(t, helperArgv, "--tmpfs", "/run:rw,noexec,nosuid,nodev,size=65536,uid=0,gid=0,mode=0700")
 	requireArgPair(t, helperArgv, "--memory-swap", fmt.Sprint(spec.HelperLimits.MemorySwapBytes))

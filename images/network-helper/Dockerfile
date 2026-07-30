@@ -33,5 +33,6 @@ COPY --from=context-audit --chown=0:0 --chmod=0555 /context/build/portable-ghar-
 COPY --from=context-audit --chown=0:0 --chmod=0444 /context/build/legacy.manifest.json /usr/share/portable-ghar/legacy.manifest.json
 COPY --from=context-audit --chown=0:0 --chmod=0444 /context/build/packages.lock.json /usr/share/portable-ghar/packages.lock.json
 COPY --from=context-audit --chown=0:0 --chmod=0444 /context/build/packages.spdx.json /usr/share/portable-ghar/packages.spdx.json
+USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/portable-ghar-network-helper"]
 CMD ["apply"]
