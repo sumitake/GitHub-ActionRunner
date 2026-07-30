@@ -848,6 +848,45 @@ def apply_candidate_overlay(clone, runtime, candidate):
 
 
 def validate_dockerfiles(clone, runtime):
+    try:
+        snapshot_check = subprocess.run(
+            [
+                sys.executable,
+                "scripts/ci/check_runner_debian_snapshot.py",
+            ],
+            cwd=clone,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        reject("runner Debian snapshot contract")
+    if (
+        snapshot_check.returncode != 0
+        or snapshot_check.stdout
+        != b"check-runner-debian-snapshot: verified\n"
+        or snapshot_check.stderr
+    ):
+        reject("runner Debian snapshot contract")
+
+    snapshot_lock = read_json(
+        clone / "images/runner/debian-snapshot.lock.json"
+    )
+    try:
+        expected_sources = [
+            (
+                "deb [check-valid-until=no] "
+                "https://snapshot.debian.org/archive/"
+                f"{row['archive']}/{snapshot_lock['snapshot']} "
+                f"{row['suite']} {row['component']}"
+            )
+            for row in snapshot_lock["sources"]
+        ]
+    except (KeyError, TypeError):
+        reject("runner Debian snapshot contract")
+
     acquirers = []
     for entry in runtime["images"]:
         dockerfile = clone / entry["dockerfile"]
@@ -879,8 +918,8 @@ def validate_dockerfiles(clone, runtime):
         if "apt-get" in text:
             acquirers.append(entry["name"])
             if (
-                "snapshot.debian.org/archive/debian/20250101T000000Z" not in text
-                or "ARG SOURCE_DATE_EPOCH" not in text
+                "ARG SOURCE_DATE_EPOCH" not in text
+                or any(source not in text for source in expected_sources)
             ):
                 reject("package snapshot")
     if acquirers != ["runner"]:

@@ -420,6 +420,133 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
   somewhere before image validation. Retain the existing image-ID comparison
   and all ignored-context boundaries.
 
+### 9. Base-image and package-snapshot coherence
+
+The exact `ca7afeaa648102b6567fccff213fa541bc50fa12` hosted build proved
+that the locked CA bootstrap works: both Docker jobs completed HTTPS
+`apt-get update` against `snapshot.debian.org`. They then failed identically
+before package installation because the immutable runner base contains
+`perl-base 5.36.0-7+deb12u3`, while the independently pinned
+`20250101T000000Z` archive exposes `perl 5.36.0-7+deb12u1` with an exact
+dependency on the older `perl-base`.
+
+The base is the amd64 platform manifest
+`debian:bookworm-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4`.
+Its immutable OCI config says it was created at
+`2026-06-23T00:00:00Z` from source epoch `1782172800`. The root filesystem's
+Debian source metadata records the matching immutable source universe:
+
+- `debian/20260623T000000Z`: `bookworm` and `bookworm-updates`, component
+  `main`;
+- `debian-security/20260623T000000Z`: `bookworm-security`, component `main`.
+
+The archived `bookworm` index at that exact timestamp contains
+`perl 5.36.0-7+deb12u3`, matching the base's installed `perl-base`. All three
+recorded Release files and package indexes were positively fetched before
+settling this design. The defect is therefore not a missing package or TLS
+problem; it is two individually immutable inputs locked to different package
+universes.
+
+Treat the runner base and its apt repositories as one atomic provenance tuple:
+
+- Add a source-controlled `images/runner/debian-snapshot.lock.json` with a
+  closed schema. Require exact top-level and nested key sets with no unknown,
+  missing, defaulted, or type-coerced values. Bind:
+  - schema version `1` and architecture enum `amd64`;
+  - exact digest-pinned base reference, immutable OCI config digest, rootfs
+    layer digest, creation time, and numeric source epoch;
+  - one shared `20260623T000000Z` source timestamp whose UTC date and epoch
+    equal the base provenance;
+  - an ordered, fixed-length three-entry source array: `debian/bookworm`,
+    `debian/bookworm-updates`, and
+    `debian-security/bookworm-security`, each with component `main`, exact
+    HTTPS archive identity, signed `InRelease` SHA-256, and the referenced
+    `main/binary-amd64/Packages.xz` byte length and SHA-256;
+  - one ordered eight-entry direct-package table whose single `name` and
+    `version` values generate both every apt `name=version` argument and the
+    same eight post-install anchors; and
+  - one additional-anchor table containing only `perl` and `perl-base`, whose
+    required exact equal version closes the observed dependency edge.
+  Reject any source reorder, omission, addition, alternate timestamp,
+  non-HTTPS archive, extra component, wrong architecture, mismatched base
+  epoch/date, mixed source timestamps, package reorder, duplicate package, or
+  unknown field.
+- Admit exactly that tracked lock through the runner's deny-all
+  `.dockerignore` and context inventory. Because the tracked lock itself is
+  already inside the runner context, unlike the separately produced CA
+  bundle, Task 5 must not copy or regenerate it. Bind the context audit to the
+  whole lock-file digest with a source-controlled literal. A source contract
+  outside Docker independently hashes the tracked file and requires that
+  literal to match, then the context audit hashes the same admitted bytes.
+  Mutating only the lock, only the Dockerfile literal, or an untracked context
+  replacement therefore fails before package acquisition.
+- Keep each runner `FROM` reference byte-equal to the lock's base reference.
+  Replace the unrelated 2025 snapshot with the lock's exact ordered three
+  HTTPS entries. Preserve `check-valid-until=no`, command-scoped CA/peer/host
+  verification, and the fixed package names. Install all eight direct
+  packages as exact `name=version` arguments derived from the lock. Do not add
+  `--allow-downgrades`, apt pin priorities, version wildcards, HTTP, moving
+  mirrors, or a mutable "latest" timestamp.
+- Immediately after `apt-get update` and before installation, require exactly
+  three apt-list `InRelease` files. Match each suite to its one file, verify
+  its SHA-256 against the lock, and require its signed SHA-256 table to contain
+  exactly the locked byte length and digest for
+  `main/binary-amd64/Packages.xz`. Apt's normal signature verification then
+  authenticates the exact index content that the lock names; a timestamp path
+  alone is not treated as a content pin.
+- Immediately after installation, generate a canonical sorted
+  `name<TAB>version` record for the eight direct-package entries plus the two
+  additional anchors with `dpkg-query` and compare it byte-for-byte to the
+  source-controlled expected values derived from those same lock entries. The
+  schema and validator forbid a second overlapping version list: mutating a
+  direct install version necessarily changes its anchor expectation, while
+  `perl` and `perl-base` must remain equal. Persist that verified record and the
+  audited lock read-only under `/usr/share/portable-ghar/`. Also persist a
+  sorted full `dpkg-query` inventory for auditability. The base manifest pins
+  apt/dpkg, the authenticated `InRelease` files pin every package-index entry,
+  exact direct versions constrain the requested roots, the anchor comparison
+  closes the observed `perl`/`perl-base` edge, and duplicated clean image IDs
+  cover the resulting full transitive filesystem. No one signal is presented
+  as the dependency-closure proof by itself.
+- Add one fail-closed source validator for this tuple and call it from the
+  authoritative source gate before Docker. It must parse the lock once and
+  derive every expected consumer: both runner `FROM` lines, the exact three
+  source lines and no other Debian source, the `InRelease`/Packages evidence,
+  exact install arguments, post-install anchors, context-audit lock digest,
+  `.dockerignore` admission, release-rehearsal validation, and README refresh
+  contract. Mutation tests must independently change each tuple member and
+  prove rejection, including the known-bad 2026 base plus 2025 archive,
+  missing/reordered security or updates, mixed timestamps, an added component,
+  one stale `FROM`, one stale package version, one stale audit digest, and an
+  unknown JSON key. Package mutations must cover an install-only or
+  anchor-only representation attempt and each unequal direction of the
+  `perl`/`perl-base` pair.
+- Extend release rehearsal to invoke the same closed source validator inside
+  the clean clone before Docker. Its additional Dockerfile inventory check
+  reads the tracked lock and reconstructs the exact expected source set; it
+  contains no literal snapshot timestamp of its own.
+- Keep the hosted duplicated Docker build as the positive dependency-closure
+  gate. Static equality and content pins prove that the declared tuple is
+  used. The Linux build must additionally pass the signed-index checks, exact
+  package install, post-install anchor comparison, full inventory creation,
+  and both clean exports with the same image ID and normalized config epoch.
+- Document the refresh rule: a future base-image update must atomically
+  rederive the source timestamp and source set from that exact platform
+  manifest/rootfs metadata; fetch and record the signed-index and package-index
+  evidence; resolve the exact direct and anchor versions; refresh the lock,
+  Dockerfile consumers, audit digest, validators, and docs in one PR; and pass
+  both hosted builds before merge. An automated runner-image rebuild may
+  perform this governed refresh, but it may never merge only the base digest,
+  only an apt timestamp, or any partial consumer update.
+
+Do not reuse the Task 6 legacy-helper package lock for this purpose. It is an
+eight-package `iptables` rootfs closure, not the Actions runner's package
+closure. Converting the runner to a new offline rootfs would be a legitimate
+future hardening project, but it is a materially larger packaging and SBOM
+change than repairing the already-declared snapshot-based runner design.
+Likewise, forced downgrades or a hand-picked newer archive date would make the
+current build pass without establishing a durable relation to the pinned base.
+
 ## RED and GREEN verification
 
 1. Add focused tests for:
@@ -449,7 +576,17 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
      matching full-line legacy-layout ordering;
    - exact locked-CA path/digest admission, Task 6-before-Task 5 ordering,
      runner-context checksum verification, explicit HTTPS peer/host
-     verification for both apt operations, and final bootstrap-file absence.
+     verification for both apt operations, and final bootstrap-file absence;
+   - the closed base/snapshot lock schema, exact base reference and ordered
+     three-source equality, signed-index/package-index content evidence,
+     exact install versions and post-install `perl`/`perl-base` anchors,
+     context-audit lock digest, rejection of every one-sided tuple mutation,
+     and release-validator derivation from the tracked lock rather than a
+     stale timestamp literal;
+   - fail-closed behavior of the live post-update/pre-install index gate:
+     mismatched `InRelease` bytes, other than exactly three suite files, or a
+     signed table missing the locked Packages length/digest must abort before
+     an install command can run.
 2. Observe the focused tests fail for the intended reason before production
    edits.
 3. Implement the minimum changes, run focused tests, `go test ./...`,
@@ -568,6 +705,50 @@ path could pass the preceding exact equality test is not possible under
 `pathlib.Path` equality, but the resolved argument removes that ambiguity from
 the evidence surface.
 
+The package-coherence design review covered the exact 41,749-byte plan
+artifact with SHA-256
+`76554f80eddc0227ef60ccad8e04f5eb49efe6d10e57e4cc26fdd4ce80e8fb72`
+(session `019fb438-f9d8-79e1-a8a4-2b54fa19a335`, request
+`42441661-b330-47f9-9d37-6e2386ce5c5e`). Its schema-constrained verdict was
+`REVISE`. The material findings integrated above are content-pinned signed
+indexes, exact direct package versions, post-install `perl`/`perl-base`
+anchors, strict no-default JSON parsing, a shared source timestamp and fixed
+suite order, a single mutation-tested source validator, and an atomic
+all-consumer refresh rule.
+
+Two proposed details are narrowed rather than copied literally. Task 5 need
+not stage the package lock: unlike the generated CA bundle, the tracked
+package lock is already a source-controlled member of the runner build
+context. Independent source hashing plus the context-audit digest closes the
+same authority boundary without creating a second copy. A predeclared list of
+every transitive package is also unnecessary once the exact signed
+`InRelease` and referenced `Packages.xz` content are pinned, the direct roots
+are exact-versioned, the observed exact-version dependency edge is asserted,
+and the complete resulting filesystem must reproduce byte-for-byte. The full
+installed inventory is nevertheless retained as image evidence.
+
+The confirm-only review of the exact revised 46,792-byte plan artifact with
+SHA-256
+`7b59276eab0a99cf88d5a4e332e7cff3e4fe365dc9304ab84e8a0b0a99728b19`
+(session `019fb43d-322a-7cf1-8ab2-a6c7e55e2509`, request
+`c1b012e3-e744-4ec7-8b5b-075f15395bd6`) remained `REVISE`. Its three
+load-bearing refinements are now explicit: the eight direct versions are one
+source for both install and post-install comparison; the live signed-index
+gate receives behavioral fail-before-install tests, not only static string
+checks; and reproducible image IDs cannot substitute for any package
+coherence signal.
+
+The final confirm-only review covered the exact 48,402-byte plan artifact with
+SHA-256
+`271025faab3d1fab49c3b4dc11618c563e2126da57d3d46f2ad291098f601ddf`
+(session `019fb441-cf48-7693-9662-0b5b36521330`, request
+`073bb8d1-2607-4bea-ae03-2523b0c7f2a8`). Its schema-constrained verdict was
+`PROCEED` with no remaining material gap. It explicitly confirmed the
+single-source package versions, behaviorally tested pre-install signed-index
+gate, and prohibition on substituting equal image IDs for any missing
+coherence signal. Only that structured result counts; unstructured model
+scratch text is not review evidence.
+
 ## Stop conditions
 
 - Stop if the framing repair needs to weaken byte/OOB/truncation/EOF checks.
@@ -577,6 +758,14 @@ the evidence surface.
   finding tuple.
 - Stop if the package bootstrap requires HTTP, disabled TLS verification,
   mutable host trust, or any CA path not bound by the tracked lock.
+- Stop if the package repair changes only the base or only the archive, uses a
+  snapshot not derived from the exact base provenance, forces package
+  downgrades, or claims dependency closure without a clean hosted Docker
+  build.
+- Stop if package installation can run without first passing the exact
+  signed-index/content gate, if direct packages are not exact-versioned, or if
+  the post-install anchor comparison is missing, skipped, or nonfatal—even
+  when duplicated clean image IDs still match.
 - After the verified, reviewed Phase 2 source PR merges, report the exact PR
   and merge commit plus deferred operational gates, then pause.
 

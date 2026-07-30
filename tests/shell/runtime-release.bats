@@ -850,6 +850,18 @@ import sys
 root = pathlib.Path(sys.argv[1])
 manifest = json.loads(pathlib.Path(sys.argv[2]).read_text())
 images = manifest["runtime"]["images"]
+snapshot_lock = json.loads(
+    (root / "images/runner/debian-snapshot.lock.json").read_text()
+)
+expected_sources = [
+    (
+        "deb [check-valid-until=no] "
+        "https://snapshot.debian.org/archive/"
+        f"{row['archive']}/{snapshot_lock['snapshot']} "
+        f"{row['suite']} {row['component']}"
+    )
+    for row in snapshot_lock["sources"]
+]
 assert len(images) == 6
 acquirers = []
 for entry in images:
@@ -863,11 +875,12 @@ for entry in images:
     assert "security.debian.org" not in text
     if "apt-get" in text:
         acquirers.append(entry["name"])
-        assert "snapshot.debian.org/archive/debian/20250101T000000Z" in text
+        assert all(source in text for source in expected_sources)
         assert "ARG SOURCE_DATE_EPOCH" in text
 assert acquirers == ["runner"]
 PY
   [ "$status" -eq 0 ]
+  grep -F 'scripts/ci/check_runner_debian_snapshot.py' "$REHEARSE"
 }
 
 @test "rehearsal rejects malformed arguments and an existing output before Docker" {
