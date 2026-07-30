@@ -8,6 +8,7 @@ setup() {
 }
 
 teardown() {
+  chmod -R u+w "$WORK" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
 
@@ -43,6 +44,89 @@ assert_no_transaction() {
   [ ! -e "$repository/images/runner/build" ]
   [ ! -e "$repository/images/network-adapter/build" ]
   [ ! -e "$repository/images/.task5-prepare.lock" ]
+}
+
+mode_of() {
+  if stat -c '%a' "$1" >/dev/null 2>&1; then
+    stat -c '%a' "$1"
+  else
+    stat -f '%OLp' "$1"
+  fi
+}
+
+make_offline_preparation_fixture() {
+  make_minimal_repository
+  repository="$(cd -P "$repository" && pwd -P)"
+  fake_bin="$WORK/fake-bin"
+  mkdir -p "$fake_bin"
+
+  cat >"$fake_bin/go" <<'EOF'
+#!/bin/sh
+set -eu
+output=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    output=$2
+    shift 2
+  else
+    shift
+  fi
+done
+[ -n "$output" ]
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$output"
+chmod 0555 "$output"
+EOF
+  chmod 0755 "$fake_bin/go"
+
+  cat >"$repository/scripts/fetch-runner.sh" <<'EOF'
+#!/bin/sh
+set -eu
+build=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  --build-dir)
+    build=$2
+    ;;
+  esac
+  shift 2
+done
+[ -n "$build" ]
+output="$build/runner-runtime"
+mkdir -p "$output/runner/bin"
+printf '%s\n' runner >"$output/runner/bin/Runner.Listener"
+chmod 0700 "$output/runner"
+chmod 0555 "$output/runner/bin" "$output/runner/bin/Runner.Listener"
+for name in runner.tree-manifest.json runner.tree-lock runner.runtime-lock.json READY; do
+  printf '%s\n' "$name" >"$output/$name"
+  chmod 0444 "$output/$name"
+done
+EOF
+  chmod 0755 "$repository/scripts/fetch-runner.sh"
+
+  cat >"$repository/scripts/stage-action-tool-archive.sh" <<'EOF'
+#!/bin/sh
+set -eu
+output=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  --output-dir)
+    output=$2
+    ;;
+  esac
+  shift 2
+done
+[ -n "$output" ]
+mkdir -p "$output/seed-cache/tool"
+printf '%s\n' seed >"$output/seed-cache/tool/payload"
+chmod 0700 "$output/seed-cache"
+chmod 0555 "$output/seed-cache/tool"
+chmod 0444 "$output/seed-cache/tool/payload"
+for name in seed-cache.manifest.json seed-cache.tree-lock READY; do
+  printf '%s\n' "$name" >"$output/$name"
+  chmod 0444 "$output/$name"
+done
+EOF
+  chmod 0755 "$repository/scripts/stage-action-tool-archive.sh"
 }
 
 @test "prepare-task5-images.sh exists, is executable, and parses as POSIX shell" {
@@ -126,6 +210,21 @@ assert_no_transaction() {
   ! grep -F '2.336.0' "$SCRIPT"
   ! grep -F '2.336.0' "$REPO_ROOT/images/runner/Dockerfile"
   grep -F 'runner-download-spec' "$SCRIPT"
+}
+
+@test "prepared runner and seed contexts preserve verified object modes" {
+  make_offline_preparation_fixture
+
+  run env PATH="$fake_bin:$PATH" \
+    "$repository/scripts/prepare-task5-images.sh" \
+    --generation 1 \
+    --ca-bundle "$repository/images/trust/build/ca-bundle.pem"
+  [ "$status" -eq 0 ]
+
+  [ "$(mode_of "$repository/images/runner/build/runner/bin")" = 555 ]
+  [ "$(mode_of "$repository/images/runner/build/runner/bin/Runner.Listener")" = 555 ]
+  [ "$(mode_of "$repository/images/runner/build/seed-cache/tool")" = 555 ]
+  [ "$(mode_of "$repository/images/runner/build/seed-cache/tool/payload")" = 444 ]
 }
 
 @test "both Docker contexts deny all by default and audit the effective context" {

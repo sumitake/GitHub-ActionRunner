@@ -270,12 +270,12 @@ done
 chmod 555 "$runner_stage/portable-ghar-runner-gate" \
   "$adapter_stage/portable-ghar-network-adapter" || die
 
-cp -R "$runtime_output/runner" "$runner_stage/runner" || die
+cp -Rp "$runtime_output/runner" "$runner_stage/runner" || die
 for name in runner.tree-manifest.json runner.tree-lock runner.runtime-lock.json; do
   cp -p "$runtime_output/$name" "$runner_stage/$name" || die
 done
 cp -p "$runtime_output/READY" "$runner_stage/runner.READY" || die
-cp -R "$seed_output/seed-cache" "$runner_stage/seed-cache" || die
+cp -Rp "$seed_output/seed-cache" "$runner_stage/seed-cache" || die
 for name in seed-cache.manifest.json seed-cache.tree-lock; do
   cp -p "$seed_output/$name" "$runner_stage/$name" || die
 done
