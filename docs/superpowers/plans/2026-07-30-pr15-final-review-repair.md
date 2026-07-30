@@ -264,7 +264,11 @@ GOTOOLCHAIN=go1.26.5 go test -race ./internal/hostruntime -run 'DockerCLI|Create
 
 **Files:**
 
-- Modify `cmd/portable-ghar-task11-listener/core.go` and tests.
+- Modify `cmd/portable-ghar-task11-listener/core.go`.
+- Modify `cmd/portable-ghar-task11-listener/main.go`.
+- Modify `cmd/portable-ghar-task11-listener/proxy.go`.
+- Modify `cmd/portable-ghar-task11-listener/main_test.go`.
+- Modify `cmd/portable-ghar-task11-listener/proxy_test.go`.
 
 **RED tests:**
 
@@ -274,20 +278,44 @@ GOTOOLCHAIN=go1.26.5 go test -race ./internal/hostruntime -run 'DockerCLI|Create
    their applicable bound and honor parent cancellation.
 3. Exactly `MaximumWireBytes` decoded response bytes may succeed;
    `MaximumWireBytes+1` fails without canonical-success parsing.
-4. Redirects are disabled, and 1xx/trailer behavior cannot create an
-   unbounded exchange.
+4. Redirects, non-HTTP/1.1 final responses, content encoding, declared or
+   delivered trailers, content-length mismatch, partial framing, and 1xx
+   behavior cannot create an unbounded or accepted exchange.
 5. Cancellation or overflow cannot emit the terminal success frame.
+6. The exact loopback relay/CONNECT/TLS happy path remains stable under the
+   race detector and repeated execution. Relay-side `ECONNRESET`, `EPIPE`, or
+   closed-connection errors are benign only after the exact CONNECT request
+   was captured and the client exchange already reached its terminal result;
+   they never mask a CONNECT-phase failure.
 
 **GREEN implementation:**
 
-- Pass the caller's bounded context into `exchangeHTTPS`; remove
-  `context.Background()` from the request path.
-- Require a fixed enclosing deadline and set connection/TLS deadlines from
-  the smaller remaining bound.
-- Use `io.LimitReader(MaximumWireBytes+1)` on the decoded body, reject
-  overflow, and bind digest/status/TLS only after complete in-bound EOF.
-- Use an HTTP client/transport with redirects disabled and explicit response-
-  header/TLS bounds.
+- Keep the existing simple one-connection state machine. `main` creates a
+  signal-cancelable parent; `run` wraps only the `run` action in one fixed
+  30-second source-level protocol timeout; `runListener` passes that exact
+  bounded context into `exchangeHTTPS`. No environment, overlay, host, or
+  operator sizing field selects or extends this timeout.
+- Before any network I/O, require a non-nil caller context with a future
+  deadline. After the exact `tcp4` loopback dial, bind the connection to that
+  enclosing deadline and close it on caller cancellation. Never clear or
+  extend the deadline.
+- Preserve the exact manual CONNECT request/response bytes, normal TLS
+  verification, exact leaf certificate/SPKI digest binding, and HTTP/1.1-only
+  negotiation before sending the GET.
+- For only the already-authenticated tunnel, use one fresh, non-reusable HTTP
+  transport/client whose only TLS dial callback can return that exact
+  connection once. Its ordinary dial path always rejects, proxy discovery is
+  absent, redirects/compression/keep-alives/HTTP2 are disabled, response
+  headers have a fixed 32-KiB source bound, and the header timeout is clamped
+  to the positive enclosing time remaining.
+- Use `io.LimitReader(MaximumWireBytes+1)` on the decoded body, reject a copied
+  count above `MaximumWireBytes` before digest acceptance, require clean EOF
+  and exact nonnegative content length, reject trailers both before and after
+  the read, and bind digest/status/TLS only after the complete in-bound
+  response is closed successfully.
+- Keep every returned error opaque. Do not add a generic transport framework,
+  timeout configuration surface, retry, connection pool, alternate proxy
+  mode, or direct-network fallback.
 
 **Focused verification:**
 

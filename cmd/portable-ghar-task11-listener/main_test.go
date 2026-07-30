@@ -9,6 +9,7 @@ import (
 	"net"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/sumitake/portable-ghar/internal/runtimeenv"
 	"github.com/sumitake/portable-ghar/internal/task11synthetic"
@@ -52,7 +53,12 @@ func TestRunAcceptsOnlyVersionOrRun(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			var output bytes.Buffer
-			status := run(test.args, &output, listenerRuntime{})
+			status := run(
+				context.Background(),
+				test.args,
+				&output,
+				listenerRuntime{},
+			)
 			if status != test.status || output.String() != test.output {
 				t.Fatalf(
 					"run(%v) = status %d output %q, want %d %q",
@@ -104,7 +110,12 @@ func TestRunNormalConsumesExactEnvironmentAndEmitsBoundStream(t *testing.T) {
 		},
 	}
 	var output bytes.Buffer
-	if status := run([]string{"run"}, &output, runtime); status != 0 {
+	if status := run(
+		context.Background(),
+		[]string{"run"},
+		&output,
+		runtime,
+	); status != 0 {
 		t.Fatalf("run status = %d, output = %q", status, output.Bytes())
 	}
 	if environment.hasJIT() ||
@@ -185,6 +196,79 @@ func TestRunNormalConsumesExactEnvironmentAndEmitsBoundStream(t *testing.T) {
 	}
 }
 
+func TestRunBindsHTTPSExchangeToFixedProtocolDeadline(t *testing.T) {
+	t.Parallel()
+
+	input, document := listenerInputForTest(
+		t,
+		task11synthetic.ScenarioOneJob,
+	)
+	environment := newFakeListenerEnvironment(document)
+	runtime := validListenerRuntimeForTest(
+		t,
+		input,
+		environment,
+		newFakeListenerObserver(),
+	)
+	runtime.exchangeHTTPS = func(
+		ctx context.Context,
+		_ task11synthetic.Sentinel,
+	) (string, error) {
+		deadline, ok := ctx.Deadline()
+		remaining := time.Until(deadline)
+		if !ok ||
+			remaining <= 0 ||
+			remaining > listenerProtocolTimeout {
+			t.Fatalf(
+				"exchange context deadline ok=%t remaining=%s",
+				ok,
+				remaining,
+			)
+		}
+		return input.Sentinel.ResponseBodyDigest, nil
+	}
+	var output bytes.Buffer
+	if status := run(
+		context.Background(),
+		[]string{"run"},
+		&output,
+		runtime,
+	); status != 0 {
+		t.Fatalf("run status = %d, output = %q", status, output.Bytes())
+	}
+}
+
+func TestRunCancellationCannotMintTerminalEvidence(t *testing.T) {
+	t.Parallel()
+
+	input, document := listenerInputForTest(
+		t,
+		task11synthetic.ScenarioOneJob,
+	)
+	environment := newFakeListenerEnvironment(document)
+	runtime := validListenerRuntimeForTest(
+		t,
+		input,
+		environment,
+		newFakeListenerObserver(),
+	)
+	parent, cancel := context.WithCancel(context.Background())
+	runtime.exchangeHTTPS = func(
+		context.Context,
+		task11synthetic.Sentinel,
+	) (string, error) {
+		cancel()
+		return input.Sentinel.ResponseBodyDigest, nil
+	}
+	var output bytes.Buffer
+	if status := run(parent, []string{"run"}, &output, runtime); status != 1 {
+		t.Fatalf("run status = %d, want 1; output=%q", status, output.Bytes())
+	}
+	if lines := bytes.Count(output.Bytes(), []byte{'\n'}); lines != 1 {
+		t.Fatalf("cancellation minted terminal evidence: %q", output.Bytes())
+	}
+}
+
 func TestRunFaultScenariosEmitOnlyArmedBoundary(t *testing.T) {
 	t.Parallel()
 
@@ -260,7 +344,12 @@ func TestRunFaultScenariosEmitOnlyArmedBoundary(t *testing.T) {
 				},
 			}
 			var output bytes.Buffer
-			status := run([]string{"run"}, &output, runtime)
+			status := run(
+				context.Background(),
+				[]string{"run"},
+				&output,
+				runtime,
+			)
 			if status != test.status {
 				t.Fatalf("run status = %d, want %d", status, test.status)
 			}
@@ -342,7 +431,12 @@ func TestRunSeedScenariosBindPreparationAndTerminalProof(t *testing.T) {
 				return session, nil
 			}
 			var output bytes.Buffer
-			if status := run([]string{"run"}, &output, runtime); status != 0 {
+			if status := run(
+				context.Background(),
+				[]string{"run"},
+				&output,
+				runtime,
+			); status != 0 {
 				t.Fatalf("run status = %d output=%q", status, output.Bytes())
 			}
 			marker, _ := task11synthetic.DeriveJobMarkerDigest(
@@ -501,7 +595,12 @@ func TestRunFailsClosedWithoutMintingTerminalEvidence(t *testing.T) {
 			}
 			mutate(&runtime, environment, observer, marker)
 			var output bytes.Buffer
-			if status := run([]string{"run"}, &output, runtime); status != 1 {
+			if status := run(
+				context.Background(),
+				[]string{"run"},
+				&output,
+				runtime,
+			); status != 1 {
 				t.Fatalf("run status = %d, want 1; output=%q", status, output.Bytes())
 			}
 			if bytes.Count(output.Bytes(), []byte{'\n'}) > 1 {

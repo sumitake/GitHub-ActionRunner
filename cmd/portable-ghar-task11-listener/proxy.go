@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -13,9 +12,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/task11synthetic"
@@ -26,6 +28,11 @@ var errHTTPSExchange = errors.New("task11 listener HTTPS exchange failed")
 type httpsExchangeRuntime struct {
 	relayAddress string
 	roots        *x509.CertPool
+	dialContext  func(
+		context.Context,
+		string,
+		string,
+	) (net.Conn, error)
 }
 
 func exchangeHTTPS(
@@ -42,6 +49,7 @@ func exchangeHTTPS(
 		httpsExchangeRuntime{
 			relayAddress: task11synthetic.HTTPSRelayEndpoint,
 			roots:        roots,
+			dialContext:  dialHTTPSRelay,
 		},
 	)
 }
@@ -53,7 +61,13 @@ func exchangeHTTPSVia(
 ) (string, error) {
 	if ctx == nil ||
 		runtime.relayAddress == "" ||
-		runtime.roots == nil {
+		runtime.roots == nil ||
+		runtime.dialContext == nil ||
+		ctx.Err() != nil {
+		return "", errHTTPSExchange
+	}
+	deadline, hasDeadline := ctx.Deadline()
+	if !hasDeadline || !deadline.After(time.Now()) {
 		return "", errHTTPSExchange
 	}
 	target, requestTarget, requestHost, err := parseHTTPSExchangeTarget(
@@ -77,19 +91,22 @@ func exchangeHTTPSVia(
 		return "", errHTTPSExchange
 	}
 
-	var dialer net.Dialer
-	connection, err := dialer.DialContext(
+	connection, err := runtime.dialContext(
 		ctx,
 		"tcp4",
 		runtime.relayAddress,
 	)
-	if err != nil {
+	if err != nil || connection == nil {
 		return "", errHTTPSExchange
 	}
 	defer connection.Close()
 	if err := bindConnectionDeadline(ctx, connection); err != nil {
 		return "", errHTTPSExchange
 	}
+	stopCancellationClose := context.AfterFunc(ctx, func() {
+		_ = connection.Close()
+	})
+	defer stopCancellationClose()
 
 	connectRequest := "CONNECT " + target + " HTTP/1.1\r\n" +
 		"Host: " + target + "\r\n\r\n"
@@ -134,40 +151,126 @@ func exchangeHTTPSVia(
 		return "", errHTTPSExchange
 	}
 
-	getRequest := "GET " + requestTarget + " HTTP/1.1\r\n" +
-		"Host: " + requestHost + "\r\n" +
-		"Connection: close\r\n\r\n"
-	if err := writeExact(tlsConnection, []byte(getRequest)); err != nil {
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
 		return "", errHTTPSExchange
 	}
-	request := &http.Request{
-		Method: http.MethodGet,
-		URL: &url.URL{
-			Scheme: "https",
-			Host:   requestHost,
-			Path:   requestTarget,
+	var tunnelUsed atomic.Bool
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: func(
+			context.Context,
+			string,
+			string,
+		) (net.Conn, error) {
+			return nil, errHTTPSExchange
 		},
-		Host:       requestHost,
-		Proto:      "HTTP/1.1",
-		ProtoMajor: 1,
-		ProtoMinor: 1,
+		DialTLSContext: func(
+			dialContext context.Context,
+			network string,
+			address string,
+		) (net.Conn, error) {
+			if dialContext == nil ||
+				dialContext.Err() != nil ||
+				network != "tcp" ||
+				address != target ||
+				!tunnelUsed.CompareAndSwap(false, true) {
+				return nil, errHTTPSExchange
+			}
+			return tlsConnection, nil
+		},
+		ForceAttemptHTTP2:      false,
+		DisableCompression:     true,
+		DisableKeepAlives:      true,
+		MaxConnsPerHost:        1,
+		ResponseHeaderTimeout:  remaining,
+		MaxResponseHeaderBytes: 32 << 10,
+		TLSNextProto: map[string]func(
+			string,
+			*tls.Conn,
+		) http.RoundTripper{},
 	}
-	response, err := http.ReadResponse(
-		bufio.NewReaderSize(tlsConnection, 32<<10),
-		request,
+	defer transport.CloseIdleConnections()
+	client := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(
+			*http.Request,
+			[]*http.Request,
+		) error {
+			return errHTTPSExchange
+		},
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		sentinel.URL,
+		nil,
 	)
-	if err != nil || response == nil {
+	if err != nil ||
+		request.URL.RequestURI() != requestTarget {
 		return "", errHTTPSExchange
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK ||
-		response.Header.Get("Content-Encoding") != "" ||
+	request.Host = requestHost
+	request.Close = true
+	request.Header.Set("User-Agent", "")
+	var informationalResponse atomic.Bool
+	request = request.WithContext(httptrace.WithClientTrace(
+		request.Context(),
+		&httptrace.ClientTrace{
+			Got1xxResponse: func(
+				int,
+				textproto.MIMEHeader,
+			) error {
+				informationalResponse.Store(true)
+				return errHTTPSExchange
+			},
+		},
+	))
+	response, err := client.Do(request)
+	if err != nil || response == nil || response.Body == nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		return "", errHTTPSExchange
+	}
+	bodyClosed := false
+	defer func() {
+		if !bodyClosed {
+			_ = response.Body.Close()
+		}
+	}()
+	if informationalResponse.Load() ||
+		response.Proto != "HTTP/1.1" ||
+		response.ProtoMajor != 1 ||
+		response.ProtoMinor != 1 ||
+		response.StatusCode != http.StatusOK ||
+		len(response.Header.Values("Content-Encoding")) != 0 ||
+		len(response.TransferEncoding) != 0 ||
+		response.ContentLength < 0 ||
+		response.ContentLength >
+			int64(task11synthetic.MaximumWireBytes) ||
 		len(response.Trailer) != 0 {
 		return "", errHTTPSExchange
 	}
 	hasher := sha256.New()
-	if _, err := io.Copy(hasher, response.Body); err != nil ||
+	bodyBytes, err := io.Copy(
+		hasher,
+		io.LimitReader(
+			response.Body,
+			int64(task11synthetic.MaximumWireBytes)+1,
+		),
+	)
+	if err != nil ||
+		bodyBytes > int64(task11synthetic.MaximumWireBytes) ||
+		response.ContentLength != bodyBytes ||
 		len(response.Trailer) != 0 {
+		return "", errHTTPSExchange
+	}
+	if err := response.Body.Close(); err != nil {
+		return "", errHTTPSExchange
+	}
+	bodyClosed = true
+	if ctx.Err() != nil {
 		return "", errHTTPSExchange
 	}
 	observedBodyBytes := hasher.Sum(nil)
@@ -178,6 +281,15 @@ func exchangeHTTPSVia(
 		return "", errHTTPSExchange
 	}
 	return hex.EncodeToString(observedBodyBytes), nil
+}
+
+func dialHTTPSRelay(
+	ctx context.Context,
+	network string,
+	address string,
+) (net.Conn, error) {
+	var dialer net.Dialer
+	return dialer.DialContext(ctx, network, address)
 }
 
 func parseHTTPSExchangeTarget(
@@ -232,12 +344,15 @@ func bindConnectionDeadline(
 	ctx context.Context,
 	connection net.Conn,
 ) error {
+	if ctx == nil || connection == nil {
+		return errHTTPSExchange
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	deadline, ok := ctx.Deadline()
 	if !ok {
-		return nil
+		return context.DeadlineExceeded
 	}
 	if !deadline.After(time.Now()) {
 		return context.DeadlineExceeded

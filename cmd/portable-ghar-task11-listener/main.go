@@ -1,11 +1,21 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, defaultListenerRuntime()))
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	status := run(ctx, os.Args[1:], os.Stdout, defaultListenerRuntime())
+	stop()
+	os.Exit(status)
 }
 
 func defaultListenerRuntime() listenerRuntime {

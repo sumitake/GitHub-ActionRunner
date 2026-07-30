@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"time"
 
 	"github.com/sumitake/portable-ghar/internal/runtimeenv"
 	"github.com/sumitake/portable-ghar/internal/task11synthetic"
 )
 
 const listenerJITEnvironmentName = "ACTIONS_RUNNER_INPUT_JITCONFIG"
+const listenerProtocolTimeout = 30 * time.Second
 
 type listenerObservationPoint uint8
 
@@ -57,6 +59,7 @@ type listenerRuntime struct {
 }
 
 func run(
+	ctx context.Context,
 	args []string,
 	stdout io.Writer,
 	runtime listenerRuntime,
@@ -77,13 +80,22 @@ func run(
 	default:
 		return 2
 	}
-	if !validListenerRuntime(runtime) {
+	if ctx == nil || ctx.Err() != nil || !validListenerRuntime(runtime) {
 		return 1
 	}
-	return runListener(stdout, runtime)
+	runContext, cancel := context.WithTimeout(ctx, listenerProtocolTimeout)
+	defer cancel()
+	return runListener(runContext, stdout, runtime)
 }
 
-func runListener(stdout io.Writer, runtime listenerRuntime) int {
+func runListener(
+	ctx context.Context,
+	stdout io.Writer,
+	runtime listenerRuntime,
+) int {
+	if ctx == nil || ctx.Err() != nil {
+		return 1
+	}
 	observer, err := runtime.newObserver()
 	if err != nil || observer == nil ||
 		!validListenerCgroupVersion(observer.CgroupVersion()) ||
@@ -169,7 +181,8 @@ func runListener(stdout io.Writer, runtime listenerRuntime) int {
 		SeedID:                       input.SeedID,
 	}
 	boundaryDocument, err := task11synthetic.MarshalBoundaryFrame(boundaryFrame)
-	if err != nil || writeAll(stdout, boundaryDocument) != nil {
+	if err != nil || ctx.Err() != nil ||
+		writeAll(stdout, boundaryDocument) != nil {
 		return 1
 	}
 	switch input.Scenario {
@@ -186,10 +199,10 @@ func runListener(stdout io.Writer, runtime listenerRuntime) int {
 	}
 
 	observedBodyDigest, err := runtime.exchangeHTTPS(
-		context.Background(),
+		ctx,
 		input.Sentinel,
 	)
-	if err != nil ||
+	if err != nil || ctx.Err() != nil ||
 		observedBodyDigest != input.Sentinel.ResponseBodyDigest ||
 		observer.Sample(observationProxyComplete) != nil {
 		return 1
@@ -229,7 +242,7 @@ func runListener(stdout io.Writer, runtime listenerRuntime) int {
 		return 1
 	}
 	highWater, err := observer.HighWater()
-	if err != nil {
+	if err != nil || ctx.Err() != nil {
 		return 1
 	}
 	terminalFrame := task11synthetic.TerminalFrame{
