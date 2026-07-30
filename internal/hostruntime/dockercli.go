@@ -46,11 +46,13 @@ type DockerCLIConfig struct {
 type DockerCLI struct {
 	cfg                DockerCLIConfig
 	runner             CommandRunner
+	createRandom       io.Reader
 	issuer             [32]byte
 	mu                 sync.Mutex
 	adapters           map[[32]byte]*adapterRecord
 	brokers            map[[32]byte]*brokerRecord
 	brokerReservations map[[32]byte]brokerReservation
+	pendingNames       map[string]struct{}
 	runners            map[[32]byte]*runnerRecord
 }
 
@@ -71,9 +73,11 @@ func NewDockerCLI(cfg DockerCLIConfig, runner CommandRunner) (*DockerCLI, error)
 	cli := &DockerCLI{
 		cfg:                cfg,
 		runner:             runner,
+		createRandom:       rand.Reader,
 		adapters:           make(map[[32]byte]*adapterRecord),
 		brokers:            make(map[[32]byte]*brokerRecord),
 		brokerReservations: make(map[[32]byte]brokerReservation),
+		pendingNames:       make(map[string]struct{}),
 		runners:            make(map[[32]byte]*runnerRecord),
 	}
 	if _, err := io.ReadFull(rand.Reader, cli.issuer[:]); err != nil {
@@ -89,27 +93,53 @@ func (c *DockerCLI) CreateNetworkAdapter(ctx context.Context, spec AdapterSpec) 
 	if c == nil {
 		return AdapterHandle{}, errors.New("hostruntime: docker cli required")
 	}
+	if ctx == nil {
+		return AdapterHandle{}, errors.New("hostruntime: context required")
+	}
 	if err := c.validateAdapterSpec(spec); err != nil {
 		return AdapterHandle{}, err
 	}
 	if err := c.verifySeccomp(spec.Seccomp); err != nil {
 		return AdapterHandle{}, err
 	}
-	var nonce [32]byte
-	if _, err := io.ReadFull(rand.Reader, nonce[:]); err != nil {
-		return AdapterHandle{}, errors.New("hostruntime: adapter nonce generation failed")
+	if err := c.reserveCreateName(spec.Name); err != nil {
+		return AdapterHandle{}, err
 	}
+	reserved := true
+	defer func() {
+		if reserved {
+			c.releaseCreateName(spec.Name)
+		}
+	}()
+	var nonce [32]byte
+	if _, err := io.ReadFull(c.createRandom, nonce[:]); err != nil {
+		return AdapterHandle{}, errors.Join(
+			errors.New("hostruntime: adapter nonce generation failed"),
+			err,
+		)
+	}
+	invoked := false
+	reject := func(primary error) (AdapterHandle, error) {
+		if !invoked {
+			return AdapterHandle{}, primary
+		}
+		return AdapterHandle{}, c.cleanupRejectedCreate(ctx, spec.Name, primary)
+	}
+	invoked = true
 	result, err := c.runner.Run(ctx, c.adapterCreateArgv(spec), nil, nil)
 	if err != nil {
-		return AdapterHandle{}, errors.New("hostruntime: adapter create failed")
+		return reject(errors.Join(
+			errors.New("hostruntime: adapter create failed"),
+			err,
+		))
 	}
 	if result.ExitCode != 0 || result.Signaled || result.StdoutTruncated ||
 		result.StderrTruncated || len(result.Stderr) != 0 {
-		return AdapterHandle{}, errors.New("hostruntime: adapter create did not return bounded success")
+		return reject(errors.New("hostruntime: adapter create did not return bounded success"))
 	}
 	id, err := parseContainerID(result.Stdout)
 	if err != nil {
-		return AdapterHandle{}, err
+		return reject(err)
 	}
 	handle := newAdapterHandle(
 		id,
@@ -121,7 +151,13 @@ func (c *DockerCLI) CreateNetworkAdapter(ctx context.Context, spec AdapterSpec) 
 		nonce,
 	)
 	c.mu.Lock()
+	if _, exists := c.adapters[nonce]; exists {
+		c.mu.Unlock()
+		return reject(errors.New("hostruntime: adapter nonce collision"))
+	}
 	c.adapters[nonce] = &adapterRecord{handle: handle, spec: spec}
+	delete(c.pendingNames, spec.Name)
+	reserved = false
 	c.mu.Unlock()
 	return handle, nil
 }
@@ -131,6 +167,9 @@ func (c *DockerCLI) CreateNetworkAdapter(ctx context.Context, spec AdapterSpec) 
 func (c *DockerCLI) CreateRunner(ctx context.Context, spec RunnerSpec) (RunnerHandle, error) {
 	if c == nil {
 		return RunnerHandle{}, errors.New("hostruntime: docker cli required")
+	}
+	if ctx == nil {
+		return RunnerHandle{}, errors.New("hostruntime: context required")
 	}
 	if !spec.Adapter.validFor(c.issuer) {
 		return RunnerHandle{}, errors.New("hostruntime: adapter handle invalid")
@@ -144,24 +183,47 @@ func (c *DockerCLI) CreateRunner(ctx context.Context, spec RunnerSpec) (RunnerHa
 	if err := c.verifySeccomp(spec.Seccomp); err != nil {
 		return RunnerHandle{}, err
 	}
+	if err := c.reserveCreateName(spec.Name); err != nil {
+		return RunnerHandle{}, err
+	}
+	reserved := true
+	defer func() {
+		if reserved {
+			c.releaseCreateName(spec.Name)
+		}
+	}()
 	if err := c.reinspectAdapter(ctx, spec.Adapter); err != nil {
 		return RunnerHandle{}, err
 	}
 	var nonce [32]byte
-	if _, err := io.ReadFull(rand.Reader, nonce[:]); err != nil {
-		return RunnerHandle{}, errors.New("hostruntime: runner nonce generation failed")
+	if _, err := io.ReadFull(c.createRandom, nonce[:]); err != nil {
+		return RunnerHandle{}, errors.Join(
+			errors.New("hostruntime: runner nonce generation failed"),
+			err,
+		)
 	}
+	invoked := false
+	reject := func(primary error) (RunnerHandle, error) {
+		if !invoked {
+			return RunnerHandle{}, primary
+		}
+		return RunnerHandle{}, c.cleanupRejectedCreate(ctx, spec.Name, primary)
+	}
+	invoked = true
 	result, err := c.runner.Run(ctx, c.runnerCreateArgv(spec), nil, nil)
 	if err != nil {
-		return RunnerHandle{}, errors.New("hostruntime: runner create failed")
+		return reject(errors.Join(
+			errors.New("hostruntime: runner create failed"),
+			err,
+		))
 	}
 	if result.ExitCode != 0 || result.Signaled || result.StdoutTruncated ||
 		result.StderrTruncated || len(result.Stderr) != 0 {
-		return RunnerHandle{}, errors.New("hostruntime: runner create did not return bounded success")
+		return reject(errors.New("hostruntime: runner create did not return bounded success"))
 	}
 	id, err := parseContainerID(result.Stdout)
 	if err != nil {
-		return RunnerHandle{}, err
+		return reject(err)
 	}
 	handle := newRunnerHandle(
 		id,
@@ -173,11 +235,18 @@ func (c *DockerCLI) CreateRunner(ctx context.Context, spec RunnerSpec) (RunnerHa
 		spec.Profile == HostProfileQTSCaplessRoot,
 	)
 	var token [releaseTokenBytes]byte
-	if _, err := io.ReadFull(rand.Reader, token[:]); err != nil {
-		_ = c.removeRunnerID(context.Background(), id)
-		return RunnerHandle{}, errors.New("hostruntime: release token generation failed")
+	if _, err := io.ReadFull(c.createRandom, token[:]); err != nil {
+		return reject(errors.Join(
+			errors.New("hostruntime: release token generation failed"),
+			err,
+		))
 	}
 	c.mu.Lock()
+	if _, exists := c.runners[nonce]; exists {
+		c.mu.Unlock()
+		zeroToken(&token)
+		return reject(errors.New("hostruntime: runner nonce collision"))
+	}
 	c.runners[nonce] = &runnerRecord{
 		handle:  handle,
 		adapter: spec.Adapter,
@@ -185,8 +254,107 @@ func (c *DockerCLI) CreateRunner(ctx context.Context, spec RunnerSpec) (RunnerHa
 		next:    GateHydrateSeeds,
 		token:   token,
 	}
+	delete(c.pendingNames, spec.Name)
+	reserved = false
 	c.mu.Unlock()
 	return handle, nil
+}
+
+func (c *DockerCLI) reserveCreateName(name string) error {
+	if c == nil {
+		return errors.New("hostruntime: docker cli required")
+	}
+	if err := validateContainerName(name); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pendingNames == nil {
+		c.pendingNames = make(map[string]struct{})
+	}
+	if _, exists := c.pendingNames[name]; exists {
+		return errors.New("hostruntime: container name already reserved")
+	}
+	for _, record := range c.adapters {
+		if record != nil && record.spec.Name == name {
+			return errors.New("hostruntime: container name already reserved")
+		}
+	}
+	for _, record := range c.runners {
+		if record != nil && record.spec.Name == name {
+			return errors.New("hostruntime: container name already reserved")
+		}
+	}
+	for _, record := range c.brokers {
+		if record != nil && !record.directoriesGone && record.spec.Name == name {
+			return errors.New("hostruntime: container name already reserved")
+		}
+	}
+	for _, reservation := range c.brokerReservations {
+		if reservation.name == name {
+			return errors.New("hostruntime: container name already reserved")
+		}
+	}
+	c.pendingNames[name] = struct{}{}
+	return nil
+}
+
+func (c *DockerCLI) releaseCreateName(name string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	delete(c.pendingNames, name)
+	c.mu.Unlock()
+}
+
+func (c *DockerCLI) cleanupRejectedCreate(
+	parent context.Context,
+	name string,
+	primary error,
+) error {
+	if primary == nil {
+		primary = errors.New("hostruntime: create rejected")
+	}
+	if c == nil {
+		return primary
+	}
+	if err := validateContainerName(name); err != nil {
+		return errors.Join(
+			primary,
+			errors.New("hostruntime: rejected create cleanup name invalid"),
+		)
+	}
+	base := context.Background()
+	if parent != nil {
+		base = context.WithoutCancel(parent)
+	}
+	ctx, cancel := context.WithTimeout(base, cleanupTimeout)
+	defer cancel()
+	result, err := c.runner.Run(
+		ctx,
+		[]string{c.cfg.DockerPath, "rm", "-f", name},
+		nil,
+		nil,
+	)
+	var cleanupErr error
+	if err != nil {
+		cleanupErr = errors.Join(
+			errors.New("hostruntime: rejected create cleanup failed"),
+			err,
+		)
+	}
+	if result.ExitCode != 0 || result.Signaled ||
+		result.StdoutTruncated || result.StderrTruncated {
+		cleanupErr = errors.Join(
+			cleanupErr,
+			errors.New("hostruntime: rejected create cleanup did not return bounded success"),
+		)
+	}
+	if cleanupErr != nil {
+		return errors.Join(primary, cleanupErr)
+	}
+	return primary
 }
 
 func (c *DockerCLI) validateAdapterSpec(spec AdapterSpec) error {
