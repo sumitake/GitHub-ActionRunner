@@ -100,8 +100,11 @@ RUN set -eu; \
       /var/cache/apt/* \
       /var/lib/apt/lists/* \
       /var/log/apt/* \
-      /var/log/dpkg.log \
       /tmp/runner-package-anchors.expected \
+    && rm -f \
+      /var/cache/ldconfig/aux-cache \
+      /var/log/alternatives.log \
+      /var/log/dpkg.log \
     && rm -f /portable-ghar-bootstrap-ca.pem
 COPY --from=context-audit --chown=0:0 --chmod=0444 /context-audit.OK /opt/portable-ghar/context-audit.OK
 COPY --chown=0:0 build/runner /opt/actions-runner
@@ -118,6 +121,8 @@ RUN chmod 0555 /opt/actions-runner /opt/portable-ghar/seed-cache \
     && expected_version=$(/usr/local/bin/portable-ghar-runner-gate verify-image) \
     && installed_version=$(/opt/actions-runner/bin/Runner.Listener --version) \
     && test "$installed_version" = "$expected_version" \
+    && rm -rf /opt/actions-runner/_diag \
+    && test ! -e /opt/actions-runner/_diag \
     && test ! -e /portable-ghar-bootstrap-ca.pem \
     && test -r /usr/share/portable-ghar/debian-snapshot.lock.json \
     && test -r /usr/share/portable-ghar/runner-package-anchors.tsv \

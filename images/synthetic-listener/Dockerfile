@@ -35,7 +35,14 @@ RUN apt-get update \
       liblttng-ust1 \
       libssl3 \
       zlib1g \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf \
+      /var/cache/apt/* \
+      /var/lib/apt/lists/* \
+      /var/log/apt/* \
+    && rm -f \
+      /var/cache/ldconfig/aux-cache \
+      /var/log/alternatives.log \
+      /var/log/dpkg.log
 COPY --from=context-audit --chown=0:0 --chmod=0444 /context-audit.OK /opt/portable-ghar/context-audit.OK
 COPY --chown=0:0 build/runner /opt/actions-runner
 COPY --chown=0:0 build/seed-cache /opt/portable-ghar/seed-cache
@@ -52,6 +59,8 @@ RUN chmod 0555 /opt/actions-runner /opt/portable-ghar/seed-cache \
     && installed_version=$(/opt/actions-runner/bin/Runner.Listener --version) \
     && test "$installed_version" = "portable-ghar-task11-synthetic-v1" \
     && test "$installed_version" != "$expected_version" \
+    && rm -rf /opt/actions-runner/_diag \
+    && test ! -e /opt/actions-runner/_diag \
     && test "$(find /opt/actions-runner -type f -print | wc -l)" -eq 1 \
     && test -z "$(find /opt/actions-runner/externals -mindepth 1 -print -quit)" \
     && install -d -m 0700 -o 65532 -g 65532 /runner /tmp /scratch
