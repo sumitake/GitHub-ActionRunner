@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -58,6 +59,15 @@ type inspectOutput struct {
 	Generation  uint64                      `json:"generation"`
 	ActiveFleet fleetfence.Fleet            `json:"active_fleet"`
 	Holders     []fleetfence.HolderIdentity `json:"holders"`
+}
+
+type guardedChild struct {
+	command    *exec.Cmd
+	pgid       atomic.Int64
+	waitResult chan error
+	reaped     chan struct{}
+	getpgid    func(int) (int, error)
+	kill       func(int, syscall.Signal) error
 }
 
 func main() {
@@ -372,6 +382,7 @@ func executeGuard(
 	command.Stdout = stdout
 	command.Stderr = stderr
 	command.ExtraFiles = []*os.File{childAuthority}
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := command.Start(); err != nil {
 		return errors.Join(
 			err,
@@ -380,12 +391,26 @@ func executeGuard(
 			store.Close(),
 		)
 	}
-	waitResult := make(chan error, 1)
-	go func() { waitResult <- command.Wait() }()
+	child, err := newGuardedChild(command)
+	if err != nil {
+		var killErr error
+		if command.Process != nil {
+			killErr = command.Process.Kill()
+		}
+		waitErr := command.Wait()
+		return errors.Join(
+			err,
+			killErr,
+			waitErr,
+			childAuthority.Close(),
+			guard.Close(),
+			store.Close(),
+		)
+	}
+	child.startWait()
 	if err := childAuthority.Close(); err != nil {
 		childErr := terminateChild(
-			command,
-			waitResult,
+			child,
 			dependencies.terminationGrace,
 		)
 		return errors.Join(
@@ -417,19 +442,17 @@ func executeGuard(
 	waiting := true
 	for waiting {
 		select {
-		case childErr = <-waitResult:
+		case childErr = <-child.waitResult:
 			waiting = false
 		case authorityErr = <-renewalResult:
 			childErr = terminateChild(
-				command,
-				waitResult,
+				child,
 				dependencies.terminationGrace,
 			)
 			waiting = false
 		case received := <-signals:
 			childErr = terminateChildWithSignal(
-				command,
-				waitResult,
+				child,
 				received,
 				dependencies.terminationGrace,
 			)
@@ -481,38 +504,133 @@ func renewGuard(
 }
 
 func terminateChild(
-	command *exec.Cmd,
-	waitResult <-chan error,
+	child *guardedChild,
 	grace time.Duration,
 ) error {
 	return terminateChildWithSignal(
-		command,
-		waitResult,
+		child,
 		syscall.SIGTERM,
 		grace,
 	)
 }
 
 func terminateChildWithSignal(
-	command *exec.Cmd,
-	waitResult <-chan error,
+	child *guardedChild,
 	initial os.Signal,
 	grace time.Duration,
 ) error {
-	if command.Process != nil {
-		_ = command.Process.Signal(initial)
+	if child == nil || child.command == nil ||
+		child.command.Process == nil || grace <= 0 {
+		return errors.New("guard child invalid")
+	}
+	signalValue, ok := initial.(syscall.Signal)
+	if !ok {
+		return errors.New("guard signal invalid")
+	}
+	select {
+	case err := <-child.waitResult:
+		return err
+	default:
+	}
+	initialErr := child.signal(signalValue)
+	if initialErr != nil {
+		directKillErr := child.command.Process.Kill()
+		return errors.Join(
+			initialErr,
+			directKillErr,
+			<-child.waitResult,
+		)
 	}
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 	select {
-	case err := <-waitResult:
+	case err := <-child.waitResult:
 		return err
 	case <-timer.C:
-		if command.Process != nil {
-			_ = command.Process.Kill()
+		select {
+		case err := <-child.waitResult:
+			return err
+		default:
 		}
-		return <-waitResult
+		killErr := child.signal(syscall.SIGKILL)
+		var directKillErr error
+		if killErr != nil {
+			directKillErr = child.command.Process.Kill()
+		}
+		return errors.Join(
+			killErr,
+			directKillErr,
+			<-child.waitResult,
+		)
 	}
+}
+
+func newGuardedChild(command *exec.Cmd) (*guardedChild, error) {
+	if command == nil || command.Process == nil ||
+		command.Process.Pid <= 0 {
+		return nil, errors.New("guard child missing")
+	}
+	pgid, err := syscall.Getpgid(command.Process.Pid)
+	if err != nil ||
+		pgid <= 0 ||
+		pgid != command.Process.Pid {
+		return nil, errors.Join(
+			errors.New("guard process group invalid"),
+			err,
+		)
+	}
+	child := &guardedChild{
+		command:    command,
+		waitResult: make(chan error, 1),
+		reaped:     make(chan struct{}),
+		getpgid:    syscall.Getpgid,
+		kill:       syscall.Kill,
+	}
+	child.pgid.Store(int64(pgid))
+	return child, nil
+}
+
+func (child *guardedChild) startWait() {
+	go func() {
+		err := child.command.Wait()
+		child.pgid.Store(0)
+		close(child.reaped)
+		child.waitResult <- err
+	}()
+}
+
+func (child *guardedChild) signal(signal syscall.Signal) error {
+	if child == nil || child.command == nil ||
+		child.command.Process == nil ||
+		child.getpgid == nil ||
+		child.kill == nil {
+		return errors.New("guard process group invalid")
+	}
+	select {
+	case <-child.reaped:
+		return os.ErrProcessDone
+	default:
+	}
+	pgid := int(child.pgid.Load())
+	if pgid <= 0 || pgid != child.command.Process.Pid {
+		return errors.New("guard process group invalid")
+	}
+	current, err := child.getpgid(child.command.Process.Pid)
+	if err != nil || current != pgid {
+		return errors.Join(
+			errors.New("guard process group changed"),
+			err,
+		)
+	}
+	select {
+	case <-child.reaped:
+		return os.ErrProcessDone
+	default:
+	}
+	if int(child.pgid.Load()) != pgid {
+		return os.ErrProcessDone
+	}
+	return child.kill(-pgid, signal)
 }
 
 func writeCanonical(output io.Writer, value any) error {

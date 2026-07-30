@@ -25,6 +25,7 @@ const (
 	fenceHelperMarkerEnv   = "PORTABLE_GHAR_FENCE_TEST_MARKER"
 	fenceHelperDurationEnv = "PORTABLE_GHAR_FENCE_TEST_DURATION"
 	fenceHelperIgnoreEnv   = "PORTABLE_GHAR_FENCE_TEST_IGNORE_TERM"
+	fenceHelperGrandEnv    = "PORTABLE_GHAR_FENCE_TEST_GRANDCHILD_MARKER"
 )
 
 type commandIdentityStub struct{}
@@ -123,12 +124,60 @@ func TestFenceWorkloadSubprocess(t *testing.T) {
 	if err != nil || duration <= 0 {
 		t.Fatalf("duration invalid: %v", err)
 	}
+	var grandchild *exec.Cmd
+	if marker := os.Getenv(fenceHelperGrandEnv); marker != "" {
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatalf("grandchild executable: %v", err)
+		}
+		grandchild = exec.Command(
+			executable,
+			"-test.run=^TestFenceGrandchildSubprocess$",
+			"-test.count=1",
+		)
+		grandchild.Env = append(
+			os.Environ(),
+			fenceHelperModeEnv+"=grandchild",
+			fenceHelperMarkerEnv+"="+marker,
+			fenceHelperDurationEnv+"="+duration.String(),
+			fenceHelperIgnoreEnv+"="+
+				os.Getenv(fenceHelperIgnoreEnv),
+		)
+		grandchild.Stdout = io.Discard
+		grandchild.Stderr = io.Discard
+		if err := grandchild.Start(); err != nil {
+			t.Fatalf("start grandchild: %v", err)
+		}
+		defer grandchild.Wait()
+	}
 	if err := os.WriteFile(
 		os.Getenv(fenceHelperMarkerEnv),
 		[]byte(strconv.Itoa(os.Getpid())),
 		0o600,
 	); err != nil {
 		t.Fatalf("write marker: %v", err)
+	}
+	time.Sleep(duration)
+}
+
+func TestFenceGrandchildSubprocess(t *testing.T) {
+	if os.Getenv(fenceHelperModeEnv) != "grandchild" {
+		return
+	}
+	if os.Getenv(fenceHelperIgnoreEnv) == "1" {
+		signal.Ignore(syscall.SIGTERM)
+		defer signal.Reset(syscall.SIGTERM)
+	}
+	duration, err := time.ParseDuration(os.Getenv(fenceHelperDurationEnv))
+	if err != nil || duration <= 0 {
+		t.Fatalf("duration invalid: %v", err)
+	}
+	if err := os.WriteFile(
+		os.Getenv(fenceHelperMarkerEnv),
+		[]byte(strconv.Itoa(os.Getpid())),
+		0o600,
+	); err != nil {
+		t.Fatalf("write grandchild marker: %v", err)
 	}
 	time.Sleep(duration)
 }
@@ -160,12 +209,33 @@ func startFenceGuardHelper(
 	duration time.Duration,
 	ignoreTermination bool,
 ) (*exec.Cmd, int) {
+	command, childPID, _ := startFenceGuardTreeHelper(
+		t,
+		root,
+		duration,
+		ignoreTermination,
+		false,
+	)
+	return command, childPID
+}
+
+func startFenceGuardTreeHelper(
+	t *testing.T,
+	root string,
+	duration time.Duration,
+	ignoreTermination bool,
+	spawnGrandchild bool,
+) (*exec.Cmd, int, int) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatalf("executable: %v", err)
 	}
 	marker := filepath.Join(t.TempDir(), "workload-pid")
+	grandchildMarker := ""
+	if spawnGrandchild {
+		grandchildMarker = filepath.Join(t.TempDir(), "grandchild-pid")
+	}
 	ignore := "0"
 	if ignoreTermination {
 		ignore = "1"
@@ -182,12 +252,27 @@ func startFenceGuardHelper(
 		fenceHelperMarkerEnv+"="+marker,
 		fenceHelperDurationEnv+"="+duration.String(),
 		fenceHelperIgnoreEnv+"="+ignore,
+		fenceHelperGrandEnv+"="+grandchildMarker,
 	)
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard
 	if err := command.Start(); err != nil {
 		t.Fatalf("start guard helper: %v", err)
 	}
+	childPID := waitForMarkerPID(t, marker, command)
+	grandchildPID := 0
+	if grandchildMarker != "" {
+		grandchildPID = waitForMarkerPID(t, grandchildMarker, command)
+	}
+	return command, childPID, grandchildPID
+}
+
+func waitForMarkerPID(
+	t *testing.T,
+	marker string,
+	command *exec.Cmd,
+) int {
+	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		document, readErr := os.ReadFile(marker)
@@ -198,7 +283,7 @@ func startFenceGuardHelper(
 				_ = command.Wait()
 				t.Fatalf("workload PID invalid: %q", document)
 			}
-			return command, pid
+			return pid
 		}
 		if !errors.Is(readErr, os.ErrNotExist) || time.Now().After(deadline) {
 			_ = command.Process.Kill()
@@ -222,6 +307,68 @@ func waitForProcessExit(t *testing.T, pid int, timeout time.Duration) {
 			t.Fatalf("process %d remained alive", pid)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestGuardedChildNeverSignalsAfterReapOrGroupChange(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		reaped    bool
+		current   int
+		wantIs    error
+		wantKills int
+	}{
+		{
+			name:      "reaped pid could be reused",
+			reaped:    true,
+			current:   4100,
+			wantIs:    os.ErrProcessDone,
+			wantKills: 0,
+		},
+		{
+			name:      "child escaped captured group",
+			current:   4200,
+			wantKills: 0,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			const pid = 4100
+			reaped := make(chan struct{})
+			if test.reaped {
+				close(reaped)
+			}
+			kills := 0
+			child := &guardedChild{
+				command: &exec.Cmd{
+					Process: &os.Process{Pid: pid},
+				},
+				reaped: reaped,
+				getpgid: func(int) (int, error) {
+					return test.current, nil
+				},
+				kill: func(int, syscall.Signal) error {
+					kills++
+					return nil
+				},
+			}
+			child.pgid.Store(pid)
+			err := child.signal(syscall.SIGTERM)
+			if err == nil ||
+				test.wantIs != nil && !errors.Is(err, test.wantIs) ||
+				kills != test.wantKills {
+				t.Fatalf(
+					"signal() error=%v, kills=%d",
+					err,
+					kills,
+				)
+			}
+		})
 	}
 }
 
@@ -341,6 +488,43 @@ func TestGuardEscalatesForwardedTerminationAndReapsChild(t *testing.T) {
 			stderr,
 		)
 	}
+	cleanupNeeded = false
+}
+
+func TestGuardTerminatesTheDedicatedChildProcessGroup(t *testing.T) {
+	root := privateStateDir(t)
+	dependencies := testDependencies()
+	bootstrapPortableFence(t, root, dependencies)
+	command, childPID, grandchildPID := startFenceGuardTreeHelper(
+		t,
+		root,
+		5*time.Second,
+		true,
+		true,
+	)
+	cleanupNeeded := true
+	t.Cleanup(func() {
+		if cleanupNeeded {
+			_ = command.Process.Kill()
+			_ = syscall.Kill(childPID, syscall.SIGKILL)
+			_ = syscall.Kill(grandchildPID, syscall.SIGKILL)
+		}
+	})
+	if err := command.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal guard parent: %v", err)
+	}
+	waitResult := make(chan error, 1)
+	go func() { waitResult <- command.Wait() }()
+	select {
+	case err := <-waitResult:
+		if err == nil {
+			t.Fatal("terminated guard parent exited successfully")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("guard did not terminate its dedicated process group")
+	}
+	waitForProcessExit(t, childPID, time.Second)
+	waitForProcessExit(t, grandchildPID, time.Second)
 	cleanupNeeded = false
 }
 
