@@ -6,10 +6,10 @@ that evidence and any rollback material is retained. It assumes the
 components in [Architecture overview](../architecture/overview.md) and
 the boundaries in [Trust boundaries](../security/trust-boundaries.md).
 
-Phase 1 of this repository ships no host watchdog binary. This page
-describes the intended operational contract the later host-integration
-phase implements; it is not a claim that any watchdog behavior below is
-live against a deployed host today.
+Phase 2 source includes the host watchdog and its host-integration seams.
+They remain pre-deployment pending the deferred operational and
+live-activation gates, so this page is not a claim that any watchdog
+behavior below is live against a deployed host today.
 
 ## Watchdog restart authority
 

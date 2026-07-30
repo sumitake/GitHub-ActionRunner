@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1
 
+ARG SOURCE_DATE_EPOCH
+
 FROM debian:bookworm-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4 AS context-audit
 COPY . /context
 RUN set -eu; \

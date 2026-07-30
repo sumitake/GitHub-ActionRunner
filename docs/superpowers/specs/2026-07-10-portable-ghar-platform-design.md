@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 -->
 
-- **Status:** Design amended; Phase 2 implementation is underway. The 2026-07-22 runner-lifecycle amendment remains gated on a fresh distinct-family review of this exact revision before its runtime code is generated (section 22); no host activation is authorized.
+- **Status:** Phase 2 source implementation complete; deferred Linux/Docker operational evidence, forced-runner-version-bump evidence, host sizing, external failover, migration, and live activation remain gated. No host activation is authorized.
 - **Repository:** `portable-ghar`
 - **License:** MPL-2.0
 - **Primary audience:** Operators running ephemeral GitHub Actions workloads on a Linux Docker host, with QNAP/QTS as the first reference host

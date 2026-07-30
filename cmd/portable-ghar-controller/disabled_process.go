@@ -106,6 +106,11 @@ func (process *disabledControllerProcess) Run(parent context.Context) error {
 		runErr = err
 	}
 	if runErr == nil {
+		if err := process.recoverServerSockets(); err != nil {
+			runErr = err
+		}
+	}
+	if runErr == nil {
 		if err := process.openServers(); err != nil {
 			runErr = err
 		}
@@ -246,24 +251,32 @@ func (process *disabledControllerProcess) openServers() error {
 	return nil
 }
 
+func (process *disabledControllerProcess) recoverServerSockets() error {
+	if process == nil || process.ownership == nil ||
+		process.ownership.Validate() != nil {
+		return errLocalProtocol
+	}
+	return recoverOwnedLocalSockets(
+		[]string{process.adminSocketPath, process.healthSocketPath},
+		process.expectedUID,
+	)
+}
+
 func (process *disabledControllerProcess) validateSocketIdentities() error {
 	if process == nil ||
 		process.adminServer == nil ||
 		process.healthServer == nil {
 		return errLocalProtocol
 	}
-	if err := requireLocalSocketIdentity(
-		process.adminServer.path,
-		process.adminServer.expectedUID,
-		process.adminServer.identity,
-	); err != nil {
-		return err
+	if process.adminServer.socketGuard == nil ||
+		process.adminServer.socketGuard.Verify() != nil {
+		return errLocalProtocol
 	}
-	return requireLocalSocketIdentity(
-		process.healthServer.path,
-		process.healthServer.expectedUID,
-		process.healthServer.identity,
-	)
+	if process.healthServer.socketGuard == nil ||
+		process.healthServer.socketGuard.Verify() != nil {
+		return errLocalProtocol
+	}
+	return nil
 }
 
 func (process *disabledControllerProcess) waitForServers(

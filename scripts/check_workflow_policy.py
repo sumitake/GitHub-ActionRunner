@@ -63,7 +63,8 @@ from typing import Optional, Union
 # manual review of the corresponding tagged release; adding an entry is a
 # deliberate, reviewed act, never automatic. Entries beyond the five Task 8
 # uses (actions/checkout, actions/setup-go, actions/setup-node,
-# actions/upload-artifact, aquasecurity/trivy-action) are pre-reviewed for
+# actions/upload-artifact, docker/setup-buildx-action,
+# aquasecurity/trivy-action) are pre-reviewed for
 # later tasks (CodeQL, dependency review, Gitleaks, attestation, SBOM,
 # Bats, and least-privilege GitHub App token minting) so this table does
 # not need to change again when those workflows are added.
@@ -73,6 +74,7 @@ REVIEWED_ACTION_PINS: dict[str, tuple[str, str]] = {
     "actions/setup-go": ("924ae3a1cded613372ab5595356fb5720e22ba16", "v6.5.0"),
     "actions/setup-node": ("48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e", "v6.4.0"),
     "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "v7.0.1"),
+    "docker/setup-buildx-action": ("8d2750c68a42422c14e847fe6c8ac0403b4cbd6f", "v3"),
     "aquasecurity/trivy-action": ("ed142fd0673e97e23eac54620cfb913e5ce36c25", "v0.36.0"),
     "github/codeql-action": ("99df26d4f13ea111d4ec1a7dddef6063f76b97e9", "v4.37.0"),
     "actions/dependency-review-action": (

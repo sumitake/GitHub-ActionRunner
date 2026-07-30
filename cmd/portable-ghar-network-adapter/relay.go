@@ -5,13 +5,12 @@ import (
 	"errors"
 	"io"
 	"net"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/relaycontract"
-	"golang.org/x/sys/unix"
+	"github.com/sumitake/portable-ghar/internal/unixsocketguard"
 )
 
 const relayBufferBytes = 32 << 10
@@ -21,23 +20,16 @@ type relayEndpoint struct {
 	SocketName      string
 }
 
-type brokerObjectIdentity struct {
-	socketPath string
-	device     uint64
-	inode      uint64
-	uid        uint32
-	gid        uint32
-}
-
 type peerVerifier func(*net.UnixConn, relaycontract.Binding) error
 
 type relayHandler func(context.Context, *net.TCPConn) error
 
 type relayMachine struct {
-	brokerDirectory string
-	binding         relaycontract.Binding
-	ioTimeout       time.Duration
-	verifyPeer      peerVerifier
+	brokerGuard      *unixsocketguard.Guard
+	brokerSocketPath string
+	binding          relaycontract.Binding
+	ioTimeout        time.Duration
+	verifyPeer       peerVerifier
 }
 
 type terminalRelayError struct{ cause error }
@@ -58,64 +50,63 @@ func validateRelayEndpoints(endpoints []relayEndpoint) error {
 	return nil
 }
 
-func verifyBrokerObjects(directory string, binding relaycontract.Binding) (brokerObjectIdentity, error) {
+func openBrokerGuard(
+	directory string,
+	binding relaycontract.Binding,
+) (*unixsocketguard.Guard, string, error) {
 	if !canonicalAbsolute(directory) || relaycontract.Validate(binding) != nil ||
 		binding.Socket.Name != relaycontract.HTTPSProxySocket {
-		return brokerObjectIdentity{}, errors.New("network-adapter: broker binding invalid")
-	}
-	resolved, err := filepath.EvalSymlinks(directory)
-	if err != nil || resolved != directory {
-		return brokerObjectIdentity{}, errors.New("network-adapter: broker directory indirect")
-	}
-	var directoryStat unix.Stat_t
-	if unix.Lstat(directory, &directoryStat) != nil ||
-		uint32(directoryStat.Mode)&unix.S_IFMT != unix.S_IFDIR ||
-		uint32(directoryStat.Mode)&0o777 != binding.Directory.Mode ||
-		uint64(directoryStat.Dev) != binding.Directory.Device ||
-		directoryStat.Ino != binding.Directory.Inode ||
-		directoryStat.Uid != binding.Directory.UID ||
-		directoryStat.Gid != binding.Directory.GID ||
-		directoryStat.Uid != uint32(os.Geteuid()) {
-		return brokerObjectIdentity{}, errors.New("network-adapter: broker directory identity changed")
+		return nil, "", errors.New("network-adapter: broker binding invalid")
 	}
 	socketPath := filepath.Join(directory, binding.Socket.Name)
 	if filepath.Dir(socketPath) != directory {
-		return brokerObjectIdentity{}, errors.New("network-adapter: broker socket path escaped")
+		return nil, "", errors.New("network-adapter: broker socket path escaped")
 	}
-	var socketStat unix.Stat_t
-	if unix.Lstat(socketPath, &socketStat) != nil ||
-		uint32(socketStat.Mode)&unix.S_IFMT != unix.S_IFSOCK ||
-		uint32(socketStat.Mode)&0o777 != binding.Socket.Mode ||
-		uint64(socketStat.Dev) != binding.Socket.Device ||
-		socketStat.Ino != binding.Socket.Inode ||
-		socketStat.Uid != binding.Socket.UID ||
-		socketStat.Gid != binding.Socket.GID ||
-		socketStat.Nlink != 1 {
-		return brokerObjectIdentity{}, errors.New("network-adapter: broker socket identity changed")
+	guard, err := unixsocketguard.OpenReadOnly(
+		directory,
+		unixsocketguard.Snapshot{
+			Directory: unixsocketguard.DirectoryIdentity{
+				Device: binding.Directory.Device,
+				Inode:  binding.Directory.Inode,
+				UID:    binding.Directory.UID,
+				GID:    binding.Directory.GID,
+				Mode:   binding.Directory.Mode,
+			},
+			Socket: unixsocketguard.SocketIdentity{
+				Name:   binding.Socket.Name,
+				Device: binding.Socket.Device,
+				Inode:  binding.Socket.Inode,
+				UID:    binding.Socket.UID,
+				GID:    binding.Socket.GID,
+				Mode:   binding.Socket.Mode,
+			},
+		},
+	)
+	if err != nil {
+		return nil, "", errors.New("network-adapter: broker identity changed")
 	}
-	return brokerObjectIdentity{
-		socketPath: socketPath,
-		device:     uint64(socketStat.Dev),
-		inode:      socketStat.Ino,
-		uid:        socketStat.Uid,
-		gid:        socketStat.Gid,
-	}, nil
+	return guard, socketPath, nil
 }
 
 func (machine relayMachine) relayOne(ctx context.Context, client *net.TCPConn) error {
-	if ctx == nil || client == nil || machine.ioTimeout <= 0 || machine.verifyPeer == nil {
+	if ctx == nil || client == nil || machine.ioTimeout <= 0 ||
+		machine.verifyPeer == nil || machine.brokerGuard == nil ||
+		!canonicalAbsolute(machine.brokerSocketPath) {
 		if client != nil {
 			client.Close()
 		}
 		return errors.New("network-adapter: relay inputs invalid")
 	}
 	defer client.Close()
-	before, err := verifyBrokerObjects(machine.brokerDirectory, machine.binding)
-	if err != nil {
+	if err := machine.brokerGuard.Verify(); err != nil {
 		return terminalRelayError{cause: err}
 	}
 	dialer := net.Dialer{Timeout: machine.ioTimeout}
-	rawBroker, err := dialer.DialContext(ctx, "unix", before.socketPath)
+	rawBroker, err := dialer.DialContext(
+		ctx,
+		"unix",
+		machine.brokerSocketPath,
+	)
 	if err != nil {
 		return terminalRelayError{cause: err}
 	}
@@ -125,11 +116,7 @@ func (machine relayMachine) relayOne(ctx context.Context, client *net.TCPConn) e
 		return terminalRelayError{cause: errors.New("network-adapter: broker transport invalid")}
 	}
 	defer broker.Close()
-	after, err := verifyBrokerObjects(machine.brokerDirectory, machine.binding)
-	if err != nil || before != after {
-		if err == nil {
-			err = errors.New("network-adapter: broker identity changed during connect")
-		}
+	if err := machine.brokerGuard.Verify(); err != nil {
 		return terminalRelayError{cause: err}
 	}
 	if err := machine.verifyPeer(broker, machine.binding); err != nil {

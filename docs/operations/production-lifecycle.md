@@ -10,9 +10,10 @@ All commands shown here are synthetic and illustrative -- they describe
 the shape of an operator's positive read-back gate, not a real
 deployment's paths, hosts, or credentials.
 
-Phase 1 of this repository ships no runtime controller. This page
-describes the intended lifecycle the later runtime phases implement; it is
-not a claim that any of the states or gates below are live today.
+Phase 2 source implements the local controller and lifecycle seams
+described here. The repository has not yet cleared its deferred
+Linux/Docker operational, sizing, cutover, or live-activation gates, so
+this page is not a claim that any state or procedure below is live today.
 
 ## Persisted controller states
 

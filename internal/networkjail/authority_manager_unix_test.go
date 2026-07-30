@@ -162,8 +162,11 @@ func TestUnixAuthorityManagerRejectsSocketReplacementWithoutDeactivation(t *test
 	if err := endpoint.server.close(); err != nil {
 		t.Fatalf("cleanup original server: %v", err)
 	}
-	if err := endpoint.socketPin.close(); err != nil {
-		t.Fatalf("cleanup socket pin: %v", err)
+	if err := endpoint.socketPin.close(); !errors.Is(
+		err,
+		ErrPermitAuthorityUnavailable,
+	) {
+		t.Fatalf("quarantined socket pin close = %v", err)
 	}
 }
 
@@ -233,8 +236,11 @@ func TestUnixAuthorityManagerQuarantinesPostCloseSocketReplacement(t *testing.T)
 	if _, err := os.Lstat(lease.socketPath); err != nil {
 		t.Fatalf("replacement socket was removed: %v", err)
 	}
-	if err := endpoint.socketPin.close(); err != nil {
-		t.Fatalf("cleanup socket pin: %v", err)
+	if err := endpoint.socketPin.close(); !errors.Is(
+		err,
+		ErrPermitAuthorityUnavailable,
+	) {
+		t.Fatalf("quarantined socket pin close = %v", err)
 	}
 }
 
@@ -308,8 +314,11 @@ func TestUnixAuthorityManagerRejectsParentDirectoryReplacement(t *testing.T) {
 	if err := endpoint.server.close(); err != nil {
 		t.Fatalf("cleanup original server: %v", err)
 	}
-	if err := endpoint.socketPin.close(); err != nil {
-		t.Fatalf("cleanup socket pin: %v", err)
+	if err := endpoint.socketPin.close(); !errors.Is(
+		err,
+		ErrPermitAuthorityUnavailable,
+	) {
+		t.Fatalf("quarantined socket pin close = %v", err)
 	}
 }
 

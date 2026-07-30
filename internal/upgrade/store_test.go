@@ -661,6 +661,35 @@ func TestDuplicateJournalAcquireFDsStopsAndCleansUpOnFailure(t *testing.T) {
 	})
 }
 
+func TestReleaseProspectiveJournalLockUnlocksThenClosesExactlyOnce(
+	t *testing.T,
+) {
+	var calls []string
+	err := releaseProspectiveJournalLock(
+		41,
+		func(fd int) error {
+			if fd != 41 {
+				t.Fatalf("unlock fd = %d, want 41", fd)
+			}
+			calls = append(calls, "unlock")
+			return errors.New("fixture unlock failure")
+		},
+		func(fd int) error {
+			if fd != 41 {
+				t.Fatalf("close fd = %d, want 41", fd)
+			}
+			calls = append(calls, "close")
+			return errors.New("fixture close failure")
+		},
+	)
+	if !errors.Is(err, ErrJournalIntegrity) {
+		t.Fatalf("releaseProspectiveJournalLock() error = %v", err)
+	}
+	if got, want := strings.Join(calls, ","), "unlock,close"; got != want {
+		t.Fatalf("cleanup calls = %q, want %q", got, want)
+	}
+}
+
 func TestFileJournalStoreExactCASAndClosedState(t *testing.T) {
 	t.Parallel()
 

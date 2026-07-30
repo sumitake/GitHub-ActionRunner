@@ -13,7 +13,7 @@ import (
 )
 
 func TestReadDialRequestUnixAcceptsOneExactDataMessage(t *testing.T) {
-	reader, writer := unixDatagramPair(t)
+	reader, writer := unixStreamPair(t)
 	graph, _, err := Compile(validPolicyManifest())
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
@@ -24,6 +24,9 @@ func TestReadDialRequestUnixAcceptsOneExactDataMessage(t *testing.T) {
 	}
 	if _, _, err := writer.WriteMsgUnix(frame, nil, nil); err != nil {
 		t.Fatalf("WriteMsgUnix: %v", err)
+	}
+	if err := writer.CloseWrite(); err != nil {
+		t.Fatalf("CloseWrite: %v", err)
 	}
 	request, err := ReadDialRequestUnix(
 		context.Background(),
@@ -40,7 +43,7 @@ func TestReadDialRequestUnixAcceptsOneExactDataMessage(t *testing.T) {
 }
 
 func TestReadDialRequestUnixRejectsAndClosesSCMRights(t *testing.T) {
-	reader, writer := unixDatagramPair(t)
+	reader, writer := unixStreamPair(t)
 	graph, _, err := Compile(validPolicyManifest())
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
@@ -56,6 +59,9 @@ func TestReadDialRequestUnixRejectsAndClosesSCMRights(t *testing.T) {
 	if _, _, err := writer.WriteMsgUnix(frame, rights, nil); err != nil {
 		t.Fatalf("WriteMsgUnix: %v", err)
 	}
+	if err := writer.CloseWrite(); err != nil {
+		t.Fatalf("CloseWrite: %v", err)
+	}
 	if _, err := ReadDialRequestUnix(
 		context.Background(),
 		reader,
@@ -67,7 +73,7 @@ func TestReadDialRequestUnixRejectsAndClosesSCMRights(t *testing.T) {
 }
 
 func TestReadDialRequestUnixRejectsTruncatedMessage(t *testing.T) {
-	reader, writer := unixDatagramPair(t)
+	reader, writer := unixStreamPair(t)
 	graph, _, err := Compile(validPolicyManifest())
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
@@ -75,6 +81,9 @@ func TestReadDialRequestUnixRejectsTruncatedMessage(t *testing.T) {
 	oversized := make([]byte, MaxDialRequestFrameBytes+2)
 	if _, _, err := writer.WriteMsgUnix(oversized, nil, nil); err != nil {
 		t.Fatalf("WriteMsgUnix: %v", err)
+	}
+	if err := writer.CloseWrite(); err != nil {
+		t.Fatalf("CloseWrite: %v", err)
 	}
 	if _, err := ReadDialRequestUnix(
 		context.Background(),
@@ -86,11 +95,60 @@ func TestReadDialRequestUnixRejectsTruncatedMessage(t *testing.T) {
 	}
 }
 
-func unixDatagramPair(t *testing.T) (*net.UnixConn, *net.UnixConn) {
+func TestReadDialRequestUnixRejectsMissingHalfClose(t *testing.T) {
+	reader, writer := unixStreamPair(t)
+	graph, _, err := Compile(validPolicyManifest())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	frame, err := EncodeDialRequest(DialRequest{Host: "example.com", Port: 443})
+	if err != nil {
+		t.Fatalf("EncodeDialRequest: %v", err)
+	}
+	if _, err := writer.Write(frame); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if _, err := ReadDialRequestUnix(
+		context.Background(),
+		reader,
+		graph,
+		20*time.Millisecond,
+	); err == nil {
+		t.Fatal("ReadDialRequestUnix accepted missing half-close")
+	}
+}
+
+func TestReadDialRequestUnixRejectsExtraBytes(t *testing.T) {
+	reader, writer := unixStreamPair(t)
+	graph, _, err := Compile(validPolicyManifest())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	frame, err := EncodeDialRequest(DialRequest{Host: "example.com", Port: 443})
+	if err != nil {
+		t.Fatalf("EncodeDialRequest: %v", err)
+	}
+	if _, err := writer.Write(append(frame, 'x')); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := writer.CloseWrite(); err != nil {
+		t.Fatalf("CloseWrite: %v", err)
+	}
+	if _, err := ReadDialRequestUnix(
+		context.Background(),
+		reader,
+		graph,
+		time.Second,
+	); err == nil {
+		t.Fatal("ReadDialRequestUnix accepted extra bytes")
+	}
+}
+
+func unixStreamPair(t *testing.T) (*net.UnixConn, *net.UnixConn) {
 	t.Helper()
 	descriptors, err := unix.Socketpair(
 		unix.AF_UNIX,
-		unix.SOCK_DGRAM,
+		unix.SOCK_STREAM,
 		0,
 	)
 	if err != nil {

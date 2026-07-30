@@ -4,14 +4,15 @@
 
 **Pre-deployment. Experimental. Public-preview upstream dependency.**
 
-This repository is the phase 1 public foundation for Portable GHAR: a
-governed source tree, synthetic configuration contracts, enforceable
-sanitization, and this documentation set. It contains no runner
-controller, no host integration, no Cloudflare Worker deployment, and no
-routing writer -- none of that runtime code has landed yet. Everything
-this README describes about the controller, failover, notifications, or
-migration is a description of the reviewed design this repository will
-implement, not a claim that any of it is running today.
+This repository contains the Phase 2 source implementation of the local
+Portable GHAR controller and isolation runtime, including its runner,
+adapter, broker, helper, verifier, host-lifecycle, conformance, and
+reproducible-build seams. **Source complete does not mean fully verified
+or deployed:** positive Linux/Docker operational evidence, forced-runner-
+version-bump evidence, the operator-approved host sizing tuple, external
+failover, workflow migration, and live activation remain separate gates.
+Nothing in this README is a claim that Portable GHAR is running on a live
+host today.
 
 Portable GHAR also depends on `actions/scaleset`, a **public-preview**
 GitHub client interface, not a stable or official GitHub API. This project
@@ -151,9 +152,9 @@ is in [docs/operations/operations.md](docs/operations/operations.md).
 ## Repository map
 
 ```text
-cmd/            planned controller/watchdog binaries (not yet present)
-internal/       Go packages behind narrow interfaces (buildinfo today)
-worker/         Cloudflare Worker/Durable Object TypeScript source
+cmd/            controller, watchdog, runner-gate, and isolation binaries
+internal/       controller, lifecycle, isolation, state, and release packages
+worker/         pre-deployment Cloudflare Worker/Durable Object source
 images/         runner, network-adapter/broker/helper/verifier image roots
 deploy/         host-adapter integration (QTS, systemd)
 config/         schema/ and examples/ for the synthetic public contracts
@@ -194,13 +195,14 @@ fail-closed public-source sanitizer: it rejects private/loopback/
 link-local literals, PEM and credential-shaped blocks, personal paths,
 non-synthetic identifiers, and deployment-specific values in tracked and
 generated output alike, and a release cannot proceed when it fails.
-Phase 1 defines a reproducible source-release pipeline: a clean rebuild,
-the full required-check suite, filesystem and image scanning, an SBOM and
-third-party license inventory, checksums, and provenance attestations for
-every published artifact. Repository settings such as branch protection
-and required status checks are applied only after every stable check has
-passed once on a reviewed pull request head -- a merge is not itself a
-deployment.
+Phase 2 source defines reproducible source and runtime release pipelines:
+clean independent rebuilds, the full required-check suite, filesystem and
+image scanning, SBOM and third-party license inventories, checksums, and
+provenance attestations for published artifacts. Those paths remain
+pre-deployment until their deferred Linux/Docker and operational evidence
+gates pass. Repository settings such as branch protection and required
+status checks are applied only after every stable check has passed once on
+a reviewed pull request head -- a merge is not itself a deployment.
 
 ## Docs and license
 

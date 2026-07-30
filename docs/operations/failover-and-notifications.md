@@ -6,10 +6,10 @@ notification channels a routing transition drives. It assumes the
 components in [Architecture overview](../architecture/overview.md) and
 the boundaries in [Trust boundaries](../security/trust-boundaries.md).
 
-Phase 1 of this repository ships no Cloudflare Worker deployment. This
-page describes the intended failover and notification contract the later
-failover phase implements; it is not a claim that any of the behavior
-below is live against a deployed Worker today.
+Phase 2 source does not activate a Cloudflare Worker deployment. This page
+describes the intended failover and notification contract the later
+external-control-plane phase implements; it is not a claim that any
+behavior below is live against a deployed Worker today.
 
 ## Server-owned enrollment epochs
 

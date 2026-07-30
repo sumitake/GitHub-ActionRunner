@@ -110,7 +110,7 @@ run_fetch() {
   run_fetch
   [ "$status" -eq 0 ]
   [ -f "$WORK/build/$RUNNER_ASSET" ]
-  [ "$(stat -f %Lp "$WORK/build/$RUNNER_ASSET" 2>/dev/null || stat -c %a "$WORK/build/$RUNNER_ASSET")" = 400 ]
+  [ "$(stat -c %a "$WORK/build/$RUNNER_ASSET" 2>/dev/null || stat -f %Lp "$WORK/build/$RUNNER_ASSET")" = 400 ]
   [ -f "$WORK/build/runner-runtime/READY" ]
   [ "$output" = '{"schema_version":1,"runtime_lock_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","tree_lock_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","manifest_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","evidence_generation":7}' ]
   grep -Fx "runner-download-spec" "$LOG"

@@ -5,6 +5,7 @@ package networkjail
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"time"
 
@@ -39,21 +40,46 @@ func ReadDialRequestUnix(
 	}
 	defer func() { _ = connection.SetReadDeadline(time.Time{}) }()
 
-	data := make([]byte, MaxDialRequestFrameBytes+1)
+	data := make([]byte, 0, MaxDialRequestFrameBytes+1)
 	oob := make([]byte, unixFrameOOBBytes)
-	dataBytes, oobBytes, flags, address, err := connection.ReadMsgUnix(data, oob)
-	if oobBytes > 0 {
-		closeReceivedUnixRights(oob[:oobBytes])
+	for {
+		remaining := MaxDialRequestFrameBytes + 1 - len(data)
+		if remaining <= 0 {
+			return DialRequest{}, errors.New("networkjail: unix dial frame rejected")
+		}
+		chunk := make([]byte, remaining)
+		dataBytes, oobBytes, flags, _, err := connection.ReadMsgUnix(
+			chunk,
+			oob,
+		)
+		if oobBytes > 0 {
+			closeReceivedUnixRights(oob[:oobBytes])
+		}
+		if oobBytes != 0 ||
+			flags&(unix.MSG_CTRUNC|unix.MSG_TRUNC) != 0 {
+			return DialRequest{}, errors.New("networkjail: unix dial frame rejected")
+		}
+		if dataBytes < 0 || dataBytes > len(chunk) {
+			return DialRequest{}, errors.New("networkjail: unix dial frame rejected")
+		}
+		data = append(data, chunk[:dataBytes]...)
+		if len(data) > MaxDialRequestFrameBytes {
+			return DialRequest{}, errors.New("networkjail: unix dial frame rejected")
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return DialRequest{}, errors.New("networkjail: unix dial frame read failed")
+		}
+		if dataBytes == 0 {
+			return DialRequest{}, errors.New("networkjail: unix dial frame rejected")
+		}
 	}
-	if err != nil {
-		return DialRequest{}, errors.New("networkjail: unix dial frame read failed")
-	}
-	if address != nil || oobBytes != 0 ||
-		flags&(unix.MSG_CTRUNC|unix.MSG_TRUNC) != 0 ||
-		dataBytes <= 0 || dataBytes > MaxDialRequestFrameBytes {
+	if len(data) == 0 {
 		return DialRequest{}, errors.New("networkjail: unix dial frame rejected")
 	}
-	request, err := DecodeDialRequest(data[:dataBytes], graph)
+	request, err := DecodeDialRequest(data, graph)
 	if err != nil {
 		return DialRequest{}, errors.New("networkjail: unix dial frame rejected")
 	}

@@ -253,9 +253,8 @@ func finalizeAuthoritySocketWith(
 	}
 	_, socket, err := readAuthorityPathIdentity(socketPath, true)
 	if err == nil && (socket.UID != uid || socket.GID != gid) {
-		const maxSigned32 = uint32(1<<31 - 1)
-		if strconv.IntSize == 32 &&
-			(uid > maxSigned32 || gid > maxSigned32) {
+		maxInt := uint64(^uint(0) >> 1)
+		if uint64(uid) > maxInt || uint64(gid) > maxInt {
 			return hostruntime.SocketIdentity{}, nil,
 				ErrPermitAuthorityUnavailable
 		}

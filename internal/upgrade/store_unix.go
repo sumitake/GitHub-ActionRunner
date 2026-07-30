@@ -253,15 +253,34 @@ func (store *FileJournalStore) Acquire(
 	if err := flockJournal(ctx, lockFD); err != nil {
 		return nil, err
 	}
-	if err := unix.Close(lockPinFD); err != nil {
-		_ = unix.Flock(lockFD, unix.LOCK_UN)
-		return nil, ErrJournalIntegrity
-	}
+	pinCloseErr := unix.Close(lockPinFD)
 	cleanupPin = false
+	if pinCloseErr != nil {
+		cleanupLock = false
+		return nil, errors.Join(
+			ErrJournalIntegrity,
+			releaseProspectiveJournalLock(
+				lockFD,
+				func(fd int) error {
+					return unix.Flock(fd, unix.LOCK_UN)
+				},
+				unix.Close,
+			),
+		)
+	}
 	if err := verifyJournalRoot(rootFD, rootPath, rootIdentity); err != nil ||
 		verifyJournalLock(rootFD, lockIdentity) != nil {
-		_ = unix.Flock(lockFD, unix.LOCK_UN)
-		return nil, ErrJournalIntegrity
+		cleanupLock = false
+		return nil, errors.Join(
+			ErrJournalIntegrity,
+			releaseProspectiveJournalLock(
+				lockFD,
+				func(fd int) error {
+					return unix.Flock(fd, unix.LOCK_UN)
+				},
+				unix.Close,
+			),
+		)
 	}
 
 	cleanupRoot = false
@@ -273,6 +292,24 @@ func (store *FileJournalStore) Acquire(
 		rootIdentity: rootIdentity,
 		lockIdentity: lockIdentity,
 	}, nil
+}
+
+func releaseProspectiveJournalLock(
+	fd int,
+	unlock func(int) error,
+	closeFD func(int) error,
+) error {
+	if fd < 0 || unlock == nil || closeFD == nil {
+		return ErrJournalIntegrity
+	}
+	var result error
+	if err := unlock(fd); err != nil {
+		result = errors.Join(result, ErrJournalIntegrity)
+	}
+	if err := closeFD(fd); err != nil {
+		result = errors.Join(result, ErrJournalIntegrity)
+	}
+	return result
 }
 
 func duplicateJournalAcquireFDs(

@@ -27,6 +27,11 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  printf 'check-images: python3 is required but was not found on PATH\n' >&2
+  exit 1
+fi
+
 if [ ! -f "$manifest" ]; then
   printf 'check-images: manifest not found: %s\n' "$manifest" >&2
   exit 1
@@ -129,6 +134,27 @@ case "$source_epoch" in
   ;;
 esac
 
+created_epoch() {
+  python3 - "$1" <<'PY'
+import datetime
+import re
+import sys
+
+value = sys.argv[1]
+if not re.fullmatch(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:[.]0+)?(?:Z|[+]00:00)",
+    value,
+):
+    raise SystemExit(1)
+normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+parsed = datetime.datetime.fromisoformat(normalized)
+if parsed.tzinfo is None:
+    raise SystemExit(1)
+print(int(parsed.timestamp()))
+PY
+}
+
 i=0
 while [ "$i" -lt "$image_count" ]; do
   entry="$(jq -c ".images[$i]" "$manifest")"
@@ -139,14 +165,39 @@ while [ "$i" -lt "$image_count" ]; do
   tag_a="portable-ghar-check-images:${name}-a"
   tag_b="portable-ghar-check-images:${name}-b"
 
-  docker build --no-cache --provenance=false \
+  SOURCE_DATE_EPOCH="$source_epoch" docker buildx build \
+    --platform linux/amd64 \
+    --no-cache \
+    --provenance=false \
+    --sbom=false \
     --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
-    -f "$dockerfile" -t "$tag_a" "$context" >/dev/null
+    --output "type=docker,name=$tag_a,rewrite-timestamp=true" \
+    -f "$dockerfile" "$context" >/dev/null
   id_a="$(docker image inspect --format '{{.Id}}' "$tag_a")"
-  docker build --no-cache --provenance=false \
+  created_a="$(docker image inspect --format '{{.Created}}' "$tag_a")"
+  if ! created_epoch_a="$(created_epoch "$created_a")" ||
+    [ "$created_epoch_a" != "$source_epoch" ]; then
+    docker image rm -f "$tag_a" >/dev/null 2>&1 || true
+    printf 'check-images: %s first export has noncanonical creation time\n' "$name" >&2
+    exit 1
+  fi
+
+  SOURCE_DATE_EPOCH="$source_epoch" docker buildx build \
+    --platform linux/amd64 \
+    --no-cache \
+    --provenance=false \
+    --sbom=false \
     --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
-    -f "$dockerfile" -t "$tag_b" "$context" >/dev/null
+    --output "type=docker,name=$tag_b,rewrite-timestamp=true" \
+    -f "$dockerfile" "$context" >/dev/null
   id_b="$(docker image inspect --format '{{.Id}}' "$tag_b")"
+  created_b="$(docker image inspect --format '{{.Created}}' "$tag_b")"
+  if ! created_epoch_b="$(created_epoch "$created_b")" ||
+    [ "$created_epoch_b" != "$source_epoch" ]; then
+    docker image rm -f "$tag_a" "$tag_b" >/dev/null 2>&1 || true
+    printf 'check-images: %s second export has noncanonical creation time\n' "$name" >&2
+    exit 1
+  fi
 
   docker image rm -f "$tag_a" "$tag_b" >/dev/null 2>&1 || true
 

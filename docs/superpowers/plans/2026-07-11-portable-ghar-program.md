@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- The review-gated design in `docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md` is authoritative for planning. Phase 2 implementation is underway; the 2026-07-22 runner-lifecycle amendment remains pre-code review-gated, and any further material architecture change requires a revised design review.
+- The review-gated design in `docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md` is authoritative for planning. Phase 2 source implementation is complete; its deferred operational evidence remains separately gated, and any further material architecture change requires a revised design review.
 - The public repository must contain only generic source, schemas, synthetic fixtures, documentation, and reproducible build metadata. Actual host, network, repository, account, notification, schedule, credential, and migration values stay in a mode-restricted private overlay outside the repository.
 - Never place a GitHub App private key, installation token, Cloudflare token, heartbeat key, JIT configuration, webhook URL, notification destination, raw production log, or private denylist in a command transcript, test fixture, issue, pull request, commit, release, or delegate prompt.
 - All public pull-request checks run on GitHub-hosted runners with no deployment secrets, no `pull_request_target`, least-privilege permissions, `persist-credentials: false`, timeouts, concurrency cancellation, and Actions pinned to full commit SHAs.

@@ -16,8 +16,15 @@ import (
 
 func TestVerifyBrokerObjectsRejectsAliasAndSameUIDSocketReplacement(t *testing.T) {
 	fixture := newBrokerSocketFixture(t)
-	if _, err := verifyBrokerObjects(fixture.directory, fixture.binding); err != nil {
-		t.Fatalf("verifyBrokerObjects: %v", err)
+	guard, socketPath, err := openBrokerGuard(
+		fixture.directory,
+		fixture.binding,
+	)
+	if err != nil {
+		t.Fatalf("openBrokerGuard: %v", err)
+	}
+	if socketPath != fixture.socketPath {
+		t.Fatalf("socket path = %q, want %q", socketPath, fixture.socketPath)
 	}
 
 	alias := fixture.directory + "-alias"
@@ -25,8 +32,8 @@ func TestVerifyBrokerObjectsRejectsAliasAndSameUIDSocketReplacement(t *testing.T
 		t.Fatalf("Symlink: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Remove(alias) })
-	if _, err := verifyBrokerObjects(alias, fixture.binding); err == nil {
-		t.Fatal("verifyBrokerObjects accepted a directory alias")
+	if _, _, err := openBrokerGuard(alias, fixture.binding); err == nil {
+		t.Fatal("openBrokerGuard accepted a directory alias")
 	}
 
 	if err := fixture.listener.Close(); err != nil {
@@ -43,14 +50,22 @@ func TestVerifyBrokerObjectsRejectsAliasAndSameUIDSocketReplacement(t *testing.T
 	if err := os.Chmod(fixture.socketPath, 0o600); err != nil {
 		t.Fatalf("replacement Chmod: %v", err)
 	}
-	if _, err := verifyBrokerObjects(fixture.directory, fixture.binding); err == nil {
-		t.Fatal("verifyBrokerObjects accepted same-UID socket replacement")
+	if err := guard.Verify(); err == nil {
+		t.Fatal("retained broker guard accepted same-UID socket replacement")
 	}
 }
 
 func TestRelayOneCopiesOpaqueBytesAndPropagatesHalfClose(t *testing.T) {
 	fixture := newBrokerSocketFixture(t)
 	defer fixture.listener.Close()
+	brokerGuard, brokerSocketPath, err := openBrokerGuard(
+		fixture.directory,
+		fixture.binding,
+	)
+	if err != nil {
+		t.Fatalf("openBrokerGuard: %v", err)
+	}
+	defer brokerGuard.Close()
 	brokerDone := make(chan error, 1)
 	go func() {
 		connection, err := fixture.listener.AcceptUnix()
@@ -87,10 +102,11 @@ func TestRelayOneCopiesOpaqueBytesAndPropagatesHalfClose(t *testing.T) {
 		t.Fatalf("AcceptTCP: %v", err)
 	}
 	machine := relayMachine{
-		brokerDirectory: fixture.directory,
-		binding:         fixture.binding,
-		ioTimeout:       2 * time.Second,
-		verifyPeer:      func(*net.UnixConn, relaycontract.Binding) error { return nil },
+		brokerGuard:      brokerGuard,
+		brokerSocketPath: brokerSocketPath,
+		binding:          fixture.binding,
+		ioTimeout:        2 * time.Second,
+		verifyPeer:       func(*net.UnixConn, relaycontract.Binding) error { return nil },
 	}
 	relayDone := make(chan error, 1)
 	go func() { relayDone <- machine.relayOne(context.Background(), serverSide) }()

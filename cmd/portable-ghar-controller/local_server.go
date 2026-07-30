@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sumitake/portable-ghar/internal/unixsocketguard"
 	"golang.org/x/sys/unix"
 )
 
@@ -27,9 +28,8 @@ type localServerConfig struct {
 
 type localServer struct {
 	mu               sync.Mutex
-	path             string
 	expectedUID      uint32
-	identity         localSocketIdentity
+	socketGuard      *unixsocketguard.OwnedGuard
 	listener         *net.UnixListener
 	allowed          map[localMethod]struct{}
 	admission        chan struct{}
@@ -91,31 +91,36 @@ func newLocalServer(config localServerConfig) (*localServer, error) {
 	if err != nil {
 		return nil, errLocalProtocol
 	}
-	listener.SetUnlinkOnClose(false)
-	cleanup := func() {
-		_ = listener.Close()
-		_ = os.Remove(config.Path)
-	}
 	if err := os.Chmod(config.Path, 0o600); err != nil {
-		cleanup()
+		_ = listener.Close()
 		return nil, errLocalProtocol
 	}
-	identity, err := observeLocalSocketIdentity(
-		config.Path,
-		config.ExpectedUID,
-	)
+	parent := filepath.Dir(config.Path)
+	name := filepath.Base(config.Path)
+	snapshot, err := unixsocketguard.Observe(parent, name)
+	if err != nil || snapshot.Directory.UID != config.ExpectedUID ||
+		snapshot.Socket.UID != config.ExpectedUID {
+		listener.SetUnlinkOnClose(false)
+		_ = listener.Close()
+		return nil, errLocalProtocol
+	}
+	socketGuard, err := unixsocketguard.OpenOwned(parent, snapshot)
 	if err != nil {
-		cleanup()
+		current, observeErr := unixsocketguard.Observe(parent, name)
+		if observeErr != nil || current != snapshot {
+			listener.SetUnlinkOnClose(false)
+		}
+		_ = listener.Close()
 		return nil, errLocalProtocol
 	}
+	listener.SetUnlinkOnClose(false)
 	fatal := config.Fatal
 	if fatal == nil {
 		fatal = func() {}
 	}
 	return &localServer{
-		path:             config.Path,
 		expectedUID:      config.ExpectedUID,
-		identity:         identity,
+		socketGuard:      socketGuard,
 		listener:         listener,
 		allowed:          allowed,
 		admission:        config.Admission,
@@ -168,11 +173,8 @@ func (server *localServer) serve() {
 			server.mu.Unlock()
 			return
 		}
-		if err := requireLocalSocketIdentity(
-			server.path,
-			server.expectedUID,
-			server.identity,
-		); err != nil {
+		if server.socketGuard == nil ||
+			server.socketGuard.Verify() != nil {
 			_ = connection.Close()
 			server.tripFatal()
 			return
@@ -241,11 +243,8 @@ func (server *localServer) serveConnection(connection *net.UnixConn) {
 	if _, ok := server.allowed[request.Method]; !ok {
 		return
 	}
-	if err := requireLocalSocketIdentity(
-		server.path,
-		server.expectedUID,
-		server.identity,
-	); err != nil {
+	if server.socketGuard == nil ||
+		server.socketGuard.Verify() != nil {
 		server.tripFatal()
 		return
 	}
@@ -282,11 +281,8 @@ func (server *localServer) serveConnection(connection *net.UnixConn) {
 		server.tripFatal()
 		return
 	}
-	if err := requireLocalSocketIdentity(
-		server.path,
-		server.expectedUID,
-		server.identity,
-	); err != nil {
+	if server.socketGuard == nil ||
+		server.socketGuard.Verify() != nil {
 		server.tripFatal()
 		return
 	}
@@ -376,14 +372,20 @@ func (server *localServer) closeAsync() {
 	}
 	server.mu.Unlock()
 
+	var closeErr error
+	guardCleanupAllowed := server.socketGuard != nil &&
+		server.socketGuard.Verify() == nil
+	if !guardCleanupAllowed {
+		closeErr = errors.Join(closeErr, errLocalProtocol)
+	}
 	if cancel != nil {
 		cancel()
 	}
-	var closeErr error
 	if listener != nil {
 		if err := listener.Close(); err != nil &&
 			!errors.Is(err, net.ErrClosed) {
 			closeErr = errors.Join(closeErr, err)
+			guardCleanupAllowed = false
 		}
 	}
 	for _, connection := range connections {
@@ -403,14 +405,20 @@ func (server *localServer) closeAsync() {
 	server.mu.Lock()
 	closeErr = errors.Join(closeErr, server.acceptErr)
 	server.mu.Unlock()
-	closeErr = errors.Join(
-		closeErr,
-		removeOwnedLocalSocket(
-			server.path,
-			server.expectedUID,
-			server.identity,
-		),
-	)
+	guardRemoved := false
+	if guardCleanupAllowed {
+		if server.socketGuard.Verify() != nil ||
+			server.socketGuard.Remove() != nil {
+			closeErr = errors.Join(closeErr, errLocalProtocol)
+		} else {
+			guardRemoved = true
+		}
+	}
+	if guardRemoved {
+		if err := server.socketGuard.Close(); err != nil {
+			closeErr = errors.Join(closeErr, errLocalProtocol)
+		}
+	}
 	server.mu.Lock()
 	server.closeErr = closeErr
 	server.mu.Unlock()
@@ -424,27 +432,6 @@ func validateLocalSocketParent(path string, expectedUID uint32) error {
 		uint32(stat.Mode)&unix.S_IFMT != unix.S_IFDIR ||
 		uint32(stat.Mode)&0o777 != 0o700 ||
 		stat.Uid != expectedUID {
-		return errLocalProtocol
-	}
-	return nil
-}
-
-func removeOwnedLocalSocket(
-	path string,
-	expectedUID uint32,
-	identity localSocketIdentity,
-) error {
-	if err := requireLocalSocketIdentity(
-		path,
-		expectedUID,
-		identity,
-	); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return errLocalProtocol
-	}
-	if err := os.Remove(path); err != nil {
 		return errLocalProtocol
 	}
 	return nil

@@ -1,15 +1,14 @@
 # Third-Party Notices
 
 This file is a placeholder. No third-party dependencies are bundled yet
-into any distributed artifact of this project -- Phase 1 ships only
-build/protocol seams, schemas, and repository policy, with no packaged
-release.
+into a tagged distributed artifact of this project. The Phase 2 source
+tree declares and pins dependencies, but no tagged distribution has been
+published from it yet.
 
 A complete, accurate third-party notices file (license texts and
 attribution for every dependency actually bundled into a release artifact)
-will be compiled automatically at release time as part of Task 10
-(reproducible source release, SBOM, scans, and provenance) later in the
-implementation plan. That step will generate this file's real contents
+will be compiled automatically by the reproducible release pipeline with
+its SBOM, scans, and provenance. That step will generate this file's real contents
 from the release's Software Bill of Materials (SBOM) rather than from a
 hand-maintained list, so it stays accurate as dependencies change.
 

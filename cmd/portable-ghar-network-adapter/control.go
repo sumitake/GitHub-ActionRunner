@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/relaycontract"
+	"github.com/sumitake/portable-ghar/internal/unixsocketguard"
 	"golang.org/x/sys/unix"
 )
 
@@ -27,14 +28,7 @@ type adapterConfig struct {
 
 type controlPeerVerifier func(*net.UnixConn) error
 
-type socketIdentity struct {
-	device uint64
-	inode  uint64
-	uid    uint32
-	gid    uint32
-}
-
-func holdAdapter(config adapterConfig) error {
+func holdAdapter(config adapterConfig) (result error) {
 	if !canonicalAbsolute(config.controlDirectory) ||
 		!canonicalAbsolute(config.controlSocket) ||
 		!canonicalAbsolute(config.brokerDirectory) ||
@@ -50,12 +44,19 @@ func holdAdapter(config adapterConfig) error {
 	if err := verifyBrokerDirectoryBaseline(config.brokerDirectory); err != nil {
 		return err
 	}
-	control, identity, err := listenControlSocket(config.controlSocket)
+	control, controlGuard, err := listenControlSocket(config.controlSocket)
 	if err != nil {
 		return err
 	}
-	defer control.Close()
-	defer removeOwnedSocket(config.controlSocket, identity)
+	controlOpen := true
+	defer func() {
+		if controlOpen {
+			result = errors.Join(
+				result,
+				closeOwnedControlSocket(control, controlGuard),
+			)
+		}
+	}()
 
 	connection, err := control.AcceptUnix()
 	if err != nil {
@@ -66,15 +67,31 @@ func holdAdapter(config adapterConfig) error {
 		connection.Close()
 		return err
 	}
-	if _, err := verifyBrokerObjects(config.brokerDirectory, binding); err != nil {
+	brokerGuard, brokerSocketPath, err := openBrokerGuard(
+		config.brokerDirectory,
+		binding,
+	)
+	if err != nil {
 		connection.Close()
 		return err
 	}
+	brokerGuardOpen := true
+	defer func() {
+		if brokerGuardOpen {
+			if closeErr := brokerGuard.Close(); closeErr != nil {
+				result = errors.Join(
+					result,
+					errors.New("network-adapter: broker guard close failed"),
+				)
+			}
+		}
+	}()
 	machine := relayMachine{
-		brokerDirectory: config.brokerDirectory,
-		binding:         binding,
-		ioTimeout:       config.ioTimeout,
-		verifyPeer:      config.verifyPeer,
+		brokerGuard:      brokerGuard,
+		brokerSocketPath: brokerSocketPath,
+		binding:          binding,
+		ioTimeout:        config.ioTimeout,
+		verifyPeer:       config.verifyPeer,
 	}
 	listeners, err := openRelayListeners(config.endpoints)
 	if err != nil {
@@ -93,13 +110,24 @@ func holdAdapter(config adapterConfig) error {
 	if err := connection.Close(); err != nil {
 		return errors.New("network-adapter: control close failed")
 	}
-	if err := control.Close(); err != nil {
-		return errors.New("network-adapter: control listener close failed")
-	}
-	if err := removeOwnedSocket(config.controlSocket, identity); err != nil {
+	if err := closeOwnedControlSocket(control, controlGuard); err != nil {
 		return err
 	}
-	return serveRelayListeners(context.Background(), listeners, machine, config.maxConnections)
+	controlOpen = false
+	serveErr := serveRelayListeners(
+		context.Background(),
+		listeners,
+		machine,
+		config.maxConnections,
+	)
+	if err := brokerGuard.Close(); err != nil {
+		serveErr = errors.Join(
+			serveErr,
+			errors.New("network-adapter: broker guard close failed"),
+		)
+	}
+	brokerGuardOpen = false
+	return serveErr
 }
 
 func forwardBinding(
@@ -196,52 +224,62 @@ func verifyBrokerDirectoryBaseline(directory string) error {
 	return nil
 }
 
-func listenControlSocket(path string) (*net.UnixListener, socketIdentity, error) {
+func listenControlSocket(
+	path string,
+) (*net.UnixListener, *unixsocketguard.OwnedGuard, error) {
 	var existing unix.Stat_t
 	if err := unix.Lstat(path, &existing); err == nil || !errors.Is(err, unix.ENOENT) {
-		return nil, socketIdentity{}, errors.New("network-adapter: control socket exists")
+		return nil, nil, errors.New("network-adapter: control socket exists")
 	}
 	oldMask := unix.Umask(0o077)
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	unix.Umask(oldMask)
 	if err != nil {
-		return nil, socketIdentity{}, errors.New("network-adapter: control listen failed")
+		return nil, nil, errors.New("network-adapter: control listen failed")
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = listener.Close()
+		return nil, nil, errors.New("network-adapter: control chmod failed")
+	}
+	root := filepath.Dir(path)
+	name := filepath.Base(path)
+	snapshot, err := unixsocketguard.Observe(root, name)
+	if err != nil ||
+		snapshot.Directory.UID != uint32(os.Geteuid()) ||
+		snapshot.Socket.UID != uint32(os.Geteuid()) {
+		listener.SetUnlinkOnClose(false)
+		_ = listener.Close()
+		return nil, nil, errors.New("network-adapter: control identity invalid")
+	}
+	guard, err := unixsocketguard.OpenOwned(root, snapshot)
+	if err != nil {
+		current, observeErr := unixsocketguard.Observe(root, name)
+		if observeErr != nil || current != snapshot {
+			listener.SetUnlinkOnClose(false)
+		}
+		_ = listener.Close()
+		return nil, nil, errors.New("network-adapter: control identity invalid")
 	}
 	listener.SetUnlinkOnClose(false)
-	if err := os.Chmod(path, 0o600); err != nil {
-		listener.Close()
-		_ = os.Remove(path)
-		return nil, socketIdentity{}, errors.New("network-adapter: control chmod failed")
-	}
-	var stat unix.Stat_t
-	if unix.Lstat(path, &stat) != nil ||
-		uint32(stat.Mode)&unix.S_IFMT != unix.S_IFSOCK ||
-		uint32(stat.Mode)&0o777 != 0o600 ||
-		stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 {
-		listener.Close()
-		_ = os.Remove(path)
-		return nil, socketIdentity{}, errors.New("network-adapter: control identity invalid")
-	}
-	return listener, socketIdentity{
-		device: uint64(stat.Dev),
-		inode:  stat.Ino,
-		uid:    stat.Uid,
-		gid:    stat.Gid,
-	}, nil
+	return listener, guard, nil
 }
 
-func removeOwnedSocket(path string, identity socketIdentity) error {
-	var stat unix.Stat_t
-	if err := unix.Lstat(path, &stat); errors.Is(err, unix.ENOENT) {
-		return nil
-	} else if err != nil ||
-		uint32(stat.Mode)&unix.S_IFMT != unix.S_IFSOCK ||
-		uint64(stat.Dev) != identity.device || stat.Ino != identity.inode ||
-		stat.Uid != identity.uid || stat.Gid != identity.gid {
+func closeOwnedControlSocket(
+	listener *net.UnixListener,
+	guard *unixsocketguard.OwnedGuard,
+) error {
+	if listener == nil || guard == nil || guard.Verify() != nil {
 		return errors.New("network-adapter: control socket replacement detected")
 	}
-	if err := os.Remove(path); err != nil {
-		return errors.New("network-adapter: control socket removal failed")
+	if err := listener.Close(); err != nil &&
+		!errors.Is(err, net.ErrClosed) {
+		return errors.New("network-adapter: control listener close failed")
+	}
+	if guard.Verify() != nil || guard.Remove() != nil {
+		return errors.New("network-adapter: control socket replacement detected")
+	}
+	if guard.Close() != nil {
+		return errors.New("network-adapter: control guard close failed")
 	}
 	return nil
 }
