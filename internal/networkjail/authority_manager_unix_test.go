@@ -345,8 +345,7 @@ func TestFinalizeAuthoritySocketFailureKeepsUnlinkOnClose(t *testing.T) {
 		socketPath,
 		directory,
 		directoryIdentity,
-		uint32(os.Getuid()),
-		uint32(os.Getgid()),
+		mustParseAuthorityTestUser(t),
 	)
 	if !errors.Is(err, ErrPermitAuthorityUnavailable) || pin != nil {
 		t.Fatalf("finalize result = %v/%v", pin, err)
@@ -403,8 +402,7 @@ func TestFinalizeAuthoritySocketPinMismatchPreservesReplacement(t *testing.T) {
 		socketPath,
 		directory,
 		directoryIdentity,
-		uint32(os.Getuid()),
-		uint32(os.Getgid()),
+		mustParseAuthorityTestUser(t),
 		openPin,
 	)
 	if !errors.Is(err, ErrPermitAuthorityUnavailable) || pin != nil {
@@ -422,6 +420,30 @@ func TestFinalizeAuthoritySocketPinMismatchPreservesReplacement(t *testing.T) {
 	if err := replacement.Close(); err != nil {
 		t.Fatalf("close replacement: %v", err)
 	}
+}
+
+func TestParseAuthorityUserBindsKernelAndNativeIDs(t *testing.T) {
+	raw := strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid())
+	user, err := parseAuthorityUser(raw)
+	if err != nil {
+		t.Fatalf("parseAuthorityUser(%q): %v", raw, err)
+	}
+	if uint64(user.uid) != uint64(os.Getuid()) ||
+		uint64(user.gid) != uint64(os.Getgid()) ||
+		user.nativeUID != os.Getuid() ||
+		user.nativeGID != os.Getgid() {
+		t.Fatalf("parsed user = %+v", user)
+	}
+}
+
+func mustParseAuthorityTestUser(t *testing.T) authorityUser {
+	t.Helper()
+	raw := strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid())
+	user, err := parseAuthorityUser(raw)
+	if err != nil {
+		t.Fatalf("parseAuthorityUser(%q): %v", raw, err)
+	}
+	return user
 }
 
 func prepareAuthorityTestDirectory(path string) error {

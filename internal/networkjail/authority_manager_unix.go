@@ -4,7 +4,6 @@ package networkjail
 
 import (
 	"context"
-	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -38,6 +37,13 @@ type managedUnixAuthority struct {
 	deactivated     bool
 }
 
+type authorityUser struct {
+	uid       uint32
+	gid       uint32
+	nativeUID int
+	nativeGID int
+}
+
 func NewUnixAuthorityManager(
 	authority *PermitAuthority,
 	maxClients uint32,
@@ -65,7 +71,7 @@ func (manager *UnixAuthorityManager) Start(
 		filepath.Clean(request.directory) != request.directory {
 		return authorityLease{}, ErrPermitAuthorityUnavailable
 	}
-	uid, gid, err := parseAuthorityUser(request.user)
+	user, err := parseAuthorityUser(request.user)
 	if err != nil {
 		return authorityLease{}, ErrPermitAuthorityUnavailable
 	}
@@ -74,7 +80,9 @@ func (manager *UnixAuthorityManager) Start(
 		return authorityLease{}, ErrPermitAuthorityUnavailable
 	}
 	directory, _, err := readAuthorityPathIdentity(request.directory, false)
-	if err != nil || directory.UID != uid || directory.GID != gid {
+	if err != nil ||
+		directory.UID != user.uid ||
+		directory.GID != user.gid {
 		return authorityLease{}, ErrPermitAuthorityUnavailable
 	}
 	socketPath := filepath.Join(request.directory, "dial-authority.sock")
@@ -144,8 +152,7 @@ func (manager *UnixAuthorityManager) Start(
 		socketPath,
 		request.directory,
 		directory,
-		uid,
-		gid,
+		user,
 	)
 	if err != nil {
 		return authorityLease{}, ErrPermitAuthorityUnavailable
@@ -215,16 +222,14 @@ func finalizeAuthoritySocket(
 	socketPath string,
 	directoryPath string,
 	directory hostruntime.DirectoryIdentity,
-	uid uint32,
-	gid uint32,
+	user authorityUser,
 ) (hostruntime.SocketIdentity, *authoritySocketPin, error) {
 	return finalizeAuthoritySocketWith(
 		listener,
 		socketPath,
 		directoryPath,
 		directory,
-		uid,
-		gid,
+		user,
 		openAuthoritySocketPin,
 	)
 }
@@ -234,8 +239,7 @@ func finalizeAuthoritySocketWith(
 	socketPath string,
 	directoryPath string,
 	directory hostruntime.DirectoryIdentity,
-	uid uint32,
-	gid uint32,
+	user authorityUser,
 	openPin func(
 		string,
 		hostruntime.DirectoryIdentity,
@@ -243,7 +247,11 @@ func finalizeAuthoritySocketWith(
 	) (*authoritySocketPin, error),
 ) (hostruntime.SocketIdentity, *authoritySocketPin, error) {
 	if listener == nil || socketPath == "" || directoryPath == "" ||
-		openPin == nil {
+		openPin == nil ||
+		user.nativeUID < 0 ||
+		user.nativeGID < 0 ||
+		uint64(user.nativeUID) != uint64(user.uid) ||
+		uint64(user.nativeGID) != uint64(user.gid) {
 		return hostruntime.SocketIdentity{}, nil,
 			ErrPermitAuthorityUnavailable
 	}
@@ -253,13 +261,9 @@ func finalizeAuthoritySocketWith(
 			ErrPermitAuthorityUnavailable
 	}
 	_, socket, err := readAuthorityPathIdentity(socketPath, true)
-	if err == nil && (socket.UID != uid || socket.GID != gid) {
-		if uint64(uid) > uint64(math.MaxInt) ||
-			uint64(gid) > uint64(math.MaxInt) {
-			return hostruntime.SocketIdentity{}, nil,
-				ErrPermitAuthorityUnavailable
-		}
-		if err := os.Chown(socketPath, int(uid), int(gid)); err != nil {
+	if err == nil &&
+		(socket.UID != user.uid || socket.GID != user.gid) {
+		if err := os.Chown(socketPath, user.nativeUID, user.nativeGID); err != nil {
 			return hostruntime.SocketIdentity{}, nil,
 				ErrPermitAuthorityUnavailable
 		}
@@ -267,8 +271,8 @@ func finalizeAuthoritySocketWith(
 	}
 	if err != nil ||
 		socket.Device != directory.Device ||
-		socket.UID != uid ||
-		socket.GID != gid {
+		socket.UID != user.uid ||
+		socket.GID != user.gid {
 		return hostruntime.SocketIdentity{}, nil,
 			ErrPermitAuthorityUnavailable
 	}
@@ -392,20 +396,37 @@ func (endpoint *managedUnixAuthority) close() error {
 	return endpoint.server.close()
 }
 
-func parseAuthorityUser(value string) (uint32, uint32, error) {
+func parseAuthorityUser(value string) (authorityUser, error) {
 	parts := strings.Split(value, ":")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return 0, 0, ErrPermitAuthorityUnavailable
+		return authorityUser{}, ErrPermitAuthorityUnavailable
 	}
 	uid, err := strconv.ParseUint(parts[0], 10, 32)
 	if err != nil || strconv.FormatUint(uid, 10) != parts[0] {
-		return 0, 0, ErrPermitAuthorityUnavailable
+		return authorityUser{}, ErrPermitAuthorityUnavailable
 	}
 	gid, err := strconv.ParseUint(parts[1], 10, 32)
 	if err != nil || strconv.FormatUint(gid, 10) != parts[1] {
-		return 0, 0, ErrPermitAuthorityUnavailable
+		return authorityUser{}, ErrPermitAuthorityUnavailable
 	}
-	return uint32(uid), uint32(gid), nil
+	nativeUID, err := strconv.Atoi(parts[0])
+	if err != nil ||
+		nativeUID < 0 ||
+		strconv.Itoa(nativeUID) != parts[0] {
+		return authorityUser{}, ErrPermitAuthorityUnavailable
+	}
+	nativeGID, err := strconv.Atoi(parts[1])
+	if err != nil ||
+		nativeGID < 0 ||
+		strconv.Itoa(nativeGID) != parts[1] {
+		return authorityUser{}, ErrPermitAuthorityUnavailable
+	}
+	return authorityUser{
+		uid:       uint32(uid),
+		gid:       uint32(gid),
+		nativeUID: nativeUID,
+		nativeGID: nativeGID,
+	}, nil
 }
 
 var _ authorityManager = (*UnixAuthorityManager)(nil)

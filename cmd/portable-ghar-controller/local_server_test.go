@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -133,15 +134,26 @@ func TestLocalServerAdmissionSaturatesBeforeSecondRequestRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial second: %v", err)
 	}
-	if _, err := second.Write(request); err != nil {
+	var response []byte
+	written, writeErr := second.Write(request)
+	switch {
+	case writeErr == nil:
+		if written != len(request) {
+			_ = second.Close()
+			t.Fatalf("write second request = %d bytes, want %d", written, len(request))
+		}
+		if unixSecond, ok := second.(*net.UnixConn); ok {
+			_ = unixSecond.CloseWrite()
+		}
+		_ = second.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		response, _ = io.ReadAll(second)
+	case errors.Is(writeErr, syscall.EPIPE):
+		// Linux may close the saturated connection before this write reaches
+		// the server. EPIPE is the exact early-rejection shape.
+	default:
 		_ = second.Close()
-		t.Fatalf("write second request: %v", err)
+		t.Fatalf("write second request: %v", writeErr)
 	}
-	if unixSecond, ok := second.(*net.UnixConn); ok {
-		_ = unixSecond.CloseWrite()
-	}
-	_ = second.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-	response, _ := io.ReadAll(second)
 	_ = second.Close()
 	if len(response) != 0 {
 		t.Fatalf("saturated response = %q, want no response", response)

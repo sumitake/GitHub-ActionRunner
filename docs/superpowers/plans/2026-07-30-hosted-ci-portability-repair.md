@@ -51,6 +51,10 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
     container audit also exposed a canonical-order mismatch: the generated
     legacy layout was path-ordered while the Docker audit hashes complete
     layout lines under `LC_ALL=C sort`.
+14. A standard `math.MaxInt` bound still left aggregate CodeQL reporting the
+    `uint32`-to-`int` flow. The same hosted Linux run also closed a saturated
+    Unix client before its request write, returning the exact wrapped `EPIPE`
+    rejection shape instead of accepting the write and then returning EOF.
 
 ## Threat model and invariants
 
@@ -253,11 +257,17 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
   tracked shell inventory, matching the source gate across ShellCheck
   versions. Keep informational diagnostics advisory.
 - Rewrite the workflow gofmt check as an explicit `if`, satisfying actionlint.
-- Remove unsafe capacity preallocation hints flagged by CodeQL and explicitly
-  reject UID/GID values above the unconditional current-architecture maximum
-  `int` before conversion and `os.Chown`. Use the standard `math.MaxInt`
-  constant at the conversion site so both the compiler and CodeQL recognize
-  the same bound.
+- Remove unsafe capacity preallocation hints flagged by CodeQL. Parse each
+  canonical UID/GID decimal independently into both the kernel-facing `uint32`
+  representation and the native `int` representation required by
+  `os.Chown`. Require both parses and both canonical decimal round trips to
+  agree, then retain the two representations in one closed value. This removes
+  the narrowing conversion dataflow entirely while keeping socket metadata
+  comparisons in the kernel's unsigned representation.
+- In the saturated local Unix-server regression, accept only the exact wrapped
+  `EPIPE` write failure observed on Linux as an alternative to successful
+  request write followed by EOF. Both paths must still prove zero response
+  bytes, zero handler calls, and release of the admission slot.
 - Generate the legacy-rootfs layout in the same bytewise full-line order that
   the Docker context audit independently recomputes with `LC_ALL=C sort`.
   Content hashes, modes, types, paths, and symlink targets remain unchanged;
@@ -372,8 +382,9 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
    - GNU-first/BSD-fallback file-mode inspection;
    - Buildx image-export timestamp rewriting without weakening image-ID
      comparison, including exact exported config epoch inspection;
-   - scanner-recognized `math.MaxInt` ownership conversion and matching
-     full-line legacy-layout ordering.
+   - independently parsed, canonically equal kernel/native ownership IDs with
+     no narrowing conversion, exact saturated-client `EPIPE` handling, and
+     matching full-line legacy-layout ordering.
 2. Observe the focused tests fail for the intended reason before production
    edits.
 3. Implement the minimum changes, run focused tests, `go test ./...`,

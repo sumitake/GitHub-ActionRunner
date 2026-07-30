@@ -16,12 +16,19 @@ GITLEAKS_FINGERPRINT = (
 
 
 class HostedCIPortabilityContractTest(unittest.TestCase):
-    def test_authority_chown_uses_scanner_recognized_int_bound(self) -> None:
+    def test_authority_chown_uses_native_int_parse_without_narrowing(self) -> None:
         source = (
             REPO_ROOT / "internal/networkjail/authority_manager_unix.go"
         ).read_text(encoding="utf-8")
-        self.assertIn("uint64(math.MaxInt)", source)
-        self.assertNotIn("^uint(0) >> 1", source)
+        self.assertIn("strconv.Atoi(parts[0])", source)
+        self.assertIn("strconv.Atoi(parts[1])", source)
+        self.assertIn(
+            "os.Chown(socketPath, user.nativeUID, user.nativeGID)",
+            source,
+        )
+        self.assertNotIn("int(uid)", source)
+        self.assertNotIn("int(gid)", source)
+        self.assertNotIn("math.MaxInt", source)
 
     def test_legacy_layout_matches_docker_full_line_sort(self) -> None:
         path = REPO_ROOT / "scripts/_prepare_task6_context.py"
