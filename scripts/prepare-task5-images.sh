@@ -26,6 +26,14 @@ canonical_existing_file() {
   [ "$candidate" = "$resolved/$leaf" ]
 }
 
+file_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 canonical_existing_directory() {
   candidate=$1
   case "$candidate" in
@@ -55,10 +63,12 @@ generation=
 runner_archive=
 seed_root=
 seed_manifest=
+ca_bundle=
 seen_generation=0
 seen_archive=0
 seen_seed_root=0
 seen_seed_manifest=0
+seen_ca_bundle=0
 while [ "$#" -gt 0 ]; do
   [ "$#" -ge 2 ] || die
   case "$1" in
@@ -82,6 +92,11 @@ while [ "$#" -gt 0 ]; do
     seed_manifest=$2
     seen_seed_manifest=1
     ;;
+  --ca-bundle)
+    [ "$seen_ca_bundle" = 0 ] || die
+    ca_bundle=$2
+    seen_ca_bundle=1
+    ;;
   *)
     die
     ;;
@@ -95,15 +110,35 @@ case "$generation" in
 *) die ;;
 esac
 [ "$seen_seed_root" = "$seen_seed_manifest" ] || die
+[ "$seen_ca_bundle" = 1 ] || die
 
-for dependency in go git jq cp mv rm mkdir chmod dirname basename mktemp; do
+for dependency in go git jq awk cp mv rm mkdir chmod dirname basename mktemp; do
   command -v "$dependency" >/dev/null 2>&1 || die
 done
+if ! command -v sha256sum >/dev/null 2>&1 &&
+  ! command -v shasum >/dev/null 2>&1; then
+  die
+fi
 
 script_directory=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P) || die
 repository=$(cd -P "$script_directory/.." && pwd -P) || die
 [ -f "$repository/go.mod" ] && [ -d "$repository/images/runner" ] &&
   [ -d "$repository/images/network-adapter" ] || die
+ca_lock="$repository/images/trust/ca-bundle.lock.json"
+[ -f "$ca_lock" ] && [ ! -L "$ca_lock" ] || die
+jq -e '
+  .schema_version == 1 and
+  (.sha256 | test("^[0-9a-f]{64}$")) and
+  .context_path == "images/trust/build/ca-bundle.pem" and
+  .copied_path == "/etc/ssl/certs/ca-bundle.crt"
+' "$ca_lock" >/dev/null || die
+expected_ca_sha=$(jq -er '.sha256' "$ca_lock") || die
+ca_context_path=$(jq -er '.context_path' "$ca_lock") || die
+expected_ca_path="$repository/$ca_context_path"
+canonical_existing_file "$ca_bundle" || die
+[ "$ca_bundle" = "$expected_ca_path" ] || die
+require_untracked_if_in_repository "$ca_bundle" "$repository" || die
+[ "$(file_sha256 "$ca_bundle")" = "$expected_ca_sha" ] || die
 
 runner_build="$repository/images/runner/build"
 adapter_build="$repository/images/network-adapter/build"
@@ -209,6 +244,20 @@ else
 fi
 
 mkdir -m 700 "$runner_stage" "$adapter_stage" || die
+cp -p "$ca_bundle" "$runner_stage/ca-bundle.pem" || die
+canonical_existing_file "$runner_stage/ca-bundle.pem" || die
+[ "$(file_sha256 "$runner_stage/ca-bundle.pem")" = "$expected_ca_sha" ] ||
+  die
+cp -p "$ca_lock" "$runner_stage/ca-bundle.lock.json" || die
+printf '%s  %s\n' "$expected_ca_sha" ca-bundle.pem \
+  >"$runner_stage/ca-bundle.sha256" || die
+chmod 444 \
+  "$runner_stage/ca-bundle.pem" \
+  "$runner_stage/ca-bundle.lock.json" \
+  "$runner_stage/ca-bundle.sha256" || die
+for name in ca-bundle.pem ca-bundle.lock.json ca-bundle.sha256; do
+  canonical_existing_file "$runner_stage/$name" || die
+done
 (
   cd "$repository"
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
@@ -242,6 +291,11 @@ chmod 444 \
 
 mv "$adapter_stage" "$adapter_build" || die
 mv "$runner_stage" "$runner_build" || die
+for name in ca-bundle.pem ca-bundle.lock.json ca-bundle.sha256; do
+  canonical_existing_file "$runner_build/$name" || die
+done
+[ "$(file_sha256 "$runner_build/ca-bundle.pem")" = "$expected_ca_sha" ] ||
+  die
 committed=1
 printf '%s\n' "prepare-task5-images: ready generation=$generation"
 exit 0

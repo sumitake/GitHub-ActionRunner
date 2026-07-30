@@ -14,3 +14,6 @@
 !build/seed-cache.manifest.json
 !build/seed-cache.tree-lock
 !build/seed-cache.READY
+!build/ca-bundle.pem
+!build/ca-bundle.lock.json
+!build/ca-bundle.sha256

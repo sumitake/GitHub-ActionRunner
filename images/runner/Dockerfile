@@ -15,10 +15,18 @@ RUN set -eu; \
         build/runner.runtime-lock.json|build/runner.READY| \
         build/seed-cache|build/seed-cache/*| \
         build/seed-cache.manifest.json|build/seed-cache.tree-lock| \
-        build/seed-cache.READY) ;; \
+        build/seed-cache.READY| \
+        build/ca-bundle.pem|build/ca-bundle.lock.json|build/ca-bundle.sha256) ;; \
         *) exit 1 ;; \
       esac; \
     done; \
+    expected_ca_sha=3ff344e30b9b1ed2971044eabb438a08f2e2245ddb5f8ab1a3ad8b63ab4eaf91; \
+    expected_ca_lock_sha=b39d26752fd97766b533547ff731334348c0f35e041adb49848e2cd10f30c592; \
+    test "$(sha256sum /context/build/ca-bundle.lock.json | awk '{print $1}')" = "$expected_ca_lock_sha"; \
+    test "$(sha256sum /context/build/ca-bundle.pem | awk '{print $1}')" = "$expected_ca_sha"; \
+    cd /context/build; \
+    printf '%s  %s\n' "$expected_ca_sha" ca-bundle.pem | cmp - ca-bundle.sha256; \
+    sha256sum -c ca-bundle.sha256; \
     test -x /context/build/portable-ghar-runner-gate; \
     test -f /context/build/runner.READY; \
     test -f /context/build/seed-cache.READY; \
@@ -26,6 +34,7 @@ RUN set -eu; \
 
 FROM debian:bookworm-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4
 ARG SOURCE_DATE_EPOCH
+COPY --from=context-audit --chown=0:0 --chmod=0444 /context/build/ca-bundle.pem /portable-ghar-bootstrap-ca.pem
 RUN set -eu; \
     case "${SOURCE_DATE_EPOCH:-}" in \
       ""|*[!0-9]*) exit 1 ;; \
@@ -34,8 +43,17 @@ RUN set -eu; \
     printf '%s\n' \
       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250101T000000Z bookworm main' \
       > /etc/apt/sources.list; \
-    apt-get -o Acquire::Check-Valid-Until=false update \
-    && apt-get install -y --no-install-recommends \
+    apt-get \
+      -o Acquire::Check-Valid-Until=false \
+      -o Acquire::https::CaInfo=/portable-ghar-bootstrap-ca.pem \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      update \
+    && apt-get \
+      -o Acquire::https::CaInfo=/portable-ghar-bootstrap-ca.pem \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      install -y --no-install-recommends \
       ca-certificates \
       curl \
       git \
@@ -48,7 +66,8 @@ RUN set -eu; \
       /var/cache/apt/* \
       /var/lib/apt/lists/* \
       /var/log/apt/* \
-      /var/log/dpkg.log
+      /var/log/dpkg.log \
+    && rm -f /portable-ghar-bootstrap-ca.pem
 COPY --from=context-audit --chown=0:0 --chmod=0444 /context-audit.OK /opt/portable-ghar/context-audit.OK
 COPY --chown=0:0 build/runner /opt/actions-runner
 COPY --chown=0:0 build/seed-cache /opt/portable-ghar/seed-cache
@@ -64,6 +83,7 @@ RUN chmod 0555 /opt/actions-runner /opt/portable-ghar/seed-cache \
     && expected_version=$(/usr/local/bin/portable-ghar-runner-gate verify-image) \
     && installed_version=$(/opt/actions-runner/bin/Runner.Listener --version) \
     && test "$installed_version" = "$expected_version" \
+    && test ! -e /portable-ghar-bootstrap-ca.pem \
     && install -d -m 0700 -o 65532 -g 65532 /runner /tmp /scratch
 
 ENV HOME=/runner \

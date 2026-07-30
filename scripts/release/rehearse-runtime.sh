@@ -1310,7 +1310,7 @@ def main():
 
     work = pathlib.Path(
         tempfile.mkdtemp(prefix=".runtime-rehearsal.", dir=os.fspath(output.parent))
-    )
+    ).resolve(strict=True)
     os.chmod(work, 0o700)
     log = work / "rehearsal.log"
     log.touch(mode=0o600)
@@ -1546,20 +1546,29 @@ def main():
 
         # Prepare every test/release image context, then run the complete gate.
         run(
+            ["scripts/prepare-task6-images.sh"],
+            cwd=clone,
+            env=env,
+            log=log,
+            timeout=1800,
+        )
+        ca_bundle = clone / "images/trust/build/ca-bundle.pem"
+        try:
+            resolved_ca_bundle = ca_bundle.resolve(strict=True)
+        except OSError:
+            reject("CA bundle path")
+        if resolved_ca_bundle != ca_bundle or not ca_bundle.is_file():
+            reject("CA bundle path")
+        run(
             [
                 "scripts/prepare-task5-images.sh",
                 "--generation",
                 "1",
                 "--runner-archive",
                 os.fspath(runner_archive),
+                "--ca-bundle",
+                os.fspath(resolved_ca_bundle),
             ],
-            cwd=clone,
-            env=env,
-            log=log,
-            timeout=1800,
-        )
-        run(
-            ["scripts/prepare-task6-images.sh"],
             cwd=clone,
             env=env,
             log=log,

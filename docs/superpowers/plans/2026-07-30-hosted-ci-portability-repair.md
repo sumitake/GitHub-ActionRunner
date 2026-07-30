@@ -55,6 +55,11 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
     `uint32`-to-`int` flow. The same hosted Linux run also closed a saturated
     Unix client before its request write, returning the exact wrapped `EPIPE`
     rejection shape instead of accepting the write and then returning EOF.
+15. The hosted runner-image build exposed a TLS bootstrap deadlock. The pinned
+    `debian:bookworm-slim` base has no usable system CA store, but the
+    Dockerfile replaced its package sources with the HTTPS snapshot before
+    installing `ca-certificates`. Snapshot verification therefore failed
+    before apt could install the package that would make it possible.
 
 ## Threat model and invariants
 
@@ -89,6 +94,10 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
   a permanent restart failure. Stale-name recovery requires an independent
   proof that the prior writer is gone plus exclusive authority over the exact
   private parent; pathname metadata by itself is never recovery authority.
+- Package-manager bootstrap must never fall back to HTTP, disable TLS
+  verification, trust a mutable host store, or accept an arbitrary caller
+  bundle. The same immutable CA lock already used by Task 6 is the sole
+  authority for the bootstrap bytes.
 
 ## Implementation
 
@@ -358,6 +367,59 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
   (`stat -f %Lp`) only when GNU mode is unavailable. Preserve the exact
   expected `400` assertion.
 
+### 8. HTTPS package-manager bootstrap
+
+- Prepare Task 6 before Task 5 in both hosted CI and the clean release
+  rehearsal. Task 6 remains the single downloader and digest verifier for the
+  locked Mozilla CA bundle and publishes it only at the ignored canonical path
+  named by `images/trust/ca-bundle.lock.json`.
+- Make Task 5 require that exact absolute canonical path. Re-read the tracked
+  lock, require its closed schema and exact context path, independently hash
+  the bundle, and reject absence, symlink, noncanonical path, digest mismatch,
+  alternate path, or arbitrary caller-supplied trust material before runner
+  acquisition or context publication. Copy the admitted bundle into the
+  runner staging directory and then re-hash that staged copy against the lock
+  before context commit; do not hash one path and later re-read a different
+  path as the admitted bytes.
+- Generate the runner-context checksum file from the tracked lock digest only
+  after that staged-copy verification. Never accept or copy a caller-supplied
+  checksum. Copy only the verified bundle, the tracked lock, and this derived
+  checksum file into the ignored runner build context.
+- Extend the deny-all `.dockerignore` and context inventory for exactly those
+  three files. Bind the context audit to source-controlled authority rather
+  than only to mutually consistent ignored files: the Dockerfile records both
+  the locked bundle digest and the whole tracked lock-file digest, the source
+  contracts require those literals to equal the tracked files, and the audit
+  requires the lock file, bundle, and derived checksum to match those exact
+  values. A co-smuggled PEM, lock, and checksum therefore cannot authorize
+  themselves.
+- Introduce the final-stage dependency before any package network operation by
+  copying the verified bundle only from the completed `context-audit` stage
+  into fixed build-only path `/portable-ghar-bootstrap-ca.pem`. Forbid any
+  second raw-context trust-material copy into the final stage.
+- Pass that one fixed absolute path to both snapshot `apt-get update` and
+  `apt-get install` through command-scoped `-o Acquire::https::CaInfo=...`,
+  with command-scoped peer and hostname verification explicitly true on both
+  operations. Do not persist an apt config or use `SSL_CERT_FILE`,
+  `CURL_CA_BUNDLE`, or any environment-derived trust path. Preserve the exact
+  HTTPS snapshot and `Check-Valid-Until=false`; never introduce HTTP,
+  `trusted=yes`, `Verify-Peer=false`, or `Verify-Host=false`.
+- After the locked snapshot installs the normal `ca-certificates` package,
+  remove the bootstrap file in the same build step. The later runner
+  verification step—after every subsequent `COPY` and other image
+  mutation—must prove the build-only path is absent so it cannot silently
+  become a second runtime trust store.
+- Update the Task 5 image READMEs and static contracts to show the required
+  Task 6 ordering, exact `--ca-bundle` argument, checksum/context audit, TLS
+  options, final absence proof, and matching CI/rehearsal order. Both callers
+  must resolve the repository with `pwd -P` (or the equivalent already
+  canonical clone path), then pass exactly
+  `<repository>/images/trust/build/ca-bundle.pem`; omission, a relative path,
+  and any alternate absolute path fail before mutation. Static contracts must
+  assert this exact order and invocation shape, not merely Task 6 occurring
+  somewhere before image validation. Retain the existing image-ID comparison
+  and all ignored-context boundaries.
+
 ## RED and GREEN verification
 
 1. Add focused tests for:
@@ -384,7 +446,10 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
      comparison, including exact exported config epoch inspection;
    - independently parsed, canonically equal kernel/native ownership IDs with
      no narrowing conversion, exact saturated-client `EPIPE` handling, and
-     matching full-line legacy-layout ordering.
+     matching full-line legacy-layout ordering;
+   - exact locked-CA path/digest admission, Task 6-before-Task 5 ordering,
+     runner-context checksum verification, explicit HTTPS peer/host
+     verification for both apt operations, and final bootstrap-file absence.
 2. Observe the focused tests fail for the intended reason before production
    edits.
 3. Implement the minimum changes, run focused tests, `go test ./...`,
@@ -447,6 +512,62 @@ artifact with SHA-256
 `PROCEED` with an empty material-gap list. The implementation therefore starts
 only after this converged design checkpoint.
 
+The hosted runner-image TLS failure materially expanded the plan and triggered
+a separate direct Grok architecture reconsultation. The first review covered
+the exact 5,289-byte artifact with SHA-256
+`80dd10838c59d3d504f7ab9ecbdf887d34dda8c9c58e564907946a5a4f0645fe`
+(session `019fb406-6af3-7990-b636-dbc556b956a9`, request
+`d59f5dfa-c2a3-4a28-a663-033914d50377`) and returned `REVISE`. Its five
+material findings are integrated above: the final stage depends on a completed
+context audit rather than a second raw copy; the audit binds the whole tracked
+lock file as well as the bundle; Task 5 re-hashes the staged copy and derives
+the checksum from the lock; apt uses one fixed command-scoped trust path with
+verification explicitly enabled and proves later absence; and CI/rehearsal
+enforce the exact Task 6-before-Task 5 order and canonical argument.
+
+The confirm-only Grok review covered the revised exact 6,915-byte artifact
+with SHA-256
+`9d1b9e3c6a460f2a625e646c69948ddc16d68537be12c027cae3bafd40d0d7ec`
+(session `019fb40b-1694-7432-beb8-a325b16b95d8`, request
+`fff67f64-c6a9-4324-8b5e-74a99d0b3367`) and returned `PROCEED` with no
+remaining material gap. Production edits began only after that second
+checkpoint.
+
+The first direct exact-patch review attempt covered the 31,390-byte staged
+patch with SHA-256
+`deb96050b6b3fe51e1547fa574cc7dcf4ea26f22ac992b6689b920cdca598fc2`
+and tree `93b731a7fcdc440a1ee23f37ac706465ab713bcd`
+(session `019fb41c-7aac-7730-8bfe-00ac511cd9ac`, request
+`a1b83b5b-0c9b-4b92-b114-f732bdef26d3`). It did not produce the required
+schema-constrained terminal output and therefore does not count as the code
+review gate. Two useful observations from its uncounted text are integrated:
+Bats now behaviorally rejects missing, alternate, digest-mismatched, and
+symlink CA inputs before transaction creation, and release rehearsal
+positively resolves and checks the clone-local canonical CA path before
+passing it to Task 5.
+
+Three other claims from that text are rejected as contradicted by the exact
+artifact or platform semantics. A completed Docker stage retains its
+filesystem, so `COPY --from=context-audit` reads the verified bytes. Re-hashing
+the private staged copy closes a source-path swap before publication within the
+declared trusted-source-preparation boundary. The apt trust settings are
+command-scoped, no apt configuration is persisted, and no network operation
+follows removal of the bootstrap file.
+
+The changed-artifact follow-up covered the 35,892-byte patch with SHA-256
+`4ccf88fac88778261533792adf47fc944c27100198467f7cff2a7362fcd697ec`
+and tree `72ad2f1c45164c17e89b52de1d777d3c7a52f74f`
+(session `019fb422-2387-71a2-afa8-688fd19f99a7`, request
+`d580525c-8004-4510-9fb4-40e44eedab75`). It also failed the CLI structured-output
+contract and does not count as the code review gate. Its useful hardening is
+integrated: release rehearsal passes the positively resolved CA `Path` object,
+and Task 5 proves all three trust files are regular, nonsymlink canonical files
+in the private stage and again after atomic publication, including a final
+bundle digest check before commit. The suggestion that an unresolved clone
+path could pass the preceding exact equality test is not possible under
+`pathlib.Path` equality, but the resolved argument removes that ambiguity from
+the evidence surface.
+
 ## Stop conditions
 
 - Stop if the framing repair needs to weaken byte/OOB/truncation/EOF checks.
@@ -454,6 +575,8 @@ only after this converged design checkpoint.
 - Stop if reproducibility requires dropping the image-ID comparison.
 - Stop if any secret-scan exception is broader than one exact immutable
   finding tuple.
+- Stop if the package bootstrap requires HTTP, disabled TLS verification,
+  mutable host trust, or any CA path not bound by the tracked lock.
 - After the verified, reviewed Phase 2 source PR merges, report the exact PR
   and merge commit plus deferred operational gates, then pause.
 
