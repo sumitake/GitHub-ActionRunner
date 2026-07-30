@@ -23,7 +23,16 @@ RUN set -eu; \
     printf '%s\n' verified > /context-audit.OK
 
 FROM debian:bookworm-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4
-RUN apt-get update \
+ARG SOURCE_DATE_EPOCH
+RUN set -eu; \
+    case "${SOURCE_DATE_EPOCH:-}" in \
+      ""|*[!0-9]*) exit 1 ;; \
+    esac; \
+    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*; \
+    printf '%s\n' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250101T000000Z bookworm main' \
+      > /etc/apt/sources.list; \
+    apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
@@ -33,7 +42,11 @@ RUN apt-get update \
       liblttng-ust1 \
       libssl3 \
       zlib1g \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf \
+      /var/cache/apt/* \
+      /var/lib/apt/lists/* \
+      /var/log/apt/* \
+      /var/log/dpkg.log
 COPY --from=context-audit --chown=0:0 --chmod=0444 /context-audit.OK /opt/portable-ghar/context-audit.OK
 COPY --chown=0:0 build/runner /opt/actions-runner
 COPY --chown=0:0 build/seed-cache /opt/portable-ghar/seed-cache

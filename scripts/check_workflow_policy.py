@@ -65,8 +65,8 @@ from typing import Optional, Union
 # uses (actions/checkout, actions/setup-go, actions/setup-node,
 # actions/upload-artifact, aquasecurity/trivy-action) are pre-reviewed for
 # later tasks (CodeQL, dependency review, Gitleaks, attestation, SBOM,
-# Bats) so this table does not need to change again when those workflows
-# are added.
+# Bats, and least-privilege GitHub App token minting) so this table does
+# not need to change again when those workflows are added.
 # ---------------------------------------------------------------------------
 REVIEWED_ACTION_PINS: dict[str, tuple[str, str]] = {
     "actions/checkout": ("9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", "v7.0.0"),
@@ -81,6 +81,10 @@ REVIEWED_ACTION_PINS: dict[str, tuple[str, str]] = {
     ),
     "gitleaks/gitleaks-action": ("e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e", "v3.0.0"),
     "actions/attest": ("a1948c3f048ba23858d222213b7c278aabede763", "v4.1.1"),
+    "actions/create-github-app-token": (
+        "bcd2ba49218906704ab6c1aa796996da409d3eb1",
+        "v3.2.0",
+    ),
     "anchore/sbom-action": ("e22c389904149dbc22b58101806040fa8d37a610", "v0.24.0"),
     "bats-core/bats-action": ("77d6fb60505b4d0d1d73e48bd035b55074bbfb43", "4.0.0"),
 }

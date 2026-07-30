@@ -38,7 +38,25 @@ EXPECTED_STABLE_CONTEXTS = {
 # the CodeQL scan job (results go to the Security tab -- it is intentionally
 # NOT one of the seven required PR status-check contexts above, but it is
 # still a unique job id that must not collide with any of them).
-EXPECTED_ALL_CONTEXTS = EXPECTED_STABLE_CONTEXTS | {"codeql", "release"}
+EXPECTED_RUNTIME_RELEASE_CONTEXTS = {
+    "release-admission",
+    "release-build-a",
+    "release-build-b",
+    "release-compare-attest",
+    "release",
+    "runner-candidate-admission",
+    "runner-candidate-build-a",
+    "runner-candidate-build-b",
+    "runner-candidate-compare-attest",
+    "runner-candidate-publish",
+}
+CREATE_APP_TOKEN_ACTION = (
+    "actions/create-github-app-token@"
+    "bcd2ba49218906704ab6c1aa796996da409d3eb1"
+)
+EXPECTED_ALL_CONTEXTS = (
+    EXPECTED_STABLE_CONTEXTS | {"codeql"} | EXPECTED_RUNTIME_RELEASE_CONTEXTS
+)
 
 # A minimal workflow that should pass every check cleanly. Each negative
 # test below takes this exact text and mutates ONE line to introduce ONE
@@ -427,6 +445,22 @@ class MissingWorkflowsDirTest(unittest.TestCase):
 
 
 class RealCiWorkflowTest(unittest.TestCase):
+    @staticmethod
+    def _load_real_workflow(name: str) -> dict:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import check_workflow_policy as cwp  # noqa: PLC0415
+
+        path = REAL_WORKFLOWS_DIR / name
+        if not path.is_file():
+            raise AssertionError(f"missing {path}")
+        return cwp.parse_workflow(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _run_text(job: dict) -> str:
+        return "\n".join(
+            str(step.get("run", "")) for step in job.get("steps", []) if isinstance(step, dict)
+        )
+
     def test_real_ci_workflow_passes(self) -> None:
         self.assertTrue(REAL_WORKFLOWS_DIR.is_dir(), "missing .github/workflows")
         result = run_checker(REAL_WORKFLOWS_DIR)
@@ -463,6 +497,342 @@ class RealCiWorkflowTest(unittest.TestCase):
         # seven stable contexts plus the CodeQL scan job -- nothing missing,
         # nothing stray.
         self.assertEqual(set(context_sources.keys()), EXPECTED_ALL_CONTEXTS)
+
+    def test_candidate_release_workflow_has_closed_triggers_and_split_authority(self) -> None:
+        root = self._load_real_workflow("runner-release-candidate.yml")
+        triggers = root.get("on", {})
+        self.assertEqual(set(triggers), {"workflow_dispatch", "repository_dispatch"})
+        self.assertEqual(
+            list(triggers["repository_dispatch"]["types"]),
+            ["observe-runner-release"],
+        )
+        self.assertIn(triggers["workflow_dispatch"], ({}, None))
+        self.assertEqual(
+            set(root["jobs"]),
+            {
+                "runner-candidate-admission",
+                "runner-candidate-build-a",
+                "runner-candidate-build-b",
+                "runner-candidate-compare-attest",
+                "runner-candidate-publish",
+            },
+        )
+        self.assertEqual(root["concurrency"]["cancel-in-progress"], "false")
+
+        admission = root["jobs"]["runner-candidate-admission"]
+        self.assertEqual(admission["steps"][0]["name"], "Validate trusted dispatch")
+        self.assertNotIn("uses", admission["steps"][0])
+        admission_text = self._run_text(admission)
+        for required in (
+            "PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR",
+            "GITHUB_ACTOR",
+            "PORTABLE_GHAR_DEFAULT_BRANCH",
+            "GITHUB_EVENT_PATH",
+            "object_pairs_hook",
+            "observe-runner-release.sh",
+        ):
+            self.assertIn(required, admission_text)
+        self.assertNotIn("CLIENT_PAYLOAD", admission_text)
+
+        admission_step = admission["steps"][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            event_path = Path(tmp) / "event.json"
+            base_environment = {
+                "GITHUB_ACTOR": "trusted-observer",
+                "GITHUB_REF": "refs/heads/main",
+                "PORTABLE_GHAR_DEFAULT_BRANCH": "main",
+                "PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR": "trusted-observer",
+            }
+            valid_cases = (
+                (
+                    "repository_dispatch",
+                    b'{"action":"observe-runner-release","client_payload":{}}\n',
+                ),
+                ("workflow_dispatch", b'{"inputs":{}}\n'),
+            )
+            for event_name, raw in valid_cases:
+                with self.subTest(event_name=event_name, validity="valid"):
+                    event_path.write_bytes(raw)
+                    result = subprocess.run(
+                        ["bash", "-c", admission_step["run"]],
+                        capture_output=True,
+                        env={
+                            **base_environment,
+                            "GITHUB_EVENT_NAME": event_name,
+                            "GITHUB_EVENT_PATH": str(event_path),
+                        },
+                    )
+                    self.assertEqual(
+                        result.returncode,
+                        0,
+                        msg=f"stdout={result.stdout!r} stderr={result.stderr!r}",
+                    )
+            invalid_cases = (
+                (
+                    "repository_dispatch",
+                    b'{"action":"observe-runner-release","client_payload":{"x":1}}\n',
+                ),
+                (
+                    "repository_dispatch",
+                    b'{"action":"other","client_payload":{}}\n',
+                ),
+                (
+                    "repository_dispatch",
+                    b'{"action":"observe-runner-release",'
+                    b'"client_payload":{},"client_payload":{}}\n',
+                ),
+                ("workflow_dispatch", b'{"inputs":{"unexpected":"value"}}\n'),
+                ("workflow_dispatch", b'{"client_payload":{}}\n'),
+            )
+            for event_name, raw in invalid_cases:
+                with self.subTest(event_name=event_name, validity="invalid"):
+                    event_path.write_bytes(raw)
+                    result = subprocess.run(
+                        ["bash", "-c", admission_step["run"]],
+                        capture_output=True,
+                        env={
+                            **base_environment,
+                            "GITHUB_EVENT_NAME": event_name,
+                            "GITHUB_EVENT_PATH": str(event_path),
+                        },
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+
+        compare = root["jobs"]["runner-candidate-compare-attest"]
+        compare_text = self._run_text(compare)
+        self.assertIn(r"\(.sha256)  \(.path)", compare_text)
+        self.assertNotIn(r"a/\(.path)", compare_text)
+        self.assertIn("provenance-subjects.json", compare_text)
+        attest_steps = [
+            step
+            for step in compare["steps"]
+            if str(step.get("uses", "")).startswith("actions/attest@")
+        ]
+        self.assertEqual(len(attest_steps), 1)
+        self.assertIn("subject-checksums", attest_steps[0]["with"])
+        self.assertEqual(
+            compare["permissions"],
+            {
+                "actions": "read",
+                "artifact-metadata": "write",
+                "attestations": "write",
+                "contents": "read",
+                "id-token": "write",
+            },
+        )
+
+        publish = root["jobs"]["runner-candidate-publish"]
+        self.assertEqual(
+            publish["permissions"],
+            {"actions": "read", "contents": "write"},
+        )
+        publish_runs = [
+            str(step.get("run", ""))
+            for step in publish["steps"]
+            if isinstance(step, dict)
+        ]
+        self.assertIn("publish-runtime-release.sh", publish_runs[-1])
+        self.assertIn("runner-candidate-v", publish_runs[-1])
+        self.assertIn("SOURCE_COMMIT", publish_runs[-1])
+        self.assertNotIn("gh release create", "\n".join(publish_runs))
+        self.assertIn("compare-runtime-rebuilds.sh", "\n".join(publish_runs))
+        app_steps = [
+            step
+            for step in publish["steps"]
+            if str(step.get("uses", "")).startswith(
+                "actions/create-github-app-token@"
+            )
+        ]
+        self.assertEqual(len(app_steps), 1)
+        self.assertEqual(app_steps[0]["uses"], CREATE_APP_TOKEN_ACTION)
+        self.assertEqual(
+            app_steps[0]["with"],
+            {
+                "client-id": "${{ vars.PORTABLE_GHAR_RELEASE_APP_CLIENT_ID }}",
+                "private-key": "${{ secrets.PORTABLE_GHAR_RELEASE_APP_PRIVATE_KEY }}",
+                "permission-administration": "read",
+            },
+        )
+        publish_step = publish["steps"][-1]
+        self.assertEqual(
+            publish_step["env"],
+            {
+                "PGHAR_RELEASE_SETTINGS_TOKEN": "${{ steps.release-settings-token.outputs.token }}",
+                "PGHAR_RELEASE_TOKEN": "${{ github.token }}",
+            },
+        )
+        self.assertNotIn("GITHUB_TOKEN", publish_step["env"])
+        self.assertNotIn("GH_TOKEN", publish_step["env"])
+
+        text = (REAL_WORKFLOWS_DIR / "runner-release-candidate.yml").read_text(
+            encoding="utf-8"
+        )
+        for forbidden in (
+            "schedule:",
+            "pull_request:",
+            "pull_request_target:",
+            "--clobber",
+            "release delete",
+            "runner-candidate-latest",
+        ):
+            self.assertNotIn(forbidden, text)
+        for job_id, job in root["jobs"].items():
+            if job_id != "runner-candidate-publish":
+                self.assertNotIn("gh release create", self._run_text(job))
+                self.assertNotIn(
+                    "actions/create-github-app-token@",
+                    str(job),
+                )
+
+    def test_product_release_workflow_uses_two_rebuilds_and_publish_last(self) -> None:
+        root = self._load_real_workflow("release.yml")
+        self.assertEqual(set(root.get("on", {})), {"push"})
+        self.assertEqual(list(root["on"]["push"]["tags"]), ["v*"])
+        self.assertEqual(
+            set(root["jobs"]),
+            {
+                "release-admission",
+                "release-build-a",
+                "release-build-b",
+                "release-compare-attest",
+                "release",
+            },
+        )
+        self.assertEqual(root["concurrency"]["cancel-in-progress"], "false")
+
+        admission = root["jobs"]["release-admission"]
+        self.assertEqual(admission["steps"][0]["name"], "Checkout exact tag")
+        self.assertIn("signed tag", self._run_text(admission))
+        self.assertIn("tag_object", admission["outputs"])
+
+        for job_id in ("release-build-a", "release-build-b"):
+            job = root["jobs"][job_id]
+            text = self._run_text(job)
+            self.assertIn("--release-kind product", text)
+            self.assertIn("rehearse-runtime.sh", text)
+            self.assertIn("publication-tree.tar", text)
+            self.assertIn("GOCACHE", text)
+            self.assertIn("GOMODCACHE", text)
+            self.assertNotIn("actions/cache@", str(job))
+
+        compare = root["jobs"]["release-compare-attest"]
+        compare_text = self._run_text(compare)
+        self.assertIn("compare-runtime-rebuilds.sh", compare_text)
+        self.assertIn("sha256sum", compare_text)
+        self.assertIn("provenance-subjects.json", compare_text)
+        self.assertIn(r"\(.sha256)  \(.path)", compare_text)
+        self.assertNotIn(r"a/\(.path)", compare_text)
+        attest_steps = [
+            step
+            for step in compare["steps"]
+            if str(step.get("uses", "")).startswith("actions/attest@")
+        ]
+        self.assertEqual(len(attest_steps), 1)
+        self.assertIn("subject-checksums", attest_steps[0]["with"])
+        self.assertEqual(
+            compare["permissions"],
+            {
+                "actions": "read",
+                "artifact-metadata": "write",
+                "attestations": "write",
+                "contents": "read",
+                "id-token": "write",
+            },
+        )
+
+        publish = root["jobs"]["release"]
+        self.assertEqual(
+            publish["permissions"],
+            {"actions": "read", "contents": "write"},
+        )
+        publish_runs = [
+            str(step.get("run", ""))
+            for step in publish["steps"]
+            if isinstance(step, dict)
+        ]
+        self.assertIn("compare-runtime-rebuilds.sh", "\n".join(publish_runs))
+        self.assertIn("publish-runtime-release.sh", publish_runs[-1])
+        self.assertIn("TAG_OBJECT", publish_runs[-1])
+        self.assertNotIn("gh release create", "\n".join(publish_runs))
+        app_steps = [
+            step
+            for step in publish["steps"]
+            if str(step.get("uses", "")).startswith(
+                "actions/create-github-app-token@"
+            )
+        ]
+        self.assertEqual(len(app_steps), 1)
+        self.assertEqual(app_steps[0]["uses"], CREATE_APP_TOKEN_ACTION)
+        self.assertEqual(
+            app_steps[0]["with"],
+            {
+                "client-id": "${{ vars.PORTABLE_GHAR_RELEASE_APP_CLIENT_ID }}",
+                "private-key": "${{ secrets.PORTABLE_GHAR_RELEASE_APP_PRIVATE_KEY }}",
+                "permission-administration": "read",
+            },
+        )
+        publish_step = publish["steps"][-1]
+        self.assertEqual(
+            publish_step["env"],
+            {
+                "PGHAR_RELEASE_SETTINGS_TOKEN": "${{ steps.release-settings-token.outputs.token }}",
+                "PGHAR_RELEASE_TOKEN": "${{ github.token }}",
+            },
+        )
+        self.assertNotIn("GITHUB_TOKEN", publish_step["env"])
+        self.assertNotIn("GH_TOKEN", publish_step["env"])
+        for job_id, job in root["jobs"].items():
+            if job_id != "release":
+                self.assertNotIn("gh release create", self._run_text(job))
+                self.assertNotIn(
+                    "actions/create-github-app-token@",
+                    str(job),
+                )
+
+    def test_runtime_release_jobs_bind_exact_source_commit_and_tree(self) -> None:
+        for workflow_name, admission_id, build_ids, compare_id, publish_id in (
+            (
+                "release.yml",
+                "release-admission",
+                ("release-build-a", "release-build-b"),
+                "release-compare-attest",
+                "release",
+            ),
+            (
+                "runner-release-candidate.yml",
+                "runner-candidate-admission",
+                ("runner-candidate-build-a", "runner-candidate-build-b"),
+                "runner-candidate-compare-attest",
+                "runner-candidate-publish",
+            ),
+        ):
+            with self.subTest(workflow=workflow_name):
+                root = self._load_real_workflow(workflow_name)
+                for job_id, job in root["jobs"].items():
+                    checkout_steps = [
+                        step
+                        for step in job["steps"]
+                        if str(step.get("uses", "")).startswith("actions/checkout@")
+                    ]
+                    self.assertEqual(len(checkout_steps), 1, msg=job_id)
+                    self.assertIn("ref", checkout_steps[0]["with"], msg=job_id)
+                    self.assertIn("git rev-parse HEAD", self._run_text(job), msg=job_id)
+                    self.assertIn('git rev-parse "HEAD^{tree}"', self._run_text(job), msg=job_id)
+
+                for build_id in build_ids:
+                    self.assertEqual(list(root["jobs"][build_id]["needs"]), [admission_id])
+                self.assertEqual(
+                    set(root["jobs"][compare_id]["needs"]),
+                    {admission_id, *build_ids},
+                )
+                self.assertEqual(
+                    set(root["jobs"][publish_id]["needs"]),
+                    {admission_id, compare_id},
+                )
+                self.assertIn(
+                    "compare-runtime-rebuilds.sh",
+                    self._run_text(root["jobs"][publish_id]),
+                )
 
     def test_sanitization_workflow_triggers_and_job_shape(self) -> None:
         sys.path.insert(0, str(REPO_ROOT / "scripts"))

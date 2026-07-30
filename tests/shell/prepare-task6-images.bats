@@ -96,20 +96,34 @@ setup() {
   [ "$output" = $'network-adapter\nnetwork-broker-dialer\nnetwork-broker-parser\nnetwork-helper\nnetwork-verifier\nrunner\nsynthetic-listener' ]
 }
 
-@test "CI and release prepare Task 6 contexts before building the image manifest" {
-  for workflow in ci.yml release.yml; do
-    task6_line="$(
-      grep -nF 'scripts/prepare-task6-images.sh' \
-        "$REPO_ROOT/.github/workflows/$workflow" |
-        cut -d: -f1
-    )"
-    image_line="$(
-      grep -nF 'scripts/ci/check-images.sh' \
-        "$REPO_ROOT/.github/workflows/$workflow" |
-        cut -d: -f1
-    )"
-    [ -n "$task6_line" ]
-    [ -n "$image_line" ]
-    [ "$task6_line" -lt "$image_line" ]
-  done
+@test "CI and release rehearsal prepare Task 6 before image validation" {
+  ci_task6_line="$(
+    grep -nF 'scripts/prepare-task6-images.sh' \
+      "$REPO_ROOT/.github/workflows/ci.yml" |
+      cut -d: -f1
+  )"
+  ci_image_line="$(
+    grep -nF 'scripts/ci/check-images.sh' \
+      "$REPO_ROOT/.github/workflows/ci.yml" |
+      cut -d: -f1
+  )"
+  [ -n "$ci_task6_line" ]
+  [ -n "$ci_image_line" ]
+  [ "$ci_task6_line" -lt "$ci_image_line" ]
+
+  grep -F 'scripts/release/rehearse-runtime.sh' \
+    "$REPO_ROOT/.github/workflows/release.yml"
+  rehearsal_task6_line="$(
+    grep -nF '"scripts/prepare-task6-images.sh"' \
+      "$REPO_ROOT/scripts/release/rehearse-runtime.sh" |
+      cut -d: -f1
+  )"
+  rehearsal_gate_line="$(
+    grep -nF '"scripts/test-controller-runtime.sh", "--full"' \
+      "$REPO_ROOT/scripts/release/rehearse-runtime.sh" |
+      cut -d: -f1
+  )"
+  [ -n "$rehearsal_task6_line" ]
+  [ -n "$rehearsal_gate_line" ]
+  [ "$rehearsal_task6_line" -lt "$rehearsal_gate_line" ]
 }

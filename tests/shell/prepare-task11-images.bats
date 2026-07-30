@@ -51,24 +51,38 @@ teardown() {
   grep -F '!build/portable-ghar-runner-gate' "$context/.dockerignore"
 }
 
-@test "image manifest and workflows include Task 11 before image builds" {
+@test "image manifest and release rehearsal include Task 11 before the full gate" {
   run jq -r '.images[].name' "$REPO_ROOT/images/manifest.json"
   [ "$status" -eq 0 ]
   [ "$output" = $'network-adapter\nnetwork-broker-dialer\nnetwork-broker-parser\nnetwork-helper\nnetwork-verifier\nrunner\nsynthetic-listener' ]
 
-  for workflow in ci.yml release.yml; do
-    task11_line="$(
-      grep -nF 'scripts/prepare-task11-images.sh' \
-        "$REPO_ROOT/.github/workflows/$workflow" |
-        cut -d: -f1
-    )"
-    image_line="$(
-      grep -nF 'scripts/ci/check-images.sh' \
-        "$REPO_ROOT/.github/workflows/$workflow" |
-        cut -d: -f1
-    )"
-    [ -n "$task11_line" ]
-    [ -n "$image_line" ]
-    [ "$task11_line" -lt "$image_line" ]
-  done
+  ci_task11_line="$(
+    grep -nF 'scripts/prepare-task11-images.sh' \
+      "$REPO_ROOT/.github/workflows/ci.yml" |
+      cut -d: -f1
+  )"
+  ci_image_line="$(
+    grep -nF 'scripts/ci/check-images.sh' \
+      "$REPO_ROOT/.github/workflows/ci.yml" |
+      cut -d: -f1
+  )"
+  [ -n "$ci_task11_line" ]
+  [ -n "$ci_image_line" ]
+  [ "$ci_task11_line" -lt "$ci_image_line" ]
+
+  grep -F 'scripts/release/rehearse-runtime.sh' \
+    "$REPO_ROOT/.github/workflows/release.yml"
+  rehearsal_task11_line="$(
+    grep -nF '"scripts/prepare-task11-images.sh", "--generation", "1"' \
+      "$REPO_ROOT/scripts/release/rehearse-runtime.sh" |
+      cut -d: -f1
+  )"
+  rehearsal_gate_line="$(
+    grep -nF '"scripts/test-controller-runtime.sh", "--full"' \
+      "$REPO_ROOT/scripts/release/rehearse-runtime.sh" |
+      cut -d: -f1
+  )"
+  [ -n "$rehearsal_task11_line" ]
+  [ -n "$rehearsal_gate_line" ]
+  [ "$rehearsal_task11_line" -lt "$rehearsal_gate_line" ]
 }
