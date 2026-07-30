@@ -114,11 +114,13 @@ func TestRunCycleFailsClosedOnProofOrStorageDrift(t *testing.T) {
 		name    string
 		storage StorageEnvelope
 		mutate  func(*fakeSupervisor)
+		status  Status
 		reason  Reason
 	}{
 		{
 			name:    "storage stop",
 			storage: denyStorage{},
+			status:  StatusRecoverable,
 			reason:  ReasonStorageStop,
 		},
 		{
@@ -127,6 +129,7 @@ func TestRunCycleFailsClosedOnProofOrStorageDrift(t *testing.T) {
 			mutate: func(supervisor *fakeSupervisor) {
 				supervisor.activeListeners = 1
 			},
+			status: StatusFailed,
 			reason: ReasonProofFailed,
 		},
 		{
@@ -135,6 +138,7 @@ func TestRunCycleFailsClosedOnProofOrStorageDrift(t *testing.T) {
 			mutate: func(supervisor *fakeSupervisor) {
 				supervisor.proofIdentity = strings.Repeat("f", 64)
 			},
+			status: StatusFailed,
 			reason: ReasonProofFailed,
 		},
 	}
@@ -162,7 +166,7 @@ func TestRunCycleFailsClosedOnProofOrStorageDrift(t *testing.T) {
 			}
 			result, err := watchdog.RunCycle(context.Background())
 			if err == nil ||
-				result.Status != StatusRecoverable ||
+				result.Status != test.status ||
 				result.Reason != test.reason ||
 				supervisor.starts != 0 {
 				t.Fatalf(
@@ -176,6 +180,345 @@ func TestRunCycleFailsClosedOnProofOrStorageDrift(t *testing.T) {
 	}
 }
 
+func TestRunCycleRejectsZeroFenceGeneration(t *testing.T) {
+	t.Parallel()
+
+	supervisor := &fakeSupervisor{
+		observation: Observation{
+			ActiveFleet: FleetPortable,
+			Process:     ProcessAbsent,
+		},
+	}
+	result, err := (Watchdog{
+		Lifecycle:    &fakeLifecycle{},
+		Supervisor:   supervisor,
+		Storage:      allowStorage{},
+		PollInterval: time.Millisecond,
+	}).RunCycle(context.Background())
+	if !errors.Is(err, ErrSupervisionFailed) ||
+		result.Status != StatusFailed ||
+		result.Reason != ReasonInspectFailed ||
+		supervisor.starts != 0 ||
+		supervisor.stops != 0 ||
+		supervisor.proofs != 0 {
+		t.Fatalf(
+			"RunCycle() = %#v, error=%v, supervisor=%#v",
+			result,
+			err,
+			supervisor,
+		)
+	}
+}
+
+func TestRunCycleStopsAndProvesAbsentAfterFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		observation Observation
+		storage     StorageEnvelope
+		mutate      func(*fakeSupervisor)
+		wantStatus  Status
+		wantReason  Reason
+		wantStarts  int
+	}{
+		{
+			name: "running proof failure",
+			observation: Observation{
+				FenceGeneration: 31,
+				ActiveFleet:     FleetPortable,
+				Process:         ProcessRunning,
+				ProcessIdentity: strings.Repeat("a", 64),
+			},
+			storage: allowStorage{},
+			mutate: func(supervisor *fakeSupervisor) {
+				supervisor.activeListeners = 1
+			},
+			wantStatus: StatusFailed,
+			wantReason: ReasonProofFailed,
+		},
+		{
+			name: "storage failure",
+			observation: Observation{
+				FenceGeneration: 32,
+				ActiveFleet:     FleetPortable,
+				Process:         ProcessRunning,
+				ProcessIdentity: strings.Repeat("b", 64),
+			},
+			storage:    denyStorage{},
+			wantStatus: StatusRecoverable,
+			wantReason: ReasonStorageStop,
+		},
+		{
+			name: "new process proof failure",
+			observation: Observation{
+				FenceGeneration: 33,
+				ActiveFleet:     FleetPortable,
+				Process:         ProcessAbsent,
+			},
+			storage: allowStorage{},
+			mutate: func(supervisor *fakeSupervisor) {
+				supervisor.activeListeners = 1
+			},
+			wantStatus: StatusFailed,
+			wantReason: ReasonProofFailed,
+			wantStarts: 1,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			events := []string{}
+			lifecycle := &fakeLifecycle{events: &events}
+			supervisor := &fakeSupervisor{
+				observation: test.observation,
+				events:      &events,
+			}
+			if test.mutate != nil {
+				test.mutate(supervisor)
+			}
+			result, err := (Watchdog{
+				Lifecycle:    lifecycle,
+				Supervisor:   supervisor,
+				Storage:      test.storage,
+				PollInterval: time.Millisecond,
+			}).RunCycle(context.Background())
+			if !errors.Is(err, ErrSupervisionFailed) ||
+				result.Status != test.wantStatus ||
+				result.Reason != test.wantReason ||
+				supervisor.starts != test.wantStarts ||
+				supervisor.stops != 1 ||
+				supervisor.observation.Process != ProcessAbsent ||
+				supervisor.observation.ProcessIdentity != "" ||
+				lifecycle.lastLease == nil ||
+				lifecycle.lastLease.closeCount != 1 {
+				t.Fatalf(
+					"RunCycle() = %#v, error=%v, supervisor=%#v, lease=%#v",
+					result,
+					err,
+					supervisor,
+					lifecycle.lastLease,
+				)
+			}
+			stopIndex := indexOfEvent(events, "stop")
+			proofIndex := lastIndexOfEvent(events, "inspect")
+			closeIndex := indexOfEvent(events, "close")
+			if stopIndex < 0 ||
+				proofIndex < 0 ||
+				closeIndex < 0 ||
+				stopIndex >= proofIndex ||
+				proofIndex >= closeIndex {
+				t.Fatalf("call order = %v", events)
+			}
+		})
+	}
+}
+
+func TestRunCycleFailsWhenPostStopAbsenceCannotBeProved(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*fakeSupervisor)
+	}{
+		{
+			name: "inspect error",
+			mutate: func(supervisor *fakeSupervisor) {
+				supervisor.inspectErrAt = 2
+				supervisor.inspectErr = errors.New("inspect failed")
+			},
+		},
+		{
+			name: "foreign identity remains",
+			mutate: func(supervisor *fakeSupervisor) {
+				supervisor.afterStop = &Observation{
+					FenceGeneration: 34,
+					ActiveFleet:     FleetPortable,
+					Process:         ProcessRunning,
+					ProcessIdentity: strings.Repeat("f", 64),
+				}
+			},
+		},
+		{
+			name: "fence drift",
+			mutate: func(supervisor *fakeSupervisor) {
+				supervisor.afterStop = &Observation{
+					FenceGeneration: 35,
+					ActiveFleet:     FleetPortable,
+					Process:         ProcessAbsent,
+				}
+			},
+		},
+		{
+			name: "fleet drift",
+			mutate: func(supervisor *fakeSupervisor) {
+				supervisor.afterStop = &Observation{
+					FenceGeneration: 34,
+					ActiveFleet:     FleetLegacy,
+					Process:         ProcessAbsent,
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			supervisor := &fakeSupervisor{
+				observation: Observation{
+					FenceGeneration: 34,
+					ActiveFleet:     FleetPortable,
+					Process:         ProcessRunning,
+					ProcessIdentity: strings.Repeat("d", 64),
+				},
+				activeListeners: 1,
+			}
+			test.mutate(supervisor)
+			result, err := (Watchdog{
+				Lifecycle:    &fakeLifecycle{},
+				Supervisor:   supervisor,
+				Storage:      allowStorage{},
+				PollInterval: time.Millisecond,
+			}).RunCycle(context.Background())
+			if !errors.Is(err, ErrSupervisionFailed) ||
+				result.Status != StatusFailed ||
+				result.Reason != ReasonProofFailed ||
+				supervisor.stops != 1 ||
+				supervisor.starts != 0 {
+				t.Fatalf(
+					"RunCycle() = %#v, error=%v, supervisor=%#v",
+					result,
+					err,
+					supervisor,
+				)
+			}
+		})
+	}
+}
+
+func TestRunCycleUnhealthyStopFailureIsFailed(t *testing.T) {
+	t.Parallel()
+
+	stopErr := errors.New("stop failed")
+	supervisor := &fakeSupervisor{
+		observation: Observation{
+			FenceGeneration: 35,
+			ActiveFleet:     FleetPortable,
+			Process:         ProcessUnhealthy,
+			ProcessIdentity: strings.Repeat("e", 64),
+		},
+		stopErr: stopErr,
+	}
+	result, err := (Watchdog{
+		Lifecycle:    &fakeLifecycle{},
+		Supervisor:   supervisor,
+		Storage:      allowStorage{},
+		PollInterval: time.Millisecond,
+	}).RunCycle(context.Background())
+	if !errors.Is(err, ErrSupervisionFailed) ||
+		!errors.Is(err, stopErr) ||
+		result.Status != StatusFailed ||
+		result.Reason != ReasonStopFailed ||
+		supervisor.stops != 1 ||
+		supervisor.starts != 0 {
+		t.Fatalf(
+			"RunCycle() = %#v, error=%v, supervisor=%#v",
+			result,
+			err,
+			supervisor,
+		)
+	}
+}
+
+func TestRunCycleLeaseCloseFailureCannotReturnSuccess(t *testing.T) {
+	t.Parallel()
+
+	closeErr := errors.New("lease close failed")
+	lifecycle := &fakeLifecycle{closeErr: closeErr}
+	result, err := (Watchdog{
+		Lifecycle: lifecycle,
+		Supervisor: &fakeSupervisor{
+			observation: Observation{
+				FenceGeneration: 36,
+				ActiveFleet:     FleetNone,
+				Process:         ProcessAbsent,
+			},
+		},
+		Storage:      allowStorage{},
+		PollInterval: time.Millisecond,
+	}).RunCycle(context.Background())
+	if !errors.Is(err, ErrSupervisionFailed) ||
+		!errors.Is(err, closeErr) ||
+		result.Status != StatusFailed ||
+		result.Reason != Reason("lifecycle-close-failed") ||
+		lifecycle.lastLease == nil ||
+		lifecycle.lastLease.closeCount != 1 {
+		t.Fatalf(
+			"RunCycle() = %#v, error=%v, lease=%#v",
+			result,
+			err,
+			lifecycle.lastLease,
+		)
+	}
+}
+
+func TestRunCycleLeaseCloseFailurePreservesPrimaryResult(t *testing.T) {
+	t.Parallel()
+
+	closeErr := errors.New("lease close failed")
+	lifecycle := &fakeLifecycle{
+		owned:    true,
+		closeErr: closeErr,
+	}
+	result, err := (Watchdog{
+		Lifecycle: lifecycle,
+		Supervisor: &fakeSupervisor{
+			observation: Observation{
+				FenceGeneration: 37,
+				ActiveFleet:     FleetPortable,
+				Process:         ProcessAbsent,
+			},
+		},
+		Storage:      allowStorage{},
+		PollInterval: time.Millisecond,
+	}).RunCycle(context.Background())
+	if !errors.Is(err, ErrLifecycleOwned) ||
+		!errors.Is(err, closeErr) ||
+		result.Status != StatusRecoverable ||
+		result.Reason != ReasonLifecycleOwned ||
+		lifecycle.lastLease == nil ||
+		lifecycle.lastLease.closeCount != 1 {
+		t.Fatalf(
+			"RunCycle() = %#v, error=%v, lease=%#v",
+			result,
+			err,
+			lifecycle.lastLease,
+		)
+	}
+}
+
+func indexOfEvent(events []string, wanted string) int {
+	for index, event := range events {
+		if event == wanted {
+			return index
+		}
+	}
+	return -1
+}
+
+func lastIndexOfEvent(events []string, wanted string) int {
+	found := -1
+	for index, event := range events {
+		if event == wanted {
+			found = index
+		}
+	}
+	return found
+}
+
 type fakeSupervisor struct {
 	mu              sync.Mutex
 	observation     Observation
@@ -184,6 +527,12 @@ type fakeSupervisor struct {
 	proofs          int
 	activeListeners uint64
 	proofIdentity   string
+	inspectCount    int
+	inspectErrAt    int
+	inspectErr      error
+	afterStop       *Observation
+	events          *[]string
+	stopErr         error
 }
 
 func (supervisor *fakeSupervisor) Inspect(
@@ -191,6 +540,11 @@ func (supervisor *fakeSupervisor) Inspect(
 ) (Observation, error) {
 	supervisor.mu.Lock()
 	defer supervisor.mu.Unlock()
+	supervisor.inspectCount++
+	supervisor.recordEvent("inspect")
+	if supervisor.inspectErrAt == supervisor.inspectCount {
+		return Observation{}, supervisor.inspectErr
+	}
 	return supervisor.observation, nil
 }
 
@@ -203,7 +557,15 @@ func (supervisor *fakeSupervisor) SafeStop(
 	if observation != supervisor.observation {
 		return ErrSupervisionFailed
 	}
+	supervisor.recordEvent("stop")
 	supervisor.stops++
+	if supervisor.stopErr != nil {
+		return supervisor.stopErr
+	}
+	if supervisor.afterStop != nil {
+		supervisor.observation = *supervisor.afterStop
+		return nil
+	}
 	supervisor.observation.Process = ProcessAbsent
 	supervisor.observation.ProcessIdentity = ""
 	return nil
@@ -219,6 +581,7 @@ func (supervisor *fakeSupervisor) StartDisabled(
 		observation.Process != ProcessAbsent {
 		return Observation{}, ErrSupervisionFailed
 	}
+	supervisor.recordEvent("start")
 	supervisor.starts++
 	supervisor.observation.Process = ProcessRunning
 	supervisor.observation.ProcessIdentity = strings.Repeat("c", 64)
@@ -231,6 +594,7 @@ func (supervisor *fakeSupervisor) ProveDisabled(
 ) (DisabledProof, error) {
 	supervisor.mu.Lock()
 	defer supervisor.mu.Unlock()
+	supervisor.recordEvent("prove")
 	supervisor.proofs++
 	identity := observation.ProcessIdentity
 	if supervisor.proofIdentity != "" {
@@ -248,6 +612,12 @@ func (supervisor *fakeSupervisor) ProveDisabled(
 	}, nil
 }
 
+func (supervisor *fakeSupervisor) recordEvent(event string) {
+	if supervisor.events != nil {
+		*supervisor.events = append(*supervisor.events, event)
+	}
+}
+
 type allowStorage struct{}
 
 func (allowStorage) Revalidate(context.Context) error { return nil }
@@ -262,30 +632,56 @@ type fakeLifecycle struct {
 	owned      bool
 	acquireErr error
 	ownedErr   error
+	closeErr   error
+	events     *[]string
+	lastLease  *fakeLifecycleLease
 }
 
 func (lifecycle *fakeLifecycle) Acquire(
 	context.Context,
 	time.Duration,
 ) (LifecycleLease, error) {
+	if lifecycle.events != nil {
+		*lifecycle.events = append(*lifecycle.events, "acquire")
+	}
 	if lifecycle.acquireErr != nil {
 		return nil, lifecycle.acquireErr
 	}
-	return &fakeLifecycleLease{
-		owned: lifecycle.owned,
-		err:   lifecycle.ownedErr,
-	}, nil
+	lifecycle.lastLease = &fakeLifecycleLease{
+		owned:    lifecycle.owned,
+		err:      lifecycle.ownedErr,
+		closeErr: lifecycle.closeErr,
+		events:   lifecycle.events,
+	}
+	return lifecycle.lastLease, nil
 }
 
 type fakeLifecycleLease struct {
-	owned bool
-	err   error
+	owned      bool
+	err        error
+	closeErr   error
+	closeCount int
+	events     *[]string
 }
 
-func (*fakeLifecycleLease) Validate() error { return nil }
+func (lease *fakeLifecycleLease) Validate() error {
+	lease.recordEvent("validate")
+	return nil
+}
 
 func (lease *fakeLifecycleLease) Owned() (bool, error) {
+	lease.recordEvent("owned")
 	return lease.owned, lease.err
 }
 
-func (*fakeLifecycleLease) Close() error { return nil }
+func (lease *fakeLifecycleLease) Close() error {
+	lease.closeCount++
+	lease.recordEvent("close")
+	return lease.closeErr
+}
+
+func (lease *fakeLifecycleLease) recordEvent(event string) {
+	if lease.events != nil {
+		*lease.events = append(*lease.events, event)
+	}
+}

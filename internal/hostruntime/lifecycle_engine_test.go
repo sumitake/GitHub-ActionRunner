@@ -86,6 +86,221 @@ func TestLifecycleEngineCompletesAndReplaysWithoutDuplicateEffects(t *testing.T)
 	}
 }
 
+func TestLifecycleEngineExecuteCloseFailureUpgradesSuccessToIntegrity(t *testing.T) {
+	t.Parallel()
+
+	binding := goldenUpgradeBinding(t)
+	store := openTestLifecycleStore(t)
+	effects := newTestLifecycleEffects(t, binding)
+	closeErr := errors.New("lease close failed")
+	lease := &testLifecycleOperationLease{closeErr: closeErr}
+	engine := LifecycleEngine{
+		Store:        store,
+		Effects:      effects,
+		Storage:      allowTestStorage{},
+		PollInterval: time.Millisecond,
+		Now: monotonicTestClock(
+			time.Date(2026, 7, 29, 12, 30, 0, 0, time.UTC),
+		),
+		leaseAcquire: func(
+			context.Context,
+			time.Duration,
+		) (lifecycleOperationLease, error) {
+			return lease, nil
+		},
+	}
+	request := lifecycleTestRequest(
+		t,
+		binding,
+		time.Date(2026, 7, 29, 12, 30, 0, 0, time.UTC),
+	)
+
+	result, err := engine.Execute(context.Background(), request)
+	if !errors.Is(err, ErrLifecycleExecution) ||
+		!errors.Is(err, closeErr) ||
+		result.Status != HostActionFailed ||
+		result.ErrorClass != LifecycleErrorIntegrity ||
+		result.TargetProofDigest != nil ||
+		lease.closeCount != 1 {
+		t.Fatalf(
+			"Execute() = %#v, error=%v, lease=%#v",
+			result,
+			err,
+			lease,
+		)
+	}
+}
+
+func TestLifecycleEngineCloseFailurePreservesPrimaryFailure(t *testing.T) {
+	t.Parallel()
+
+	binding := goldenUpgradeBinding(t)
+	store := openTestLifecycleStore(t)
+	effects := newTestLifecycleEffects(t, binding)
+	effects.ambiguous[OperationPhasePrepared] = true
+	closeErr := errors.New("lease close failed")
+	lease := &testLifecycleOperationLease{closeErr: closeErr}
+	engine := LifecycleEngine{
+		Store:        store,
+		Effects:      effects,
+		Storage:      allowTestStorage{},
+		PollInterval: time.Millisecond,
+		Now: monotonicTestClock(
+			time.Date(2026, 7, 29, 12, 45, 0, 0, time.UTC),
+		),
+		leaseAcquire: func(
+			context.Context,
+			time.Duration,
+		) (lifecycleOperationLease, error) {
+			return lease, nil
+		},
+	}
+	request := lifecycleTestRequest(
+		t,
+		binding,
+		time.Date(2026, 7, 29, 12, 45, 0, 0, time.UTC),
+	)
+
+	result, err := engine.Execute(context.Background(), request)
+	if !errors.Is(err, ErrLifecycleRecoverable) ||
+		!errors.Is(err, closeErr) ||
+		result.Status != HostActionRecoverable ||
+		result.ErrorClass != LifecycleErrorAmbiguousEffect ||
+		lease.closeCount != 1 {
+		t.Fatalf(
+			"Execute() = %#v, error=%v, lease=%#v",
+			result,
+			err,
+			lease,
+		)
+	}
+}
+
+func TestLifecycleEngineRecoverValidatesLeaseBeforePrepareOrEffects(t *testing.T) {
+	t.Parallel()
+
+	binding := goldenUpgradeBinding(t)
+	store := openTestLifecycleStore(t)
+	effects := newTestLifecycleEffects(t, binding)
+	validateErr := errors.New("lease identity changed")
+	lease := &testLifecycleOperationLease{validateErr: validateErr}
+	engine := LifecycleEngine{
+		Store:        store,
+		Effects:      effects,
+		Storage:      allowTestStorage{},
+		Compensation: &testCompensationAuthority{},
+		PollInterval: time.Millisecond,
+		Now: monotonicTestClock(
+			time.Date(2026, 7, 29, 12, 50, 0, 0, time.UTC),
+		),
+		leaseAcquire: func(
+			context.Context,
+			time.Duration,
+		) (lifecycleOperationLease, error) {
+			return lease, nil
+		},
+	}
+	request := lifecycleTestRequest(
+		t,
+		binding,
+		time.Date(2026, 7, 29, 12, 50, 0, 0, time.UTC),
+	)
+
+	result, err := engine.Recover(context.Background(), request)
+	if !errors.Is(err, ErrLifecycleExecution) ||
+		result.Status != HostActionFailed ||
+		result.ErrorClass != LifecycleErrorIntegrity ||
+		lease.validateCount != 1 ||
+		lease.closeCount != 1 ||
+		len(effects.countsCopy()) != 0 {
+		t.Fatalf(
+			"Recover() = %#v, error=%v, lease=%#v, effects=%#v",
+			result,
+			err,
+			lease,
+			effects.countsCopy(),
+		)
+	}
+	names, listErr := store.ListCanonicalNames(LifecycleJournals)
+	if listErr != nil || len(names) != 0 {
+		t.Fatalf("journal names = %v, error=%v", names, listErr)
+	}
+}
+
+func TestLifecycleEngineRecoverCloseFailureUpgradesSuccessToIntegrity(t *testing.T) {
+	t.Parallel()
+
+	binding := goldenUpgradeBinding(t)
+	store := openTestLifecycleStore(t)
+	effects := newTestLifecycleEffects(t, binding)
+	engine := LifecycleEngine{
+		Store:        store,
+		Effects:      effects,
+		Storage:      allowTestStorage{},
+		PollInterval: time.Millisecond,
+		Now: monotonicTestClock(
+			time.Date(2026, 7, 29, 12, 55, 0, 0, time.UTC),
+		),
+	}
+	authority := &testCompensationAuthority{
+		engine: &engine,
+		path:   CompensationInstallUpgradePostSelection,
+	}
+	engine.Compensation = authority
+	request := lifecycleTestRequest(
+		t,
+		binding,
+		time.Date(2026, 7, 29, 12, 55, 0, 0, time.UTC),
+	)
+	prepared, err := engine.prepare(context.Background(), request)
+	if err != nil {
+		t.Fatalf("prepare() error = %v", err)
+	}
+	for prepared.journal.Phase != OperationPhaseCurrentSelected {
+		if _, err := engine.ensurePhaseApplied(
+			context.Background(),
+			request,
+			prepared,
+		); err != nil {
+			t.Fatalf(
+				"ensurePhaseApplied(%q) error = %v",
+				prepared.journal.Phase,
+				err,
+			)
+		}
+		if err := engine.advanceJournal(binding, prepared); err != nil {
+			t.Fatalf(
+				"advanceJournal(%q) error = %v",
+				prepared.journal.Phase,
+				err,
+			)
+		}
+	}
+	closeErr := errors.New("lease close failed")
+	lease := &testLifecycleOperationLease{closeErr: closeErr}
+	engine.leaseAcquire = func(
+		context.Context,
+		time.Duration,
+	) (lifecycleOperationLease, error) {
+		return lease, nil
+	}
+
+	result, err := engine.Recover(context.Background(), request)
+	if !errors.Is(err, ErrLifecycleExecution) ||
+		!errors.Is(err, closeErr) ||
+		result.Status != HostActionFailed ||
+		result.ErrorClass != LifecycleErrorIntegrity ||
+		result.TargetProofDigest != nil ||
+		lease.closeCount != 1 {
+		t.Fatalf(
+			"Recover() = %#v, error=%v, lease=%#v",
+			result,
+			err,
+			lease,
+		)
+	}
+}
+
 func TestLifecycleEngineRecoversApplyingReceiptFromTargetReadback(t *testing.T) {
 	t.Parallel()
 
@@ -364,6 +579,37 @@ func (allowTestStorage) Revalidate(
 	StorageReservation,
 ) error {
 	return nil
+}
+
+type testLifecycleOperationLease struct {
+	validateErr   error
+	closeErr      error
+	validateCount int
+	closeCount    int
+}
+
+func (lease *testLifecycleOperationLease) Validate() error {
+	lease.validateCount++
+	return lease.validateErr
+}
+
+func (lease *testLifecycleOperationLease) Close() error {
+	lease.closeCount++
+	return lease.closeErr
+}
+
+func lifecycleTestRequest(
+	t *testing.T,
+	binding OperationBinding,
+	now time.Time,
+) LifecycleRequest {
+	t.Helper()
+	return LifecycleRequest{
+		Binding:        binding,
+		PriorManifest:  goldenManifest(t),
+		TargetManifest: goldenManifest(t),
+		Reservation:    goldenStorageReservation(t, binding, now),
+	}
 }
 
 type testCompensationAuthority struct {

@@ -107,6 +107,15 @@ type LifecycleEngine struct {
 	Compensation LifecycleCompensationAuthority
 	PollInterval time.Duration
 	Now          func() time.Time
+	leaseAcquire func(
+		context.Context,
+		time.Duration,
+	) (lifecycleOperationLease, error)
+}
+
+type lifecycleOperationLease interface {
+	Validate() error
+	Close() error
 }
 
 type lifecyclePrepared struct {
@@ -134,7 +143,7 @@ func (err *lifecycleEngineError) Unwrap() error {
 func (engine LifecycleEngine) Execute(
 	ctx context.Context,
 	request LifecycleRequest,
-) (HostActionResult, error) {
+) (result HostActionResult, resultErr error) {
 	if ctx == nil ||
 		engine.Store == nil ||
 		engine.Effects == nil ||
@@ -149,7 +158,7 @@ func (engine LifecycleEngine) Execute(
 			ErrLifecycleExecution
 	}
 
-	lease, err := engine.Store.Acquire(ctx, engine.PollInterval)
+	lease, err := engine.acquireOperationLease(ctx)
 	if err != nil {
 		return engine.resultForError(
 			request.Binding,
@@ -157,7 +166,16 @@ func (engine LifecycleEngine) Execute(
 			classifyLifecycleError(err),
 		), lifecyclePublicError(err)
 	}
-	defer lease.Close()
+	var prepared *lifecyclePrepared
+	defer func() {
+		result, resultErr = finalizeLifecycleOperation(
+			request.Binding,
+			prepared,
+			result,
+			resultErr,
+			lease.Close(),
+		)
+	}()
 	if err := lease.Validate(); err != nil {
 		return engine.resultForError(
 			request.Binding,
@@ -166,7 +184,7 @@ func (engine LifecycleEngine) Execute(
 		), ErrLifecycleExecution
 	}
 
-	prepared, err := engine.prepareLocked(ctx, request)
+	prepared, err = engine.prepareLocked(ctx, request)
 	if err != nil {
 		return engine.resultForError(
 			request.Binding,
@@ -183,7 +201,7 @@ func (engine LifecycleEngine) Execute(
 func (engine LifecycleEngine) Recover(
 	ctx context.Context,
 	request LifecycleRequest,
-) (HostActionResult, error) {
+) (result HostActionResult, resultErr error) {
 	if ctx == nil ||
 		engine.Store == nil ||
 		engine.Effects == nil ||
@@ -195,7 +213,7 @@ func (engine LifecycleEngine) Recover(
 		return lifecycleFailureResult(request.Binding, LifecycleErrorInvalidRequest),
 			ErrLifecycleExecution
 	}
-	lease, err := engine.Store.Acquire(ctx, engine.PollInterval)
+	lease, err := engine.acquireOperationLease(ctx)
 	if err != nil {
 		classified := classifyLifecycleError(err)
 		return engine.resultForError(
@@ -204,8 +222,24 @@ func (engine LifecycleEngine) Recover(
 			classified,
 		), lifecyclePublicError(classified)
 	}
-	defer lease.Close()
-	prepared, err := engine.prepareLocked(ctx, request)
+	var prepared *lifecyclePrepared
+	defer func() {
+		result, resultErr = finalizeLifecycleOperation(
+			request.Binding,
+			prepared,
+			result,
+			resultErr,
+			lease.Close(),
+		)
+	}()
+	if err := lease.Validate(); err != nil {
+		return engine.resultForError(
+			request.Binding,
+			nil,
+			integrityLifecycleError(err),
+		), ErrLifecycleExecution
+	}
+	prepared, err = engine.prepareLocked(ctx, request)
 	if err != nil {
 		classified := classifyLifecycleError(err)
 		return engine.resultForError(
@@ -290,7 +324,7 @@ func (engine LifecycleEngine) driveLocked(
 	ctx context.Context,
 	request LifecycleRequest,
 	prepared *lifecyclePrepared,
-	lease *LifecycleLease,
+	lease lifecycleOperationLease,
 ) (HostActionResult, error) {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -361,6 +395,45 @@ func (engine LifecycleEngine) driveLocked(
 			), lifecyclePublicError(classified)
 		}
 	}
+}
+
+func (engine LifecycleEngine) acquireOperationLease(
+	ctx context.Context,
+) (lifecycleOperationLease, error) {
+	if engine.leaseAcquire != nil {
+		return engine.leaseAcquire(ctx, engine.PollInterval)
+	}
+	return engine.Store.Acquire(ctx, engine.PollInterval)
+}
+
+func finalizeLifecycleOperation(
+	binding OperationBinding,
+	prepared *lifecyclePrepared,
+	result HostActionResult,
+	primaryErr error,
+	closeErr error,
+) (HostActionResult, error) {
+	if closeErr == nil {
+		return result, primaryErr
+	}
+	if primaryErr != nil {
+		return result, errors.Join(primaryErr, closeErr)
+	}
+	failed := lifecycleFailureResult(binding, LifecycleErrorIntegrity)
+	if prepared != nil && isLowerHex64(prepared.journalDigest) {
+		failed.JournalDigest = prepared.journalDigest
+	}
+	if isLowerHex64(result.JournalDigest) {
+		failed.JournalDigest = result.JournalDigest
+	}
+	if validFleet(result.ActiveFleet) {
+		failed.ActiveFleet = result.ActiveFleet
+	}
+	failed.FenceGeneration = result.FenceGeneration
+	if _, _, err := MarshalHostActionResult(failed); err != nil {
+		failed = lifecycleFailureResult(binding, LifecycleErrorIntegrity)
+	}
+	return failed, errors.Join(ErrLifecycleExecution, closeErr)
 }
 
 // prepare is split out for crash-seeding tests. Production callers use

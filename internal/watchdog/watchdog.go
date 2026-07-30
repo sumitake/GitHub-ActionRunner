@@ -89,6 +89,7 @@ const (
 	ReasonStoppedAtNone  Reason = "stopped-at-none"
 	ReasonLifecycleOwned Reason = "lifecycle-owned"
 	ReasonLifecycleBusy  Reason = "lifecycle-busy"
+	ReasonLifecycleClose Reason = "lifecycle-close-failed"
 	ReasonStorageStop    Reason = "storage-stop"
 	ReasonInspectFailed  Reason = "inspect-failed"
 	ReasonStopFailed     Reason = "safe-stop-failed"
@@ -113,7 +114,7 @@ type Watchdog struct {
 
 func (watchdog Watchdog) RunCycle(
 	ctx context.Context,
-) (Result, error) {
+) (result Result, runErr error) {
 	if ctx == nil ||
 		watchdog.Lifecycle == nil ||
 		watchdog.Supervisor == nil ||
@@ -139,7 +140,19 @@ func (watchdog Watchdog) RunCycle(
 			Reason: ReasonInspectFailed,
 		}, ErrSupervisionFailed
 	}
-	defer lease.Close()
+	defer func() {
+		closeErr := lease.Close()
+		if closeErr == nil {
+			return
+		}
+		if runErr == nil {
+			result.Status = StatusFailed
+			result.Reason = ReasonLifecycleClose
+			runErr = errors.Join(ErrSupervisionFailed, closeErr)
+			return
+		}
+		runErr = errors.Join(runErr, closeErr)
+	}()
 	if err := lease.Validate(); err != nil {
 		return Result{
 			Status: StatusFailed,
@@ -160,10 +173,35 @@ func (watchdog Watchdog) RunCycle(
 		}, ErrLifecycleOwned
 	}
 	if err := watchdog.Storage.Revalidate(ctx); err != nil {
-		return Result{
-			Status: StatusRecoverable,
-			Reason: ReasonStorageStop,
-		}, ErrSupervisionFailed
+		observation, inspectErr := watchdog.Supervisor.Inspect(ctx)
+		if inspectErr != nil || validateObservation(observation) != nil {
+			return Result{
+				Status: StatusFailed,
+				Reason: ReasonInspectFailed,
+			}, errors.Join(ErrSupervisionFailed, err, inspectErr)
+		}
+		base := Result{
+			FenceGeneration: observation.FenceGeneration,
+			ActiveFleet:     observation.ActiveFleet,
+		}
+		if observation.Process != ProcessAbsent {
+			_, reason, stopErr := watchdog.safeStopAndProveAbsent(
+				ctx,
+				observation,
+			)
+			if stopErr != nil {
+				base.Status = StatusFailed
+				base.Reason = reason
+				return base, errors.Join(
+					ErrSupervisionFailed,
+					err,
+					stopErr,
+				)
+			}
+		}
+		base.Status = StatusRecoverable
+		base.Reason = ReasonStorageStop
+		return base, errors.Join(ErrSupervisionFailed, err)
 	}
 	observation, err := watchdog.Supervisor.Inspect(ctx)
 	if err != nil || validateObservation(observation) != nil {
@@ -178,23 +216,14 @@ func (watchdog Watchdog) RunCycle(
 	}
 	if observation.ActiveFleet == FleetNone {
 		if observation.Process != ProcessAbsent {
-			if err := watchdog.Supervisor.SafeStop(
+			_, reason, err := watchdog.safeStopAndProveAbsent(
 				ctx,
 				observation,
-			); err != nil {
+			)
+			if err != nil {
 				base.Status = StatusFailed
-				base.Reason = ReasonStopFailed
-				return base, ErrSupervisionFailed
-			}
-			after, err := watchdog.Supervisor.Inspect(ctx)
-			if err != nil ||
-				validateObservation(after) != nil ||
-				after.ActiveFleet != FleetNone ||
-				after.FenceGeneration != observation.FenceGeneration ||
-				after.Process != ProcessAbsent {
-				base.Status = StatusFailed
-				base.Reason = ReasonProofFailed
-				return base, ErrSupervisionFailed
+				base.Reason = reason
+				return base, err
 			}
 		}
 		base.Status = StatusOK
@@ -203,32 +232,31 @@ func (watchdog Watchdog) RunCycle(
 	}
 	if observation.Process == ProcessRunning {
 		if err := watchdog.proveDisabled(ctx, observation); err != nil {
-			base.Status = StatusRecoverable
+			_, _, stopErr := watchdog.safeStopAndProveAbsent(
+				ctx,
+				observation,
+			)
+			base.Status = StatusFailed
 			base.Reason = ReasonProofFailed
-			return base, ErrSupervisionFailed
+			return base, errors.Join(
+				ErrSupervisionFailed,
+				err,
+				stopErr,
+			)
 		}
 		base.Status = StatusOK
 		base.Reason = ReasonHealthy
 		return base, nil
 	}
 	if observation.Process == ProcessUnhealthy {
-		if err := watchdog.Supervisor.SafeStop(
+		stopped, reason, err := watchdog.safeStopAndProveAbsent(
 			ctx,
 			observation,
-		); err != nil {
+		)
+		if err != nil {
 			base.Status = StatusFailed
-			base.Reason = ReasonStopFailed
-			return base, ErrSupervisionFailed
-		}
-		stopped, err := watchdog.Supervisor.Inspect(ctx)
-		if err != nil ||
-			validateObservation(stopped) != nil ||
-			stopped.FenceGeneration != observation.FenceGeneration ||
-			stopped.ActiveFleet != observation.ActiveFleet ||
-			stopped.Process != ProcessAbsent {
-			base.Status = StatusFailed
-			base.Reason = ReasonProofFailed
-			return base, ErrSupervisionFailed
+			base.Reason = reason
+			return base, err
 		}
 		observation = stopped
 	}
@@ -241,16 +269,46 @@ func (watchdog Watchdog) RunCycle(
 		started.ProcessIdentity == observation.ProcessIdentity {
 		base.Status = StatusFailed
 		base.Reason = ReasonStartFailed
-		return base, ErrSupervisionFailed
+		return base, errors.Join(ErrSupervisionFailed, err)
 	}
 	if err := watchdog.proveDisabled(ctx, started); err != nil {
-		base.Status = StatusRecoverable
+		_, _, stopErr := watchdog.safeStopAndProveAbsent(ctx, started)
+		base.Status = StatusFailed
 		base.Reason = ReasonProofFailed
-		return base, ErrSupervisionFailed
+		return base, errors.Join(
+			ErrSupervisionFailed,
+			err,
+			stopErr,
+		)
 	}
 	base.Status = StatusOK
 	base.Reason = ReasonRestarted
 	return base, nil
+}
+
+func (watchdog Watchdog) safeStopAndProveAbsent(
+	ctx context.Context,
+	observation Observation,
+) (Observation, Reason, error) {
+	if err := watchdog.Supervisor.SafeStop(ctx, observation); err != nil {
+		return Observation{}, ReasonStopFailed, errors.Join(
+			ErrSupervisionFailed,
+			err,
+		)
+	}
+	after, err := watchdog.Supervisor.Inspect(ctx)
+	if err != nil ||
+		validateObservation(after) != nil ||
+		after.FenceGeneration != observation.FenceGeneration ||
+		after.ActiveFleet != observation.ActiveFleet ||
+		after.Process != ProcessAbsent ||
+		after.ProcessIdentity != "" {
+		return Observation{}, ReasonProofFailed, errors.Join(
+			ErrSupervisionFailed,
+			err,
+		)
+	}
+	return after, "", nil
 }
 
 func (watchdog Watchdog) proveDisabled(
@@ -276,6 +334,9 @@ func (watchdog Watchdog) proveDisabled(
 }
 
 func validateObservation(observation Observation) error {
+	if observation.FenceGeneration == 0 {
+		return ErrSupervisionFailed
+	}
 	if observation.ActiveFleet != FleetNone &&
 		observation.ActiveFleet != FleetPortable &&
 		observation.ActiveFleet != FleetLegacy {
