@@ -200,18 +200,17 @@ func (store *FileJournalStore) Acquire(
 		store.mu.Unlock()
 		return nil, ErrJournalStoreClosed
 	}
-	rootFD, rootErr := duplicateJournalFD(store.rootFD)
-	lockPinFD, pinErr := duplicateJournalFD(store.lockPinFD)
+	rootFD, lockPinFD, duplicateErr := duplicateJournalAcquireFDs(
+		store.rootFD,
+		store.lockPinFD,
+		duplicateJournalFD,
+	)
 	rootIdentity := store.rootIdentity
 	lockIdentity := store.lockIdentity
 	rootPath := store.root
 	store.mu.Unlock()
-	if rootErr != nil {
-		return nil, rootErr
-	}
-	if pinErr != nil {
-		_ = unix.Close(rootFD)
-		return nil, pinErr
+	if duplicateErr != nil {
+		return nil, duplicateErr
 	}
 	cleanupRoot := true
 	defer func() {
@@ -274,6 +273,28 @@ func (store *FileJournalStore) Acquire(
 		rootIdentity: rootIdentity,
 		lockIdentity: lockIdentity,
 	}, nil
+}
+
+func duplicateJournalAcquireFDs(
+	rootFD int,
+	lockPinFD int,
+	duplicate func(int) (int, error),
+) (int, int, error) {
+	if duplicate == nil {
+		return -1, -1, ErrJournalStoreClosed
+	}
+	rootDuplicate, err := duplicate(rootFD)
+	if err != nil {
+		return -1, -1, err
+	}
+	lockPinDuplicate, err := duplicate(lockPinFD)
+	if err != nil {
+		if closeErr := unix.Close(rootDuplicate); closeErr != nil {
+			return -1, -1, errors.Join(err, ErrJournalIntegrity)
+		}
+		return -1, -1, err
+	}
+	return rootDuplicate, lockPinDuplicate, nil
 }
 
 func verifyJournalRoot(

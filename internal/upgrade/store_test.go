@@ -588,6 +588,79 @@ func TestFileJournalStoreRejectsRootAndLockReplacement(t *testing.T) {
 	})
 }
 
+func TestDuplicateJournalAcquireFDsStopsAndCleansUpOnFailure(t *testing.T) {
+	t.Run("root duplicate failure never attempts pin duplicate", func(t *testing.T) {
+		calls := 0
+		duplicate := func(int) (int, error) {
+			calls++
+			return -1, ErrJournalStoreClosed
+		}
+		rootFD, pinFD, err := duplicateJournalAcquireFDs(
+			101,
+			102,
+			duplicate,
+		)
+		if !errors.Is(err, ErrJournalStoreClosed) ||
+			rootFD != -1 ||
+			pinFD != -1 ||
+			calls != 1 {
+			t.Fatalf(
+				"duplicate result = %d/%d/%v calls=%d",
+				rootFD,
+				pinFD,
+				err,
+				calls,
+			)
+		}
+	})
+
+	t.Run("pin duplicate failure closes root duplicate", func(t *testing.T) {
+		pipe := make([]int, 2)
+		if err := unix.Pipe(pipe); err != nil {
+			t.Fatalf("Pipe: %v", err)
+		}
+		defer unix.Close(pipe[0])
+		defer unix.Close(pipe[1])
+		rootDuplicate := -1
+		calls := 0
+		duplicate := func(fd int) (int, error) {
+			calls++
+			if calls == 1 {
+				var err error
+				rootDuplicate, err = unix.Dup(fd)
+				return rootDuplicate, err
+			}
+			return -1, ErrJournalStoreClosed
+		}
+		rootFD, pinFD, err := duplicateJournalAcquireFDs(
+			pipe[0],
+			pipe[1],
+			duplicate,
+		)
+		if !errors.Is(err, ErrJournalStoreClosed) ||
+			rootFD != -1 ||
+			pinFD != -1 ||
+			calls != 2 {
+			t.Fatalf(
+				"duplicate result = %d/%d/%v calls=%d",
+				rootFD,
+				pinFD,
+				err,
+				calls,
+			)
+		}
+		if closeErr := unix.Close(rootDuplicate); !errors.Is(
+			closeErr,
+			unix.EBADF,
+		) {
+			t.Fatalf(
+				"root duplicate remained open: close error = %v",
+				closeErr,
+			)
+		}
+	})
+}
+
 func TestFileJournalStoreExactCASAndClosedState(t *testing.T) {
 	t.Parallel()
 

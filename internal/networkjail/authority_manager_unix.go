@@ -123,7 +123,6 @@ func (manager *UnixAuthorityManager) Start(
 	if err != nil {
 		return authorityLease{}, ErrPermitAuthorityUnavailable
 	}
-	listener.SetUnlinkOnClose(false)
 	listenerOpen := true
 	var socket hostruntime.SocketIdentity
 	var socketPin *authoritySocketPin
@@ -139,31 +138,13 @@ func (manager *UnixAuthorityManager) Start(
 			_ = socketPin.close()
 		}
 	}()
-	if err := os.Chmod(socketPath, 0o600); err != nil {
-		return authorityLease{}, ErrPermitAuthorityUnavailable
-	}
-	_, socket, err = readAuthorityPathIdentity(socketPath, true)
-	if err == nil && (socket.UID != uid || socket.GID != gid) {
-		const maxSigned32 = uint32(1<<31 - 1)
-		if strconv.IntSize == 32 &&
-			(uid > maxSigned32 || gid > maxSigned32) {
-			return authorityLease{}, ErrPermitAuthorityUnavailable
-		}
-		if err := os.Chown(socketPath, int(uid), int(gid)); err != nil {
-			return authorityLease{}, ErrPermitAuthorityUnavailable
-		}
-		_, socket, err = readAuthorityPathIdentity(socketPath, true)
-	}
-	if err != nil ||
-		socket.Device != directory.Device ||
-		socket.UID != uid ||
-		socket.GID != gid {
-		return authorityLease{}, ErrPermitAuthorityUnavailable
-	}
-	socketPin, err = openAuthoritySocketPin(
+	socket, socketPin, err = finalizeAuthoritySocket(
+		listener,
+		socketPath,
 		request.directory,
 		directory,
-		socket,
+		uid,
+		gid,
 	)
 	if err != nil {
 		return authorityLease{}, ErrPermitAuthorityUnavailable
@@ -226,6 +207,96 @@ func (manager *UnixAuthorityManager) Start(
 		endpoint:      endpoint,
 		valid:         true,
 	}, nil
+}
+
+func finalizeAuthoritySocket(
+	listener *net.UnixListener,
+	socketPath string,
+	directoryPath string,
+	directory hostruntime.DirectoryIdentity,
+	uid uint32,
+	gid uint32,
+) (hostruntime.SocketIdentity, *authoritySocketPin, error) {
+	return finalizeAuthoritySocketWith(
+		listener,
+		socketPath,
+		directoryPath,
+		directory,
+		uid,
+		gid,
+		openAuthoritySocketPin,
+	)
+}
+
+func finalizeAuthoritySocketWith(
+	listener *net.UnixListener,
+	socketPath string,
+	directoryPath string,
+	directory hostruntime.DirectoryIdentity,
+	uid uint32,
+	gid uint32,
+	openPin func(
+		string,
+		hostruntime.DirectoryIdentity,
+		hostruntime.SocketIdentity,
+	) (*authoritySocketPin, error),
+) (hostruntime.SocketIdentity, *authoritySocketPin, error) {
+	if listener == nil || socketPath == "" || directoryPath == "" ||
+		openPin == nil {
+		return hostruntime.SocketIdentity{}, nil,
+			ErrPermitAuthorityUnavailable
+	}
+	listener.SetUnlinkOnClose(true)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		return hostruntime.SocketIdentity{}, nil,
+			ErrPermitAuthorityUnavailable
+	}
+	_, socket, err := readAuthorityPathIdentity(socketPath, true)
+	if err == nil && (socket.UID != uid || socket.GID != gid) {
+		const maxSigned32 = uint32(1<<31 - 1)
+		if strconv.IntSize == 32 &&
+			(uid > maxSigned32 || gid > maxSigned32) {
+			return hostruntime.SocketIdentity{}, nil,
+				ErrPermitAuthorityUnavailable
+		}
+		if err := os.Chown(socketPath, int(uid), int(gid)); err != nil {
+			return hostruntime.SocketIdentity{}, nil,
+				ErrPermitAuthorityUnavailable
+		}
+		_, socket, err = readAuthorityPathIdentity(socketPath, true)
+	}
+	if err != nil ||
+		socket.Device != directory.Device ||
+		socket.UID != uid ||
+		socket.GID != gid {
+		return hostruntime.SocketIdentity{}, nil,
+			ErrPermitAuthorityUnavailable
+	}
+	socketPin, err := openPin(
+		directoryPath,
+		directory,
+		socket,
+	)
+	if err != nil {
+		pathDirectory, _, directoryErr := readAuthorityPathIdentity(
+			directoryPath,
+			false,
+		)
+		_, pathSocket, socketErr := readAuthorityPathIdentity(
+			socketPath,
+			true,
+		)
+		if directoryErr != nil ||
+			socketErr != nil ||
+			pathDirectory != directory ||
+			pathSocket != socket {
+			listener.SetUnlinkOnClose(false)
+		}
+		return hostruntime.SocketIdentity{}, nil,
+			ErrPermitAuthorityUnavailable
+	}
+	listener.SetUnlinkOnClose(false)
+	return socket, socketPin, nil
 }
 
 func (manager *UnixAuthorityManager) Stop(

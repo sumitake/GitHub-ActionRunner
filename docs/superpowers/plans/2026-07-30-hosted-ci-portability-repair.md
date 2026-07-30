@@ -204,6 +204,14 @@ without reopening its pathname. Crash recovery remains the pre-existing
 controller transaction/restart responsibility; this repair neither broadens
 recovery nor accepts a pathname-only identity after a guard is lost.
 
+The first exact-patch Grok review of signed head `145f4d1` correctly found two
+cleanup gaps. Construction now keeps listener unlink-on-close enabled until the
+socket pin is established, but disables it on an observed pin/path mismatch so
+a replacement is never removed. Journal acquisition now duplicates the root
+first, attempts the pin only after root success, and closes the root duplicate
+if pin duplication fails. Focused failure-injection regressions cover all three
+branches before the changed-head confirmation review.
+
 ## Stop conditions
 
 - Stop if the framing repair needs to weaken byte/OOB/truncation/EOF checks.

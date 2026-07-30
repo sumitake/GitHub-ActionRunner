@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/sumitake/portable-ghar/internal/hostruntime"
 )
 
 func TestUnixAuthorityManagerBindsExactSocketAndDeactivates(t *testing.T) {
@@ -308,6 +310,108 @@ func TestUnixAuthorityManagerRejectsParentDirectoryReplacement(t *testing.T) {
 	}
 	if err := endpoint.socketPin.close(); err != nil {
 		t.Fatalf("cleanup socket pin: %v", err)
+	}
+}
+
+func TestFinalizeAuthoritySocketFailureKeepsUnlinkOnClose(t *testing.T) {
+	directory := permitSocketTempDir(t)
+	if err := prepareAuthorityTestDirectory(directory); err != nil {
+		t.Fatalf("prepare directory: %v", err)
+	}
+	directoryIdentity, _, err := readAuthorityPathIdentity(directory, false)
+	if err != nil {
+		t.Fatalf("directory identity: %v", err)
+	}
+	directoryIdentity.Device++
+	socketPath := filepath.Join(directory, authoritySocketLiteral)
+	listener, err := net.ListenUnix(
+		"unix",
+		&net.UnixAddr{Name: socketPath, Net: "unix"},
+	)
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	_, pin, err := finalizeAuthoritySocket(
+		listener,
+		socketPath,
+		directory,
+		directoryIdentity,
+		uint32(os.Getuid()),
+		uint32(os.Getgid()),
+	)
+	if !errors.Is(err, ErrPermitAuthorityUnavailable) || pin != nil {
+		t.Fatalf("finalize result = %v/%v", pin, err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := os.Lstat(socketPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed construction left socket path: %v", err)
+	}
+}
+
+func TestFinalizeAuthoritySocketPinMismatchPreservesReplacement(t *testing.T) {
+	directory := permitSocketTempDir(t)
+	if err := prepareAuthorityTestDirectory(directory); err != nil {
+		t.Fatalf("prepare directory: %v", err)
+	}
+	directoryIdentity, _, err := readAuthorityPathIdentity(directory, false)
+	if err != nil {
+		t.Fatalf("directory identity: %v", err)
+	}
+	socketPath := filepath.Join(directory, authoritySocketLiteral)
+	listener, err := net.ListenUnix(
+		"unix",
+		&net.UnixAddr{Name: socketPath, Net: "unix"},
+	)
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	var replacement *net.UnixListener
+	openPin := func(
+		string,
+		hostruntime.DirectoryIdentity,
+		hostruntime.SocketIdentity,
+	) (*authoritySocketPin, error) {
+		if err := os.Remove(socketPath); err != nil {
+			t.Fatalf("remove original socket: %v", err)
+		}
+		var err error
+		replacement, err = net.ListenUnix(
+			"unix",
+			&net.UnixAddr{Name: socketPath, Net: "unix"},
+		)
+		if err != nil {
+			t.Fatalf("replacement listener: %v", err)
+		}
+		if err := os.Chmod(socketPath, 0o600); err != nil {
+			t.Fatalf("replacement chmod: %v", err)
+		}
+		return nil, ErrPermitAuthorityUnavailable
+	}
+	_, pin, err := finalizeAuthoritySocketWith(
+		listener,
+		socketPath,
+		directory,
+		directoryIdentity,
+		uint32(os.Getuid()),
+		uint32(os.Getgid()),
+		openPin,
+	)
+	if !errors.Is(err, ErrPermitAuthorityUnavailable) || pin != nil {
+		t.Fatalf("finalize result = %v/%v", pin, err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := os.Lstat(socketPath); err != nil {
+		t.Fatalf("failed construction removed replacement: %v", err)
+	}
+	if replacement == nil {
+		t.Fatal("replacement listener was not created")
+	}
+	if err := replacement.Close(); err != nil {
+		t.Fatalf("close replacement: %v", err)
 	}
 }
 
