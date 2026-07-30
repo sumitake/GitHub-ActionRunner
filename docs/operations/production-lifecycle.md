@@ -73,6 +73,21 @@ forward rather than repeating an already-applied effect. An upstream
 compatibility failure leaves acquisition disabled and hosted routing
 unchanged.
 
+Detailed source-ready procedures are separated by lifecycle phase:
+
+- [Controller upgrade](controller-upgrade.md) covers immutable replacement,
+  hosted hold, qualification, drain, selection, canary, and enable gates.
+- [Controller recovery](controller-recovery.md) covers authoritative
+  read-back, ambiguity, dark observer startup, forward recovery, compensation,
+  and rollback.
+- [Runner release](runner-release.md) covers automatic official-release
+  observation, maintenance responses, forced-version-bump continuity, and
+  whole-container reclamation.
+
+These procedures do not authorize live-host commands. Each live execution
+still requires a separately approved packet with exact identities,
+postconditions, rollback, and stop conditions.
+
 ## Grafana and InfluxDB activation gate
 
 Portable GHAR controller health and GitHub workflow state are complementary
