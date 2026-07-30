@@ -671,6 +671,165 @@ func TestRunnerImageVerificationIsNonAuthorizingAndRequiresInstalledRoot(t *test
 	}
 }
 
+func TestRunnerImageDiagnosticsOverlayIsExactAndDigestNeutral(t *testing.T) {
+	output, manifest, staging := installedRunnerImageFixture(t)
+	uid := uint32(os.Geteuid())
+	gid := uint32(os.Getegid())
+
+	baseline, err := verifyRunnerImageDirectoryForOwner(
+		output,
+		manifest,
+		47,
+		uid,
+		gid,
+	)
+	if err != nil {
+		t.Fatalf("verify strict baseline: %v", err)
+	}
+	if _, err := verifyRunnerImageDirectoryWithDiagnosticsOverlayForOwner(
+		output,
+		manifest,
+		47,
+		uid,
+		gid,
+	); err == nil {
+		t.Fatal("overlay verifier accepted a missing diagnostics overlay")
+	}
+
+	addRunnerImageObject(t, output, func() {
+		if err := os.Symlink("/runner/_diag", filepath.Join(output, "_diag")); err != nil {
+			t.Fatalf("Symlink diagnostics overlay: %v", err)
+		}
+	})
+	overlaid, err := verifyRunnerImageDirectoryWithDiagnosticsOverlayForOwner(
+		output,
+		manifest,
+		47,
+		uid,
+		gid,
+	)
+	if err != nil {
+		t.Fatalf("verify diagnostics overlay: %v", err)
+	}
+	if overlaid.Generation() != baseline.Generation() ||
+		overlaid.ManifestDigest() != baseline.ManifestDigest() ||
+		overlaid.TreeLockDigest() != baseline.TreeLockDigest() ||
+		overlaid.ManifestDigest() != staging.ManifestDigest() ||
+		overlaid.TreeLockDigest() != staging.TreeLockDigest() {
+		t.Fatalf(
+			"overlay changed logical evidence: baseline=%d/%s/%s overlay=%d/%s/%s staging=%d/%s/%s",
+			baseline.Generation(),
+			baseline.ManifestDigest(),
+			baseline.TreeLockDigest(),
+			overlaid.Generation(),
+			overlaid.ManifestDigest(),
+			overlaid.TreeLockDigest(),
+			staging.Generation(),
+			staging.ManifestDigest(),
+			staging.TreeLockDigest(),
+		)
+	}
+	if _, err := verifyRunnerImageDirectoryForOwner(
+		output,
+		manifest,
+		47,
+		uid,
+		gid,
+	); err == nil {
+		t.Fatal("strict verifier accepted the diagnostics overlay")
+	}
+}
+
+func TestRunnerImageDiagnosticsOverlayRejectsEveryOtherObject(t *testing.T) {
+	tests := map[string]func(*testing.T, string){
+		"relative target": func(t *testing.T, output string) {
+			if err := os.Symlink("runner/_diag", filepath.Join(output, "_diag")); err != nil {
+				t.Fatalf("Symlink relative diagnostics overlay: %v", err)
+			}
+		},
+		"wrong absolute target": func(t *testing.T, output string) {
+			if err := os.Symlink("/tmp/_diag", filepath.Join(output, "_diag")); err != nil {
+				t.Fatalf("Symlink wrong diagnostics overlay: %v", err)
+			}
+		},
+		"regular file": func(t *testing.T, output string) {
+			if err := os.WriteFile(filepath.Join(output, "_diag"), nil, 0o444); err != nil {
+				t.Fatalf("WriteFile diagnostics overlay: %v", err)
+			}
+		},
+		"directory": func(t *testing.T, output string) {
+			if err := os.Mkdir(filepath.Join(output, "_diag"), 0o555); err != nil {
+				t.Fatalf("Mkdir diagnostics overlay: %v", err)
+			}
+		},
+		"extra sibling": func(t *testing.T, output string) {
+			if err := os.Symlink("/runner/_diag", filepath.Join(output, "_diag")); err != nil {
+				t.Fatalf("Symlink diagnostics overlay: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(output, "unexpected"), nil, 0o444); err != nil {
+				t.Fatalf("WriteFile unexpected sibling: %v", err)
+			}
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			output, manifest, _ := installedRunnerImageFixture(t)
+			addRunnerImageObject(t, output, func() { mutate(t, output) })
+			if _, err := verifyRunnerImageDirectoryWithDiagnosticsOverlayForOwner(
+				output,
+				manifest,
+				47,
+				uint32(os.Geteuid()),
+				uint32(os.Getegid()),
+			); err == nil {
+				t.Fatal("overlay verifier accepted a noncanonical diagnostics object")
+			}
+		})
+	}
+}
+
+func installedRunnerImageFixture(
+	t *testing.T,
+) (string, RunnerTreeManifest, VerifiedRunnerDirectory) {
+	t.Helper()
+	parent := canonicalTempDir(t)
+	archivePath, digest := writeRunnerArchive(t, parent, validRunnerTarEntries())
+	output := filepath.Join(parent, "runner-image")
+	t.Cleanup(func() { makeRunnerTreeRemovable(output) })
+	staging, err := ExtractRunnerArchive(RunnerExtractOptions{
+		ArchivePath:        archivePath,
+		ExpectedSHA256:     digest,
+		EvidenceGeneration: 47,
+		OutputDirectory:    output,
+	})
+	if err != nil {
+		t.Fatalf("ExtractRunnerArchive: %v", err)
+	}
+	var document bytes.Buffer
+	if err := WriteRunnerManifest(&document, staging); err != nil {
+		t.Fatalf("WriteRunnerManifest: %v", err)
+	}
+	manifest, err := LoadRunnerManifest(bytes.NewReader(document.Bytes()))
+	if err != nil {
+		t.Fatalf("LoadRunnerManifest: %v", err)
+	}
+	if err := os.Chmod(output, 0o555); err != nil {
+		t.Fatalf("Chmod installed root: %v", err)
+	}
+	return output, manifest, staging
+}
+
+func addRunnerImageObject(t *testing.T, output string, add func()) {
+	t.Helper()
+	if err := os.Chmod(output, 0o755); err != nil {
+		t.Fatalf("Chmod mutable installed root: %v", err)
+	}
+	add()
+	if err := os.Chmod(output, 0o555); err != nil {
+		t.Fatalf("Chmod resealed installed root: %v", err)
+	}
+}
+
 func TestPinnedRunnerArchiveConformance(t *testing.T) {
 	archivePath := os.Getenv("PGHAR_PINNED_RUNNER_ARCHIVE")
 	if archivePath == "" {

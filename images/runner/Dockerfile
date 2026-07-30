@@ -123,6 +123,8 @@ RUN chmod 0555 /opt/actions-runner /opt/portable-ghar/seed-cache \
     && test "$installed_version" = "$expected_version" \
     && rm -rf /opt/actions-runner/_diag \
     && test ! -e /opt/actions-runner/_diag \
+    && ln -s /runner/_diag /opt/actions-runner/_diag \
+    && /usr/local/bin/portable-ghar-runner-gate verify-image-overlay \
     && test ! -e /portable-ghar-bootstrap-ca.pem \
     && test -r /usr/share/portable-ghar/debian-snapshot.lock.json \
     && test -r /usr/share/portable-ghar/runner-package-anchors.tsv \

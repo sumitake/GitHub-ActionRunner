@@ -61,6 +61,8 @@ RUN chmod 0555 /opt/actions-runner /opt/portable-ghar/seed-cache \
     && test "$installed_version" != "$expected_version" \
     && rm -rf /opt/actions-runner/_diag \
     && test ! -e /opt/actions-runner/_diag \
+    && ln -s /runner/_diag /opt/actions-runner/_diag \
+    && /usr/local/bin/portable-ghar-runner-gate verify-image-overlay \
     && test "$(find /opt/actions-runner -type f -print | wc -l)" -eq 1 \
     && test -z "$(find /opt/actions-runner/externals -mindepth 1 -print -quit)" \
     && install -d -m 0700 -o 65532 -g 65532 /runner /tmp /scratch

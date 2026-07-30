@@ -19,6 +19,7 @@ import (
 
 const (
 	defaultRunnerRoot      = "/runner"
+	defaultDiagnosticsPath = "/runner/_diag"
 	defaultGateDirectory   = "/runner/.portable-ghar"
 	defaultGateSocket      = "/runner/.portable-ghar/gate.sock"
 	defaultRunnerWork      = "/runner/_work"
@@ -34,6 +35,7 @@ type listenerExecutor func(*os.File, string, []string, []string) error
 
 type gateRuntime struct {
 	runnerRoot         string
+	diagnosticsPath    string
 	workRoot           string
 	socketDirectory    string
 	socketPath         string
@@ -49,12 +51,14 @@ type gateRuntime struct {
 	namespace          func() ([]byte, error)
 	execListener       listenerExecutor
 	verifyImage        func() error
+	verifyImageOverlay func() error
 	observeConformance func() (runnerConformanceWire, error)
 }
 
 func defaultGateRuntime() gateRuntime {
 	return gateRuntime{
 		runnerRoot:         defaultRunnerRoot,
+		diagnosticsPath:    defaultDiagnosticsPath,
 		workRoot:           defaultRunnerWork,
 		socketDirectory:    defaultGateDirectory,
 		socketPath:         defaultGateSocket,
@@ -70,6 +74,7 @@ func defaultGateRuntime() gateRuntime {
 		namespace:          currentNetworkNamespace,
 		execListener:       execListenerProcess,
 		verifyImage:        imageverify.VerifyInstalledRunnerImage,
+		verifyImageOverlay: imageverify.VerifyInstalledRunnerImageWithDiagnosticsOverlay,
 		observeConformance: defaultRunnerConformance,
 	}
 }
@@ -78,14 +83,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, runtime gateR
 	if len(args) != 1 || stdout == nil || stderr == nil {
 		return gateUnavailable(stderr, 2)
 	}
-	if args[0] == "verify-image" {
-		if runtime.verifyImage == nil {
+	if args[0] == "verify-image" || args[0] == "verify-image-overlay" {
+		verifier := runtime.verifyImage
+		if args[0] == "verify-image-overlay" {
+			verifier = runtime.verifyImageOverlay
+		}
+		if verifier == nil {
 			return gateUnavailable(stderr, 1)
 		}
 		if err := requireEmptyInput(stdin); err != nil {
 			return gateUnavailable(stderr, 1)
 		}
-		if err := runtime.verifyImage(); err != nil {
+		if err := verifier(); err != nil {
 			return gateUnavailable(stderr, 1)
 		}
 		version := strings.TrimPrefix(buildinfo.Pins().UpstreamRunner.Version, "v")
@@ -165,7 +174,9 @@ func requireEmptyInput(reader io.Reader) error {
 
 func holdGate(runtime gateRuntime) error {
 	if runtime.namespace == nil || runtime.execListener == nil ||
+		runtime.verifyImageOverlay == nil ||
 		!canonicalRuntimePath(runtime.runnerRoot) ||
+		!canonicalRuntimePath(runtime.diagnosticsPath) ||
 		!canonicalRuntimePath(runtime.workRoot) ||
 		!canonicalRuntimePath(runtime.socketDirectory) ||
 		!canonicalRuntimePath(runtime.socketPath) ||
@@ -176,9 +187,13 @@ func holdGate(runtime gateRuntime) error {
 		!canonicalRuntimePath(runtime.seedTreeLock) ||
 		!canonicalRuntimePath(runtime.seedReady) ||
 		runtime.socketDirectory != filepath.Dir(runtime.socketPath) ||
+		runtime.diagnosticsPath != filepath.Join(runtime.runnerRoot, "_diag") ||
 		runtime.socketDirectory != filepath.Join(runtime.runnerRoot, ".portable-ghar") ||
 		runtime.workRoot != filepath.Join(runtime.runnerRoot, "_work") {
 		return errors.New("runner-gate: runtime paths invalid")
+	}
+	if err := runtime.verifyImageOverlay(); err != nil {
+		return err
 	}
 	listenerIdentity, err := loadGateRuntimeLock(runtime.runtimeLockPath, runtime.treeLockPath)
 	if err != nil {
@@ -191,6 +206,13 @@ func holdGate(runtime gateRuntime) error {
 		runtime.seedReady,
 		runtime.seedUID,
 		runtime.seedGID,
+	)
+	if err != nil {
+		return err
+	}
+	diagnosticsIdentity, err := prepareDiagnosticsDirectory(
+		runtime.runnerRoot,
+		runtime.diagnosticsPath,
 	)
 	if err != nil {
 		return err
@@ -212,7 +234,12 @@ func holdGate(runtime gateRuntime) error {
 		func(ids []string) error { return catalog.hydrate(runtime.workRoot, ids) },
 		runtime.namespace,
 		func(jit []byte) error {
-			return executeVerifiedListener(listenerIdentity, jit, runtime.execListener)
+			return executeVerifiedListener(
+				listenerIdentity,
+				diagnosticsIdentity,
+				jit,
+				runtime.execListener,
+			)
 		},
 	)
 	err = serveGateListener(listener, socketIdentity, machine, runtime.ioTimeout)
@@ -226,6 +253,187 @@ func holdGate(runtime gateRuntime) error {
 
 func canonicalRuntimePath(path string) bool {
 	return filepath.IsAbs(path) && filepath.Clean(path) == path && strings.IndexByte(path, 0) < 0
+}
+
+type runtimePathIdentity struct {
+	device uint64
+	inode  uint64
+	uid    uint32
+	gid    uint32
+	mode   uint32
+}
+
+type diagnosticsDirectoryIdentity struct {
+	runnerRoot      string
+	diagnosticsPath string
+	root            runtimePathIdentity
+	diagnostics     runtimePathIdentity
+}
+
+func prepareDiagnosticsDirectory(
+	runnerRoot string,
+	diagnosticsPath string,
+) (diagnosticsDirectoryIdentity, error) {
+	if !canonicalRuntimePath(runnerRoot) ||
+		diagnosticsPath != filepath.Join(runnerRoot, "_diag") {
+		return diagnosticsDirectoryIdentity{}, errors.New(
+			"runner-gate: diagnostics path invalid",
+		)
+	}
+	rootFD, rootStat, err := openRuntimeRunnerRoot(runnerRoot)
+	if err != nil {
+		return diagnosticsDirectoryIdentity{}, err
+	}
+	defer unix.Close(rootFD)
+
+	var diagnosticsStat unix.Stat_t
+	created := false
+	err = unix.Fstatat(
+		rootFD,
+		"_diag",
+		&diagnosticsStat,
+		unix.AT_SYMLINK_NOFOLLOW,
+	)
+	if errors.Is(err, unix.ENOENT) {
+		oldMask := unix.Umask(0o077)
+		createErr := unix.Mkdirat(rootFD, "_diag", 0o700)
+		unix.Umask(oldMask)
+		if createErr != nil {
+			return diagnosticsDirectoryIdentity{}, errors.New(
+				"runner-gate: diagnostics directory create failed",
+			)
+		}
+		created = true
+		err = unix.Fstatat(
+			rootFD,
+			"_diag",
+			&diagnosticsStat,
+			unix.AT_SYMLINK_NOFOLLOW,
+		)
+	}
+	if err != nil ||
+		uint32(diagnosticsStat.Mode)&unix.S_IFMT != unix.S_IFDIR ||
+		uint32(diagnosticsStat.Mode)&0o777 != 0o700 ||
+		diagnosticsStat.Uid != uint32(os.Geteuid()) ||
+		diagnosticsStat.Gid != uint32(os.Getegid()) ||
+		uint64(diagnosticsStat.Dev) != uint64(rootStat.Dev) {
+		if created {
+			_ = unix.Unlinkat(rootFD, "_diag", unix.AT_REMOVEDIR)
+		}
+		return diagnosticsDirectoryIdentity{}, errors.New(
+			"runner-gate: diagnostics directory identity invalid",
+		)
+	}
+	var rootAfter unix.Stat_t
+	var pathRoot unix.Stat_t
+	if unix.Fstat(rootFD, &rootAfter) != nil ||
+		unix.Lstat(runnerRoot, &pathRoot) != nil ||
+		!sameRuntimePathIdentity(
+			runtimeIdentityFromStat(rootStat),
+			runtimeIdentityFromStat(rootAfter),
+		) ||
+		!sameRuntimePathIdentity(
+			runtimeIdentityFromStat(rootStat),
+			runtimeIdentityFromStat(pathRoot),
+		) {
+		if created {
+			_ = unix.Unlinkat(rootFD, "_diag", unix.AT_REMOVEDIR)
+		}
+		return diagnosticsDirectoryIdentity{}, errors.New(
+			"runner-gate: runner root changed during diagnostics preparation",
+		)
+	}
+	return diagnosticsDirectoryIdentity{
+		runnerRoot:      runnerRoot,
+		diagnosticsPath: diagnosticsPath,
+		root:            runtimeIdentityFromStat(rootStat),
+		diagnostics:     runtimeIdentityFromStat(diagnosticsStat),
+	}, nil
+}
+
+func revalidateDiagnosticsDirectory(
+	want diagnosticsDirectoryIdentity,
+) error {
+	if !canonicalRuntimePath(want.runnerRoot) ||
+		want.diagnosticsPath != filepath.Join(want.runnerRoot, "_diag") {
+		return errors.New("runner-gate: diagnostics identity invalid")
+	}
+	rootFD, rootStat, err := openRuntimeRunnerRoot(want.runnerRoot)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(rootFD)
+	if !sameRuntimePathIdentity(
+		want.root,
+		runtimeIdentityFromStat(rootStat),
+	) {
+		return errors.New("runner-gate: runner root identity changed")
+	}
+	var diagnosticsStat unix.Stat_t
+	if unix.Fstatat(
+		rootFD,
+		"_diag",
+		&diagnosticsStat,
+		unix.AT_SYMLINK_NOFOLLOW,
+	) != nil ||
+		!sameRuntimePathIdentity(
+			want.diagnostics,
+			runtimeIdentityFromStat(diagnosticsStat),
+		) {
+		return errors.New("runner-gate: diagnostics directory identity changed")
+	}
+	return nil
+}
+
+func openRuntimeRunnerRoot(
+	runnerRoot string,
+) (int, unix.Stat_t, error) {
+	var empty unix.Stat_t
+	resolved, err := filepath.EvalSymlinks(runnerRoot)
+	if err != nil || resolved != runnerRoot {
+		return -1, empty, errors.New("runner-gate: runner root indirect")
+	}
+	rootFD, err := unix.Open(
+		runnerRoot,
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW,
+		0,
+	)
+	if err != nil {
+		return -1, empty, errors.New("runner-gate: runner root open failed")
+	}
+	var stat unix.Stat_t
+	if unix.Fstat(rootFD, &stat) != nil ||
+		uint32(stat.Mode)&unix.S_IFMT != unix.S_IFDIR ||
+		uint32(stat.Mode)&0o777 != 0o700 ||
+		stat.Uid != uint32(os.Geteuid()) ||
+		stat.Gid != uint32(os.Getegid()) {
+		_ = unix.Close(rootFD)
+		return -1, empty, errors.New(
+			"runner-gate: runner root identity invalid",
+		)
+	}
+	return rootFD, stat, nil
+}
+
+func runtimeIdentityFromStat(stat unix.Stat_t) runtimePathIdentity {
+	return runtimePathIdentity{
+		device: uint64(stat.Dev),
+		inode:  stat.Ino,
+		uid:    stat.Uid,
+		gid:    stat.Gid,
+		mode:   uint32(stat.Mode),
+	}
+}
+
+func sameRuntimePathIdentity(
+	left runtimePathIdentity,
+	right runtimePathIdentity,
+) bool {
+	return left.device == right.device &&
+		left.inode == right.inode &&
+		left.uid == right.uid &&
+		left.gid == right.gid &&
+		left.mode == right.mode
 }
 
 func prepareGateDirectory(runnerRoot, gateDirectory string) error {
@@ -262,7 +470,12 @@ func prepareGateDirectory(runnerRoot, gateDirectory string) error {
 	return nil
 }
 
-func executeVerifiedListener(want listenerIdentity, jit []byte, executor listenerExecutor) error {
+func executeVerifiedListener(
+	want listenerIdentity,
+	diagnostics diagnosticsDirectoryIdentity,
+	jit []byte,
+	executor listenerExecutor,
+) error {
 	defer zero(jit)
 	if executor == nil || len(jit) == 0 || len(jit) > maxJITLength || strings.IndexByte(string(jit), 0) >= 0 {
 		return errors.New("runner-gate: listener execution inputs invalid")
@@ -278,6 +491,12 @@ func executeVerifiedListener(want listenerIdentity, jit []byte, executor listene
 	descriptorPath := "/proc/self/fd/" + strconv.FormatUint(uint64(listener.Fd()), 10)
 	argv := []string{want.Path, "run"}
 	env := runtimeenv.Listener(string(jit))
+	if err := revalidateDiagnosticsDirectory(diagnostics); err != nil {
+		for index := range env {
+			env[index] = ""
+		}
+		return err
+	}
 	err = executor(listener, descriptorPath, argv, env)
 	for index := range env {
 		env[index] = ""

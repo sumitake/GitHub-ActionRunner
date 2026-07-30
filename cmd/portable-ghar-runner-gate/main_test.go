@@ -562,10 +562,15 @@ func TestRunForwardsOnlyTheClosedGateSubcommands(t *testing.T) {
 }
 
 func TestRunVerifyImageIsBuildOnlyAndFailClosed(t *testing.T) {
-	called := 0
+	strictCalled := 0
+	overlayCalled := 0
 	runtime := gateRuntime{
 		verifyImage: func() error {
-			called++
+			strictCalled++
+			return nil
+		},
+		verifyImageOverlay: func() error {
+			overlayCalled++
 			return nil
 		},
 	}
@@ -576,8 +581,57 @@ func TestRunVerifyImageIsBuildOnlyAndFailClosed(t *testing.T) {
 		&stdout,
 		&stderr,
 		runtime,
-	); code != 0 || stdout.String() != "2.336.0\n" || stderr.Len() != 0 || called != 1 {
-		t.Fatalf("verify-image code/output/called = %d/%q/%q/%d", code, stdout.String(), stderr.String(), called)
+	); code != 0 || stdout.String() != "2.336.0\n" || stderr.Len() != 0 ||
+		strictCalled != 1 || overlayCalled != 0 {
+		t.Fatalf(
+			"verify-image code/output/called = %d/%q/%q/%d/%d",
+			code,
+			stdout.String(),
+			stderr.String(),
+			strictCalled,
+			overlayCalled,
+		)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(
+		[]string{"verify-image-overlay"},
+		bytes.NewReader(nil),
+		&stdout,
+		&stderr,
+		runtime,
+	); code != 0 || stdout.String() != "2.336.0\n" || stderr.Len() != 0 ||
+		strictCalled != 1 || overlayCalled != 1 {
+		t.Fatalf(
+			"verify-image-overlay code/output/called = %d/%q/%q/%d/%d",
+			code,
+			stdout.String(),
+			stderr.String(),
+			strictCalled,
+			overlayCalled,
+		)
+	}
+
+	runtime.verifyImageOverlay = func() error {
+		return errors.New("invalid overlay")
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(
+		[]string{"verify-image-overlay"},
+		bytes.NewReader(nil),
+		&stdout,
+		&stderr,
+		runtime,
+	); code != 1 || stdout.Len() != 0 ||
+		stderr.String() != "portable-ghar-runner-gate: unavailable\n" {
+		t.Fatalf(
+			"failed verify-image-overlay code/output = %d/%q/%q",
+			code,
+			stdout.String(),
+			stderr.String(),
+		)
 	}
 
 	runtime.verifyImage = func() error { return errors.New("invalid image") }
@@ -607,6 +661,106 @@ func TestRunVerifyImageIsBuildOnlyAndFailClosed(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsDirectoryIsPinnedAndRevalidatedBeforeExec(t *testing.T) {
+	root := shortSocketRoot(t)
+	diagnosticsPath := filepath.Join(root, "_diag")
+	pin, err := prepareDiagnosticsDirectory(root, diagnosticsPath)
+	if err != nil {
+		t.Fatalf("prepareDiagnosticsDirectory: %v", err)
+	}
+	info, err := os.Lstat(diagnosticsPath)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("diagnostics identity = %v, %v", info, err)
+	}
+	if err := revalidateDiagnosticsDirectory(pin); err != nil {
+		t.Fatalf("revalidateDiagnosticsDirectory: %v", err)
+	}
+	existing, err := prepareDiagnosticsDirectory(root, diagnosticsPath)
+	if err != nil {
+		t.Fatalf("prepare existing diagnostics directory: %v", err)
+	}
+	if !sameRuntimePathIdentity(pin.root, existing.root) ||
+		!sameRuntimePathIdentity(pin.diagnostics, existing.diagnostics) {
+		t.Fatal("pre-existing diagnostics directory did not preserve its pinned identity")
+	}
+
+	replaced := diagnosticsPath + ".replaced"
+	if err := os.Rename(diagnosticsPath, replaced); err != nil {
+		t.Fatalf("rename pinned diagnostics directory: %v", err)
+	}
+	if err := os.Mkdir(diagnosticsPath, 0o700); err != nil {
+		t.Fatalf("mkdir replacement diagnostics directory: %v", err)
+	}
+	if err := revalidateDiagnosticsDirectory(pin); err == nil {
+		t.Fatal("revalidation accepted a replacement diagnostics inode")
+	}
+}
+
+func TestDiagnosticsDirectoryRejectsWrongExistingIdentity(t *testing.T) {
+	tests := map[string]func(*testing.T, string){
+		"symlink": func(t *testing.T, path string) {
+			if err := os.Symlink(t.TempDir(), path); err != nil {
+				t.Fatalf("Symlink diagnostics path: %v", err)
+			}
+		},
+		"regular file": func(t *testing.T, path string) {
+			if err := os.WriteFile(path, nil, 0o600); err != nil {
+				t.Fatalf("WriteFile diagnostics path: %v", err)
+			}
+		},
+		"wrong mode": func(t *testing.T, path string) {
+			if err := os.Mkdir(path, 0o755); err != nil {
+				t.Fatalf("Mkdir diagnostics path: %v", err)
+			}
+		},
+	}
+	for name, create := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := shortSocketRoot(t)
+			path := filepath.Join(root, "_diag")
+			create(t, path)
+			if _, err := prepareDiagnosticsDirectory(root, path); err == nil {
+				t.Fatal("prepare accepted a noncanonical diagnostics directory")
+			}
+		})
+	}
+}
+
+func TestHoldGateRequiresOverlayProofBeforeRuntimeEffects(t *testing.T) {
+	root := shortSocketRoot(t)
+	proofErr := errors.New("test: overlay proof rejected")
+	called := 0
+	runtime := gateRuntime{
+		runnerRoot:      root,
+		diagnosticsPath: filepath.Join(root, "_diag"),
+		workRoot:        filepath.Join(root, "_work"),
+		socketDirectory: filepath.Join(root, ".portable-ghar"),
+		socketPath:      filepath.Join(root, ".portable-ghar", "gate.sock"),
+		runtimeLockPath: filepath.Join(root, "runner.runtime-lock.json"),
+		treeLockPath:    filepath.Join(root, "runner.tree-lock"),
+		seedCacheRoot:   filepath.Join(root, "seed-cache"),
+		seedManifest:    filepath.Join(root, "seed.manifest.json"),
+		seedTreeLock:    filepath.Join(root, "seed.tree-lock"),
+		seedReady:       filepath.Join(root, "seed.READY"),
+		ioTimeout:       time.Second,
+		namespace:       fixedNamespace,
+		execListener: func(*os.File, string, []string, []string) error {
+			t.Fatal("listener executor ran before overlay proof")
+			return nil
+		},
+		verifyImageOverlay: func() error {
+			called++
+			return proofErr
+		},
+	}
+	if err := holdGate(runtime); !errors.Is(err, proofErr) || called != 1 {
+		t.Fatalf("holdGate error=%v overlay calls=%d", err, called)
+	}
+	if _, err := os.Lstat(runtime.socketDirectory); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("gate directory created before overlay proof: %v", err)
+	}
+}
+
 func TestExecuteVerifiedListenerUsesDescriptorPathAndMinimalJITEnvironment(t *testing.T) {
 	t.Setenv("PORTABLE_GHAR_AMBIENT_POISON", "must-not-cross-exec")
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -628,9 +782,17 @@ func TestExecuteVerifiedListenerUsesDescriptorPathAndMinimalJITEnvironment(t *te
 		Path: listenerPath, SHA256: hex.EncodeToString(digest[:]), Size: uint64(len(contents)),
 		Mode: 0o555, UID: stat.Uid, GID: stat.Gid,
 	}
+	diagnosticsRoot := shortSocketRoot(t)
+	diagnostics, err := prepareDiagnosticsDirectory(
+		diagnosticsRoot,
+		filepath.Join(diagnosticsRoot, "_diag"),
+	)
+	if err != nil {
+		t.Fatalf("prepare diagnostics: %v", err)
+	}
 	jit := []byte("opaque-jit")
 	called := false
-	err = executeVerifiedListener(identity, jit, func(file *os.File, path string, argv, env []string) error {
+	err = executeVerifiedListener(identity, diagnostics, jit, func(file *os.File, path string, argv, env []string) error {
 		called = true
 		if file == nil || path != "/proc/self/fd/"+strconv.FormatUint(uint64(file.Fd()), 10) {
 			t.Fatalf("descriptor path=%q file=%v", path, file)
@@ -663,11 +825,33 @@ func TestExecuteVerifiedListenerUsesDescriptorPathAndMinimalJITEnvironment(t *te
 	}
 
 	nulJIT := []byte{'a', 0, 'b'}
-	if err := executeVerifiedListener(identity, nulJIT, func(*os.File, string, []string, []string) error {
+	if err := executeVerifiedListener(identity, diagnostics, nulJIT, func(*os.File, string, []string, []string) error {
 		t.Fatal("executor ran for NUL-bearing JIT")
 		return nil
 	}); err == nil || !allZero(nulJIT) {
 		t.Fatalf("NUL JIT result=%v buffer=%x", err, nulJIT)
+	}
+
+	if err := os.Rename(
+		diagnostics.diagnosticsPath,
+		diagnostics.diagnosticsPath+".old",
+	); err != nil {
+		t.Fatalf("rename diagnostics before exec: %v", err)
+	}
+	if err := os.Mkdir(diagnostics.diagnosticsPath, 0o700); err != nil {
+		t.Fatalf("mkdir replacement diagnostics before exec: %v", err)
+	}
+	replacedJIT := []byte("replacement-jit")
+	if err := executeVerifiedListener(
+		identity,
+		diagnostics,
+		replacedJIT,
+		func(*os.File, string, []string, []string) error {
+			t.Fatal("executor ran after diagnostics identity replacement")
+			return nil
+		},
+	); err == nil || !allZero(replacedJIT) {
+		t.Fatalf("replaced diagnostics result=%v buffer=%x", err, replacedJIT)
 	}
 }
 
@@ -751,6 +935,9 @@ func shortSocketRoot(t *testing.T) string {
 	}
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatalf("Chmod root: %v", err)
+	}
+	if err := os.Chown(root, os.Geteuid(), os.Getegid()); err != nil {
+		t.Fatalf("Chown root: %v", err)
 	}
 	return root
 }

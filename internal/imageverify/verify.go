@@ -71,6 +71,17 @@ type verificationLayout struct {
 // VerifyInstalledRunnerImage verifies the fixed runner image layout. It is
 // intended to run as one root-owned Docker build step before the final USER.
 func VerifyInstalledRunnerImage() error {
+	return verifyInstalledRunnerImage(false)
+}
+
+// VerifyInstalledRunnerImageWithDiagnosticsOverlay verifies the final sealed
+// image shape. It requires the sole diagnostics overlay while binding the
+// original manifest and tree-lock tuple.
+func VerifyInstalledRunnerImageWithDiagnosticsOverlay() error {
+	return verifyInstalledRunnerImage(true)
+}
+
+func verifyInstalledRunnerImage(withDiagnosticsOverlay bool) error {
 	layout := verificationLayout{
 		runnerRoot:        "/opt/actions-runner",
 		runnerManifest:    "/opt/portable-ghar/runner.tree-manifest.json",
@@ -86,7 +97,21 @@ func VerifyInstalledRunnerImage() error {
 	}
 	backends := verificationBackends{
 		runner: func(root string, manifest seedarchive.RunnerTreeManifest, generation uint64) (imageProof, error) {
-			verified, err := seedarchive.VerifyRunnerImageDirectory(root, manifest, generation)
+			var verified seedarchive.RunnerImageVerification
+			var err error
+			if withDiagnosticsOverlay {
+				verified, err = seedarchive.VerifyRunnerImageDirectoryWithDiagnosticsOverlay(
+					root,
+					manifest,
+					generation,
+				)
+			} else {
+				verified, err = seedarchive.VerifyRunnerImageDirectory(
+					root,
+					manifest,
+					generation,
+				)
+			}
 			if err != nil {
 				return imageProof{}, err
 			}

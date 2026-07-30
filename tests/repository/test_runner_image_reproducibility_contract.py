@@ -47,20 +47,30 @@ class RunnerImageReproducibilityContractTest(unittest.TestCase):
                 self.assertLess(install, cache_cleanup)
                 self.assertLess(cache_cleanup, file_cleanup)
 
-    def test_listener_smoke_removes_only_known_diagnostics_then_checks(self) -> None:
+    def test_listener_smoke_replaces_diagnostics_with_verified_tmpfs_overlay(
+        self,
+    ) -> None:
         smoke = (
             "installed_version="
             "$(/opt/actions-runner/bin/Runner.Listener --version)"
         )
         cleanup = "rm -rf /opt/actions-runner/_diag"
         absence = "test ! -e /opt/actions-runner/_diag"
+        overlay = "ln -s /runner/_diag /opt/actions-runner/_diag"
+        overlay_verify = (
+            "/usr/local/bin/portable-ghar-runner-gate verify-image-overlay"
+        )
         for relative, dockerfile in self.dockerfiles.items():
             with self.subTest(relative=relative):
                 smoke_index = dockerfile.index(smoke)
                 cleanup_index = dockerfile.index(cleanup)
                 absence_index = dockerfile.index(absence)
+                overlay_index = dockerfile.index(overlay)
+                overlay_verify_index = dockerfile.index(overlay_verify)
                 self.assertLess(smoke_index, cleanup_index)
                 self.assertLess(cleanup_index, absence_index)
+                self.assertLess(absence_index, overlay_index)
+                self.assertLess(overlay_index, overlay_verify_index)
 
 
 if __name__ == "__main__":
