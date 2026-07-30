@@ -763,6 +763,7 @@ or unregistered file may remain.
 ## Task 14.1: Freeze the Release Manifest and Hermetic Runner Build
 
 **Files:**
+
 - Modify: `release/manifest.json`
 - Modify: `images/runner/Dockerfile`
 - Test: `tests/shell/runtime-release.bats`
@@ -800,6 +801,7 @@ or unregistered file may remain.
 ## Task 14.2: Implement the Official Runner Observer
 
 **Files:**
+
 - Create: `scripts/release/observe-runner-release.sh`
 - Create/extend: `tests/shell/runner-release.bats`
 
@@ -830,6 +832,7 @@ or unregistered file may remain.
 ## Task 14.3: Implement Runtime Rehearsal and Artifact Validation
 
 **Files:**
+
 - Create: `scripts/release/rehearse-runtime.sh`
 - Extend: `tests/shell/runtime-release.bats`
 
@@ -876,6 +879,7 @@ or unregistered file may remain.
 ## Task 14.4: Implement the Read-Only Rebuild Comparator
 
 **Files:**
+
 - Create: `scripts/release/compare-runtime-rebuilds.sh`
 - Extend: `tests/shell/runtime-release.bats`
 
@@ -896,6 +900,7 @@ or unregistered file may remain.
 ## Task 14.5: Integrate Trusted Release Workflows
 
 **Files:**
+
 - Modify: `.github/workflows/release.yml`
 - Create: `.github/workflows/runner-release-candidate.yml`
 - Create: `scripts/release/publish-runtime-release.sh`

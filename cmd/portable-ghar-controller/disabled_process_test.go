@@ -254,7 +254,7 @@ func newDisabledProcessConfigFixture(
 	shutdownTimeout time.Duration,
 ) (*disabledProcessFixture, disabledControllerProcessConfig) {
 	t.Helper()
-	root, err := os.MkdirTemp("/private/tmp", "pgh-process-")
+	root, err := os.MkdirTemp(shortTestTempRoot(), "pgh-process-")
 	if err != nil {
 		t.Fatalf("make process root: %v", err)
 	}

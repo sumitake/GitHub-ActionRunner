@@ -209,14 +209,7 @@ func ParseVerifiedRunnerMaintenanceDirective(
 	if err != nil {
 		return RunnerMaintenanceDirective{}, ErrInvalidMaintenanceDirective
 	}
-	frame := make(
-		[]byte,
-		0,
-		len(runnerMaintenanceResponsePrefix)+
-			len(wire.Protocol)+
-			1+
-			len(signedDocument),
-	)
+	var frame []byte
 	frame = append(frame, runnerMaintenanceResponsePrefix...)
 	frame = append(frame, wire.Protocol...)
 	frame = append(frame, '\n')

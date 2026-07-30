@@ -243,16 +243,7 @@ func decodeScannerInspectProjection(
 func scannerInspectProjectionContainsSecret(
 	wire scannerInspectProjectionWire,
 ) bool {
-	values := make([]string, 0,
-		len(wire.Environment)+
-			len(wire.Entrypoint)+
-			len(wire.Command)+
-			len(wire.Labels)*2+
-			len(wire.Binds)+
-			len(wire.SecurityOptions)+
-			len(wire.Mounts)*7+
-			len(wire.Devices)*3,
-	)
+	var values []string
 	values = append(values, wire.Environment...)
 	values = append(values, wire.Entrypoint...)
 	values = append(values, wire.Command...)

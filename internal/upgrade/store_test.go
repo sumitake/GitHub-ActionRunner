@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestFileJournalStoreCreateReplaceAndRestart(t *testing.T) {
@@ -529,12 +531,45 @@ func TestFileJournalStoreRejectsRootAndLockReplacement(t *testing.T) {
 			t.Fatalf("open error = %v", err)
 		}
 		defer store.Close()
+		if store.lockPinFD < 0 {
+			t.Fatal("store did not retain a lock inode pin")
+		}
+		pinnedIdentity, err := journalFstatPrivate(
+			store.lockPinFD,
+			unix.S_IFREG,
+			0o600,
+			true,
+		)
+		if err != nil || pinnedIdentity != store.lockIdentity {
+			t.Fatalf(
+				"lock pin = %+v/%v, want %+v",
+				pinnedIdentity,
+				err,
+				store.lockIdentity,
+			)
+		}
 		lock := filepath.Join(root, journalLockName)
 		if err := os.Remove(lock); err != nil {
 			t.Fatalf("Remove(lock) error = %v", err)
 		}
 		if err := os.WriteFile(lock, []byte("replacement"), 0o600); err != nil {
 			t.Fatalf("WriteFile(lock) error = %v", err)
+		}
+		replacementFD, replacementIdentity, err := openJournalLock(
+			store.rootFD,
+			false,
+		)
+		if err != nil {
+			t.Fatalf("open replacement lock: %v", err)
+		}
+		if err := unix.Close(replacementFD); err != nil {
+			t.Fatalf("close replacement lock: %v", err)
+		}
+		if replacementIdentity == store.lockIdentity {
+			t.Fatalf(
+				"replacement reused pinned lock identity: %+v",
+				replacementIdentity,
+			)
 		}
 		ctx, cancel := context.WithTimeout(
 			context.Background(),

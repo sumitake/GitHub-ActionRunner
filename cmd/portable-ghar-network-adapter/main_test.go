@@ -118,7 +118,7 @@ func TestReadBindingConnectionRequiresApprovedControlPeer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	temporary, err := os.MkdirTemp("/private/tmp", "pghar-control-test-")
+	temporary, err := os.MkdirTemp(shortTestTempRoot(), "pghar-control-test-")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}

@@ -121,6 +121,14 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+source_epoch="$(git show -s --format=%ct HEAD)"
+case "$source_epoch" in
+"" | *[!0-9]* | 0)
+  printf 'check-images: exact HEAD has no valid positive source epoch\n' >&2
+  exit 1
+  ;;
+esac
+
 i=0
 while [ "$i" -lt "$image_count" ]; do
   entry="$(jq -c ".images[$i]" "$manifest")"
@@ -131,9 +139,13 @@ while [ "$i" -lt "$image_count" ]; do
   tag_a="portable-ghar-check-images:${name}-a"
   tag_b="portable-ghar-check-images:${name}-b"
 
-  docker build --no-cache -f "$dockerfile" -t "$tag_a" "$context" >/dev/null
+  docker build --no-cache --provenance=false \
+    --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
+    -f "$dockerfile" -t "$tag_a" "$context" >/dev/null
   id_a="$(docker image inspect --format '{{.Id}}' "$tag_a")"
-  docker build --no-cache -f "$dockerfile" -t "$tag_b" "$context" >/dev/null
+  docker build --no-cache --provenance=false \
+    --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
+    -f "$dockerfile" -t "$tag_b" "$context" >/dev/null
   id_b="$(docker image inspect --format '{{.Id}}' "$tag_b")"
 
   docker image rm -f "$tag_a" "$tag_b" >/dev/null 2>&1 || true

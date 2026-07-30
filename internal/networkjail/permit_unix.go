@@ -206,36 +206,59 @@ func readExactUnixFrame(
 	connection *net.UnixConn,
 	size int,
 ) ([]byte, error) {
-	if connection == nil || size <= 0 {
+	if connection == nil || size <= 0 ||
+		!isConnectedUnixStream(connection) {
 		return nil, ErrPermitAuthorityUnavailable
 	}
 	frame := make([]byte, size)
 	oob := make([]byte, permitUnixOOBBytes)
 	offset := 0
 	for offset < len(frame) {
-		read, oobRead, flags, address, err := connection.ReadMsgUnix(
+		read, oobRead, flags, _, err := connection.ReadMsgUnix(
 			frame[offset:],
 			oob,
 		)
 		if oobRead > 0 {
 			closeReceivedUnixRights(oob[:oobRead])
 		}
-		if err != nil || address != nil || oobRead != 0 ||
+		if err != nil || oobRead != 0 ||
 			flags&(unix.MSG_CTRUNC|unix.MSG_TRUNC) != 0 || read <= 0 {
 			return nil, ErrPermitAuthorityUnavailable
 		}
 		offset += read
 	}
 	extra := make([]byte, 1)
-	read, oobRead, flags, address, err := connection.ReadMsgUnix(extra, oob)
+	read, oobRead, flags, _, err := connection.ReadMsgUnix(extra, oob)
 	if oobRead > 0 {
 		closeReceivedUnixRights(oob[:oobRead])
 	}
-	if read != 0 || !errors.Is(err, io.EOF) || address != nil ||
+	if read != 0 || !errors.Is(err, io.EOF) ||
 		oobRead != 0 || flags&(unix.MSG_CTRUNC|unix.MSG_TRUNC) != 0 {
 		return nil, ErrPermitAuthorityUnavailable
 	}
 	return frame, nil
+}
+
+func isConnectedUnixStream(connection *net.UnixConn) bool {
+	if connection == nil || connection.RemoteAddr() == nil {
+		return false
+	}
+	raw, err := connection.SyscallConn()
+	if err != nil {
+		return false
+	}
+	socketType := 0
+	var socketErr error
+	if err := raw.Control(func(fd uintptr) {
+		socketType, socketErr = unix.GetsockoptInt(
+			int(fd),
+			unix.SOL_SOCKET,
+			unix.SO_TYPE,
+		)
+	}); err != nil || socketErr != nil {
+		return false
+	}
+	return socketType == unix.SOCK_STREAM
 }
 
 func writeExactUnixFrame(

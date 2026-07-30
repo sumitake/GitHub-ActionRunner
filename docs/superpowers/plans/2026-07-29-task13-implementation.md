@@ -459,18 +459,18 @@ Unit mode runs, in order:
 9. `boundary`
    - `GOTOOLCHAIN=go1.26.5 go test ./tests/boundaries -count=1`;
 10. `staticcheck`
-   - `GOTOOLCHAIN=go1.26.5 go tool staticcheck ./...`;
+    - `GOTOOLCHAIN=go1.26.5 go tool staticcheck ./...`;
 11. `module`
-   - `GOTOOLCHAIN=go1.26.5 go mod verify`;
+    - `GOTOOLCHAIN=go1.26.5 go mod verify`;
 12. `shellcheck`
-   - ShellCheck over every tracked `scripts/**/*.sh` and `deploy/**/*.sh`
-     through a NUL-delimited array, plus the gate itself before it is tracked;
+    - ShellCheck over every tracked `scripts/**/*.sh` and `deploy/**/*.sh`
+      through a NUL-delimited array, plus the gate itself before it is tracked;
 13. `shfmt`
     - `GOTOOLCHAIN=go1.26.5 go tool shfmt -d scripts deploy`, requiring empty
       diff;
 14. `bats`
-   - every `tests/shell/*.bats` and `tests/shell/qts/*.bats` through a
-     NUL-delimited array;
+    - every `tests/shell/*.bats` and `tests/shell/qts/*.bats` through a
+      NUL-delimited array;
 15. `python-contract`
     - every tracked `tests/**/test_*.py` through `python3 -m unittest`;
 16. `workflow-policy`
@@ -480,8 +480,8 @@ Unit mode runs, in order:
 18. `public-sanitizer`
     - `python3 scripts/sanitize_public.py --tracked`;
 19. `chaos-source`
-   - compile/run only `TestChaosSourceOptInBoundary` under `-tags=chaos -v`
-     and require its exact top-level `PASS` record;
+    - compile/run only `TestChaosSourceOptInBoundary` under `-tags=chaos -v`
+      and require its exact top-level `PASS` record;
 20. `source-integrity-exit`
     - compare the tracked tree and index with entry fingerprints.
 

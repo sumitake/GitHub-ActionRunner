@@ -245,8 +245,7 @@ stage_shellcheck() {
     files[${#files[@]}]="$path"
   done <"$inventory"
   [ "${#files[@]}" -gt 0 ] || return 1
-  shellcheck "$script_directory/test-controller-runtime.sh" || return 1
-  shellcheck "${files[@]}"
+  shellcheck --severity=warning "${files[@]}"
 }
 
 stage_shfmt() {

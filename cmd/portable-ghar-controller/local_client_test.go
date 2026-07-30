@@ -282,7 +282,7 @@ func startLocalTestServer(
 	respond func(localRequest) ([]byte, error),
 ) string {
 	t.Helper()
-	root, err := os.MkdirTemp("/private/tmp", "pgh-ipc-")
+	root, err := os.MkdirTemp(shortTestTempRoot(), "pgh-ipc-")
 	if err != nil {
 		t.Fatalf("make short socket root: %v", err)
 	}

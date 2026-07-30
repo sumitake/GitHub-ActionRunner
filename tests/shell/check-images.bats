@@ -179,3 +179,36 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"docker is required"* ]]
 }
+
+@test "both no-cache builds share the exact commit epoch and disable provenance" {
+  mkdir -p "$TMP_DIR/images/runner" "$TMP_DIR/bin"
+  printf 'FROM scratch\n' >"$TMP_DIR/images/runner/Dockerfile"
+  cat >"$TMP_DIR/manifest.json" <<EOF
+{
+  "version": 1,
+  "images": [
+    {"name": "runner", "context": "$TMP_DIR/images/runner", "dockerfile": "$TMP_DIR/images/runner/Dockerfile"}
+  ]
+}
+EOF
+  cat >"$TMP_DIR/bin/docker" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$DOCKER_CALLS"
+if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+  printf '%s\n' 'sha256:fixed-image-id'
+fi
+EOF
+  chmod +x "$TMP_DIR/bin/docker"
+  ln -s "$(command -v jq)" "$TMP_DIR/bin/jq"
+  ln -s "$(command -v git)" "$TMP_DIR/bin/git"
+  expected_epoch="$(git -C "$REPO_ROOT" show -s --format=%ct HEAD)"
+
+  run env \
+    DOCKER_CALLS="$TMP_DIR/docker.calls" \
+    PATH="$TMP_DIR/bin" \
+    "$(command -v bash)" "$SCRIPT" "$TMP_DIR/manifest.json"
+
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^build ' "$TMP_DIR/docker.calls")" -eq 2 ]
+  [ "$(grep -c -- "--no-cache --provenance=false --build-arg SOURCE_DATE_EPOCH=$expected_epoch" "$TMP_DIR/docker.calls")" -eq 2 ]
+}

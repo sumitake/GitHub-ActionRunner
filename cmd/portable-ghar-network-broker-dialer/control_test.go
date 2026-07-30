@@ -130,7 +130,7 @@ func waitForFIFO(t *testing.T, path string, done <-chan error) {
 
 func shortBrokerTempDir(t *testing.T) string {
 	t.Helper()
-	directory, err := os.MkdirTemp("/private/tmp", "pgh-broker-")
+	directory, err := os.MkdirTemp(shortTestTempRoot(), "pgh-broker-")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}

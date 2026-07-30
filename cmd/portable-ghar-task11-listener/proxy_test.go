@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -124,7 +125,7 @@ func TestExchangeHTTPSRejectsTLSBodyAndStatusSubstitution(t *testing.T) {
 			); err == nil {
 				t.Fatal("exchangeHTTPSVia accepted substituted evidence")
 			}
-			relay.Wait(t)
+			relay.WaitAfterRejectedExchange(t)
 		})
 	}
 
@@ -152,7 +153,7 @@ func TestExchangeHTTPSRejectsTLSBodyAndStatusSubstitution(t *testing.T) {
 	); err == nil {
 		t.Fatal("exchangeHTTPSVia followed or accepted redirect")
 	}
-	relay.Wait(t)
+	relay.WaitAfterRejectedExchange(t)
 }
 
 func sentinelForTLSTest(
@@ -214,6 +215,14 @@ func (r *testConnectRelay) Request() string {
 }
 
 func (r *testConnectRelay) Wait(t *testing.T) {
+	r.wait(t, false)
+}
+
+func (r *testConnectRelay) WaitAfterRejectedExchange(t *testing.T) {
+	r.wait(t, true)
+}
+
+func (r *testConnectRelay) wait(t *testing.T, allowReset bool) {
 	t.Helper()
 	select {
 	case <-r.done:
@@ -222,7 +231,8 @@ func (r *testConnectRelay) Wait(t *testing.T) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.err != nil {
+	if r.err != nil &&
+		!(allowReset && errors.Is(r.err, syscall.ECONNRESET)) {
 		t.Fatalf("relay error: %v", r.err)
 	}
 }

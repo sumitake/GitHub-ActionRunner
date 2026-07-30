@@ -4,7 +4,6 @@ package networkjail
 
 import (
 	"context"
-	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -25,15 +24,17 @@ type UnixAuthorityManager struct {
 }
 
 type managedUnixAuthority struct {
-	mu            sync.Mutex
-	server        *unixPermitServer
-	socketPath    string
-	socket        hostruntime.SocketIdentity
-	slot          CapacitySlotID
-	generation    JobGeneration
-	closed        bool
-	socketRemoved bool
-	deactivated   bool
+	mu              sync.Mutex
+	server          *unixPermitServer
+	socketPin       *authoritySocketPin
+	socketPath      string
+	socket          hostruntime.SocketIdentity
+	slot            CapacitySlotID
+	generation      JobGeneration
+	closed          bool
+	socketRemoved   bool
+	socketPinClosed bool
+	deactivated     bool
 }
 
 func NewUnixAuthorityManager(
@@ -124,17 +125,30 @@ func (manager *UnixAuthorityManager) Start(
 	}
 	listener.SetUnlinkOnClose(false)
 	listenerOpen := true
+	var socket hostruntime.SocketIdentity
+	var socketPin *authoritySocketPin
+	socketPinOpen := false
 	defer func() {
 		if listenerOpen {
 			_ = listener.Close()
-			_ = os.Remove(socketPath)
+			if socketPin != nil {
+				_ = socketPin.remove()
+			}
+		}
+		if socketPinOpen {
+			_ = socketPin.close()
 		}
 	}()
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		return authorityLease{}, ErrPermitAuthorityUnavailable
 	}
-	_, socket, err := readAuthorityPathIdentity(socketPath, true)
+	_, socket, err = readAuthorityPathIdentity(socketPath, true)
 	if err == nil && (socket.UID != uid || socket.GID != gid) {
+		const maxSigned32 = uint32(1<<31 - 1)
+		if strconv.IntSize == 32 &&
+			(uid > maxSigned32 || gid > maxSigned32) {
+			return authorityLease{}, ErrPermitAuthorityUnavailable
+		}
 		if err := os.Chown(socketPath, int(uid), int(gid)); err != nil {
 			return authorityLease{}, ErrPermitAuthorityUnavailable
 		}
@@ -146,6 +160,15 @@ func (manager *UnixAuthorityManager) Start(
 		socket.GID != gid {
 		return authorityLease{}, ErrPermitAuthorityUnavailable
 	}
+	socketPin, err = openAuthoritySocketPin(
+		request.directory,
+		directory,
+		socket,
+	)
+	if err != nil {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	socketPinOpen = true
 	peer, err := currentAuthorityProcessIdentity()
 	if err != nil {
 		return authorityLease{}, ErrPermitAuthorityUnavailable
@@ -173,6 +196,7 @@ func (manager *UnixAuthorityManager) Start(
 	}
 	endpoint := &managedUnixAuthority{
 		server:     server,
+		socketPin:  socketPin,
 		socketPath: socketPath,
 		socket:     socket,
 		slot:       slot,
@@ -192,6 +216,7 @@ func (manager *UnixAuthorityManager) Start(
 	reserved = false
 	activated = false
 	listenerOpen = false
+	socketPinOpen = false
 	return authorityLease{
 		proof:         proof,
 		slotID:        request.slotID,
@@ -223,6 +248,7 @@ func (manager *UnixAuthorityManager) Stop(
 		endpoint.mu.Lock()
 		stopped := endpoint.closed &&
 			endpoint.socketRemoved &&
+			endpoint.socketPinClosed &&
 			endpoint.deactivated
 		endpoint.mu.Unlock()
 		if stopped {
@@ -237,21 +263,21 @@ func (manager *UnixAuthorityManager) Stop(
 	endpoint.mu.Lock()
 	defer endpoint.mu.Unlock()
 	if !endpoint.closed {
+		if endpoint.socketPin == nil ||
+			endpoint.socketPinClosed ||
+			endpoint.socketPin.verify() != nil {
+			return ErrPermitAuthorityUnavailable
+		}
 		if err := endpoint.server.close(); err != nil {
 			return ErrPermitAuthorityUnavailable
 		}
 		endpoint.closed = true
 	}
 	if !endpoint.socketRemoved {
-		_, currentSocket, err := readAuthorityPathIdentity(
-			endpoint.socketPath,
-			true,
-		)
-		if err != nil || currentSocket != endpoint.socket ||
-			os.Remove(endpoint.socketPath) != nil {
+		if endpoint.socketPin == nil || endpoint.socketPinClosed {
 			return ErrPermitAuthorityUnavailable
 		}
-		if _, err := os.Lstat(endpoint.socketPath); !errors.Is(err, os.ErrNotExist) {
+		if err := endpoint.socketPin.remove(); err != nil {
 			return ErrPermitAuthorityUnavailable
 		}
 		endpoint.socketRemoved = true
@@ -266,11 +292,25 @@ func (manager *UnixAuthorityManager) Stop(
 		}
 		endpoint.deactivated = true
 	}
+	pinCloseFailed := false
+	if !endpoint.socketPinClosed {
+		if endpoint.socketPin == nil {
+			return ErrPermitAuthorityUnavailable
+		}
+		if err := endpoint.socketPin.close(); err != nil {
+			pinCloseFailed = true
+		}
+		endpoint.socketPin = nil
+		endpoint.socketPinClosed = true
+	}
 	manager.mu.Lock()
 	if manager.active[lease.socketPath] == endpoint {
 		delete(manager.active, lease.socketPath)
 	}
 	manager.mu.Unlock()
+	if pinCloseFailed {
+		return ErrPermitAuthorityUnavailable
+	}
 	return nil
 }
 

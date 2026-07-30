@@ -740,7 +740,7 @@ func fixedNamespace() ([]byte, error) {
 
 func shortSocketRoot(t *testing.T) string {
 	t.Helper()
-	root, err := os.MkdirTemp("/private/tmp", "pghar-gate-")
+	root, err := os.MkdirTemp(shortTestTempRoot(), "pghar-gate-")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}

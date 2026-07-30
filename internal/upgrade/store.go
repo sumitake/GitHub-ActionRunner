@@ -68,6 +68,7 @@ type FileJournalStore struct {
 
 	root             string
 	rootFD           int
+	lockPinFD        int
 	rootIdentity     journalFileIdentity
 	lockIdentity     journalFileIdentity
 	maxDocumentBytes int

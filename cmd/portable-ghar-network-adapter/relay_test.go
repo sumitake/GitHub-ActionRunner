@@ -183,15 +183,24 @@ func TestRelayServerRejectsClientFloodAtExactCap(t *testing.T) {
 		t.Fatalf("first call=%d", call)
 	}
 
-	second := dialTCPFixture(t, listener)
-	defer second.Close()
-	if err := second.SetDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("second SetDeadline: %v", err)
+	second, dialErr := net.DialTCP(
+		"tcp4",
+		nil,
+		listener.Addr().(*net.TCPAddr),
+	)
+	if dialErr != nil && !isConnectionReset(dialErr) {
+		t.Fatalf("over-cap DialTCP: %v", dialErr)
 	}
-	if _, err := second.Write([]byte("over-cap")); err == nil {
-		var probe [1]byte
-		if count, readErr := second.Read(probe[:]); count != 0 || readErr == nil {
-			t.Fatalf("over-cap client remained open: count=%d err=%v", count, readErr)
+	if second != nil {
+		defer second.Close()
+		if err := second.SetDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Fatalf("second SetDeadline: %v", err)
+		}
+		if _, err := second.Write([]byte("over-cap")); err == nil {
+			var probe [1]byte
+			if count, readErr := second.Read(probe[:]); count != 0 || readErr == nil {
+				t.Fatalf("over-cap client remained open: count=%d err=%v", count, readErr)
+			}
 		}
 	}
 	if calls.Load() != 1 {
@@ -267,7 +276,7 @@ type brokerSocketFixture struct {
 
 func newBrokerSocketFixture(t *testing.T) brokerSocketFixture {
 	t.Helper()
-	temporary, err := os.MkdirTemp("/private/tmp", "pghar-adapter-test-")
+	temporary, err := os.MkdirTemp(shortTestTempRoot(), "pghar-adapter-test-")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}

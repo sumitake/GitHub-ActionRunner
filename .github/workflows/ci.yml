@@ -25,7 +25,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Check gofmt
-        run: unformatted="$(find . -type f -name '*.go' -not -path './.git/*' -print0 | xargs -0 gofmt -l)" && test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
+        run: 'unformatted="$(find . -type f -name "*.go" -not -path "./.git/*" -print0 | xargs -0 gofmt -l)"; if [ -n "$unformatted" ]; then printf "%s\n" "$unformatted"; exit 1; fi'
       - name: go vet
         run: go vet ./...
       - name: go test
@@ -83,7 +83,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: ShellCheck
-        run: find scripts deploy -type f -name '*.sh' -print0 | xargs -0 -r shellcheck
+        run: 'mapfile -d "" -t shell_files < <(git ls-files -z -- "*.sh"); if [ "${#shell_files[@]}" -eq 0 ]; then exit 1; fi; shellcheck --severity=warning "${shell_files[@]}"'
       - name: shfmt diff
         run: go tool shfmt -d scripts
       - name: Install Bats

@@ -29,13 +29,10 @@ func openFileJournalStore(
 		_ = unix.Close(rootFD)
 		return nil, err
 	}
-	if err := unix.Close(lockFD); err != nil {
-		_ = unix.Close(rootFD)
-		return nil, ErrJournalIntegrity
-	}
 	return &FileJournalStore{
 		root:             config.Root,
 		rootFD:           rootFD,
+		lockPinFD:        lockFD,
 		rootIdentity:     rootIdentity,
 		lockIdentity:     lockIdentity,
 		maxDocumentBytes: config.MaxDocumentBytes,
@@ -169,15 +166,20 @@ func (store *FileJournalStore) Close() error {
 		return nil
 	}
 	store.closed = true
-	if store.rootFD < 0 {
-		return nil
+	var result error
+	if store.lockPinFD >= 0 {
+		if err := unix.Close(store.lockPinFD); err != nil {
+			result = errors.Join(result, ErrJournalIntegrity)
+		}
+		store.lockPinFD = -1
 	}
-	err := unix.Close(store.rootFD)
-	store.rootFD = -1
-	if err != nil {
-		return ErrJournalIntegrity
+	if store.rootFD >= 0 {
+		if err := unix.Close(store.rootFD); err != nil {
+			result = errors.Join(result, ErrJournalIntegrity)
+		}
+		store.rootFD = -1
 	}
-	return nil
+	return result
 }
 
 func (store *FileJournalStore) Acquire(
@@ -198,13 +200,18 @@ func (store *FileJournalStore) Acquire(
 		store.mu.Unlock()
 		return nil, ErrJournalStoreClosed
 	}
-	rootFD, err := duplicateJournalFD(store.rootFD)
+	rootFD, rootErr := duplicateJournalFD(store.rootFD)
+	lockPinFD, pinErr := duplicateJournalFD(store.lockPinFD)
 	rootIdentity := store.rootIdentity
 	lockIdentity := store.lockIdentity
 	rootPath := store.root
 	store.mu.Unlock()
-	if err != nil {
-		return nil, err
+	if rootErr != nil {
+		return nil, rootErr
+	}
+	if pinErr != nil {
+		_ = unix.Close(rootFD)
+		return nil, pinErr
 	}
 	cleanupRoot := true
 	defer func() {
@@ -212,9 +219,24 @@ func (store *FileJournalStore) Acquire(
 			_ = unix.Close(rootFD)
 		}
 	}()
+	cleanupPin := true
+	defer func() {
+		if cleanupPin {
+			_ = unix.Close(lockPinFD)
+		}
+	}()
 
 	if err := verifyJournalRoot(rootFD, rootPath, rootIdentity); err != nil {
 		return nil, err
+	}
+	pinnedLock, err := journalFstatPrivate(
+		lockPinFD,
+		unix.S_IFREG,
+		0o600,
+		true,
+	)
+	if err != nil || pinnedLock != lockIdentity {
+		return nil, ErrJournalIntegrity
 	}
 	lockFD, observedLock, err := openJournalLock(rootFD, false)
 	if err != nil {
@@ -232,6 +254,11 @@ func (store *FileJournalStore) Acquire(
 	if err := flockJournal(ctx, lockFD); err != nil {
 		return nil, err
 	}
+	if err := unix.Close(lockPinFD); err != nil {
+		_ = unix.Flock(lockFD, unix.LOCK_UN)
+		return nil, ErrJournalIntegrity
+	}
+	cleanupPin = false
 	if err := verifyJournalRoot(rootFD, rootPath, rootIdentity); err != nil ||
 		verifyJournalLock(rootFD, lockIdentity) != nil {
 		_ = unix.Flock(lockFD, unix.LOCK_UN)

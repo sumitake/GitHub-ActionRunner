@@ -391,7 +391,7 @@ func newStartedLocalTestServerWithAdmission(
 	ioTimeout time.Duration,
 ) (*localServer, string, context.CancelFunc) {
 	t.Helper()
-	root, err := os.MkdirTemp("/private/tmp", "pgh-server-")
+	root, err := os.MkdirTemp(shortTestTempRoot(), "pgh-server-")
 	if err != nil {
 		t.Fatalf("make socket root: %v", err)
 	}
