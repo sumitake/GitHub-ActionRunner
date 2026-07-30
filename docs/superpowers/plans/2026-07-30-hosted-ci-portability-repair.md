@@ -46,6 +46,11 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
     BSD-compatible mode output, so one Bats assertion used the wrong branch on
     Linux. CodeQL also requires an unconditional, explicit `uint32`-to-`int`
     representability bound before `os.Chown`.
+13. The final hosted aggregate CodeQL check did not recognize a hand-rolled
+    current-architecture maximum, even though the branch was safe. The
+    container audit also exposed a canonical-order mismatch: the generated
+    legacy layout was path-ordered while the Docker audit hashes complete
+    layout lines under `LC_ALL=C sort`.
 
 ## Threat model and invariants
 
@@ -250,7 +255,13 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
 - Rewrite the workflow gofmt check as an explicit `if`, satisfying actionlint.
 - Remove unsafe capacity preallocation hints flagged by CodeQL and explicitly
   reject UID/GID values above the unconditional current-architecture maximum
-  `int` before conversion and `os.Chown`.
+  `int` before conversion and `os.Chown`. Use the standard `math.MaxInt`
+  constant at the conversion site so both the compiler and CodeQL recognize
+  the same bound.
+- Generate the legacy-rootfs layout in the same bytewise full-line order that
+  the Docker context audit independently recomputes with `LC_ALL=C sort`.
+  Content hashes, modes, types, paths, and symlink targets remain unchanged;
+  only the previously inconsistent canonical ordering is repaired.
 - Add exactly one `.gitleaksignore` fingerprint for the historical synthetic
   finding; do not add regex/path/rule allowlists.
 
@@ -360,7 +371,9 @@ operational evidence. Do not deploy, activate, mutate a host, or begin Phase 3.
      and unknown/mixed/near-miss negative cases;
    - GNU-first/BSD-fallback file-mode inspection;
    - Buildx image-export timestamp rewriting without weakening image-ID
-     comparison, including exact exported config epoch inspection.
+     comparison, including exact exported config epoch inspection;
+   - scanner-recognized `math.MaxInt` ownership conversion and matching
+     full-line legacy-layout ordering.
 2. Observe the focused tests fail for the intended reason before production
    edits.
 3. Implement the minimum changes, run focused tests, `go test ./...`,

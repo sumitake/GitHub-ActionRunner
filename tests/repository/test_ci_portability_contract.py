@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import unittest
 from pathlib import Path
 
@@ -15,6 +16,48 @@ GITLEAKS_FINGERPRINT = (
 
 
 class HostedCIPortabilityContractTest(unittest.TestCase):
+    def test_authority_chown_uses_scanner_recognized_int_bound(self) -> None:
+        source = (
+            REPO_ROOT / "internal/networkjail/authority_manager_unix.go"
+        ).read_text(encoding="utf-8")
+        self.assertIn("uint64(math.MaxInt)", source)
+        self.assertNotIn("^uint(0) >> 1", source)
+
+    def test_legacy_layout_matches_docker_full_line_sort(self) -> None:
+        path = REPO_ROOT / "scripts/_prepare_task6_context.py"
+        spec = importlib.util.spec_from_file_location(
+            "_prepare_task6_context",
+            path,
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        entries = [
+            {
+                "path": "z-file",
+                "type": "file",
+                "mode": "644",
+                "sha256": "0" * 64,
+            },
+            {
+                "path": "a-link",
+                "type": "symlink",
+                "mode": "777",
+                "target": "target",
+            },
+            {"path": "m-dir", "type": "directory", "mode": "755"},
+        ]
+        self.assertEqual(
+            module.canonical_layout(entries),
+            (
+                b"d 755 m-dir \n"
+                b"f 644 z-file \n"
+                b"l 777 a-link target\n"
+            ),
+        )
+
     def test_gitleaks_exception_is_one_exact_historical_fingerprint(self) -> None:
         ignore = REPO_ROOT / ".gitleaksignore"
         self.assertTrue(ignore.is_file())

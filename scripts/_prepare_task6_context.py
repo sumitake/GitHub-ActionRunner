@@ -79,6 +79,13 @@ def layout_line(entry: dict[str, object]) -> str:
     return f"{kind} {entry['mode']} {entry['path']} {target}\n"
 
 
+def canonical_layout(entries: list[dict[str, object]]) -> bytes:
+    """Match the Docker context audit's LC_ALL=C full-line ordering."""
+    return "".join(sorted(layout_line(entry) for entry in entries)).encode(
+        "utf-8"
+    )
+
+
 def write_bytes(path: Path, payload: bytes) -> None:
     path.write_bytes(payload)
     path.chmod(0o444)
@@ -131,7 +138,7 @@ def main() -> int:
         fail()
 
     entries = canonical_entries(root)
-    layout = "".join(layout_line(entry) for entry in entries).encode("utf-8")
+    layout = canonical_layout(entries)
     layout_digest = hashlib.sha256(layout).hexdigest()
     regular = "".join(
         f"{entry['sha256']}  {entry['path']}\n"

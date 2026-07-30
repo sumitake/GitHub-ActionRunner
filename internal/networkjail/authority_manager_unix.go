@@ -4,6 +4,7 @@ package networkjail
 
 import (
 	"context"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -253,8 +254,8 @@ func finalizeAuthoritySocketWith(
 	}
 	_, socket, err := readAuthorityPathIdentity(socketPath, true)
 	if err == nil && (socket.UID != uid || socket.GID != gid) {
-		maxInt := uint64(^uint(0) >> 1)
-		if uint64(uid) > maxInt || uint64(gid) > maxInt {
+		if uint64(uid) > uint64(math.MaxInt) ||
+			uint64(gid) > uint64(math.MaxInt) {
 			return hostruntime.SocketIdentity{}, nil,
 				ErrPermitAuthorityUnavailable
 		}
