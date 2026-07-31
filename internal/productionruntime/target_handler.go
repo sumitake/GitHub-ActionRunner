@@ -16,7 +16,25 @@ import (
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
 )
 
-type SystemTargetHandler struct{}
+type systemTargetProver func(
+	context.Context,
+	hostruntime.PrivateOverlay,
+	string,
+) (cli.TargetProof, error)
+
+type systemLifecycleInvoker func(
+	context.Context,
+	hostruntime.PrivateOverlay,
+	string,
+	cli.TargetProof,
+	cli.HostAction,
+	InvokeArguments,
+) (hostruntime.HostActionResult, error)
+
+type SystemTargetHandler struct {
+	prove  systemTargetProver
+	invoke systemLifecycleInvoker
+}
 
 type hostTargetState struct {
 	fencePresent  bool
@@ -26,7 +44,20 @@ type hostTargetState struct {
 }
 
 func NewSystemTargetHandler() *SystemTargetHandler {
-	return &SystemTargetHandler{}
+	return newSystemTargetHandler(
+		proveSystemTarget,
+		invokeSystemLifecycle,
+	)
+}
+
+func newSystemTargetHandler(
+	prove systemTargetProver,
+	invoke systemLifecycleInvoker,
+) *SystemTargetHandler {
+	return &SystemTargetHandler{
+		prove:  prove,
+		invoke: invoke,
+	}
 }
 
 func (handler *SystemTargetHandler) ProveTarget(
@@ -35,7 +66,20 @@ func (handler *SystemTargetHandler) ProveTarget(
 	revision string,
 ) (cli.TargetProof, error) {
 	if handler == nil ||
+		handler.prove == nil ||
 		ctx == nil ||
+		ctx.Err() != nil {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	return handler.prove(ctx, overlay, revision)
+}
+
+func proveSystemTarget(
+	ctx context.Context,
+	overlay hostruntime.PrivateOverlay,
+	revision string,
+) (cli.TargetProof, error) {
+	if ctx == nil ||
 		ctx.Err() != nil ||
 		runtime.GOOS != overlay.Target.OS ||
 		runtime.GOARCH != overlay.Target.Architecture ||
@@ -141,14 +185,94 @@ func (handler *SystemTargetHandler) StageRelease(
 }
 
 func (handler *SystemTargetHandler) Invoke(
-	context.Context,
-	hostruntime.PrivateOverlay,
-	string,
-	cli.TargetProof,
-	cli.HostAction,
-	InvokeArguments,
+	ctx context.Context,
+	overlay hostruntime.PrivateOverlay,
+	revision string,
+	target cli.TargetProof,
+	action cli.HostAction,
+	arguments InvokeArguments,
 ) (hostruntime.HostActionResult, error) {
-	return hostruntime.HostActionResult{}, ErrProtocol
+	if handler == nil ||
+		handler.prove == nil ||
+		handler.invoke == nil ||
+		ctx == nil ||
+		ctx.Err() != nil ||
+		!targetActionAllowed(
+			overlay,
+			targetHostActionForCLI(action),
+		) ||
+		!validInvokeArguments(
+			action,
+			arguments,
+			overlay,
+			target.ProofDigest,
+		) {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	current, err := handler.ProveTarget(ctx, overlay, revision)
+	if err != nil || !reflect.DeepEqual(current, target) {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	sealedTarget, err := cli.SealTargetProof(target)
+	if err != nil || sealedTarget.ProofDigest != target.ProofDigest {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	if action == cli.ActionInstall {
+		expectedStage, sealErr := cli.SealStageProof(cli.StageProof{
+			SchemaVersion:          1,
+			TargetProofDigest:      target.ProofDigest,
+			PrivateOverlayRevision: revision,
+			ManifestDigest:         arguments.ManifestDigest,
+		})
+		if sealErr != nil ||
+			expectedStage.ProofDigest != arguments.StageProofDigest {
+			return hostruntime.HostActionResult{}, ErrProtocol
+		}
+	}
+	operationID, generation, fleet, err := cli.ExpectedOperation(
+		action,
+		target,
+		arguments.ManifestDigest,
+		revision,
+	)
+	if err != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	result, err := handler.invoke(
+		ctx,
+		overlay,
+		revision,
+		target,
+		action,
+		arguments,
+	)
+	if err != nil ||
+		result.Status != hostruntime.HostActionComplete ||
+		result.OperationID != operationID ||
+		result.FenceGeneration != generation ||
+		result.ActiveFleet != fleet ||
+		result.TargetProofDigest == nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	if _, _, err := hostruntime.MarshalHostActionResult(result); err != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	return result, nil
+}
+
+func targetHostActionForCLI(action cli.HostAction) hostruntime.TargetHostAction {
+	switch action {
+	case cli.ActionInstall:
+		return hostruntime.TargetInstall
+	case cli.ActionVerify:
+		return hostruntime.TargetVerify
+	case cli.ActionSuspend:
+		return hostruntime.TargetSuspend
+	case cli.ActionResume:
+		return hostruntime.TargetResume
+	default:
+		return ""
+	}
 }
 
 func inspectHostTargetState(

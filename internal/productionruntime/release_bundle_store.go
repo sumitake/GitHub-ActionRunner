@@ -183,27 +183,40 @@ func (store *releaseBundleStore) Staged(
 	manifestDigest string,
 	overlayRevision string,
 ) (releaseBundleSnapshot, error) {
+	snapshot, present, err := store.InspectStaged(
+		manifestDigest,
+		overlayRevision,
+	)
+	if err != nil || !present {
+		return releaseBundleSnapshot{}, ErrReleaseBundle
+	}
+	return snapshot, nil
+}
+
+func (store *releaseBundleStore) InspectStaged(
+	manifestDigest string,
+	overlayRevision string,
+) (releaseBundleSnapshot, bool, error) {
 	if store == nil ||
 		!lowerHexDigest(manifestDigest) ||
 		!lowerHexDigest(overlayRevision) {
-		return releaseBundleSnapshot{}, ErrReleaseBundle
+		return releaseBundleSnapshot{}, false, ErrReleaseBundle
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if store.readyLocked() != nil {
-		return releaseBundleSnapshot{}, ErrReleaseBundle
+		return releaseBundleSnapshot{}, false, ErrReleaseBundle
 	}
 	snapshot, present, err := inspectReleaseBundle(
 		store.stagingRoot,
 		manifestDigest,
 	)
 	if err != nil ||
-		!present ||
-		snapshot.manifestDigest != manifestDigest ||
-		snapshot.overlayRevision != overlayRevision {
-		return releaseBundleSnapshot{}, ErrReleaseBundle
+		present && (snapshot.manifestDigest != manifestDigest ||
+			snapshot.overlayRevision != overlayRevision) {
+		return releaseBundleSnapshot{}, false, ErrReleaseBundle
 	}
-	return snapshot, nil
+	return snapshot, present, nil
 }
 
 func (store *releaseBundleStore) Select(
@@ -220,6 +233,51 @@ func (store *releaseBundleStore) Select(
 	if store.readyLocked() != nil {
 		return ErrReleaseBundle
 	}
+	if err := store.promoteLocked(
+		manifestDigest,
+		overlayRevision,
+	); err != nil {
+		return err
+	}
+	if err := replaceCurrentRelease(
+		store.releaseRoot,
+		manifestDigest,
+	); err != nil {
+		return ErrReleaseBundle
+	}
+	current, present, err := currentReleaseLocked(store.releaseRoot)
+	if err != nil ||
+		!present ||
+		current.manifestDigest != manifestDigest ||
+		current.overlayRevision != overlayRevision {
+		return ErrReleaseBundle
+	}
+	return nil
+}
+
+// Promote copies one exact staged bundle into its immutable release directory
+// without changing the current selection.
+func (store *releaseBundleStore) Promote(
+	manifestDigest string,
+	overlayRevision string,
+) error {
+	if store == nil ||
+		!lowerHexDigest(manifestDigest) ||
+		!lowerHexDigest(overlayRevision) {
+		return ErrReleaseBundle
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.readyLocked() != nil {
+		return ErrReleaseBundle
+	}
+	return store.promoteLocked(manifestDigest, overlayRevision)
+}
+
+func (store *releaseBundleStore) promoteLocked(
+	manifestDigest string,
+	overlayRevision string,
+) error {
 	staged, present, err := inspectReleaseBundle(
 		store.stagingRoot,
 		manifestDigest,
@@ -256,20 +314,64 @@ func (store *releaseBundleStore) Select(
 	); err != nil {
 		return ErrReleaseBundle
 	}
-	if err := replaceCurrentRelease(
+	released, present, err := inspectReleaseBundle(
 		store.releaseRoot,
 		manifestDigest,
-	); err != nil {
-		return ErrReleaseBundle
-	}
-	current, present, err := currentReleaseLocked(store.releaseRoot)
+	)
 	if err != nil ||
 		!present ||
-		current.manifestDigest != manifestDigest ||
-		current.overlayRevision != overlayRevision {
+		released.manifestDigest != manifestDigest ||
+		released.overlayRevision != overlayRevision ||
+		!bundleMatches(
+			released,
+			manifestDigest,
+			overlayRevision,
+			staged.overlayDocument,
+			staged.manifestDocument,
+		) {
 		return ErrReleaseBundle
 	}
 	return nil
+}
+
+func (store *releaseBundleStore) Released(
+	manifestDigest string,
+	overlayRevision string,
+) (releaseBundleSnapshot, error) {
+	released, present, err := store.InspectReleased(
+		manifestDigest,
+		overlayRevision,
+	)
+	if err != nil || !present {
+		return releaseBundleSnapshot{}, ErrReleaseBundle
+	}
+	return released, nil
+}
+
+func (store *releaseBundleStore) InspectReleased(
+	manifestDigest string,
+	overlayRevision string,
+) (releaseBundleSnapshot, bool, error) {
+	if store == nil ||
+		!lowerHexDigest(manifestDigest) ||
+		!lowerHexDigest(overlayRevision) {
+		return releaseBundleSnapshot{}, false, ErrReleaseBundle
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.readyLocked() != nil {
+		return releaseBundleSnapshot{}, false, ErrReleaseBundle
+	}
+	released, present, err := inspectReleaseBundle(
+		store.releaseRoot,
+		manifestDigest,
+	)
+	if err != nil ||
+		present && (released.manifestDigest != manifestDigest ||
+			released.overlayRevision != overlayRevision) {
+		return releaseBundleSnapshot{}, false, ErrReleaseBundle
+	}
+	return released, present, nil
 }
 
 func (store *releaseBundleStore) Current() (

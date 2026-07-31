@@ -651,6 +651,18 @@ func expectedOperation(
 	}
 }
 
+// ExpectedOperation derives the sole operation identity and terminal fence
+// state accepted by both the control-side command and the target-side
+// production handler. Callers cannot supply or override any derived field.
+func ExpectedOperation(
+	action HostAction,
+	target TargetProof,
+	manifestDigest string,
+	revision string,
+) (string, uint64, fleetfence.Fleet, error) {
+	return expectedOperation(action, target, manifestDigest, revision)
+}
+
 func targetProofPreimageOf(proof TargetProof) targetProofPreimage {
 	return targetProofPreimage{
 		SchemaVersion:          proof.SchemaVersion,

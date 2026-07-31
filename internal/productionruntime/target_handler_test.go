@@ -2,15 +2,168 @@ package productionruntime
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/sumitake/portable-ghar/internal/cli"
 	"github.com/sumitake/portable-ghar/internal/fleetfence"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
 )
+
+func TestSystemTargetHandlerInvokeReprovesAndBindsClosedInstall(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	overlay, revision := protocolTestOverlay(t)
+	target := protocolTestTarget(t, overlay, revision)
+	stage, err := cli.SealStageProof(cli.StageProof{
+		SchemaVersion:          1,
+		TargetProofDigest:      target.ProofDigest,
+		PrivateOverlayRevision: revision,
+		ManifestDigest:         overlay.Manifest.Digest,
+	})
+	if err != nil {
+		t.Fatalf("SealStageProof() error = %v", err)
+	}
+	operationID, generation, fleet, err := cli.ExpectedOperation(
+		cli.ActionInstall,
+		target,
+		overlay.Manifest.Digest,
+		revision,
+	)
+	if err != nil {
+		t.Fatalf("ExpectedOperation() error = %v", err)
+	}
+	resultProof := strings.Repeat("e", 64)
+	want := hostruntime.HostActionResult{
+		SchemaVersion:     1,
+		Status:            hostruntime.HostActionComplete,
+		OperationID:       operationID,
+		JournalDigest:     strings.Repeat("f", 64),
+		TargetProofDigest: &resultProof,
+		FenceGeneration:   generation,
+		ActiveFleet:       fleet,
+	}
+	proveCalls := 0
+	invokeCalls := 0
+	handler := newSystemTargetHandler(
+		func(
+			context.Context,
+			hostruntime.PrivateOverlay,
+			string,
+		) (cli.TargetProof, error) {
+			proveCalls++
+			return target, nil
+		},
+		func(
+			_ context.Context,
+			gotOverlay hostruntime.PrivateOverlay,
+			gotRevision string,
+			gotTarget cli.TargetProof,
+			gotAction cli.HostAction,
+			gotArguments InvokeArguments,
+		) (hostruntime.HostActionResult, error) {
+			invokeCalls++
+			if !reflect.DeepEqual(gotOverlay, overlay) ||
+				gotRevision != revision ||
+				gotTarget != target ||
+				gotAction != cli.ActionInstall ||
+				gotArguments.Acquisition != "disabled" ||
+				gotArguments.ManifestDigest != overlay.Manifest.Digest ||
+				gotArguments.StageProofDigest != stage.ProofDigest ||
+				gotArguments.TargetProofDigest != target.ProofDigest {
+				t.Fatalf(
+					"invoke = %#v, %q, %#v, %v, %#v",
+					gotOverlay,
+					gotRevision,
+					gotTarget,
+					gotAction,
+					gotArguments,
+				)
+			}
+			return want, nil
+		},
+	)
+
+	got, err := handler.Invoke(
+		context.Background(),
+		overlay,
+		revision,
+		target,
+		cli.ActionInstall,
+		InvokeArguments{
+			Acquisition:       "disabled",
+			ManifestDigest:    overlay.Manifest.Digest,
+			StageProofDigest:  stage.ProofDigest,
+			TargetProofDigest: target.ProofDigest,
+		},
+	)
+	if err != nil || got != want {
+		t.Fatalf("Invoke() = %#v, %v; want %#v", got, err, want)
+	}
+	if proveCalls != 1 || invokeCalls != 1 {
+		t.Fatalf("calls = prove %d, invoke %d", proveCalls, invokeCalls)
+	}
+}
+
+func TestSystemTargetHandlerInvokeRejectsDriftBeforeLifecycle(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	overlay, revision := protocolTestOverlay(t)
+	target := protocolTestTarget(t, overlay, revision)
+	invokeCalls := 0
+	handler := newSystemTargetHandler(
+		func(
+			context.Context,
+			hostruntime.PrivateOverlay,
+			string,
+		) (cli.TargetProof, error) {
+			return target, nil
+		},
+		func(
+			context.Context,
+			hostruntime.PrivateOverlay,
+			string,
+			cli.TargetProof,
+			cli.HostAction,
+			InvokeArguments,
+		) (hostruntime.HostActionResult, error) {
+			invokeCalls++
+			return hostruntime.HostActionResult{}, errors.New(
+				"must not invoke",
+			)
+		},
+	)
+
+	tampered := target
+	tampered.ProofDigest = strings.Repeat("0", 64)
+	if _, err := handler.Invoke(
+		context.Background(),
+		overlay,
+		revision,
+		tampered,
+		cli.ActionInstall,
+		InvokeArguments{
+			Acquisition:       "disabled",
+			ManifestDigest:    overlay.Manifest.Digest,
+			StageProofDigest:  strings.Repeat("1", 64),
+			TargetProofDigest: tampered.ProofDigest,
+		},
+	); !errors.Is(err, ErrProtocol) {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if invokeCalls != 0 {
+		t.Fatalf("invoke calls = %d", invokeCalls)
+	}
+}
 
 func TestInspectHostTargetStateDistinguishesGreenfieldAndPortable(
 	t *testing.T,
@@ -169,6 +322,22 @@ func TestReleaseBundleStoreStagesAndSelectsExactBundle(t *testing.T) {
 	); err != nil {
 		t.Fatalf("idempotent Stage() error = %v", err)
 	}
+	if err := store.Promote(manifestDigest, revision); err != nil {
+		t.Fatalf("Promote() error = %v", err)
+	}
+	if err := store.Promote(manifestDigest, revision); err != nil {
+		t.Fatalf("idempotent Promote() error = %v", err)
+	}
+	released, err := store.Released(manifestDigest, revision)
+	if err != nil ||
+		!released.present ||
+		string(released.overlayDocument) != string(overlayDocument) ||
+		string(released.manifestDocument) != string(manifestDocument) {
+		t.Fatalf("Released() = %#v, %v", released, err)
+	}
+	if _, present, err := store.Current(); err != nil || present {
+		t.Fatalf("Current() after promotion = (_, %t, %v)", present, err)
+	}
 	staged, err := store.Staged(manifestDigest, revision)
 	if err != nil ||
 		!staged.present ||
@@ -214,6 +383,64 @@ func TestReleaseBundleStoreFailsClosedOnAmbiguousSelection(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	if _, _, err := store.Current(); err == nil {
 		t.Fatal("Current() accepted an escaping selection")
+	}
+}
+
+func TestWatchdogMarkerStoreBindsExactBinaryAndRelease(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatalf("mkdir state: %v", err)
+	}
+	binary := filepath.Join(t.TempDir(), "portable-ghar-watchdog")
+	if err := os.WriteFile(binary, []byte("watchdog-v1"), 0o500); err != nil {
+		t.Fatalf("write watchdog: %v", err)
+	}
+	store, err := openWatchdogMarkerStore(root)
+	if err != nil {
+		t.Fatalf("openWatchdogMarkerStore() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("store.Close() error = %v", err)
+		}
+	})
+	binding := watchdogMarkerBinding{
+		PrivateOverlayRevision: strings.Repeat("a", 64),
+		ManifestDigest:         strings.Repeat("b", 64),
+		WatchdogBinary:         binary,
+	}
+	if _, present, err := store.Inspect(binding); err != nil || present {
+		t.Fatalf("Inspect(absent) = (_, %t, %v)", present, err)
+	}
+	if err := store.Install(binding); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if err := store.Install(binding); err != nil {
+		t.Fatalf("idempotent Install() error = %v", err)
+	}
+	artifact, present, err := store.Inspect(binding)
+	if err != nil ||
+		!present ||
+		artifact.ObjectID != "watchdog-marker" ||
+		artifact.Kind != "regular-file" ||
+		artifact.ContentDigest == nil ||
+		artifact.IdentityDigest == nil ||
+		artifact.Inode == 0 {
+		t.Fatalf("Inspect(installed) = (%#v, %t, %v)", artifact, present, err)
+	}
+	if err := os.Chmod(binary, 0o700); err != nil {
+		t.Fatalf("chmod watchdog writable: %v", err)
+	}
+	if err := os.WriteFile(binary, []byte("watchdog-v2"), 0o700); err != nil {
+		t.Fatalf("mutate watchdog: %v", err)
+	}
+	if err := os.Chmod(binary, 0o500); err != nil {
+		t.Fatalf("chmod watchdog pinned: %v", err)
+	}
+	if _, _, err := store.Inspect(binding); err == nil {
+		t.Fatal("Inspect() accepted a changed watchdog binary")
 	}
 }
 
