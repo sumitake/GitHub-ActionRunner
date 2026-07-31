@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,7 +18,9 @@ import (
 
 	"github.com/sumitake/portable-ghar/internal/config"
 	"github.com/sumitake/portable-ghar/internal/controller"
+	"github.com/sumitake/portable-ghar/internal/fleetfence"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
+	"github.com/sumitake/portable-ghar/internal/state"
 )
 
 const (
@@ -130,11 +134,414 @@ func openProductionDisabledObserver(
 	if err != nil || executableDigest != manifest.ControllerSHA256 {
 		return nil, errCommandUnavailable
 	}
-	// The policy-only observer is not an acceptable production fallback. Until
-	// the approval-gated target identity and concrete local cleanup/fleet
-	// authorities can construct disabledControllerProcess, fail before opening
-	// or mutating the controller database and before creating either socket.
-	return nil, errCommandUnavailable
+	if err := validateProductionControllerPaths(
+		overlay,
+		uint32(overlay.Target.ExpectedEUID),
+	); err != nil {
+		return nil, errCommandUnavailable
+	}
+	timings, err := parseProductionControllerTimings(overlay)
+	if err != nil ||
+		overlay.Resources.MaxCapacity == 0 ||
+		overlay.Resources.MaxCapacity > uint64(math.MaxInt) {
+		return nil, errCommandUnavailable
+	}
+	desired, err := productionDisabledPolicy(overlay)
+	if err != nil {
+		return nil, errCommandUnavailable
+	}
+
+	resources := &productionControllerResources{}
+	fail := func(primary error) (controllerProcess, error) {
+		return nil, errors.Join(primary, resources.Close())
+	}
+	store, err := state.OpenWithHistoryLimits(
+		databasePath,
+		runtimeConfig.HistoryLimits(),
+	)
+	if err != nil {
+		return fail(errCommandUnavailable)
+	}
+	resources.Add(store)
+	stateAdapter, err := state.NewControllerAdapter(
+		store,
+		runtimeConfig.HistoryLimits(),
+	)
+	if err != nil {
+		return fail(errCommandUnavailable)
+	}
+
+	fenceStore, err := fleetfence.OpenStore(fleetfence.StoreConfig{
+		Root:             overlay.Paths.FenceRoot,
+		Identity:         fleetfence.NewSystemIdentitySource(),
+		Now:              time.Now,
+		LockPollInterval: timings.fenceLock,
+	})
+	if err != nil {
+		return fail(errCommandUnavailable)
+	}
+	resources.Add(fenceStore)
+	callCtx, callCancel := context.WithTimeout(ctx, timings.operation)
+	fenceSnapshot, err := fenceStore.Inspect(callCtx)
+	callCancel()
+	if err != nil ||
+		fenceSnapshot.Header.Generation != manifest.FleetGeneration ||
+		(fenceSnapshot.Header.ActiveFleet != fleetfence.FleetPortable &&
+			fenceSnapshot.Header.ActiveFleet != fleetfence.FleetLegacy) {
+		return fail(errCommandUnavailable)
+	}
+	expectedFleet := fenceSnapshot.Header.ActiveFleet
+
+	var guard controller.AcquisitionGuard
+	var guardFailure <-chan error
+	if expectedFleet == fleetfence.FleetPortable {
+		fenceAdapter, err := fleetfence.NewControllerAdapter(
+			fleetfence.ControllerAdapterConfig{
+				Store:           fenceStore,
+				Generation:      manifest.FleetGeneration,
+				OwnerID:         overlay.Target.OwnerID,
+				PID:             os.Getpid(),
+				RenewalInterval: timings.fenceRenewal,
+				RenewalTimeout:  timings.fenceTimeout,
+			},
+		)
+		if err != nil {
+			return fail(errCommandUnavailable)
+		}
+		callCtx, callCancel = context.WithTimeout(ctx, timings.operation)
+		guard, err = fenceAdapter.AcquirePortable(callCtx)
+		callCancel()
+		if err != nil || guard == nil {
+			return fail(errCommandUnavailable)
+		}
+		resources.Add(guard)
+		source, ok := guard.(interface{ Failure() <-chan error })
+		if !ok || source.Failure() == nil {
+			return fail(errCommandUnavailable)
+		}
+		guardFailure = source.Failure()
+	} else {
+		callCtx, callCancel = context.WithTimeout(ctx, timings.operation)
+		legacyProof, normalizeErr := fleetfence.NormalizeLegacyObserver(
+			callCtx,
+			fenceStore,
+			stateAdapter,
+		)
+		callCancel()
+		if normalizeErr != nil ||
+			legacyProof.FleetGeneration != manifest.FleetGeneration {
+			return fail(errCommandUnavailable)
+		}
+	}
+
+	commandRunner := hostruntime.NewExecCommandRunner()
+	docker, err := hostruntime.NewDockerCLI(
+		hostruntime.DockerCLIConfig{
+			DockerPath:    overlay.Commands.DockerBinary,
+			BrokerRoot:    overlay.Paths.BrokerRoot,
+			SeccompRoot:   overlay.Paths.SeccompRoot,
+			BrokerNetwork: overlay.Docker.BrokerNetworkID,
+		},
+		commandRunner,
+	)
+	if err != nil {
+		return fail(errCommandUnavailable)
+	}
+	localAuthority, err := newProductionLocalAuthority(
+		productionLocalAuthorityConfig{
+			State:      stateAdapter,
+			Recovery:   docker,
+			Quiescence: docker,
+			BuildID:    manifest.BuildID,
+			Generation: manifest.FleetGeneration,
+			BrokerRoot: overlay.Paths.BrokerRoot,
+			Timeout:    timings.reconciliation,
+			Now:        time.Now,
+		},
+	)
+	if err != nil {
+		return fail(errCommandUnavailable)
+	}
+	fleetAuthority, err := newProductionFleetAuthority(
+		productionFleetAuthorityConfig{
+			Inspector:    fenceStore,
+			Transitions:  stateAdapter,
+			Fleet:        expectedFleet,
+			Generation:   manifest.FleetGeneration,
+			OwnerID:      portableOwner(expectedFleet, overlay.Target.OwnerID),
+			PID:          portablePID(expectedFleet, os.Getpid()),
+			GuardFailure: guardFailure,
+			Timeout:      timings.operation,
+			Now:          time.Now,
+		},
+	)
+	if err != nil {
+		return fail(errCommandUnavailable)
+	}
+	callCtx, callCancel = context.WithTimeout(ctx, timings.operation)
+	currentPolicy, err := stateAdapter.Snapshot(callCtx)
+	callCancel()
+	if err != nil || currentPolicy.Epoch == math.MaxUint64 {
+		return fail(errCommandUnavailable)
+	}
+	broker, err := newZeroDemandBroker(currentPolicy.Epoch + 1)
+	if err != nil {
+		return fail(errCommandUnavailable)
+	}
+	external := newUnavailableExternalGraph()
+	process, err := newDisabledControllerProcess(
+		disabledControllerProcessConfig{
+			Admin: disabledAdminConfig{
+				Transitions:        stateAdapter,
+				Authority:          localAuthority,
+				Broker:             broker,
+				Fleet:              fleetAuthority,
+				External:           &external,
+				Ownership:          ownership,
+				Desired:            desired,
+				ExpectedFleet:      expectedFleet,
+				ExpectedGeneration: manifest.FleetGeneration,
+				ObservationMaxAge:  timings.observationMaxAge,
+				Now:                time.Now,
+			},
+			StoreCloser:           resources,
+			AdminSocketPath:       overlay.Paths.AdminSocketPath,
+			HealthSocketPath:      overlay.Paths.HealthSocketPath,
+			ExpectedUID:           uint32(overlay.Target.ExpectedEUID),
+			AdmissionLimit:        int(overlay.Resources.MaxCapacity),
+			IOTimeout:             timings.operation,
+			OperationTimeout:      timings.operation,
+			DrainTimeout:          timings.shutdown,
+			ReconciliationCadence: timings.reconciliationCadence,
+			ShutdownTimeout:       timings.shutdown,
+		},
+	)
+	if err != nil {
+		return fail(errCommandUnavailable)
+	}
+	if ownership.Validate() != nil {
+		return fail(errCommandUnavailable)
+	}
+	return process, nil
+}
+
+type productionControllerTimings struct {
+	operation             time.Duration
+	reconciliation        time.Duration
+	reconciliationCadence time.Duration
+	shutdown              time.Duration
+	observationMaxAge     time.Duration
+	fenceLock             time.Duration
+	fenceRenewal          time.Duration
+	fenceTimeout          time.Duration
+}
+
+func parseProductionControllerTimings(
+	overlay hostruntime.PrivateOverlay,
+) (productionControllerTimings, error) {
+	parse := func(value string) (time.Duration, error) {
+		duration, err := time.ParseDuration(value)
+		if err != nil || duration <= 0 {
+			return 0, errCommandUnavailable
+		}
+		return duration, nil
+	}
+	operation, err := parse(overlay.Controller.OperationTimeout)
+	if err != nil {
+		return productionControllerTimings{}, err
+	}
+	reconciliation, err := parse(
+		overlay.Controller.ReconciliationTimeout,
+	)
+	if err != nil {
+		return productionControllerTimings{}, err
+	}
+	cadence, err := parse(overlay.Controller.ReconciliationCadence)
+	if err != nil {
+		return productionControllerTimings{}, err
+	}
+	shutdown, err := parse(overlay.Controller.ShutdownTimeout)
+	if err != nil {
+		return productionControllerTimings{}, err
+	}
+	observation, err := parse(overlay.Health.ObservationMaxAge)
+	if err != nil {
+		return productionControllerTimings{}, err
+	}
+	fenceLock, err := parse(overlay.Fence.LockPollInterval)
+	if err != nil {
+		return productionControllerTimings{}, err
+	}
+	fenceRenewal, err := parse(overlay.Fence.RenewalInterval)
+	if err != nil {
+		return productionControllerTimings{}, err
+	}
+	fenceTimeout, err := parse(overlay.Fence.RenewalTimeout)
+	if err != nil {
+		return productionControllerTimings{}, err
+	}
+	return productionControllerTimings{
+		operation:             operation,
+		reconciliation:        reconciliation,
+		reconciliationCadence: cadence,
+		shutdown:              shutdown,
+		observationMaxAge:     observation,
+		fenceLock:             fenceLock,
+		fenceRenewal:          fenceRenewal,
+		fenceTimeout:          fenceTimeout,
+	}, nil
+}
+
+func productionDisabledPolicy(
+	overlay hostruntime.PrivateOverlay,
+) (controller.AcquisitionPolicy, error) {
+	policies := make(
+		[]controller.RepositoryPolicySummary,
+		len(overlay.Repositories),
+	)
+	for index, repository := range overlay.Repositories {
+		policies[index] = controller.RepositoryPolicySummary{
+			Alias:          repository.Alias,
+			MaxConcurrency: repository.MaxConcurrency,
+			Eligibility:    repository.Eligibility,
+		}
+	}
+	return controller.CanonicalizeAcquisitionPolicy(
+		controller.AcquisitionPolicy{
+			Mode:                     controller.AcquisitionDisabled,
+			RepositoryPolicyRevision: overlay.Resources.PolicyRevision,
+			RepositoryPolicies:       policies,
+		},
+	)
+}
+
+func validateProductionControllerPaths(
+	overlay hostruntime.PrivateOverlay,
+	expectedUID uint32,
+) error {
+	if filepath.Dir(overlay.Paths.DatabasePath) != overlay.Paths.StateRoot ||
+		filepath.Dir(overlay.Paths.AdminSocketPath) != overlay.Paths.StateRoot ||
+		filepath.Dir(overlay.Paths.HealthSocketPath) != overlay.Paths.StateRoot {
+		return errCommandUnavailable
+	}
+	for _, path := range []string{
+		overlay.Paths.StateRoot,
+		overlay.Paths.FenceRoot,
+		overlay.Paths.BrokerRoot,
+		overlay.Paths.SeccompRoot,
+	} {
+		fd, err := openProductionPrivateDirectory(path, expectedUID)
+		if err == nil {
+			err = unix.Close(fd)
+		}
+		if err != nil {
+			return errCommandUnavailable
+		}
+	}
+	var database unix.Stat_t
+	if err := unix.Lstat(overlay.Paths.DatabasePath, &database); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return errCommandUnavailable
+	}
+	mode := uint32(database.Mode)
+	if mode&unix.S_IFMT != unix.S_IFREG ||
+		mode&0o777 != 0o600 ||
+		database.Uid != expectedUID ||
+		uint64(database.Nlink) != 1 ||
+		database.Ino == 0 {
+		return errCommandUnavailable
+	}
+	return nil
+}
+
+func openProductionPrivateDirectory(
+	path string,
+	expectedUID uint32,
+) (int, error) {
+	if !canonicalAbsolutePath(path) || path == "/" {
+		return -1, errCommandUnavailable
+	}
+	fd, err := unix.Open(
+		"/",
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC,
+		0,
+	)
+	if err != nil {
+		return -1, errCommandUnavailable
+	}
+	for _, component := range strings.Split(
+		strings.TrimPrefix(path, "/"),
+		"/",
+	) {
+		if component == "" || component == "." || component == ".." {
+			_ = unix.Close(fd)
+			return -1, errCommandUnavailable
+		}
+		next, openErr := unix.Openat(
+			fd,
+			component,
+			unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC,
+			0,
+		)
+		closeErr := unix.Close(fd)
+		if openErr != nil || closeErr != nil {
+			if openErr == nil {
+				_ = unix.Close(next)
+			}
+			return -1, errCommandUnavailable
+		}
+		fd = next
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		_ = unix.Close(fd)
+		return -1, errCommandUnavailable
+	}
+	mode := uint32(stat.Mode)
+	if mode&unix.S_IFMT != unix.S_IFDIR ||
+		mode&0o777 != 0o700 ||
+		stat.Uid != expectedUID ||
+		stat.Ino == 0 {
+		_ = unix.Close(fd)
+		return -1, errCommandUnavailable
+	}
+	return fd, nil
+}
+
+func portableOwner(fleet fleetfence.Fleet, owner string) string {
+	if fleet == fleetfence.FleetPortable {
+		return owner
+	}
+	return ""
+}
+
+func portablePID(fleet fleetfence.Fleet, pid int) int {
+	if fleet == fleetfence.FleetPortable {
+		return pid
+	}
+	return 0
+}
+
+type productionControllerResources struct {
+	closers []io.Closer
+}
+
+func (resources *productionControllerResources) Add(closer io.Closer) {
+	resources.closers = append(resources.closers, closer)
+}
+
+func (resources *productionControllerResources) Close() error {
+	if resources == nil {
+		return nil
+	}
+	var result error
+	for index := len(resources.closers) - 1; index >= 0; index-- {
+		result = errors.Join(result, resources.closers[index].Close())
+	}
+	resources.closers = nil
+	return result
 }
 
 func controllerManifestMatchesOverlay(

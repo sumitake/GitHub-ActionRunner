@@ -186,3 +186,14 @@ func (g *renewingGuard) Close() error {
 	}
 	return errors.Join(renewErr, closeErr)
 }
+
+// Failure exposes only the terminal health of the already-opaque guard. It
+// does not expose holder identity or any mutation capability.
+func (g *renewingGuard) Failure() <-chan error {
+	if g == nil || g.guard == nil {
+		closed := make(chan error)
+		close(closed)
+		return closed
+	}
+	return g.guard.Failure()
+}
