@@ -539,6 +539,15 @@ GOTOOLCHAIN=go1.26.5 go test -race ./cmd/portable-ghar-task11-listener -count=1
 5. `Recover` is used only for the exact operation ID already in the durable
    journal. Ambiguous readback retains journal/reservation and fails.
 
+The high-effort xAI/Grok adversarial cross-check converged on the same minimum
+shape with four binding clarifications: there is exactly one phase-to-effect
+table; lifecycle code may call the narrow disabled primitives but the watchdog
+never calls the lifecycle apply engine; every successful receipt comes from
+the post-effect observation rather than the effect return; and phases that
+depend on unavailable hosted-hold authority fail before their first write.
+No retry layer, background reconciler, generic executor, second configuration
+object, or second lifecycle/process authority is permitted.
+
 **Exact process authority:**
 
 - Store one root-owned `0600` canonical process record under the declared

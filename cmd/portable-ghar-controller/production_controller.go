@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,7 +15,6 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/sumitake/portable-ghar/internal/config"
 	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/fleetfence"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
@@ -46,15 +44,14 @@ func dialProductionAdmin(
 	if err != nil {
 		return nil, nil, errCommandUnavailable
 	}
-	runtimeConfig, err := config.LoadControllerRuntime(
-		bytes.NewReader(configDocument),
+	overlay, _, err := hostruntime.ParsePrivateOverlay(
+		configDocument,
+		maxProductionConfigBytes,
 	)
 	if err != nil {
 		return nil, nil, errCommandUnavailable
 	}
-	overlay, _, ok := runtimeConfig.ControllerPrivateOverlay()
-	if !ok ||
-		runtime.GOOS != overlay.Target.OS ||
+	if runtime.GOOS != overlay.Target.OS ||
 		runtime.GOARCH != overlay.Target.Architecture ||
 		uint64(os.Geteuid()) != overlay.Target.ExpectedEUID {
 		return nil, nil, errCommandUnavailable
@@ -99,15 +96,14 @@ func openProductionDisabledObserver(
 	if err != nil {
 		return nil, errCommandUnavailable
 	}
-	runtimeConfig, err := config.LoadControllerRuntime(
-		bytes.NewReader(configDocument),
+	overlay, _, err := hostruntime.ParsePrivateOverlay(
+		configDocument,
+		maxProductionConfigBytes,
 	)
 	if err != nil {
 		return nil, errCommandUnavailable
 	}
-	overlay, _, ok := runtimeConfig.ControllerPrivateOverlay()
-	if !ok ||
-		runtime.GOOS != overlay.Target.OS ||
+	if runtime.GOOS != overlay.Target.OS ||
 		runtime.GOARCH != overlay.Target.Architecture ||
 		uint64(os.Geteuid()) != overlay.Target.ExpectedEUID ||
 		databasePath != overlay.Paths.DatabasePath {
@@ -150,6 +146,10 @@ func openProductionDisabledObserver(
 	if err != nil {
 		return nil, errCommandUnavailable
 	}
+	historyLimits, err := productionHistoryLimits(overlay)
+	if err != nil {
+		return nil, errCommandUnavailable
+	}
 
 	resources := &productionControllerResources{}
 	fail := func(primary error) (controllerProcess, error) {
@@ -157,7 +157,7 @@ func openProductionDisabledObserver(
 	}
 	store, err := state.OpenWithHistoryLimits(
 		databasePath,
-		runtimeConfig.HistoryLimits(),
+		historyLimits,
 	)
 	if err != nil {
 		return fail(errCommandUnavailable)
@@ -165,7 +165,7 @@ func openProductionDisabledObserver(
 	resources.Add(store)
 	stateAdapter, err := state.NewControllerAdapter(
 		store,
-		runtimeConfig.HistoryLimits(),
+		historyLimits,
 	)
 	if err != nil {
 		return fail(errCommandUnavailable)
@@ -334,6 +334,64 @@ type productionControllerTimings struct {
 	fenceLock             time.Duration
 	fenceRenewal          time.Duration
 	fenceTimeout          time.Duration
+}
+
+func productionHistoryLimits(
+	overlay hostruntime.PrivateOverlay,
+) (state.HistoryLimits, error) {
+	history := overlay.Resources.History
+	minRetention, err := time.ParseDuration(history.MinRetention)
+	if err != nil {
+		return state.HistoryLimits{}, errCommandUnavailable
+	}
+	maintenanceCadence, err := time.ParseDuration(
+		history.MaintenanceCadence,
+	)
+	if err != nil {
+		return state.HistoryLimits{}, errCommandUnavailable
+	}
+	limits := state.HistoryLimits{
+		MinRetention:                 minRetention,
+		MaxHistoryRows:               history.MaxHistoryRows,
+		MaxHistoryLogicalBytes:       history.MaxHistoryLogicalBytes,
+		MaxNetworkLedgerRows:         history.MaxNetworkLedgerRows,
+		MaxNetworkLedgerLogicalBytes: history.MaxNetworkLedgerLogicalBytes,
+		InflightReserveRows:          history.InflightReserveRows,
+		InflightReserveLogicalBytes:  history.InflightReserveLogicalBytes,
+		GCBatchRows:                  history.GCBatchRows,
+		NetworkGCBatchRows:           history.NetworkGCBatchRows,
+		VacuumBatchPages:             history.VacuumBatchPages,
+		MaintenanceCadence:           maintenanceCadence,
+	}
+	if state.ValidateHistoryLimits(limits) != nil ||
+		overlay.Resources.FleetConcurrency == 0 ||
+		overlay.Resources.NetworkLedgerReserveRows == 0 ||
+		overlay.Resources.NetworkLedgerReserveBytes == 0 {
+		return state.HistoryLimits{}, errCommandUnavailable
+	}
+	requiredRows, ok := multiplyStatusTotal(
+		overlay.Resources.FleetConcurrency,
+		limits.InflightReserveRows,
+	)
+	if !ok || requiredRows > limits.MaxHistoryRows {
+		return state.HistoryLimits{}, errCommandUnavailable
+	}
+	requiredBytes, ok := multiplyStatusTotal(
+		overlay.Resources.FleetConcurrency,
+		limits.InflightReserveLogicalBytes,
+	)
+	if !ok || requiredBytes > limits.MaxHistoryLogicalBytes ||
+		overlay.Resources.NetworkLedgerReserveRows <
+			overlay.Resources.FleetConcurrency ||
+		overlay.Resources.NetworkLedgerReserveRows >
+			limits.MaxNetworkLedgerRows ||
+		overlay.Resources.NetworkLedgerReserveBytes <
+			overlay.Resources.FleetConcurrency ||
+		overlay.Resources.NetworkLedgerReserveBytes >
+			limits.MaxNetworkLedgerLogicalBytes {
+		return state.HistoryLimits{}, errCommandUnavailable
+	}
+	return limits, nil
 }
 
 func parseProductionControllerTimings(

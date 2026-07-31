@@ -13,6 +13,59 @@ import (
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
 )
 
+func TestProductionHistoryLimitsComeFromPrivateOverlay(t *testing.T) {
+	t.Parallel()
+
+	overlay := hostruntime.PrivateOverlay{
+		Resources: hostruntime.ResourceOverlay{
+			FleetConcurrency:          2,
+			NetworkLedgerReserveRows:  3,
+			NetworkLedgerReserveBytes: 4,
+			History: hostruntime.HistoryOverlay{
+				MinRetention:                 "1h",
+				MaxHistoryRows:               100,
+				MaxHistoryLogicalBytes:       200,
+				MaxNetworkLedgerRows:         10,
+				MaxNetworkLedgerLogicalBytes: 20,
+				InflightReserveRows:          2,
+				InflightReserveLogicalBytes:  3,
+				GCBatchRows:                  4,
+				NetworkGCBatchRows:           5,
+				VacuumBatchPages:             6,
+				MaintenanceCadence:           "1m",
+			},
+		},
+	}
+	limits, err := productionHistoryLimits(overlay)
+	if err != nil {
+		t.Fatalf("productionHistoryLimits: %v", err)
+	}
+	if limits.MinRetention != time.Hour ||
+		limits.MaxHistoryRows != 100 ||
+		limits.MaxHistoryLogicalBytes != 200 ||
+		limits.MaxNetworkLedgerRows != 10 ||
+		limits.MaxNetworkLedgerLogicalBytes != 20 ||
+		limits.InflightReserveRows != 2 ||
+		limits.InflightReserveLogicalBytes != 3 ||
+		limits.GCBatchRows != 4 ||
+		limits.NetworkGCBatchRows != 5 ||
+		limits.VacuumBatchPages != 6 ||
+		limits.MaintenanceCadence != time.Minute {
+		t.Fatalf("productionHistoryLimits() = %#v", limits)
+	}
+
+	invalid := overlay
+	invalid.Resources.NetworkLedgerReserveRows = 1
+	if _, err := productionHistoryLimits(invalid); err == nil {
+		t.Fatal("productionHistoryLimits accepted undersized ledger reserve")
+	}
+	invalid = overlay
+	invalid.Resources.History.MaxHistoryRows = 1
+	if _, err := productionHistoryLimits(invalid); err == nil {
+		t.Fatal("productionHistoryLimits accepted undersized inflight reserve")
+	}
+}
+
 func TestParseProductionControllerTimingsUsesOnlyExplicitOverlayValues(
 	t *testing.T,
 ) {
