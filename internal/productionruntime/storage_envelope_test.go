@@ -64,8 +64,8 @@ func TestReservationStorageAuthorityAggregatesSharedMountsAndOrphans(
 	dockerRoot.FreeBytes = 225
 	dockerRoot.FreeInodes = 23
 	state := probe.observations["state"]
-	state.FreeBytes = 225
-	state.FreeInodes = 23
+	state.FreeBytes = 226
+	state.FreeInodes = 24
 	probe.observations["docker-root"] = dockerRoot
 	probe.observations["state"] = state
 	authority, err := NewReservationStorageAuthority(probe)

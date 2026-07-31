@@ -116,6 +116,17 @@ func TestBootstrapAcquireInspectAndReadOnlySnapshot(t *testing.T) {
 	store, root, _ := newTestStore(t)
 
 	ctx, cancel := testContext(t)
+	optional, present, err := store.InspectOptional(ctx)
+	if err != nil || present ||
+		optional.Header != (Header{}) ||
+		optional.Holders != nil {
+		t.Fatalf(
+			"InspectOptional() = (%+v, %t, %v), want zero, false, nil",
+			optional,
+			present,
+			err,
+		)
+	}
 	if _, err := store.Inspect(ctx); err == nil {
 		t.Fatal("Inspect created or accepted missing bootstrap state")
 	}
@@ -153,11 +164,58 @@ func TestBootstrapAcquireInspectAndReadOnlySnapshot(t *testing.T) {
 	if string(beforeHeader) != string(afterHeader) {
 		t.Fatal("Inspect mutated header bytes")
 	}
+	optionalCtx, optionalCancel := testContext(t)
+	optional, present, err = store.InspectOptional(optionalCtx)
+	optionalCancel()
+	if err != nil || !present ||
+		optional.Header != snapshot.Header ||
+		len(optional.Holders) != 1 ||
+		optional.Holders[0] != snapshot.Holders[0] {
+		t.Fatalf(
+			"InspectOptional() = (%+v, %t, %v), want present snapshot",
+			optional,
+			present,
+			err,
+		)
+	}
 	if err := guard.Renew(context.Background()); err != nil {
 		t.Fatalf("Renew: %v", err)
 	}
 	if err := guard.Close(); err != nil {
 		t.Fatalf("guard close: %v", err)
+	}
+}
+
+func TestInspectOptionalRejectsPartialBootstrapState(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		mode os.FileMode
+	}{
+		{name: "lock only", path: lockName, mode: 0o600},
+		{name: "holders only", path: holderDirName, mode: 0o700 | os.ModeDir},
+		{name: "header only", path: headerName, mode: 0o600},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			store, root, _ := newTestStore(t)
+			path := filepath.Join(root, test.path)
+			var err error
+			if test.mode.IsDir() {
+				err = os.Mkdir(path, test.mode.Perm())
+			} else {
+				err = os.WriteFile(path, []byte("{}"), test.mode.Perm())
+			}
+			if err != nil {
+				t.Fatalf("create partial state: %v", err)
+			}
+			ctx, cancel := testContext(t)
+			defer cancel()
+			if _, _, err := store.InspectOptional(ctx); err == nil {
+				t.Fatal("InspectOptional() accepted partial bootstrap state")
+			}
+		})
 	}
 }
 

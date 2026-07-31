@@ -132,14 +132,20 @@ func (authority *ReservationStorageAuthority) Revalidate(
 			return ErrStorageEnvelope
 		}
 		envelope := mounts[expected.MountID]
-		if envelope.observed &&
-			(envelope.freeBytes != observation.FreeBytes ||
-				envelope.freeInodes != observation.FreeInodes) {
-			return ErrStorageEnvelope
+		if !envelope.observed {
+			envelope.freeBytes = observation.FreeBytes
+			envelope.freeInodes = observation.FreeInodes
+			envelope.observed = true
+		} else {
+			envelope.freeBytes = minStorageAmount(
+				envelope.freeBytes,
+				observation.FreeBytes,
+			)
+			envelope.freeInodes = minStorageAmount(
+				envelope.freeInodes,
+				observation.FreeInodes,
+			)
 		}
-		envelope.freeBytes = observation.FreeBytes
-		envelope.freeInodes = observation.FreeInodes
-		envelope.observed = true
 		mounts[expected.MountID] = envelope
 	}
 	for _, envelope := range mounts {
@@ -150,6 +156,13 @@ func (authority *ReservationStorageAuthority) Revalidate(
 		}
 	}
 	return nil
+}
+
+func minStorageAmount(left uint64, right uint64) uint64 {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func addStorageAmount(left uint64, right uint64) (uint64, bool) {

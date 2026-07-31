@@ -20,6 +20,10 @@ func (s *Store) operationFDs(bool) (int, int, error) {
 	return -1, -1, ErrInvalidState
 }
 
+func (s *Store) inspectBootstrapState() (bool, error) {
+	return false, ErrInvalidState
+}
+
 func openStableLock(int, bool) (int, fileIdentity, error) {
 	return -1, fileIdentity{}, ErrInvalidState
 }

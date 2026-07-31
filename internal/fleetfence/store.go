@@ -420,6 +420,30 @@ func (s *Store) Inspect(ctx context.Context) (Snapshot, error) {
 	return Snapshot{Header: header, Holders: holders}, nil
 }
 
+// InspectOptional distinguishes a clean, never-bootstrapped root from a
+// complete fleet-fence state without creating the lock, holder directory, or
+// header. Any partial bootstrap state is invalid rather than treated as
+// greenfield.
+func (s *Store) InspectOptional(
+	ctx context.Context,
+) (Snapshot, bool, error) {
+	if err := requireDeadline(ctx); err != nil {
+		return Snapshot{}, false, err
+	}
+	present, err := s.inspectBootstrapState()
+	if err != nil {
+		return Snapshot{}, false, err
+	}
+	if !present {
+		return Snapshot{}, false, nil
+	}
+	snapshot, err := s.Inspect(ctx)
+	if err != nil {
+		return Snapshot{}, false, err
+	}
+	return snapshot, true, nil
+}
+
 func (s *Store) readBackHeader(
 	rootFD int,
 	lockFD int,

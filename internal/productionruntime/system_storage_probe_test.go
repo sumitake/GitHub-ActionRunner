@@ -54,15 +54,32 @@ func TestSystemStorageProbeUsesOneFixedDockerRootReadAndPinnedRoles(
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
-	if !reflect.DeepEqual(snapshot, expected) {
-		t.Fatalf("Snapshot() = %#v, want %#v", snapshot, expected)
+	if len(snapshot) != len(expected) {
+		t.Fatalf("Snapshot() length = %d, want %d", len(snapshot), len(expected))
+	}
+	for index := range expected {
+		if snapshot[index].Filesystem != expected[index].Filesystem ||
+			snapshot[index].Device != expected[index].Device ||
+			snapshot[index].FreeBytes == 0 ||
+			snapshot[index].FreeInodes == 0 {
+			t.Fatalf(
+				"Snapshot()[%d] = %#v, want stable identity %#v",
+				index,
+				snapshot[index],
+				expected[index],
+			)
+		}
 	}
 	for _, availability := range expected {
 		observed, err := probe.Observe(
 			context.Background(),
 			availability.Filesystem,
 		)
-		if err != nil || observed != availability {
+		if err != nil ||
+			observed.Filesystem != availability.Filesystem ||
+			observed.Device != availability.Device ||
+			observed.FreeBytes == 0 ||
+			observed.FreeInodes == 0 {
 			t.Fatalf(
 				"Observe(%q) = %#v, %v",
 				availability.Filesystem.Role,

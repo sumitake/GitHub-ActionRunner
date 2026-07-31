@@ -60,6 +60,51 @@ func (s *Store) operationFDs(bootstrap bool) (int, int, error) {
 	return s.rootFD, s.holderFD, nil
 }
 
+func (s *Store) inspectBootstrapState() (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return false, ErrStoreClosed
+	}
+	if _, err := fstatPrivate(
+		s.rootFD,
+		unix.S_IFDIR,
+		0o700,
+		false,
+	); err != nil {
+		return false, err
+	}
+	present := 0
+	for _, name := range [...]string{
+		lockName,
+		headerName,
+		holderDirName,
+	} {
+		var stat unix.Stat_t
+		err := unix.Fstatat(
+			s.rootFD,
+			name,
+			&stat,
+			unix.AT_SYMLINK_NOFOLLOW,
+		)
+		switch {
+		case err == nil:
+			present++
+		case errors.Is(err, syscall.ENOENT):
+		default:
+			return false, ErrInvalidState
+		}
+	}
+	switch present {
+	case 0:
+		return false, nil
+	case 3:
+		return true, nil
+	default:
+		return false, ErrInvalidState
+	}
+}
+
 func openHolderDirectory(rootFD int, bootstrap bool) (int, error) {
 	if bootstrap {
 		err := unix.Mkdirat(rootFD, holderDirName, 0o700)
