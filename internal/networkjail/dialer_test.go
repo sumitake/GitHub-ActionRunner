@@ -370,16 +370,22 @@ func TestLiteralNetDialerUsesExactAddressFamilyAndBoundedContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newLiteralNetDialer: %v", err)
 	}
+	address := publicV4(8, 8, 8, 8)
 	connection, err := dialer.DialLiteral(
 		context.Background(),
-		publicV4(8, 8, 8, 8),
+		address,
 		443,
 	)
 	if err != nil {
 		t.Fatalf("DialLiteral: %v", err)
 	}
 	_ = connection.Close()
-	if network != "tcp4" || endpoint != "8.8.8.8:443" || !hadDeadline {
+	host, port, splitErr := net.SplitHostPort(endpoint)
+	if network != "tcp4" ||
+		splitErr != nil ||
+		host != address.String() ||
+		port != "443" ||
+		!hadDeadline {
 		t.Fatalf("dial network=%q endpoint=%q deadline=%v", network, endpoint, hadDeadline)
 	}
 	if _, err := dialer.DialLiteral(

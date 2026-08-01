@@ -799,7 +799,7 @@ func protocolTestOverlay(
 			Host:              "rhonas.example",
 			Port:              22,
 			User:              "portable_ghar",
-			KnownHostsFile:    "/Users/control/.ssh/known_hosts",
+			KnownHostsFile:    "/etc/portable-ghar/ssh/known_hosts",
 			CredentialName:    "ssh-control",
 			ControlUID:        501,
 			Subsystem:         "portable-ghar-v1",
@@ -818,7 +818,7 @@ func protocolTestOverlay(
 				Name: "ssh-control",
 				Ref: hostruntime.SecretRefOverlay{
 					Source: "file",
-					Ref:    "/Users/control/.ssh/id_ed25519",
+					Ref:    "/run/secrets/ssh-control",
 				},
 			},
 		},
