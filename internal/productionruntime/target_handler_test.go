@@ -257,6 +257,62 @@ func TestInspectHostTargetStateDistinguishesGreenfieldAndPortable(
 	}
 }
 
+func TestInspectHostTargetStateReportsIncompletePostFenceState(
+	t *testing.T,
+) {
+	root := t.TempDir()
+	stagingRoot := filepath.Join(root, "staging")
+	releaseRoot := filepath.Join(root, "releases")
+	fenceRoot := filepath.Join(root, "fence")
+	for _, path := range []string{stagingRoot, releaseRoot, fenceRoot} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+	overlay, _ := protocolTestOverlay(t)
+	overlay.Paths.StagingRoot = stagingRoot
+	overlay.Paths.ReleaseRoot = releaseRoot
+	overlay.Paths.FenceRoot = fenceRoot
+	fence, err := fleetfence.OpenStore(fleetfence.StoreConfig{
+		Root:             fenceRoot,
+		Identity:         targetTestIdentity{},
+		Now:              time.Now,
+		LockPollInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("fleetfence.OpenStore() error = %v", err)
+	}
+	request := fleetfence.HandoffRequest{
+		From:               fleetfence.FleetNone,
+		To:                 fleetfence.FleetPortable,
+		ExpectedGeneration: 0,
+	}
+	request.OperationID = fleetfence.HandoffOperationID(
+		request.ExpectedGeneration,
+		request.From,
+		request.To,
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := fence.Handoff(ctx, request); err != nil {
+		t.Fatalf("Handoff() error = %v", err)
+	}
+	if err := fence.Close(); err != nil {
+		t.Fatalf("fence.Close() error = %v", err)
+	}
+
+	state, err := inspectHostTargetState(ctx, overlay)
+	if err != nil {
+		t.Fatalf("inspectHostTargetState() error = %v", err)
+	}
+	if !state.fencePresent ||
+		state.generation != 1 ||
+		state.activeFleet != fleetfence.FleetPortable ||
+		state.currentDigest != nil {
+		t.Fatalf("incomplete state = %#v", state)
+	}
+}
+
 type targetTestIdentity struct{}
 
 func (targetTestIdentity) Current(

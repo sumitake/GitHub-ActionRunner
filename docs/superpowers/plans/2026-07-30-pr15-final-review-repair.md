@@ -548,6 +548,68 @@ depend on unavailable hosted-hold authority fail before their first write.
 No retry layer, background reconciler, generic executor, second configuration
 object, or second lifecycle/process authority is permitted.
 
+**Checkpoint-resume refinement (2026-07-31):** The first Task 8 checkpoint
+exposed a concrete crash-reentry gap: after the portable-fleet handoff but
+before current-release selection, a fresh live-state proof no longer looks
+greenfield even though the durable lifecycle journal still owns the exact
+greenfield operation. The minimal continuation is split only for sequencing,
+not into new authorities:
+
+- **Task 8A — finish the existing greenfield operation path.** Keep the same
+  greenfield `OperationBinding` and operation ID across a restart. Fresh entry
+  requires absent fence/current/process/watchdog state. Re-entry requires the
+  durable journal for that exact binding plus live state consistent with one
+  of its completed phases. A post-fence orphan without that exact journal is
+  a fail-before-write condition. `LifecycleEngine.Execute` remains the sole
+  forward driver; do not add a resume service, second engine, new disposition,
+  retry, or reconciler. Observation errors are never converted to an empty
+  snapshot or `Absent`. Add the truthful read-only terminal verify path and
+  wire the existing handler/executor into the command composition root.
+- **Task 8B — complete the already-specified disabled observer and watchdog
+  composition.** This remains required for the Phase 2 source-complete claim,
+  but it follows the stable install/verify entry contract so it does not hide
+  or duplicate crash-reentry authority.
+
+The exact Task 8A re-entry matrix is:
+
+| Live state | Exact lifecycle journal | Result |
+|---|---|---|
+| fence/current/process/watchdog absent | absent | admit fresh greenfield install |
+| incomplete portable greenfield state | matching operation binding | admit the same greenfield operation and continue with `Execute` |
+| incomplete portable greenfield state | absent, foreign, or ambiguous | fail before write |
+| terminal portable state | terminal matching operation | read-only verify may succeed; install does not invent an upgrade path |
+| any other state | any | fail before write |
+
+The stable greenfield identity is mechanized, not inferred from intermediate
+live state. It is always derived from the fixed start-of-operation tuple:
+greenfield disposition, expected generation `0`, nil prior/current manifest,
+the requested target manifest, portable target fleet, and overlay revision.
+Fence/current/process/watchdog observations participate only in the admission
+matrix above; they never re-key or rebind the operation and no new disposition
+is introduced.
+
+Reservation identity follows the same split. Open the descriptor-pinned
+lifecycle store before deciding fresh versus re-entry. A fresh operation may
+build and persist one new active reservation. Re-entry must read the exact
+operation journal and reservation from that store, validate both against the
+fixed binding, preserve the reservation identity fields byte-for-byte
+(including `CreatedAt`, filesystem vector, roles, crash-orphans, and budget
+digest), and revalidate that persisted envelope. Because the existing engine
+requires an active request shape even when the persisted reservation is
+committed or released, the request uses an active view of that same identity:
+only state/transition-proof fields are normalized for request validation;
+identity fields are never regenerated and `time.Now()` is never used. A
+missing or one-sided journal/reservation pair, mismatched binding, malformed
+state, or failed revalidation is an orphan/ambiguity failure before effects.
+
+Task 8A TDD order is fixed: (1) make probe/inspection failures ambiguous rather
+than absent; (2) prove matching-journal re-entry and orphan rejection; (3)
+exercise crash points after promote, fence, marker, observer, zero proof, and
+selection without duplicate effects; (4) implement byte-stable read-only
+verify; (5) replace only the install/verify composition stubs. Pure-observation
+phases never acquire a fallback write. Successful phase receipts still come
+only from their post-effect observation.
+
 **Exact process authority:**
 
 - Store one root-owned `0600` canonical process record under the declared

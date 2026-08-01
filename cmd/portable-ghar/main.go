@@ -23,6 +23,10 @@ type commandDependencies struct {
 }
 
 func productionCommandDependencies() commandDependencies {
+	targetHandler := productionruntime.NewSystemTargetHandler()
+	targetExecutor := productionruntime.NewSystemTargetHostExecutor(
+		targetHandler,
+	)
 	dependencies := cli.DefaultHostCommandDependencies(
 		func(
 			overlay hostruntime.PrivateOverlay,
@@ -47,7 +51,7 @@ func productionCommandDependencies() commandDependencies {
 			return hostruntime.RunTargetHostCommand(
 				ctx,
 				args,
-				unavailableTargetHostExecutor{},
+				targetExecutor,
 			)
 		},
 		RunTransport: func(
@@ -61,7 +65,7 @@ func productionCommandDependencies() commandDependencies {
 				stdin,
 				stdout,
 				tty,
-				unavailableProductionHandler{},
+				targetHandler,
 			)
 		},
 	}
@@ -206,48 +210,3 @@ func main() {
 	cancel()
 	os.Exit(exit)
 }
-
-type unavailableTargetHostExecutor struct{}
-
-func (unavailableTargetHostExecutor) ExecuteTargetHost(
-	context.Context,
-	hostruntime.TargetHostRequest,
-) (hostruntime.HostActionResult, error) {
-	return hostruntime.HostActionResult{}, hostruntime.ErrTargetHostFailed
-}
-
-var _ hostruntime.TargetHostExecutor = unavailableTargetHostExecutor{}
-
-type unavailableProductionHandler struct{}
-
-func (unavailableProductionHandler) ProveTarget(
-	context.Context,
-	hostruntime.PrivateOverlay,
-	string,
-) (cli.TargetProof, error) {
-	return cli.TargetProof{}, productionruntime.ErrProtocol
-}
-
-func (unavailableProductionHandler) StageRelease(
-	context.Context,
-	hostruntime.PrivateOverlay,
-	string,
-	cli.TargetProof,
-	hostruntime.RuntimeManifest,
-	string,
-) (cli.StageProof, error) {
-	return cli.StageProof{}, productionruntime.ErrProtocol
-}
-
-func (unavailableProductionHandler) Invoke(
-	context.Context,
-	hostruntime.PrivateOverlay,
-	string,
-	cli.TargetProof,
-	cli.HostAction,
-	productionruntime.InvokeArguments,
-) (hostruntime.HostActionResult, error) {
-	return hostruntime.HostActionResult{}, productionruntime.ErrProtocol
-}
-
-var _ productionruntime.TargetHandler = unavailableProductionHandler{}

@@ -111,7 +111,35 @@ func proveSystemTarget(
 	if err != nil {
 		return cli.TargetProof{}, ErrProtocol
 	}
-	return sealTargetProofForState(overlay, revision, state)
+	if !state.fencePresent {
+		return sealSystemTargetProof(
+			overlay,
+			revision,
+			manifest,
+			state,
+			nil,
+		)
+	}
+	layout, err := hostruntime.LifecycleStoreLayoutFromPrivateOverlay(overlay)
+	if err != nil {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	lifecycle, err := hostruntime.OpenLifecycleStoreLayout(layout, false)
+	if err != nil {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	proof, proofErr := sealSystemTargetProof(
+		overlay,
+		revision,
+		manifest,
+		state,
+		lifecycle,
+	)
+	closeErr := lifecycle.Close()
+	if proofErr != nil || closeErr != nil {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	return proof, nil
 }
 
 func (handler *SystemTargetHandler) StageRelease(
@@ -312,12 +340,22 @@ func inspectHostTargetState(
 	snapshot, fencePresent, inspectErr :=
 		fenceStore.InspectOptional(ctx)
 	closeErr = fenceStore.Close()
-	if inspectErr != nil || closeErr != nil ||
-		currentPresent != fencePresent {
+	if inspectErr != nil || closeErr != nil {
 		return hostTargetState{}, ErrProtocol
 	}
 	if !fencePresent {
+		if currentPresent {
+			return hostTargetState{}, ErrProtocol
+		}
 		return hostTargetState{}, nil
+	}
+	state := hostTargetState{
+		fencePresent: true,
+		generation:   snapshot.Header.Generation,
+		activeFleet:  snapshot.Header.ActiveFleet,
+	}
+	if !currentPresent {
+		return state, nil
 	}
 	if current.manifestDigest == "" ||
 		current.overlayRevision == "" {
@@ -334,12 +372,8 @@ func inspectHostTargetState(
 		}
 	}
 	currentDigest := current.manifestDigest
-	return hostTargetState{
-		fencePresent:  true,
-		generation:    snapshot.Header.Generation,
-		activeFleet:   snapshot.Header.ActiveFleet,
-		currentDigest: &currentDigest,
-	}, nil
+	state.currentDigest = &currentDigest
+	return state, nil
 }
 
 func sealTargetProofForState(
@@ -394,6 +428,149 @@ func sealTargetProofForState(
 		return cli.TargetProof{}, ErrProtocol
 	}
 	return sealed, nil
+}
+
+func sealGreenfieldContinuationProof(
+	overlay hostruntime.PrivateOverlay,
+	revision string,
+	state hostTargetState,
+	manifest hostruntime.RuntimeManifest,
+	continuation greenfieldContinuation,
+) (cli.TargetProof, error) {
+	if !state.fencePresent ||
+		state.generation != manifest.FleetGeneration ||
+		state.activeFleet != fleetfence.FleetPortable {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	entry, err := sealTargetProofForState(
+		overlay,
+		revision,
+		hostTargetState{},
+	)
+	if err != nil {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	_, manifestDigest, err := hostruntime.MarshalRuntimeManifest(manifest)
+	if err != nil {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	binding, terminalGeneration, err := fixedGreenfieldBinding(
+		entry,
+		manifestDigest,
+		revision,
+	)
+	if err != nil ||
+		terminalGeneration != manifest.FleetGeneration ||
+		validateGreenfieldContinuation(
+			continuation,
+			binding,
+			manifest,
+		) != nil ||
+		!greenfieldContinuationMatchesLiveState(
+			continuation.journal.Phase,
+			state.currentDigest,
+			manifestDigest,
+		) {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	return entry, nil
+}
+
+func sealSystemTargetProof(
+	overlay hostruntime.PrivateOverlay,
+	revision string,
+	manifest hostruntime.RuntimeManifest,
+	state hostTargetState,
+	lifecycle *hostruntime.LifecycleStore,
+) (cli.TargetProof, error) {
+	if !state.fencePresent {
+		return sealTargetProofForState(overlay, revision, state)
+	}
+	entry, err := sealTargetProofForState(
+		overlay,
+		revision,
+		hostTargetState{},
+	)
+	if err != nil {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	_, manifestDigest, err := hostruntime.MarshalRuntimeManifest(manifest)
+	if err != nil {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	binding, terminalGeneration, err := fixedGreenfieldBinding(
+		entry,
+		manifestDigest,
+		revision,
+	)
+	if err != nil || terminalGeneration != manifest.FleetGeneration {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	if lifecycle != nil {
+		continuation, present, readErr := readGreenfieldContinuation(
+			lifecycle,
+			binding,
+			manifest,
+		)
+		if readErr != nil {
+			return cli.TargetProof{}, ErrProtocol
+		}
+		if present {
+			if continuation.journal.Phase ==
+				hostruntime.OperationPhaseComplete &&
+				continuation.reservation.State ==
+					hostruntime.ReservationStateCommitted {
+				if validateGreenfieldContinuation(
+					continuation,
+					binding,
+					manifest,
+				) != nil ||
+					!greenfieldContinuationMatchesLiveState(
+						continuation.journal.Phase,
+						state.currentDigest,
+						manifestDigest,
+					) {
+					return cli.TargetProof{}, ErrProtocol
+				}
+			} else {
+				return sealGreenfieldContinuationProof(
+					overlay,
+					revision,
+					state,
+					manifest,
+					continuation,
+				)
+			}
+		}
+	}
+	if state.currentDigest == nil {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	return sealTargetProofForState(overlay, revision, state)
+}
+
+func greenfieldContinuationMatchesLiveState(
+	phase hostruntime.OperationPhase,
+	currentDigest *string,
+	targetManifestDigest string,
+) bool {
+	switch phase {
+	case hostruntime.OperationPhaseFencePortable,
+		hostruntime.OperationPhaseWatchdogInstalled,
+		hostruntime.OperationPhasePolicyDisabled,
+		hostruntime.OperationPhaseObserverStarted,
+		hostruntime.OperationPhaseZeroProven:
+		return currentDigest == nil
+	case hostruntime.OperationPhaseCurrentSelected:
+		return currentDigest == nil ||
+			*currentDigest == targetManifestDigest
+	case hostruntime.OperationPhaseVerified,
+		hostruntime.OperationPhaseComplete:
+		return currentDigest != nil &&
+			*currentDigest == targetManifestDigest
+	default:
+		return false
+	}
 }
 
 func cloneTargetDigest(value *string) *string {

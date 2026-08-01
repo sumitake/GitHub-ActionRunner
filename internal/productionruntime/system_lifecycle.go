@@ -15,6 +15,12 @@ import (
 type productionEffect uint8
 
 const (
+	maximumProductionLifecycleJournalBytes       = 1 << 20
+	maximumProductionLifecyclePostconditionBytes = 4 << 20
+	maximumProductionLifecycleReservationBytes   = 4 << 20
+)
+
+const (
 	effectPreflight productionEffect = iota + 1
 	effectCandidateStaged
 	effectCandidateSmoked
@@ -179,42 +185,23 @@ func invokeGreenfieldInstall(
 		!runtimeManifestMatchesOverlay(manifest, overlay) {
 		return hostruntime.HostActionResult{}, ErrProtocol
 	}
-	operationID, terminalGeneration, terminalFleet, err :=
-		cli.ExpectedOperation(
-			cli.ActionInstall,
-			target,
-			manifestDigest,
-			revision,
-		)
-	if err != nil ||
-		terminalGeneration != manifest.FleetGeneration ||
-		terminalFleet != fleetfence.FleetPortable {
-		return hostruntime.HostActionResult{}, ErrProtocol
-	}
-	targetManifest := manifestDigest
-	disposition := *target.InstallDisposition
-	binding := hostruntime.OperationBinding{
-		SchemaVersion:          1,
-		OperationID:            operationID,
-		Kind:                   hostruntime.OperationKindInstall,
-		InstallDisposition:     &disposition,
-		ExpectedGeneration:     0,
-		PriorManifestDigest:    nil,
-		TargetManifestDigest:   &targetManifest,
-		TargetFleet:            fleetfence.FleetPortable,
-		PrivateOverlayRevision: revision,
-	}
-	if _, _, err := hostruntime.MarshalOperationBinding(binding); err != nil {
+	binding, terminalGeneration, err := fixedGreenfieldBinding(
+		target,
+		manifestDigest,
+		revision,
+	)
+	if err != nil || terminalGeneration != manifest.FleetGeneration {
 		return hostruntime.HostActionResult{}, ErrProtocol
 	}
 
-	resources, request, err := openGreenfieldInstall(
+	resources, request, err := openGreenfieldOperation(
 		ctx,
 		overlay,
 		revision,
 		manifest,
 		manifestDigest,
 		binding,
+		true,
 	)
 	if err != nil {
 		return hostruntime.HostActionResult{}, ErrProtocol
@@ -228,6 +215,44 @@ func invokeGreenfieldInstall(
 	return result, nil
 }
 
+func fixedGreenfieldBinding(
+	target cli.TargetProof,
+	manifestDigest string,
+	revision string,
+) (hostruntime.OperationBinding, uint64, error) {
+	operationID, terminalGeneration, terminalFleet, err :=
+		cli.ExpectedOperation(
+			cli.ActionInstall,
+			target,
+			manifestDigest,
+			revision,
+		)
+	if err != nil ||
+		terminalFleet != fleetfence.FleetPortable ||
+		target.InstallDisposition == nil ||
+		*target.InstallDisposition !=
+			hostruntime.InstallDispositionGreenfieldPortable {
+		return hostruntime.OperationBinding{}, 0, ErrLifecycleEffects
+	}
+	targetManifest := manifestDigest
+	disposition := hostruntime.InstallDispositionGreenfieldPortable
+	binding := hostruntime.OperationBinding{
+		SchemaVersion:          1,
+		OperationID:            operationID,
+		Kind:                   hostruntime.OperationKindInstall,
+		InstallDisposition:     &disposition,
+		ExpectedGeneration:     0,
+		PriorManifestDigest:    nil,
+		TargetManifestDigest:   &targetManifest,
+		TargetFleet:            fleetfence.FleetPortable,
+		PrivateOverlayRevision: revision,
+	}
+	if _, _, err := hostruntime.MarshalOperationBinding(binding); err != nil {
+		return hostruntime.OperationBinding{}, 0, ErrLifecycleEffects
+	}
+	return binding, terminalGeneration, nil
+}
+
 type greenfieldInstallResources struct {
 	engine       hostruntime.LifecycleEngine
 	lifecycle    *hostruntime.LifecycleStore
@@ -237,13 +262,14 @@ type greenfieldInstallResources struct {
 	watchdog     *watchdogMarkerStore
 }
 
-func openGreenfieldInstall(
+func openGreenfieldOperation(
 	ctx context.Context,
 	overlay hostruntime.PrivateOverlay,
 	revision string,
 	manifest hostruntime.RuntimeManifest,
 	manifestDigest string,
 	binding hostruntime.OperationBinding,
+	bootstrapLifecycle bool,
 ) (*greenfieldInstallResources, hostruntime.LifecycleRequest, error) {
 	var request hostruntime.LifecycleRequest
 	if ctx == nil || ctx.Err() != nil {
@@ -288,19 +314,39 @@ func openGreenfieldInstall(
 	if err != nil {
 		return fail(ErrProtocol)
 	}
-	reservation, err := BuildStorageReservation(
+	layout, err :=
+		hostruntime.LifecycleStoreLayoutFromPrivateOverlay(overlay)
+	if err != nil {
+		return fail(ErrProtocol)
+	}
+	lifecycle, err := hostruntime.OpenLifecycleStoreLayout(
+		layout,
+		bootstrapLifecycle,
+	)
+	if err != nil {
+		return fail(ErrProtocol)
+	}
+	resources.lifecycle = lifecycle
+	reservation, err := selectGreenfieldReservation(
+		lifecycle,
 		binding,
-		overlay,
 		manifest,
-		availability,
-		time.Now().UTC(),
+		func() (hostruntime.StorageReservation, error) {
+			return BuildStorageReservation(
+				binding,
+				overlay,
+				manifest,
+				availability,
+				time.Now().UTC(),
+			)
+		},
 	)
 	if err != nil {
 		return fail(ErrProtocol)
 	}
 	storageAuthority, err := NewReservationStorageAuthority(storage)
 	if err != nil ||
-		storageAuthority.Revalidate(ctx, reservation) != nil {
+		storageAuthority.Revalidate(ctx, reservation.persisted) != nil {
 		return fail(ErrProtocol)
 	}
 
@@ -320,10 +366,12 @@ func openGreenfieldInstall(
 		return fail(ErrProtocol)
 	}
 	resources.fence = fence
-	if _, present, err := fence.InspectOptional(ctx); err != nil || present {
+	if _, present, err := fence.InspectOptional(ctx); err != nil ||
+		(!reservation.continuationPresent && present) {
 		return fail(ErrProtocol)
 	}
-	if _, present, err := releases.Current(); err != nil || present {
+	if _, present, err := releases.Current(); err != nil ||
+		(!reservation.continuationPresent && present) {
 		return fail(ErrProtocol)
 	}
 
@@ -332,7 +380,8 @@ func openGreenfieldInstall(
 		return fail(ErrProtocol)
 	}
 	resources.processStore = processStore
-	if _, _, present, err := processStore.Read(ctx); err != nil || present {
+	if _, _, present, err := processStore.Read(ctx); err != nil ||
+		(!reservation.continuationPresent && present) {
 		return fail(ErrProtocol)
 	}
 	kernel, err := NewSystemProcessKernel()
@@ -403,7 +452,7 @@ func openGreenfieldInstall(
 	}
 	if _, present, err := watchdog.Inspect(
 		watchdogBinding,
-	); err != nil || present {
+	); err != nil || (!reservation.continuationPresent && present) {
 		return fail(ErrProtocol)
 	}
 
@@ -427,16 +476,6 @@ func openGreenfieldInstall(
 		return fail(ErrProtocol)
 	}
 
-	layout, err :=
-		hostruntime.LifecycleStoreLayoutFromPrivateOverlay(overlay)
-	if err != nil {
-		return fail(ErrProtocol)
-	}
-	lifecycle, err := hostruntime.OpenLifecycleStoreLayout(layout, true)
-	if err != nil {
-		return fail(ErrProtocol)
-	}
-	resources.lifecycle = lifecycle
 	backend := &productionLifecycleBackend{
 		target: &greenfieldSystemTarget{
 			overlay:        overlay,
@@ -477,7 +516,7 @@ func openGreenfieldInstall(
 		Binding:        binding,
 		PriorManifest:  nil,
 		TargetManifest: &manifest,
-		Reservation:    reservation,
+		Reservation:    reservation.request,
 	}
 	return resources, request, nil
 }
@@ -534,9 +573,10 @@ func (target *greenfieldSystemTarget) observe(
 		return hostruntime.LifecycleEffectObservation{},
 			errors.Join(ErrLifecycleEffects, err)
 	}
-	if !target.effectPresent(effect, snapshot) {
+	state := target.effectState(effect, snapshot)
+	if state != hostruntime.LifecycleEffectPresent {
 		return hostruntime.LifecycleEffectObservation{
-			State: hostruntime.LifecycleEffectAbsent,
+			State: state,
 		}, nil
 	}
 	postcondition, err := target.postcondition(
@@ -552,6 +592,19 @@ func (target *greenfieldSystemTarget) observe(
 		State:         hostruntime.LifecycleEffectPresent,
 		Postcondition: &postcondition,
 	}, nil
+}
+
+func (target *greenfieldSystemTarget) effectState(
+	effect productionEffect,
+	snapshot greenfieldSnapshot,
+) hostruntime.LifecycleEffectState {
+	if target.effectPresent(effect, snapshot) {
+		return hostruntime.LifecycleEffectPresent
+	}
+	if target.effectAbsent(effect, snapshot) {
+		return hostruntime.LifecycleEffectAbsent
+	}
+	return hostruntime.LifecycleEffectAmbiguous
 }
 
 func (target *greenfieldSystemTarget) apply(
@@ -703,14 +756,310 @@ func (target *greenfieldSystemTarget) snapshot(
 		if !snapshot.processPresent {
 			return greenfieldSnapshot{}, ErrLifecycleEffects
 		}
-		observation, err := target.probe.Observe(ctx)
+		observation, err := observeDisabledZero(ctx, target.probe)
 		if err != nil {
-			return greenfieldSnapshot{}, nil
+			return greenfieldSnapshot{}, ErrLifecycleEffects
 		}
 		snapshot.zero = true
 		snapshot.policyEpoch = observation.PolicyEpoch
 	}
 	return snapshot, nil
+}
+
+func observeDisabledZero(
+	ctx context.Context,
+	probe DisabledControllerProbe,
+) (DisabledControllerObservation, error) {
+	if ctx == nil || ctx.Err() != nil || probe == nil {
+		return DisabledControllerObservation{}, ErrLifecycleEffects
+	}
+	return probe.Observe(ctx)
+}
+
+func activeReservationView(
+	persisted hostruntime.StorageReservation,
+) (hostruntime.StorageReservation, error) {
+	if _, _, err := hostruntime.MarshalStorageReservation(persisted); err != nil {
+		return hostruntime.StorageReservation{}, ErrLifecycleEffects
+	}
+	view := persisted
+	view.State = hostruntime.ReservationStateActive
+	view.CommittedTargetProofDigest = nil
+	view.ReleasedAbsenceProofDigest = nil
+	if _, _, err := hostruntime.MarshalStorageReservation(view); err != nil {
+		return hostruntime.StorageReservation{}, ErrLifecycleEffects
+	}
+	return view, nil
+}
+
+type greenfieldContinuation struct {
+	journal     hostruntime.OperationJournal
+	reservation hostruntime.StorageReservation
+}
+
+type greenfieldReservationChoice struct {
+	persisted           hostruntime.StorageReservation
+	request             hostruntime.StorageReservation
+	continuation        greenfieldContinuation
+	continuationPresent bool
+}
+
+type greenfieldReservationBuilder func() (
+	hostruntime.StorageReservation,
+	error,
+)
+
+func selectGreenfieldReservation(
+	store *hostruntime.LifecycleStore,
+	binding hostruntime.OperationBinding,
+	manifest hostruntime.RuntimeManifest,
+	buildFresh greenfieldReservationBuilder,
+) (greenfieldReservationChoice, error) {
+	if buildFresh == nil {
+		return greenfieldReservationChoice{}, ErrLifecycleEffects
+	}
+	continuation, present, err := readGreenfieldContinuation(
+		store,
+		binding,
+		manifest,
+	)
+	if err != nil {
+		return greenfieldReservationChoice{}, ErrLifecycleEffects
+	}
+	if present {
+		request, err := activeReservationView(continuation.reservation)
+		if err != nil {
+			return greenfieldReservationChoice{}, ErrLifecycleEffects
+		}
+		return greenfieldReservationChoice{
+			persisted:           continuation.reservation,
+			request:             request,
+			continuation:        continuation,
+			continuationPresent: true,
+		}, nil
+	}
+	fresh, err := buildFresh()
+	if err != nil {
+		return greenfieldReservationChoice{}, ErrLifecycleEffects
+	}
+	if fresh.State != hostruntime.ReservationStateActive ||
+		validateGreenfieldReservation(fresh, binding, manifest) != nil {
+		return greenfieldReservationChoice{}, ErrLifecycleEffects
+	}
+	return greenfieldReservationChoice{
+		persisted: fresh,
+		request:   fresh,
+	}, nil
+}
+
+func readGreenfieldContinuation(
+	store *hostruntime.LifecycleStore,
+	binding hostruntime.OperationBinding,
+	manifest hostruntime.RuntimeManifest,
+) (greenfieldContinuation, bool, error) {
+	if store == nil ||
+		binding.InstallDisposition == nil ||
+		*binding.InstallDisposition !=
+			hostruntime.InstallDispositionGreenfieldPortable ||
+		binding.ExpectedGeneration != 0 ||
+		binding.PriorManifestDigest != nil ||
+		binding.TargetManifestDigest == nil ||
+		binding.TargetFleet != fleetfence.FleetPortable {
+		return greenfieldContinuation{}, false, ErrLifecycleEffects
+	}
+	_, manifestDigest, err := hostruntime.MarshalRuntimeManifest(manifest)
+	if err != nil || manifestDigest != *binding.TargetManifestDigest {
+		return greenfieldContinuation{}, false, ErrLifecycleEffects
+	}
+	journalDocument, journalErr := store.ReadCanonical(
+		hostruntime.LifecycleJournals,
+		binding.OperationID+".journal.json",
+		maximumProductionLifecycleJournalBytes,
+	)
+	reservationDocument, reservationErr := store.ReadCanonical(
+		hostruntime.LifecycleReservations,
+		binding.OperationID+".reservation.json",
+		maximumProductionLifecycleReservationBytes,
+	)
+	journalAbsent := errors.Is(
+		journalErr,
+		hostruntime.ErrLifecycleStateAbsent,
+	)
+	reservationAbsent := errors.Is(
+		reservationErr,
+		hostruntime.ErrLifecycleStateAbsent,
+	)
+	if journalAbsent && reservationAbsent {
+		return greenfieldContinuation{}, false, nil
+	}
+	if journalErr != nil || reservationErr != nil {
+		return greenfieldContinuation{}, false, ErrLifecycleEffects
+	}
+	journal, _, err := hostruntime.ParseOperationJournal(
+		journalDocument,
+		maximumProductionLifecycleJournalBytes,
+	)
+	if err != nil {
+		return greenfieldContinuation{}, false, ErrLifecycleEffects
+	}
+	reservation, _, err := hostruntime.ParseStorageReservation(
+		reservationDocument,
+		maximumProductionLifecycleReservationBytes,
+	)
+	continuation := greenfieldContinuation{
+		journal:     journal,
+		reservation: reservation,
+	}
+	if err != nil || validateGreenfieldContinuation(
+		continuation,
+		binding,
+		manifest,
+	) != nil {
+		return greenfieldContinuation{}, false, ErrLifecycleEffects
+	}
+	return continuation, true, nil
+}
+
+func validateGreenfieldContinuation(
+	continuation greenfieldContinuation,
+	binding hostruntime.OperationBinding,
+	manifest hostruntime.RuntimeManifest,
+) error {
+	if hostruntime.ValidateOperationJournalAgainstBinding(
+		continuation.journal,
+		binding,
+	) != nil || validateGreenfieldReservation(
+		continuation.reservation,
+		binding,
+		manifest,
+	) != nil {
+		return ErrLifecycleEffects
+	}
+	if continuation.journal.CompensationPath != nil {
+		return ErrLifecycleEffects
+	}
+	if continuation.journal.Phase == hostruntime.OperationPhaseComplete {
+		if continuation.reservation.State !=
+			hostruntime.ReservationStateActive &&
+			continuation.reservation.State !=
+				hostruntime.ReservationStateCommitted {
+			return ErrLifecycleEffects
+		}
+		return nil
+	}
+	if continuation.reservation.State !=
+		hostruntime.ReservationStateActive {
+		return ErrLifecycleEffects
+	}
+	return nil
+}
+
+func validateGreenfieldReservation(
+	reservation hostruntime.StorageReservation,
+	binding hostruntime.OperationBinding,
+	manifest hostruntime.RuntimeManifest,
+) error {
+	_, bindingDigest, err := hostruntime.MarshalOperationBinding(binding)
+	if err != nil {
+		return ErrLifecycleEffects
+	}
+	_, manifestDigest, err := hostruntime.MarshalRuntimeManifest(manifest)
+	if err != nil ||
+		reservation.OperationID != binding.OperationID ||
+		reservation.BindingDigest != bindingDigest ||
+		reservation.TargetManifestDigest == nil ||
+		*reservation.TargetManifestDigest != manifestDigest ||
+		reservation.StorageBudgetDigest != manifest.StorageBudgetDigest {
+		return ErrLifecycleEffects
+	}
+	if _, _, err := hostruntime.MarshalStorageReservation(
+		reservation,
+	); err != nil {
+		return ErrLifecycleEffects
+	}
+	return nil
+}
+
+func verifyGreenfieldTerminal(
+	ctx context.Context,
+	store *hostruntime.LifecycleStore,
+	effects hostruntime.LifecycleEffectAuthority,
+	binding hostruntime.OperationBinding,
+	manifest hostruntime.RuntimeManifest,
+) (string, string, error) {
+	if ctx == nil || ctx.Err() != nil || store == nil || effects == nil {
+		return "", "", ErrLifecycleEffects
+	}
+	continuation, present, err := readGreenfieldContinuation(
+		store,
+		binding,
+		manifest,
+	)
+	if err != nil ||
+		!present ||
+		continuation.journal.Phase !=
+			hostruntime.OperationPhaseComplete ||
+		continuation.reservation.State !=
+			hostruntime.ReservationStateCommitted ||
+		continuation.reservation.CommittedTargetProofDigest == nil {
+		return "", "", ErrLifecycleEffects
+	}
+	_, journalDigest, err := hostruntime.MarshalOperationJournal(
+		continuation.journal,
+	)
+	if err != nil {
+		return "", "", ErrLifecycleEffects
+	}
+	effectKey, err := hostruntime.DeriveOperationEffectKey(
+		binding,
+		hostruntime.OperationPhaseComplete,
+	)
+	if err != nil {
+		return "", "", ErrLifecycleEffects
+	}
+	document, err := store.ReadCanonical(
+		hostruntime.LifecycleReceipts,
+		effectKey+".postcondition.json",
+		maximumProductionLifecyclePostconditionBytes,
+	)
+	if err != nil {
+		return "", "", ErrLifecycleEffects
+	}
+	persisted, proofDigest, err := hostruntime.ParseTargetPostcondition(
+		document,
+		maximumProductionLifecyclePostconditionBytes,
+	)
+	if err != nil ||
+		hostruntime.ValidateTargetPostconditionAgainstBinding(
+			persisted,
+			binding,
+			hostruntime.OperationPhaseComplete,
+		) != nil ||
+		*continuation.reservation.CommittedTargetProofDigest != proofDigest {
+		return "", "", ErrLifecycleEffects
+	}
+	observation, err := effects.Observe(
+		ctx,
+		binding,
+		hostruntime.OperationPhaseComplete,
+	)
+	if err != nil ||
+		observation.State != hostruntime.LifecycleEffectPresent ||
+		observation.Postcondition == nil ||
+		hostruntime.ValidateTargetPostconditionAgainstBinding(
+			*observation.Postcondition,
+			binding,
+			hostruntime.OperationPhaseComplete,
+		) != nil {
+		return "", "", ErrLifecycleEffects
+	}
+	live := *observation.Postcondition
+	live.ObservedAt = persisted.ObservedAt
+	_, liveDigest, err := hostruntime.MarshalTargetPostcondition(live)
+	if err != nil || liveDigest != proofDigest {
+		return "", "", ErrLifecycleEffects
+	}
+	return journalDigest, proofDigest, nil
 }
 
 func (target *greenfieldSystemTarget) effectPresent(
@@ -725,9 +1074,13 @@ func (target *greenfieldSystemTarget) effectPresent(
 		!snapshot.processPresent
 	switch effect {
 	case effectPreflight:
-		return baseline
+		return baseline &&
+			snapshot.stagedPresent &&
+			!snapshot.releasedPresent
 	case effectCandidateStaged, effectCandidateSmoked:
-		return baseline && snapshot.stagedPresent
+		return baseline &&
+			snapshot.stagedPresent &&
+			!snapshot.releasedPresent
 	case effectCandidatePromoted:
 		return baseline &&
 			snapshot.stagedPresent &&
@@ -740,6 +1093,7 @@ func (target *greenfieldSystemTarget) effectPresent(
 		return snapshot.fencePresent &&
 			snapshot.generation == target.terminalFence &&
 			snapshot.fleet == fleetfence.FleetPortable &&
+			snapshot.stagedPresent &&
 			!snapshot.currentPresent &&
 			!snapshot.watchdogPresent &&
 			!snapshot.processPresent &&
@@ -748,6 +1102,7 @@ func (target *greenfieldSystemTarget) effectPresent(
 		return snapshot.fencePresent &&
 			snapshot.generation == target.terminalFence &&
 			snapshot.fleet == fleetfence.FleetPortable &&
+			snapshot.stagedPresent &&
 			!snapshot.currentPresent &&
 			snapshot.watchdogPresent &&
 			!snapshot.processPresent &&
@@ -757,6 +1112,7 @@ func (target *greenfieldSystemTarget) effectPresent(
 		return snapshot.fencePresent &&
 			snapshot.generation == target.terminalFence &&
 			snapshot.fleet == fleetfence.FleetPortable &&
+			snapshot.stagedPresent &&
 			!snapshot.currentPresent &&
 			snapshot.watchdogPresent &&
 			snapshot.processPresent &&
@@ -765,6 +1121,7 @@ func (target *greenfieldSystemTarget) effectPresent(
 		return snapshot.fencePresent &&
 			snapshot.generation == target.terminalFence &&
 			snapshot.fleet == fleetfence.FleetPortable &&
+			snapshot.stagedPresent &&
 			!snapshot.currentPresent &&
 			snapshot.watchdogPresent &&
 			snapshot.processPresent &&
@@ -774,6 +1131,7 @@ func (target *greenfieldSystemTarget) effectPresent(
 		return snapshot.fencePresent &&
 			snapshot.generation == target.terminalFence &&
 			snapshot.fleet == fleetfence.FleetPortable &&
+			snapshot.stagedPresent &&
 			snapshot.currentPresent &&
 			snapshot.current.manifestDigest ==
 				target.manifestDigest &&
@@ -782,6 +1140,49 @@ func (target *greenfieldSystemTarget) effectPresent(
 			snapshot.watchdogPresent &&
 			snapshot.processPresent &&
 			snapshot.releasedPresent &&
+			snapshot.zero
+	default:
+		return false
+	}
+}
+
+func (target *greenfieldSystemTarget) effectAbsent(
+	effect productionEffect,
+	snapshot greenfieldSnapshot,
+) bool {
+	baseline := !snapshot.fencePresent &&
+		snapshot.generation == 0 &&
+		snapshot.fleet == fleetfence.FleetNone &&
+		!snapshot.currentPresent &&
+		!snapshot.watchdogPresent &&
+		!snapshot.processPresent
+	portable := snapshot.fencePresent &&
+		snapshot.generation == target.terminalFence &&
+		snapshot.fleet == fleetfence.FleetPortable &&
+		snapshot.stagedPresent &&
+		snapshot.releasedPresent &&
+		!snapshot.currentPresent
+	switch effect {
+	case effectCandidatePromoted:
+		return baseline &&
+			snapshot.stagedPresent &&
+			!snapshot.releasedPresent
+	case effectFencePortable:
+		return baseline &&
+			snapshot.stagedPresent &&
+			snapshot.releasedPresent
+	case effectWatchdogInstalled:
+		return portable &&
+			!snapshot.watchdogPresent &&
+			!snapshot.processPresent
+	case effectObserverStarted:
+		return portable &&
+			snapshot.watchdogPresent &&
+			!snapshot.processPresent
+	case effectCurrentSelected:
+		return portable &&
+			snapshot.watchdogPresent &&
+			snapshot.processPresent &&
 			snapshot.zero
 	default:
 		return false
@@ -873,13 +1274,107 @@ func (target *greenfieldSystemTarget) waitForZero(
 }
 
 func verifyInstalledTarget(
-	context.Context,
-	hostruntime.PrivateOverlay,
-	string,
-	cli.TargetProof,
-	InvokeArguments,
+	ctx context.Context,
+	overlay hostruntime.PrivateOverlay,
+	revision string,
+	target cli.TargetProof,
+	arguments InvokeArguments,
 ) (hostruntime.HostActionResult, error) {
-	return hostruntime.HostActionResult{}, ErrProtocol
+	sealedTarget, err := cli.SealTargetProof(target)
+	if ctx == nil ||
+		ctx.Err() != nil ||
+		err != nil ||
+		sealedTarget != target ||
+		target.PrivateOverlayRevision != revision ||
+		target.HostIdentityDigest != overlay.Target.HostIdentityDigest ||
+		target.ControlIdentityDigest !=
+			overlay.Target.ControlHostIdentityDigest ||
+		target.FenceGeneration == 0 ||
+		target.ActiveFleet != fleetfence.FleetPortable ||
+		target.CurrentManifestDigest == nil ||
+		*target.CurrentManifestDigest != arguments.ManifestDigest ||
+		arguments.ManifestDigest != overlay.Manifest.Digest ||
+		arguments.TargetProofDigest != target.ProofDigest ||
+		!arguments.RequireZero ||
+		!overlay.Resources.RunnerSizing.OperatorApproved {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	manifest, manifestDocument, manifestDigest, err :=
+		loadPinnedTargetManifest(overlay.Manifest.Path)
+	if err != nil ||
+		len(manifestDocument) == 0 ||
+		manifestDigest != arguments.ManifestDigest ||
+		manifest.FleetGeneration != target.FenceGeneration ||
+		!runtimeManifestMatchesOverlay(manifest, overlay) {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	entry, err := sealTargetProofForState(
+		overlay,
+		revision,
+		hostTargetState{},
+	)
+	if err != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	binding, terminalGeneration, err := fixedGreenfieldBinding(
+		entry,
+		manifestDigest,
+		revision,
+	)
+	if err != nil || terminalGeneration != manifest.FleetGeneration {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	resources, _, err := openGreenfieldOperation(
+		ctx,
+		overlay,
+		revision,
+		manifest,
+		manifestDigest,
+		binding,
+		false,
+	)
+	if err != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	journalDigest, proofDigest, verifyErr := verifyGreenfieldTerminal(
+		ctx,
+		resources.lifecycle,
+		resources.engine.Effects,
+		binding,
+		manifest,
+	)
+	closeErr := resources.Close()
+	if verifyErr != nil || closeErr != nil {
+		return hostruntime.HostActionResult{}, errors.Join(
+			ErrProtocol,
+			verifyErr,
+			closeErr,
+		)
+	}
+	operationID, generation, fleet, err := cli.ExpectedOperation(
+		cli.ActionVerify,
+		target,
+		manifestDigest,
+		revision,
+	)
+	if err != nil ||
+		generation != manifest.FleetGeneration ||
+		fleet != fleetfence.FleetPortable {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	result := hostruntime.HostActionResult{
+		SchemaVersion:     1,
+		Status:            hostruntime.HostActionComplete,
+		OperationID:       operationID,
+		JournalDigest:     journalDigest,
+		TargetProofDigest: &proofDigest,
+		FenceGeneration:   generation,
+		ActiveFleet:       fleet,
+	}
+	if _, _, err := hostruntime.MarshalHostActionResult(result); err != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	return result, nil
 }
 
 var _ LifecyclePhaseBackend = (*productionLifecycleBackend)(nil)

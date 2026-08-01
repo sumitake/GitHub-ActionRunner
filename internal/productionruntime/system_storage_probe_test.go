@@ -129,7 +129,8 @@ func TestSystemStorageProbeFailsClosedOnDriftOrUnboundedDockerOutput(
 				ExitCode: 0,
 			},
 			mutate: func(overlay *hostruntime.PrivateOverlay) {
-				overlay.Resources.Storage.Observations[0].Inode++
+				overlay.Resources.Storage.Observations[0].Inode ^=
+					uint64(1) << 63
 			},
 		},
 	}
