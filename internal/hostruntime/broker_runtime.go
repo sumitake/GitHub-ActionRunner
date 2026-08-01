@@ -95,16 +95,24 @@ func (c *DockerCLI) CreateNetworkBrokerHeld(ctx context.Context, spec BrokerSpec
 	if err != nil || result.ExitCode != 0 || result.Signaled ||
 		result.StdoutTruncated || result.StderrTruncated || len(result.Stderr) != 0 {
 		zeroToken(&token)
-		_ = c.removeBrokerID(ctx, spec.Name)
+		failure := c.cleanupRejectedNamedCreate(
+			ctx,
+			c.brokerCreateIdentity(spec),
+			errors.New("hostruntime: broker create failed"),
+		)
 		c.releaseBrokerReservation(nonce)
-		return BrokerHandle{}, errors.New("hostruntime: broker create failed")
+		return BrokerHandle{}, failure
 	}
 	id, parseErr := parseContainerID(result.Stdout)
 	if parseErr != nil {
 		zeroToken(&token)
-		_ = c.removeBrokerID(ctx, spec.Name)
+		failure := c.cleanupRejectedNamedCreate(
+			ctx,
+			c.brokerCreateIdentity(spec),
+			parseErr,
+		)
 		c.releaseBrokerReservation(nonce)
-		return BrokerHandle{}, parseErr
+		return BrokerHandle{}, failure
 	}
 
 	handle := newBrokerHandle(
@@ -199,6 +207,10 @@ func (c *DockerCLI) validateBrokerSpec(spec BrokerSpec) error {
 	if spec.CapacitySlotID == 0 || spec.JobGeneration == 0 {
 		return errors.New("hostruntime: broker slot generation required")
 	}
+	if spec.PolicyIPv6Posture != PolicyIPv6DenyViaIP6Tables &&
+		spec.PolicyIPv6Posture != PolicyIPv6KernelDisabled {
+		return errors.New("hostruntime: broker ipv6 posture invalid")
+	}
 	uid, _, err := parseUser(spec.User)
 	if err != nil || uid == 0 {
 		return errors.New("hostruntime: broker requires a non-root user")
@@ -279,14 +291,23 @@ func (c *DockerCLI) releaseBrokerReservation(nonce [32]byte) {
 
 func (c *DockerCLI) brokerCreateArgv(spec BrokerSpec) []string {
 	uid, gid, _ := parseUser(spec.User)
-	return []string{
+	argv := []string{
 		c.cfg.DockerPath, "create",
 		"--name", spec.Name,
 		"--network", c.cfg.BrokerNetwork,
+	}
+	if spec.PolicyIPv6Posture == PolicyIPv6KernelDisabled {
+		argv = append(
+			argv,
+			"--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
+			"--sysctl", "net.ipv6.conf.default.disable_ipv6=1",
+		)
+	}
+	return append(argv,
 		"--cap-drop", "ALL",
 		"--read-only",
 		"--security-opt", "no-new-privileges=true",
-		"--security-opt", "seccomp=" + spec.Seccomp.Path,
+		"--security-opt", "seccomp="+spec.Seccomp.Path,
 		"--restart", "no",
 		"--user", spec.User,
 		"--cpus", formatMilliCPU(spec.Limits.MilliCPU),
@@ -299,16 +320,40 @@ func (c *DockerCLI) brokerCreateArgv(spec BrokerSpec) []string {
 		"--log-driver", "local",
 		"--log-opt", fmt.Sprintf("max-size=%db", spec.Limits.LogBytes),
 		"--log-opt", fmt.Sprintf("max-file=%d", spec.Limits.LogFiles),
-		"--mount", "type=bind,src=" + spec.RelayParent + ",dst=" + brokerRelayMountDst,
-		"--mount", "type=bind,src=" + spec.AuthorityParent + ",dst=" + brokerAuthorityMountDst + ",readonly",
+		"--mount", "type=bind,src="+spec.RelayParent+",dst="+brokerRelayMountDst,
+		"--mount", "type=bind,src="+spec.AuthorityParent+",dst="+brokerAuthorityMountDst+",readonly",
 		"--label", "io.portable-ghar.managed=true",
 		"--label", "io.portable-ghar.kind=network-broker",
-		"--label", "io.portable-ghar.build-id=" + spec.BuildID,
-		"--label", "io.portable-ghar.fleet-generation=" + strconv.FormatUint(spec.FleetGeneration, 10),
-		"--label", "io.portable-ghar.slot=" + spec.SlotIdentity,
+		"--label", "io.portable-ghar.build-id="+spec.BuildID,
+		"--label", "io.portable-ghar.fleet-generation="+strconv.FormatUint(spec.FleetGeneration, 10),
+		"--label", "io.portable-ghar.slot="+spec.SlotIdentity,
 		"--entrypoint", brokerEntrypoint,
 		spec.Image,
 		"hold",
+	)
+}
+
+func (c *DockerCLI) brokerCreateIdentity(spec BrokerSpec) rejectedCreateIdentity {
+	return rejectedCreateIdentity{
+		Name:            spec.Name,
+		Kind:            "network-broker",
+		Image:           spec.Image,
+		BuildID:         spec.BuildID,
+		FleetGeneration: spec.FleetGeneration,
+		SlotIdentity:    spec.SlotIdentity,
+		Entrypoint:      []string{brokerEntrypoint},
+		Cmd:             []string{"hold"},
+		NetworkMode:     c.cfg.BrokerNetwork,
+	}
+}
+
+func brokerSysctls(posture PolicyIPv6Posture) map[string]string {
+	if posture != PolicyIPv6KernelDisabled {
+		return map[string]string{}
+	}
+	return map[string]string{
+		"net.ipv6.conf.all.disable_ipv6":     "1",
+		"net.ipv6.conf.default.disable_ipv6": "1",
 	}
 }
 

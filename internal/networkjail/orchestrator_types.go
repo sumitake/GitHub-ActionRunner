@@ -179,7 +179,8 @@ func validatePreparedSetupRequest(request PreparedSetupRequest) error {
 		request.Broker.CapacitySlotID == 0 ||
 		request.Broker.JobGeneration == 0 ||
 		request.Graph.digest == (Digest{}) ||
-		!request.Policy.Valid() {
+		!request.Policy.Valid() ||
+		request.Broker.PolicyIPv6Posture != request.Policy.IPv6Posture() {
 		return ErrSetupInput
 	}
 	runtimePolicy := request.Policy.RuntimePolicy()
@@ -202,10 +203,12 @@ func validatePreparedSetupRequest(request PreparedSetupRequest) error {
 }
 
 func preparedSetupRequest(request SetupRequest) PreparedSetupRequest {
+	broker := request.Broker
+	broker.PolicyIPv6Posture = request.Policy.IPv6Posture()
 	return PreparedSetupRequest{
 		Key:               request.Key,
 		Adapter:           request.Adapter,
-		Broker:            request.Broker,
+		Broker:            broker,
 		Runner:            request.Runner,
 		Verifier:          request.Verifier,
 		Graph:             request.Graph,

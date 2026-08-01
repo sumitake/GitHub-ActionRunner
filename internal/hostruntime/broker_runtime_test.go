@@ -180,19 +180,20 @@ func validBrokerSpec(t *testing.T, adapter AdapterHandle, adapterSpec AdapterSpe
 		}
 	}
 	return BrokerSpec{
-		Name:            "pghar-broker-000007",
-		Image:           "portable-ghar/network-broker-dialer@sha256:" + strings.Repeat("d", 64),
-		HelperImage:     "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
-		BuildID:         adapterSpec.BuildID,
-		FleetGeneration: adapterSpec.FleetGeneration,
-		SlotIdentity:    adapterSpec.SlotIdentity,
-		CapacitySlotID:  7,
-		JobGeneration:   19,
-		Adapter:         adapter,
-		RelayParent:     relayParent,
-		AuthorityParent: authorityParent,
-		User:            adapterSpec.User,
-		Seccomp:         adapterSpec.Seccomp,
+		Name:              "pghar-broker-000007",
+		Image:             "portable-ghar/network-broker-dialer@sha256:" + strings.Repeat("d", 64),
+		HelperImage:       "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+		PolicyIPv6Posture: PolicyIPv6DenyViaIP6Tables,
+		BuildID:           adapterSpec.BuildID,
+		FleetGeneration:   adapterSpec.FleetGeneration,
+		SlotIdentity:      adapterSpec.SlotIdentity,
+		CapacitySlotID:    7,
+		JobGeneration:     19,
+		Adapter:           adapter,
+		RelayParent:       relayParent,
+		AuthorityParent:   authorityParent,
+		User:              adapterSpec.User,
+		Seccomp:           adapterSpec.Seccomp,
 		Limits: BrokerLimits{
 			MilliCPU:        500,
 			MemoryBytes:     512 << 20,
@@ -211,6 +212,51 @@ func validBrokerSpec(t *testing.T, adapter AdapterHandle, adapterSpec AdapterSpe
 			PIDs:            16,
 			FileDescriptors: 64,
 		},
+	}
+}
+
+func TestBrokerKernelDisabledPostureUsesAndAuditsExactSysctls(t *testing.T) {
+	adapterSpec, cfg := validAdapterSpec(t)
+	cfg.BrokerNetwork = "pghar-egress"
+	brokerID := strings.Repeat("e", 64)
+	spec := validBrokerSpec(t, AdapterHandle{}, adapterSpec, cfg)
+	spec.PolicyIPv6Posture = PolicyIPv6KernelDisabled
+	cli := &DockerCLI{cfg: cfg}
+	argv := cli.brokerCreateArgv(spec)
+	want := map[string]string{
+		"net.ipv6.conf.all.disable_ipv6":     "1",
+		"net.ipv6.conf.default.disable_ipv6": "1",
+	}
+	if countArg(argv, "--sysctl") != len(want) {
+		t.Fatalf("broker sysctl count = %d, want %d: %q", countArg(argv, "--sysctl"), len(want), argv)
+	}
+	for name, value := range want {
+		requireArgPair(t, argv, "--sysctl", name+"="+value)
+	}
+
+	raw := managedBrokerInspectJSON(
+		brokerID,
+		7000,
+		adapterSpec,
+		cfg,
+		func(document map[string]any) {
+			document["HostConfig"].(map[string]any)["Sysctls"] = want
+		},
+	)
+	var documents []adapterInspect
+	if err := json.Unmarshal([]byte(raw), &documents); err != nil || len(documents) != 1 {
+		t.Fatalf("decode broker inspect fixture: %v", err)
+	}
+	record := &brokerRecord{
+		handle: BrokerHandle{id: brokerID},
+		spec:   spec,
+	}
+	if err := validateBrokerInspect(documents[0], record, cfg.BrokerNetwork); err != nil {
+		t.Fatalf("validateBrokerInspect(exact sysctls): %v", err)
+	}
+	delete(documents[0].HostConfig.Sysctls, "net.ipv6.conf.default.disable_ipv6")
+	if err := validateBrokerInspect(documents[0], record, cfg.BrokerNetwork); err == nil {
+		t.Fatal("validateBrokerInspect accepted missing kernel-disabled sysctl")
 	}
 }
 
@@ -291,6 +337,182 @@ func TestCreateNetworkBrokerHeldUsesClosedArgvAndOpaqueHandle(t *testing.T) {
 	}
 	if len(commands.commands[4].stdin) != brokerArmFrameBytes {
 		t.Fatalf("broker arm frame length = %d, want %d", len(commands.commands[4].stdin), brokerArmFrameBytes)
+	}
+}
+
+func TestCreateNetworkBrokerHeldNeverRemovesForeignNameCollision(t *testing.T) {
+	adapterSpec, cfg := validAdapterSpec(t)
+	cfg.BrokerNetwork = "pghar-egress"
+	adapterID := strings.Repeat("c", 64)
+	foreignID := strings.Repeat("d", 64)
+	commands := &scriptedCommandRunner{results: []Result{
+		{Stdout: []byte(adapterID + "\n")},
+		{Stdout: []byte(managedAdapterInspectJSON(adapterID, adapterSpec))},
+		{ExitCode: 1},
+		{Stdout: []byte(foreignID + "\n")},
+		{Stdout: []byte(rejectedCreateInspectJSON(
+			foreignID,
+			"pghar-broker-000007",
+			"runner",
+			strings.Repeat("a", 64),
+			1,
+			"foreign-slot",
+		))},
+	}}
+	cli, err := NewDockerCLI(cfg, commands)
+	if err != nil {
+		t.Fatalf("NewDockerCLI: %v", err)
+	}
+	adapter, err := cli.CreateNetworkAdapter(context.Background(), adapterSpec)
+	if err != nil {
+		t.Fatalf("CreateNetworkAdapter: %v", err)
+	}
+	spec := validBrokerSpec(t, adapter, adapterSpec, cfg)
+	if _, err := cli.CreateNetworkBrokerHeld(context.Background(), spec); err == nil {
+		t.Fatal("CreateNetworkBrokerHeld accepted a failed create")
+	}
+	for _, command := range commands.commands {
+		if slices.Contains(command.argv, "rm") {
+			t.Fatalf("foreign name collision was removed: %q", command.argv)
+		}
+	}
+	if len(commands.commands) != 5 {
+		t.Fatalf("command count = %d, want 5: %q", len(commands.commands), commands.commands)
+	}
+}
+
+func TestCreateNetworkBrokerHeldReclaimsOwnedIDAfterMalformedCreateOutput(t *testing.T) {
+	adapterSpec, cfg := validAdapterSpec(t)
+	cfg.BrokerNetwork = "pghar-egress"
+	adapterID := strings.Repeat("c", 64)
+	brokerID := strings.Repeat("e", 64)
+	commands := &scriptedCommandRunner{results: []Result{
+		{Stdout: []byte(adapterID + "\n")},
+		{Stdout: []byte(managedAdapterInspectJSON(adapterID, adapterSpec))},
+		{Stdout: []byte("malformed\n")},
+		{Stdout: []byte(brokerID + "\n")},
+	}}
+	cli, err := NewDockerCLI(cfg, commands)
+	if err != nil {
+		t.Fatalf("NewDockerCLI: %v", err)
+	}
+	adapter, err := cli.CreateNetworkAdapter(context.Background(), adapterSpec)
+	if err != nil {
+		t.Fatalf("CreateNetworkAdapter: %v", err)
+	}
+	spec := validBrokerSpec(t, adapter, adapterSpec, cfg)
+	commands.results = append(commands.results,
+		Result{Stdout: []byte(managedRejectedCreateInspectJSON(rejectedCreateIdentity{
+			ContainerID:     brokerID,
+			Name:            spec.Name,
+			Kind:            "network-broker",
+			Image:           spec.Image,
+			BuildID:         spec.BuildID,
+			FleetGeneration: spec.FleetGeneration,
+			SlotIdentity:    spec.SlotIdentity,
+			Entrypoint:      []string{brokerEntrypoint},
+			Cmd:             []string{"hold"},
+			NetworkMode:     cfg.BrokerNetwork,
+		}))},
+		Result{},
+		Result{},
+		Result{},
+	)
+	if _, err := cli.CreateNetworkBrokerHeld(context.Background(), spec); err == nil {
+		t.Fatal("CreateNetworkBrokerHeld accepted malformed create output")
+	}
+	if len(commands.commands) != 8 {
+		t.Fatalf("command count = %d, want 8: %q", len(commands.commands), commands.commands)
+	}
+	if got := commands.commands[5].argv; !slices.Equal(got, []string{
+		cfg.DockerPath, "rm", "-f", brokerID,
+	}) {
+		t.Fatalf("broker cleanup argv = %q", got)
+	}
+}
+
+func TestApplyNetworkPolicyCancellationReclaimsHelperBeforeBroker(t *testing.T) {
+	adapterSpec, cfg := validAdapterSpec(t)
+	cfg.BrokerNetwork = "pghar-egress"
+	adapterID := strings.Repeat("c", 64)
+	brokerID := strings.Repeat("e", 64)
+	helperID := strings.Repeat("f", 64)
+	brokerPID := int64(7000)
+	commands := &scriptedCommandRunner{results: []Result{
+		{Stdout: []byte(adapterID + "\n")},
+		{Stdout: []byte(managedAdapterInspectJSON(adapterID, adapterSpec))},
+		{Stdout: []byte(brokerID + "\n")},
+		{Stdout: []byte(brokerID + "\n")},
+		{Stdout: []byte("OK\n")},
+		{Stdout: []byte(managedBrokerInspectJSON(brokerID, brokerPID, adapterSpec, cfg, nil))},
+		{Stdout: []byte(fmt.Sprintf("%d 1 %s hold\n", brokerPID, brokerEntrypoint))},
+		{},
+		{Stdout: []byte(helperID + "\n")},
+	}}
+	commands.errors = make([]error, 14)
+	commands.errors[7] = context.Canceled
+	cli, err := NewDockerCLI(cfg, commands)
+	if err != nil {
+		t.Fatalf("NewDockerCLI: %v", err)
+	}
+	adapter, err := cli.CreateNetworkAdapter(context.Background(), adapterSpec)
+	if err != nil {
+		t.Fatalf("CreateNetworkAdapter: %v", err)
+	}
+	spec := validBrokerSpec(t, adapter, adapterSpec, cfg)
+	commands.results = append(commands.results,
+		Result{Stdout: []byte(managedRejectedCreateInspectJSON(rejectedCreateIdentity{
+			ContainerID:     helperID,
+			Name:            spec.Name + "-policy",
+			Kind:            "network-policy-helper",
+			Image:           spec.HelperImage,
+			BuildID:         spec.BuildID,
+			FleetGeneration: spec.FleetGeneration,
+			SlotIdentity:    spec.SlotIdentity,
+			Entrypoint:      []string{helperEntrypoint},
+			Cmd:             []string{"apply"},
+			NetworkMode:     "container:" + brokerID,
+		}))},
+		Result{},
+		Result{},
+		Result{},
+		Result{},
+	)
+	handle, err := cli.CreateNetworkBrokerHeld(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("CreateNetworkBrokerHeld: %v", err)
+	}
+	artifact, err := NewPolicyArtifact(
+		testPolicyProgram(),
+		testPolicyProgram(),
+		[]byte("{\"version\":1}\n"),
+		PolicyIPv6DenyViaIP6Tables,
+	)
+	if err != nil {
+		t.Fatalf("NewPolicyArtifact: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := cli.ApplyNetworkPolicy(ctx, handle, artifact); err == nil {
+		t.Fatal("ApplyNetworkPolicy accepted a cancelled helper")
+	}
+	if slices.Contains(commands.commands[7].argv, "--rm") {
+		t.Fatalf("policy helper still relies on implicit --rm: %q", commands.commands[7].argv)
+	}
+	if got := commands.commands[10].argv; !slices.Equal(got, []string{
+		cfg.DockerPath, "rm", "-f", helperID,
+	}) {
+		t.Fatalf("helper cleanup argv = %q", got)
+	}
+	if got := commands.commands[13].argv; !slices.Equal(got, []string{
+		cfg.DockerPath, "rm", "-f", brokerID,
+	}) {
+		t.Fatalf("broker cleanup argv = %q", got)
+	}
+	for _, call := range commands.contexts[8:13] {
+		if call.canceled || !call.hasDeadline {
+			t.Fatalf("helper cleanup context = %+v", call)
+		}
 	}
 }
 
@@ -406,6 +628,7 @@ func TestBrokerPolicyAuthorityReleaseAndAuditAreExactlyOrdered(t *testing.T) {
 	cfg.BrokerNetwork = "pghar-egress"
 	adapterID := strings.Repeat("c", 64)
 	brokerID := strings.Repeat("e", 64)
+	helperID := strings.Repeat("f", 64)
 	brokerPID := int64(7000)
 	parserPID := uint32(7001)
 	artifact, err := NewPolicyArtifact(
@@ -495,6 +718,21 @@ func TestBrokerPolicyAuthorityReleaseAndAuditAreExactlyOrdered(t *testing.T) {
 		{Stdout: slices.Clone(inspect)},
 		{Stdout: heldTop},
 		{Stdout: policyBytes},
+		{Stdout: []byte(helperID + "\n")},
+		{Stdout: []byte(managedRejectedCreateInspectJSON(rejectedCreateIdentity{
+			ContainerID:     helperID,
+			Name:            "pghar-broker-000007-policy",
+			Kind:            "network-policy-helper",
+			Image:           "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+			BuildID:         adapterSpec.BuildID,
+			FleetGeneration: adapterSpec.FleetGeneration,
+			SlotIdentity:    adapterSpec.SlotIdentity,
+			Entrypoint:      []string{helperEntrypoint},
+			Cmd:             []string{"apply"},
+			NetworkMode:     "container:" + brokerID,
+		}))},
+		{},
+		{},
 		{},
 		{Stdout: slices.Clone(inspect)},
 		{Stdout: heldTop},
@@ -540,6 +778,9 @@ func TestBrokerPolicyAuthorityReleaseAndAuditAreExactlyOrdered(t *testing.T) {
 	requireArgPair(t, helperArgv, "--tmpfs", "/run:rw,noexec,nosuid,nodev,size=65536,uid=0,gid=0,mode=0700")
 	requireArgPair(t, helperArgv, "--memory-swap", fmt.Sprint(spec.HelperLimits.MemorySwapBytes))
 	requireArgPair(t, helperArgv, "--log-driver", "none")
+	if slices.Contains(helperArgv, "--rm") {
+		t.Fatalf("policy helper still relies on implicit --rm: %q", helperArgv)
+	}
 	if countArg(helperArgv, "--env") != 1 {
 		t.Fatalf("policy helper env count = %d, want 1", countArg(helperArgv, "--env"))
 	}
@@ -580,17 +821,17 @@ func TestBrokerPolicyAuthorityReleaseAndAuditAreExactlyOrdered(t *testing.T) {
 	if len(commands.commands) != len(commands.results) {
 		t.Fatalf("commands executed = %d, scripted = %d", len(commands.commands), len(commands.results))
 	}
-	if got := commands.commands[16].argv; !slices.Equal(got, []string{
+	if got := commands.commands[20].argv; !slices.Equal(got, []string{
 		cfg.DockerPath, "exec", brokerID, brokerEntrypoint, "socket-audit",
 	}) {
 		t.Fatalf("socket audit argv = %q", got)
 	}
-	if got := commands.commands[19].argv; !slices.Equal(got, []string{
+	if got := commands.commands[23].argv; !slices.Equal(got, []string{
 		cfg.DockerPath, "exec", "-i", brokerID, brokerEntrypoint, "release",
 	}) {
 		t.Fatalf("release argv = %q", got)
 	}
-	releaseInput := commands.commands[19].stdin
+	releaseInput := commands.commands[23].stdin
 	if len(releaseInput) <= brokerReleasePrefix+releaseTokenBytes ||
 		!strings.HasPrefix(string(releaseInput[:8]), "PGHBRREL") {
 		t.Fatalf("release frame invalid: length=%d", len(releaseInput))
@@ -853,18 +1094,19 @@ func managedBrokerInspectJSON(
 	override func(map[string]any),
 ) string {
 	spec := BrokerSpec{
-		Name:            "pghar-broker-000007",
-		Image:           "portable-ghar/network-broker-dialer@sha256:" + strings.Repeat("d", 64),
-		HelperImage:     "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
-		BuildID:         adapterSpec.BuildID,
-		FleetGeneration: adapterSpec.FleetGeneration,
-		SlotIdentity:    adapterSpec.SlotIdentity,
-		CapacitySlotID:  7,
-		JobGeneration:   19,
-		RelayParent:     adapterSpec.BrokerParent,
-		AuthorityParent: filepath.Join(cfg.BrokerRoot, "slot-000007", "authority"),
-		User:            adapterSpec.User,
-		Seccomp:         adapterSpec.Seccomp,
+		Name:              "pghar-broker-000007",
+		Image:             "portable-ghar/network-broker-dialer@sha256:" + strings.Repeat("d", 64),
+		HelperImage:       "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+		PolicyIPv6Posture: PolicyIPv6DenyViaIP6Tables,
+		BuildID:           adapterSpec.BuildID,
+		FleetGeneration:   adapterSpec.FleetGeneration,
+		SlotIdentity:      adapterSpec.SlotIdentity,
+		CapacitySlotID:    7,
+		JobGeneration:     19,
+		RelayParent:       adapterSpec.BrokerParent,
+		AuthorityParent:   filepath.Join(cfg.BrokerRoot, "slot-000007", "authority"),
+		User:              adapterSpec.User,
+		Seccomp:           adapterSpec.Seccomp,
 		Limits: BrokerLimits{
 			MilliCPU:        500,
 			MemoryBytes:     512 << 20,
@@ -898,6 +1140,7 @@ func managedBrokerInspectJSON(
 		},
 		"HostConfig": map[string]any{
 			"NetworkMode":     cfg.BrokerNetwork,
+			"Sysctls":         map[string]string{},
 			"ReadonlyRootfs":  true,
 			"CapAdd":          []string{},
 			"CapDrop":         []string{"ALL"},

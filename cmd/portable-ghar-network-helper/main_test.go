@@ -120,6 +120,29 @@ func TestRunApplyKernelDisabledProvesPostureAndOmitsIP6Tables(t *testing.T) {
 	}
 }
 
+func TestProveIPv6DisabledReadsBothNamespaceValues(t *testing.T) {
+	wantPaths := []string{
+		"/proc/sys/net/ipv6/conf/all/disable_ipv6",
+		"/proc/sys/net/ipv6/conf/default/disable_ipv6",
+	}
+	var gotPaths []string
+	err := proveIPv6Disabled(func(path string) ([]byte, error) {
+		gotPaths = append(gotPaths, path)
+		return []byte("1\n"), nil
+	})
+	if err != nil {
+		t.Fatalf("proveIPv6Disabled: %v", err)
+	}
+	if !slices.Equal(gotPaths, wantPaths) {
+		t.Fatalf("read paths = %q, want %q", gotPaths, wantPaths)
+	}
+	if err := proveIPv6Disabled(func(string) ([]byte, error) {
+		return []byte("0\n"), nil
+	}); err == nil {
+		t.Fatal("proveIPv6Disabled accepted an enabled namespace value")
+	}
+}
+
 func TestRunApplyRejectsCapabilityProfilesOtherThanNetAdminOnly(t *testing.T) {
 	artifact := helperTestArtifact(t, hostruntime.PolicyIPv6DenyViaIP6Tables)
 	frame, err := hostruntime.EncodePolicyArtifact(artifact)

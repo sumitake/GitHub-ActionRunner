@@ -65,19 +65,33 @@ func (c *DockerCLI) ApplyNetworkPolicy(
 		bytes.NewReader(payload),
 	)
 	zeroBytes(payload)
+	found, cleanupErr := c.cleanupNamedContainer(
+		ctx,
+		c.policyHelperIdentity(record),
+	)
+	if cleanupErr != nil {
+		return c.failBrokerOperation(
+			ctx,
+			record,
+			errors.Join(
+				errors.New("hostruntime: policy helper cleanup failed"),
+				cleanupErr,
+			),
+		)
+	}
 	if runErr != nil || result.ExitCode != 0 || result.Signaled ||
 		result.StdoutTruncated || result.StderrTruncated ||
 		len(result.Stderr) != 0 {
 		return c.failBrokerOperation(ctx, record, errors.New("hostruntime: policy helper failed"))
+	}
+	if !found {
+		return c.failBrokerOperation(ctx, record, errors.New("hostruntime: policy helper lifecycle unproven"))
 	}
 	applied, err := parsePolicyApplication(result.Stdout)
 	if err != nil ||
 		applied.Digest != artifact.Digest() ||
 		applied.IPv6Posture != policyPostureName(artifact.posture) {
 		return c.failBrokerOperation(ctx, record, errors.New("hostruntime: policy helper readback invalid"))
-	}
-	if err := c.provePolicyHelperGone(ctx, record); err != nil {
-		return c.failBrokerOperation(ctx, record, err)
 	}
 	if _, err := c.inspectBrokerHeld(ctx, record); err != nil {
 		return c.failBrokerOperation(ctx, record, err)
@@ -105,7 +119,7 @@ func (c *DockerCLI) policyHelperArgv(record *brokerRecord) []string {
 	spec := record.spec
 	helperName := spec.Name + "-policy"
 	return []string{
-		c.cfg.DockerPath, "run", "--rm",
+		c.cfg.DockerPath, "run",
 		"--name", helperName,
 		"--network", "container:" + record.handle.id,
 		"--cap-drop", "ALL",
@@ -137,27 +151,21 @@ func (c *DockerCLI) policyHelperArgv(record *brokerRecord) []string {
 	}
 }
 
-func (c *DockerCLI) provePolicyHelperGone(
-	ctx context.Context,
+func (c *DockerCLI) policyHelperIdentity(
 	record *brokerRecord,
-) error {
-	name := record.spec.Name + "-policy"
-	result, err := c.runner.Run(
-		ctx,
-		[]string{
-			c.cfg.DockerPath, "ps", "-a",
-			"--filter", "name=^/" + name + "$",
-			"--format", "{{.ID}}",
-		},
-		nil,
-		nil,
-	)
-	if err != nil || result.ExitCode != 0 || result.Signaled ||
-		result.StdoutTruncated || result.StderrTruncated ||
-		len(result.Stdout) != 0 || len(result.Stderr) != 0 {
-		return errors.New("hostruntime: policy helper absence unproven")
+) rejectedCreateIdentity {
+	spec := record.spec
+	return rejectedCreateIdentity{
+		Name:            spec.Name + "-policy",
+		Kind:            "network-policy-helper",
+		Image:           spec.HelperImage,
+		BuildID:         spec.BuildID,
+		FleetGeneration: spec.FleetGeneration,
+		SlotIdentity:    spec.SlotIdentity,
+		Entrypoint:      []string{helperEntrypoint},
+		Cmd:             []string{"apply"},
+		NetworkMode:     "container:" + record.handle.id,
 	}
-	return nil
 }
 
 func parsePolicyApplication(data []byte) (policyApplicationWire, error) {

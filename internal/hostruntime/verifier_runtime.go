@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"strconv"
 
 	"github.com/sumitake/portable-ghar/internal/linuxcap"
@@ -570,27 +569,9 @@ func (c *DockerCLI) verifierContainerID(
 	ctx context.Context,
 	name string,
 ) (string, error) {
-	result, err := c.runner.Run(
-		ctx,
-		[]string{
-			c.cfg.DockerPath, "ps", "-a", "--no-trunc",
-			"--filter", "name=^/" + regexp.QuoteMeta(name) + "$",
-			"--format", "{{.ID}}",
-		},
-		nil,
-		nil,
-	)
-	if err != nil || result.ExitCode != 0 || result.Signaled ||
-		result.StdoutTruncated || result.StderrTruncated ||
-		len(result.Stderr) != 0 {
-		return "", errors.New("hostruntime: network verifier inventory failed")
-	}
-	if len(result.Stdout) == 0 {
-		return "", nil
-	}
-	id, err := parseContainerID(result.Stdout)
+	id, err := c.containerIDByExactName(ctx, name)
 	if err != nil {
-		return "", errors.New("hostruntime: network verifier inventory invalid")
+		return "", errors.New("hostruntime: network verifier inventory failed")
 	}
 	return id, nil
 }

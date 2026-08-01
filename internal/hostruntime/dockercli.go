@@ -353,6 +353,63 @@ func (c *DockerCLI) cleanupRejectedCreate(
 	}
 	ctx, cancel := context.WithTimeout(base, cleanupTimeout)
 	defer cancel()
+	return errors.Join(
+		primary,
+		c.cleanupOwnedContainer(ctx, expected, false),
+	)
+}
+
+func (c *DockerCLI) cleanupRejectedNamedCreate(
+	parent context.Context,
+	expected rejectedCreateIdentity,
+	primary error,
+) error {
+	if primary == nil {
+		primary = errors.New("hostruntime: create rejected")
+	}
+	_, cleanupErr := c.cleanupNamedContainer(parent, expected)
+	return errors.Join(primary, cleanupErr)
+}
+
+func (c *DockerCLI) cleanupNamedContainer(
+	parent context.Context,
+	expected rejectedCreateIdentity,
+) (bool, error) {
+	if c == nil || expected.ContainerID != "" ||
+		!validRejectedCreateIdentityFields(expected) {
+		return false, errors.New("hostruntime: named cleanup identity invalid")
+	}
+	base := context.Background()
+	if parent != nil {
+		base = context.WithoutCancel(parent)
+	}
+	ctx, cancel := context.WithTimeout(base, cleanupTimeout)
+	defer cancel()
+	id, err := c.containerIDByExactName(ctx, expected.Name)
+	if err != nil {
+		return false, errors.New("hostruntime: named cleanup inventory failed")
+	}
+	if id == "" {
+		return false, nil
+	}
+	expected.ContainerID = id
+	if err := c.cleanupOwnedContainer(ctx, expected, true); err != nil {
+		return true, err
+	}
+	if err := c.proveContainerAbsent(ctx, expected.ContainerID, expected.Name); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func (c *DockerCLI) cleanupOwnedContainer(
+	ctx context.Context,
+	expected rejectedCreateIdentity,
+	acceptAlreadyGone bool,
+) error {
+	if c == nil || ctx == nil || !validRejectedCreateIdentity(expected) {
+		return errors.New("hostruntime: rejected create cleanup identity invalid")
+	}
 	inspectResult, inspectErr := c.runner.Run(
 		ctx,
 		[]string{
@@ -368,8 +425,11 @@ func (c *DockerCLI) cleanupRejectedCreate(
 	if inspectErr != nil || inspectResult.ExitCode != 0 ||
 		inspectResult.Signaled || inspectResult.StdoutTruncated ||
 		inspectResult.StderrTruncated || len(inspectResult.Stderr) != 0 {
+		if acceptAlreadyGone &&
+			c.proveContainerAbsent(ctx, expected.ContainerID, expected.Name) == nil {
+			return nil
+		}
 		return errors.Join(
-			primary,
 			errors.New("hostruntime: rejected create cleanup inspection failed"),
 			inspectErr,
 		)
@@ -378,10 +438,7 @@ func (c *DockerCLI) cleanupRejectedCreate(
 	if err := json.Unmarshal(inspectResult.Stdout, &documents); err != nil ||
 		len(documents) != 1 ||
 		!rejectedCreateInspectMatches(documents[0], expected) {
-		return errors.Join(
-			primary,
-			errors.New("hostruntime: rejected create cleanup identity proof failed"),
-		)
+		return errors.New("hostruntime: rejected create cleanup identity proof failed")
 	}
 	removeResult, removeErr := c.runner.Run(
 		ctx,
@@ -398,55 +455,164 @@ func (c *DockerCLI) cleanupRejectedCreate(
 		removeResult.Signaled || removeResult.StdoutTruncated ||
 		removeResult.StderrTruncated || len(removeResult.Stderr) != 0 {
 		return errors.Join(
-			primary,
 			errors.New("hostruntime: rejected create cleanup removal failed"),
 			removeErr,
 		)
 	}
-	return primary
+	return nil
+}
+
+func (c *DockerCLI) containerIDByExactName(
+	ctx context.Context,
+	name string,
+) (string, error) {
+	if c == nil || ctx == nil || validateContainerName(name) != nil {
+		return "", errors.New("hostruntime: container inventory invalid")
+	}
+	return c.containerIDByFilter(
+		ctx,
+		"name=^/"+regexp.QuoteMeta(name)+"$",
+		"",
+	)
+}
+
+func (c *DockerCLI) containerIDByExactID(
+	ctx context.Context,
+	id string,
+) (string, error) {
+	if c == nil || ctx == nil || !isLowerHex64(id) {
+		return "", errors.New("hostruntime: container inventory invalid")
+	}
+	return c.containerIDByFilter(ctx, "id="+id, id)
+}
+
+func (c *DockerCLI) containerIDByFilter(
+	ctx context.Context,
+	filter string,
+	exactID string,
+) (string, error) {
+	result, err := c.runner.Run(
+		ctx,
+		[]string{
+			c.cfg.DockerPath, "ps", "-a", "--no-trunc",
+			"--filter", filter,
+			"--format", "{{.ID}}",
+		},
+		nil,
+		nil,
+	)
+	if err != nil || result.ExitCode != 0 || result.Signaled ||
+		result.StdoutTruncated || result.StderrTruncated ||
+		len(result.Stderr) != 0 {
+		return "", errors.New("hostruntime: container inventory failed")
+	}
+	if len(result.Stdout) == 0 {
+		return "", nil
+	}
+	id, err := parseContainerID(result.Stdout)
+	if err != nil || (exactID != "" && id != exactID) {
+		return "", errors.New("hostruntime: container inventory invalid")
+	}
+	return id, nil
+}
+
+func (c *DockerCLI) proveContainerAbsent(
+	ctx context.Context,
+	id string,
+	name string,
+) error {
+	byID, err := c.containerIDByExactID(ctx, id)
+	if err != nil || byID != "" {
+		return errors.New("hostruntime: container id absence unproven")
+	}
+	byName, err := c.containerIDByExactName(ctx, name)
+	if err != nil || byName != "" {
+		return errors.New("hostruntime: container name absence unproven")
+	}
+	return nil
 }
 
 type rejectedCreateIdentity struct {
 	ContainerID     string
 	Name            string
 	Kind            string
+	Image           string
 	BuildID         string
 	FleetGeneration uint64
 	SlotIdentity    string
+	Entrypoint      []string
+	Cmd             []string
+	NetworkMode     string
 }
 
 type rejectedCreateInspect struct {
 	ID     string `json:"Id"`
 	Name   string `json:"Name"`
 	Config struct {
-		Labels map[string]string `json:"Labels"`
+		Image      string            `json:"Image"`
+		Labels     map[string]string `json:"Labels"`
+		Entrypoint []string          `json:"Entrypoint"`
+		Cmd        []string          `json:"Cmd"`
 	} `json:"Config"`
+	HostConfig struct {
+		NetworkMode string `json:"NetworkMode"`
+	} `json:"HostConfig"`
 }
 
 func validRejectedCreateIdentity(identity rejectedCreateIdentity) bool {
-	if !isLowerHex64(identity.ContainerID) ||
-		validateContainerName(identity.Name) != nil ||
+	return isLowerHex64(identity.ContainerID) &&
+		validRejectedCreateIdentityFields(identity)
+}
+
+func validRejectedCreateIdentityFields(identity rejectedCreateIdentity) bool {
+	if validateContainerName(identity.Name) != nil ||
 		!isLowerHex64(identity.BuildID) ||
 		identity.FleetGeneration == 0 ||
 		validateContainerName(identity.SlotIdentity) != nil {
 		return false
 	}
-	return identity.Kind == "network-adapter" || identity.Kind == "runner"
+	switch identity.Kind {
+	case "network-adapter", "runner":
+		return identity.Image == "" && len(identity.Entrypoint) == 0 &&
+			len(identity.Cmd) == 0 && identity.NetworkMode == ""
+	case "network-broker":
+		return validateImageRef(identity.Image) == nil &&
+			equalStrings(identity.Entrypoint, []string{brokerEntrypoint}) &&
+			equalStrings(identity.Cmd, []string{"hold"}) &&
+			validateContainerName(identity.NetworkMode) == nil
+	case "network-policy-helper":
+		return validateImageRef(identity.Image) == nil &&
+			equalStrings(identity.Entrypoint, []string{helperEntrypoint}) &&
+			equalStrings(identity.Cmd, []string{"apply"}) &&
+			strings.HasPrefix(identity.NetworkMode, "container:") &&
+			isLowerHex64(strings.TrimPrefix(identity.NetworkMode, "container:"))
+	default:
+		return false
+	}
 }
 
 func rejectedCreateInspectMatches(
 	document rejectedCreateInspect,
 	expected rejectedCreateIdentity,
 ) bool {
-	return document.ID == expected.ContainerID &&
-		document.Name == "/"+expected.Name &&
-		equalStringMap(document.Config.Labels, map[string]string{
+	if document.ID != expected.ContainerID ||
+		document.Name != "/"+expected.Name ||
+		!equalStringMap(document.Config.Labels, map[string]string{
 			"io.portable-ghar.managed":          "true",
 			"io.portable-ghar.kind":             expected.Kind,
 			"io.portable-ghar.build-id":         expected.BuildID,
 			"io.portable-ghar.fleet-generation": strconv.FormatUint(expected.FleetGeneration, 10),
 			"io.portable-ghar.slot":             expected.SlotIdentity,
-		})
+		}) {
+		return false
+	}
+	if expected.Image == "" {
+		return true
+	}
+	return document.Config.Image == expected.Image &&
+		equalStrings(document.Config.Entrypoint, expected.Entrypoint) &&
+		equalStrings(document.Config.Cmd, expected.Cmd) &&
+		document.HostConfig.NetworkMode == expected.NetworkMode
 }
 
 func (c *DockerCLI) validateAdapterSpec(spec AdapterSpec) error {
@@ -728,6 +894,7 @@ type adapterInspect struct {
 	} `json:"State"`
 	HostConfig struct {
 		NetworkMode     string            `json:"NetworkMode"`
+		Sysctls         map[string]string `json:"Sysctls"`
 		ReadonlyRootfs  bool              `json:"ReadonlyRootfs"`
 		CapAdd          []string          `json:"CapAdd"`
 		CapDrop         []string          `json:"CapDrop"`

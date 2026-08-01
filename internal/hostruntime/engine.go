@@ -333,21 +333,22 @@ type RunnerSpec struct {
 // container identity, or secret. The broker network itself is fixed in
 // DockerCLIConfig so a job cannot select it.
 type BrokerSpec struct {
-	Name            string
-	Image           string
-	HelperImage     string
-	BuildID         string
-	FleetGeneration uint64
-	SlotIdentity    string
-	CapacitySlotID  uint32
-	JobGeneration   uint64
-	Adapter         AdapterHandle
-	RelayParent     string
-	AuthorityParent string
-	User            string
-	Seccomp         SeccompBinding
-	Limits          BrokerLimits
-	HelperLimits    OneShotLimits
+	Name              string
+	Image             string
+	HelperImage       string
+	PolicyIPv6Posture PolicyIPv6Posture
+	BuildID           string
+	FleetGeneration   uint64
+	SlotIdentity      string
+	CapacitySlotID    uint32
+	JobGeneration     uint64
+	Adapter           AdapterHandle
+	RelayParent       string
+	AuthorityParent   string
+	User              string
+	Seccomp           SeccompBinding
+	Limits            BrokerLimits
+	HelperLimits      OneShotLimits
 }
 
 var _ Engine = (*DockerCLI)(nil)

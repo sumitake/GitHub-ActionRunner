@@ -68,7 +68,9 @@ func defaultHelperRuntime() helperRuntime {
 		capabilities: linuxcap.ReadSelf,
 		restore:      restorePolicy,
 		save:         savePolicy,
-		disableIPv6:  disableIPv6,
+		disableIPv6: func() error {
+			return proveIPv6Disabled(os.ReadFile)
+		},
 	}
 }
 
@@ -276,15 +278,15 @@ func printableSaveComment(line []byte) bool {
 	return true
 }
 
-func disableIPv6() error {
+func proveIPv6Disabled(readFile func(string) ([]byte, error)) error {
+	if readFile == nil {
+		return errors.New("network-helper: ipv6 posture unavailable")
+	}
 	for _, path := range []string{
 		"/proc/sys/net/ipv6/conf/all/disable_ipv6",
 		"/proc/sys/net/ipv6/conf/default/disable_ipv6",
 	} {
-		if err := os.WriteFile(path, []byte("1"), 0o600); err != nil {
-			return errors.New("network-helper: ipv6 posture unavailable")
-		}
-		value, err := os.ReadFile(path)
+		value, err := readFile(path)
 		if err != nil || (!bytes.Equal(value, []byte("1")) &&
 			!bytes.Equal(value, []byte("1\n"))) {
 			zero(value)

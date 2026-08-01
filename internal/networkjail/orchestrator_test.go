@@ -288,7 +288,7 @@ func validSetupRequest(t *testing.T) SetupRequest {
 			BuildID: strings.Repeat("b", 64), FleetGeneration: 17,
 			CapacitySlotID: 7, JobGeneration: 19,
 			AuthorityParent: "/synthetic/authority", User: "65532:65532",
-			SlotIdentity: slotIdentity,
+			SlotIdentity: slotIdentity, PolicyIPv6Posture: policy.IPv6Posture(),
 		},
 		Runner: hostruntime.RunnerSpec{
 			BuildID: strings.Repeat("b", 64), FleetGeneration: 17,
@@ -369,6 +369,23 @@ func TestOrchestratorAcceptsInitialAssignmentAttemptZero(t *testing.T) {
 	defer request.JIT.Destroy()
 	if err := validatePreparedSetupRequest(preparedSetupRequest(request)); err != nil {
 		t.Fatalf("validatePreparedSetupRequest(initial attempt zero) = %v", err)
+	}
+}
+
+func TestPreparedSetupBindsAndRejectsBrokerIPv6PostureDrift(t *testing.T) {
+	request := validSetupRequest(t)
+	defer request.JIT.Destroy()
+	prepared := preparedSetupRequest(request)
+	if prepared.Broker.PolicyIPv6Posture != request.Policy.IPv6Posture() {
+		t.Fatalf(
+			"prepared broker posture = %v, want %v",
+			prepared.Broker.PolicyIPv6Posture,
+			request.Policy.IPv6Posture(),
+		)
+	}
+	prepared.Broker.PolicyIPv6Posture = hostruntime.PolicyIPv6KernelDisabled
+	if err := validatePreparedSetupRequest(prepared); err == nil {
+		t.Fatal("validatePreparedSetupRequest accepted broker policy posture drift")
 	}
 }
 

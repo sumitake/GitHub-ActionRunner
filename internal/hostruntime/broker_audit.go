@@ -132,6 +132,7 @@ func validateBrokerInspect(
 	}
 	host := document.HostConfig
 	if host.NetworkMode != network || !host.ReadonlyRootfs ||
+		!equalStringMap(host.Sysctls, brokerSysctls(spec.PolicyIPv6Posture)) ||
 		!equalStrings(host.CapDrop, []string{"ALL"}) ||
 		len(host.CapAdd) != 0 ||
 		!equalStrings(host.SecurityOpt, []string{

@@ -684,6 +684,191 @@ func TestRejectedCreateCleanupNeverRemovesUnprovedContainer(t *testing.T) {
 	}
 }
 
+func TestRejectedNamedCreateCleanupProvesOwnedIDRemovalAndNameAbsence(t *testing.T) {
+	spec, cfg := validAdapterSpec(t)
+	id := strings.Repeat("c", 64)
+	expected := rejectedCreateIdentity{
+		Name:            "pghar-broker-000007-policy",
+		Kind:            "network-policy-helper",
+		Image:           "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+		BuildID:         spec.BuildID,
+		FleetGeneration: spec.FleetGeneration,
+		SlotIdentity:    spec.SlotIdentity,
+		Entrypoint:      []string{helperEntrypoint},
+		Cmd:             []string{"apply"},
+		NetworkMode:     "container:" + strings.Repeat("e", 64),
+	}
+	primary := errors.New("create sentinel")
+	commands := &scriptedCommandRunner{results: []Result{
+		{Stdout: []byte(id + "\n")},
+		{Stdout: []byte(managedRejectedCreateInspectJSON(func() rejectedCreateIdentity {
+			owned := expected
+			owned.ContainerID = id
+			return owned
+		}()))},
+		{},
+		{},
+		{},
+	}}
+	cli, err := NewDockerCLI(cfg, commands)
+	if err != nil {
+		t.Fatalf("NewDockerCLI: %v", err)
+	}
+	err = cli.cleanupRejectedNamedCreate(context.Background(), expected, primary)
+	if !errors.Is(err, primary) || err.Error() != primary.Error() {
+		t.Fatalf("cleanup error = %v, want primary only", err)
+	}
+	if got := commands.commands[2].argv; !slices.Equal(got, []string{
+		cfg.DockerPath, "rm", "-f", id,
+	}) {
+		t.Fatalf("cleanup removal argv = %q", got)
+	}
+	if len(commands.commands) != 5 {
+		t.Fatalf("cleanup commands = %q", commands.commands)
+	}
+}
+
+func TestRejectedNamedCreateCleanupNeverRemovesUnprovedInventory(t *testing.T) {
+	spec, cfg := validAdapterSpec(t)
+	id := strings.Repeat("c", 64)
+	expected := rejectedCreateIdentity{
+		Name:            "pghar-broker-000007",
+		Kind:            "network-broker",
+		Image:           "portable-ghar/network-broker-dialer@sha256:" + strings.Repeat("d", 64),
+		BuildID:         spec.BuildID,
+		FleetGeneration: spec.FleetGeneration,
+		SlotIdentity:    spec.SlotIdentity,
+		Entrypoint:      []string{brokerEntrypoint},
+		Cmd:             []string{"hold"},
+		NetworkMode:     "pghar-egress",
+	}
+	primary := errors.New("create sentinel")
+	for _, test := range []struct {
+		name    string
+		results []Result
+	}{
+		{name: "short id", results: []Result{{Stdout: []byte("abc123\n")}}},
+		{name: "multiple ids", results: []Result{{Stdout: []byte(id + "\n" + strings.Repeat("d", 64) + "\n")}}},
+		{
+			name: "foreign identity",
+			results: []Result{
+				{Stdout: []byte(id + "\n")},
+				{Stdout: []byte(rejectedCreateInspectJSON(
+					id, expected.Name, "runner", expected.BuildID,
+					expected.FleetGeneration, expected.SlotIdentity,
+				))},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			commands := &scriptedCommandRunner{results: test.results}
+			cli, err := NewDockerCLI(cfg, commands)
+			if err != nil {
+				t.Fatalf("NewDockerCLI: %v", err)
+			}
+			err = cli.cleanupRejectedNamedCreate(context.Background(), expected, primary)
+			if !errors.Is(err, primary) || err.Error() == primary.Error() {
+				t.Fatalf("cleanup error = %v, want primary plus proof failure", err)
+			}
+			for _, command := range commands.commands {
+				if slices.Contains(command.argv, "rm") {
+					t.Fatalf("unproved container was removed: %q", command.argv)
+				}
+			}
+		})
+	}
+}
+
+func TestRejectedNamedCreateCleanupAcceptsInspectGoneOnlyAfterBothAbsenceProofs(t *testing.T) {
+	spec, cfg := validAdapterSpec(t)
+	id := strings.Repeat("c", 64)
+	expected := rejectedCreateIdentity{
+		Name:            "pghar-broker-000007-policy",
+		Kind:            "network-policy-helper",
+		Image:           "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+		BuildID:         spec.BuildID,
+		FleetGeneration: spec.FleetGeneration,
+		SlotIdentity:    spec.SlotIdentity,
+		Entrypoint:      []string{helperEntrypoint},
+		Cmd:             []string{"apply"},
+		NetworkMode:     "container:" + strings.Repeat("e", 64),
+	}
+	primary := errors.New("create sentinel")
+	commands := &scriptedCommandRunner{results: []Result{
+		{Stdout: []byte(id + "\n")},
+		{ExitCode: 1},
+		{},
+		{},
+		{},
+		{},
+	}}
+	cli, err := NewDockerCLI(cfg, commands)
+	if err != nil {
+		t.Fatalf("NewDockerCLI: %v", err)
+	}
+	err = cli.cleanupRejectedNamedCreate(context.Background(), expected, primary)
+	if !errors.Is(err, primary) || err.Error() != primary.Error() {
+		t.Fatalf("cleanup error = %v, want primary only", err)
+	}
+	for _, command := range commands.commands {
+		if slices.Contains(command.argv, "rm") {
+			t.Fatalf("already-gone container was removed: %q", command.argv)
+		}
+	}
+	if len(commands.commands) != 6 {
+		t.Fatalf("cleanup commands = %q", commands.commands)
+	}
+}
+
+func TestRejectedNamedCreateCleanupRejectsNameReuseWithoutRemovingReplacement(t *testing.T) {
+	spec, cfg := validAdapterSpec(t)
+	id := strings.Repeat("c", 64)
+	foreignID := strings.Repeat("d", 64)
+	expected := rejectedCreateIdentity{
+		Name:            "pghar-broker-000007-policy",
+		Kind:            "network-policy-helper",
+		Image:           "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+		BuildID:         spec.BuildID,
+		FleetGeneration: spec.FleetGeneration,
+		SlotIdentity:    spec.SlotIdentity,
+		Entrypoint:      []string{helperEntrypoint},
+		Cmd:             []string{"apply"},
+		NetworkMode:     "container:" + strings.Repeat("e", 64),
+	}
+	owned := expected
+	owned.ContainerID = id
+	primary := errors.New("create sentinel")
+	commands := &scriptedCommandRunner{results: []Result{
+		{Stdout: []byte(id + "\n")},
+		{Stdout: []byte(managedRejectedCreateInspectJSON(owned))},
+		{},
+		{},
+		{Stdout: []byte(foreignID + "\n")},
+	}}
+	cli, err := NewDockerCLI(cfg, commands)
+	if err != nil {
+		t.Fatalf("NewDockerCLI: %v", err)
+	}
+	err = cli.cleanupRejectedNamedCreate(context.Background(), expected, primary)
+	if !errors.Is(err, primary) || err.Error() == primary.Error() {
+		t.Fatalf("cleanup error = %v, want primary plus name-reuse failure", err)
+	}
+	removeCount := 0
+	for _, command := range commands.commands {
+		if slices.Contains(command.argv, "rm") {
+			removeCount++
+			if !slices.Equal(command.argv, []string{
+				cfg.DockerPath, "rm", "-f", id,
+			}) {
+				t.Fatalf("replacement container was targeted: %q", command.argv)
+			}
+		}
+	}
+	if removeCount != 1 {
+		t.Fatalf("cleanup removals = %d, want 1", removeCount)
+	}
+}
+
 func TestCreateNonceFailuresDoNotRemoveAndReleaseTokenFailureDoes(t *testing.T) {
 	randomErr := errors.New("random source failed")
 
@@ -1709,6 +1894,33 @@ func rejectedCreateInspectJSON(
 			"io.portable-ghar.fleet-generation": fmt.Sprint(generation),
 			"io.portable-ghar.slot":             slot,
 		}},
+	}}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+
+func managedRejectedCreateInspectJSON(identity rejectedCreateIdentity) string {
+	document := []map[string]any{{
+		"Id":   identity.ContainerID,
+		"Name": "/" + identity.Name,
+		"Config": map[string]any{
+			"Image": identity.Image,
+			"Labels": map[string]string{
+				"io.portable-ghar.managed":          "true",
+				"io.portable-ghar.kind":             identity.Kind,
+				"io.portable-ghar.build-id":         identity.BuildID,
+				"io.portable-ghar.fleet-generation": fmt.Sprint(identity.FleetGeneration),
+				"io.portable-ghar.slot":             identity.SlotIdentity,
+			},
+			"Entrypoint": identity.Entrypoint,
+			"Cmd":        identity.Cmd,
+		},
+		"HostConfig": map[string]any{
+			"NetworkMode": identity.NetworkMode,
+		},
 	}}
 	encoded, err := json.Marshal(document)
 	if err != nil {
