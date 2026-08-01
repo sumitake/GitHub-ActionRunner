@@ -1,0 +1,8 @@
+{
+  "runner": {
+    "id": 501,
+    "name": "example-fleet-runner-0001",
+    "runnerScaleSetId": 42
+  },
+  "encodedJITConfig": "PLACEHOLDER.JIT.CONFIG.TOKEN.0000000000000000000000000000000000000000"
+}

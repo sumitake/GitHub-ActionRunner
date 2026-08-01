@@ -103,5 +103,2343 @@
     "rule": "IP001",
     "sha256": "cba6fc3f6e86e3e05eaa64bfa058bcd38f5ab0c2a5caf3e5e23c806ae5764ccf",
     "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
+  },
+  {
+    "path": "internal/githubscale/adapter_contract_test.go",
+    "line": 886,
+    "rule": "IP001",
+    "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",
+    "reason": "Synthetic RFC 3849 documentation address in a canonical URL normalization assertion; the exact expected line is required to prove bracketed IPv6 and default-port handling and contains no deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/main.go",
+    "line": 40,
+    "rule": "IP001",
+    "sha256": "7742ab1dc84fb69d1c6c180f8cf039c24ff2929e2ef054aefb57cbe5572679ed",
+    "reason": "Load-bearing fixed loopback endpoint in the capless adapter's closed compile-time relay table; it is not a host or deployment address."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay.go",
+    "line": 42,
+    "rule": "IP001",
+    "sha256": "b786c176d47a83e7b4441a302ac696f316abe9f81f7cb4813fe99851d568d853",
+    "reason": "Load-bearing exact comparison against the adapter's sole allowed loopback endpoint; it is not a host or deployment address."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay.go",
+    "line": 47,
+    "rule": "IP001",
+    "sha256": "9cf3f9374331f40c39fdea72bc7d5036202e00a5e0cc3400a50ebbec8eadf6d4",
+    "reason": "Load-bearing exact host comparison that prevents the adapter from binding outside IPv4 loopback; it is not a host or deployment address."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 90,
+    "rule": "IP001",
+    "sha256": "fae7866dd601a14984e982e03d6ab5acfbd630e201390d559c5bbf03e563ce4c",
+    "reason": "Synthetic loopback listener used only by a local relay unit test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 133,
+    "rule": "IP001",
+    "sha256": "eb4c7b14607625fa0760c34b9645f3d450ea7c0aa07adedbaa80694d3e5e3b45",
+    "reason": "Synthetic expected loopback endpoint in the adapter closed-table boundary test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 139,
+    "rule": "IP001",
+    "sha256": "91855c1978a4b257c9712748a1e7b4b820c08ae30f3c6e940b1c499457d81eea",
+    "reason": "Synthetic unspecified-address negative fixture proving a non-loopback endpoint is rejected; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 140,
+    "rule": "IP001",
+    "sha256": "8600094ed00b7526ebb4fc1922306d1e1c72769f3cc4dc0567b47b3c424afd27",
+    "reason": "Synthetic loopback wrong-port fixture in the adapter closed-table rejection test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 141,
+    "rule": "IP001",
+    "sha256": "dc55ef4f5d0f4f7c6295fdaf94c8409f06def6096dd6ab37addb78a3a36c5799",
+    "reason": "Synthetic loopback path-escape fixture in the adapter closed-table rejection test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 143,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Synthetic first duplicate loopback endpoint in the adapter closed-table rejection test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 144,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Synthetic second duplicate loopback endpoint in the adapter closed-table rejection test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go",
+    "line": 155,
+    "rule": "IP001",
+    "sha256": "f5e033b0b0539f383adb418a1338921a906fca0fdb26c0dc868166259abf6d30",
+    "reason": "Synthetic loopback listener used only by the relay flood-bound unit test; it carries no host or deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go",
+    "line": 43,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Synthetic UUID-shaped GitHub release-asset object identifier required by the canonical redirect acceptance fixture; it is not a deployment identifier."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go",
+    "line": 53,
+    "rule": "URI001",
+    "sha256": "5e037138d3d5a8ce0c020abf12cb3e4cb477a71f32e9e681c982059b19cb1dbe",
+    "reason": "Adversarial URL-userinfo mutation used only to prove the runner redirect validator rejects userinfo before acquisition."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go",
+    "line": 74,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Synthetic UUID-shaped GitHub release-asset object identifier required by the bounded-stdin redirect fixture; it is not a deployment identifier."
+  },
+  {
+    "path": "internal/archive/manifest_test.go",
+    "line": 51,
+    "rule": "MAIL001",
+    "sha256": "b35442bdc16bbb4fbb1adb6e8f90894437162daff3fcdec537f08cca8ec5c99e",
+    "reason": "Adversarial URL-userinfo fixture that resembles an email address only because it proves the seed source parser rejects userinfo."
+  },
+  {
+    "path": "internal/archive/manifest_test.go",
+    "line": 51,
+    "rule": "URI001",
+    "sha256": "b35442bdc16bbb4fbb1adb6e8f90894437162daff3fcdec537f08cca8ec5c99e",
+    "reason": "Adversarial URL-userinfo fixture used only to prove the seed source parser rejects userinfo before archive staging."
+  },
+  {
+    "path": "cmd/portable-ghar-network-verifier/main_test.go",
+    "line": 196,
+    "rule": "IP001",
+    "sha256": "f487a02c6ea45f43b9927be5224f5e32bf9d7cc0ece5dc55823f4685bf132fc4",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-verifier/main_test.go",
+    "line": 209,
+    "rule": "IP001",
+    "sha256": "805d6cee062eb2c8715a964cb18894718f992dd002dbdbe32708a00263b9012c",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-verifier/main_test.go",
+    "line": 212,
+    "rule": "IP001",
+    "sha256": "545c5a952e3234d0bcf38104ff1a4d77dec3708713fa7ba00367832c14880950",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-verifier/main_test.go",
+    "line": 230,
+    "rule": "IP001",
+    "sha256": "270e1dc51e1c50fd04238642beaddbb095d775996b2bcd87fce244f27a30f148",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "cmd/portable-ghar-network-verifier/probe.go",
+    "line": 19,
+    "rule": "IP001",
+    "sha256": "15befea3bafe942f794cc3c047f952d6e0dadd06493707a6fa9d2bd73c50c61d",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile",
+    "line": 22,
+    "rule": "PATH001",
+    "sha256": "147f6e09bcb8e87738389282b75bc075790bfbf50da5983023e9c07bf4fc7d3a",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile",
+    "line": 28,
+    "rule": "PATH001",
+    "sha256": "1a2d97b69ad244c249dd3ee042eca73cb85272dad09652cebb105ce45429126e",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile",
+    "line": 34,
+    "rule": "PATH001",
+    "sha256": "691cf119e808abd6b7fa0f9d6031cb7bc13e06d017071e441fcacbf69406239a",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile",
+    "line": 35,
+    "rule": "PATH001",
+    "sha256": "e4bb86f8cbea9f07c6f306ff66cb00ea02be40a226c47236f4b87a74703df6ea",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/network-helper/Dockerfile",
+    "line": 33,
+    "rule": "PATH001",
+    "sha256": "7a0072a519592966b56eeacc2db97d8fcc93542d142a4734a9cfdabb342cb9f7",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/network-helper/Dockerfile",
+    "line": 34,
+    "rule": "PATH001",
+    "sha256": "9b17ff8c7b915d926e8b445fb001b3986343d488d95a9f6cfe0921a4125a8aef",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/network-helper/Dockerfile",
+    "line": 35,
+    "rule": "PATH001",
+    "sha256": "1da40cd4daf6d36ccef84c01a2543db2102f6c381474ea2c4bfa1cb24fab5215",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile",
+    "line": 21,
+    "rule": "PATH001",
+    "sha256": "064d2d683e90459dd23219ed26af81cc66a7938ca894ad67664be3807d718f94",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile",
+    "line": 26,
+    "rule": "PATH001",
+    "sha256": "1a2d97b69ad244c249dd3ee042eca73cb85272dad09652cebb105ce45429126e",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile",
+    "line": 29,
+    "rule": "PATH001",
+    "sha256": "691cf119e808abd6b7fa0f9d6031cb7bc13e06d017071e441fcacbf69406239a",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile",
+    "line": 30,
+    "rule": "PATH001",
+    "sha256": "e4bb86f8cbea9f07c6f306ff66cb00ea02be40a226c47236f4b87a74703df6ea",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "internal/hostruntime/broker_runtime_test.go",
+    "line": 476,
+    "rule": "IP001",
+    "sha256": "7a4d3a2fd0213bb7aac4328007e6cb30fcf7f52b2b39cc7121294ea655839937",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go",
+    "line": 118,
+    "rule": "IP001",
+    "sha256": "3f8543ada814c70561177b4f2561732c4137da899ec6510999f18cbcb108b901",
+    "reason": "Synthetic noncanonical loopback spelling required to prove the management-host parser rejects ambiguous IP input; it is not deployment data."
+  },
+  {
+    "path": "internal/config/controller_runtime_test.go",
+    "line": 396,
+    "rule": "PATH001",
+    "sha256": "35bd47b9faf483bc169dd53ad66685f8cabfb64fcf3280460544088f8e05fa6e",
+    "reason": "Synthetic control-user known-hosts path in the closed production-runtime fixture; it is not an operator or workstation path."
+  },
+  {
+    "path": "internal/config/controller_runtime_test.go",
+    "line": 415,
+    "rule": "PATH001",
+    "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
+    "reason": "Synthetic control-user credential path in the closed production-runtime fixture; it is not an operator or workstation path."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go",
+    "line": 134,
+    "rule": "PATH001",
+    "sha256": "2e74a3140ec5147478770a0edfe20e6bebffa411ef24832c3669e592e49e0ac6",
+    "reason": "Synthetic Unicode path mutation required to prove the private-overlay parser rejects noncanonical management paths; it is not deployment data."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go",
+    "line": 145,
+    "rule": "PATH001",
+    "sha256": "9d245372f7ea710453cb3ef6dda15f2334ec5f6d31b9bc432b57d336c6874fe3",
+    "reason": "Synthetic whitespace path mutation required to prove the private-overlay parser rejects ambiguous credential paths; it is not deployment data."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go",
+    "line": 516,
+    "rule": "PATH001",
+    "sha256": "35bd47b9faf483bc169dd53ad66685f8cabfb64fcf3280460544088f8e05fa6e",
+    "reason": "Synthetic control-user known-hosts path in the canonical private-overlay fixture; it is not an operator or workstation path."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go",
+    "line": 535,
+    "rule": "PATH001",
+    "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
+    "reason": "Synthetic control-user credential path in the canonical private-overlay fixture; it is not an operator or workstation path."
+  },
+  {
+    "path": "internal/productionruntime/protocol_test.go",
+    "line": 792,
+    "rule": "PATH001",
+    "sha256": "35bd47b9faf483bc169dd53ad66685f8cabfb64fcf3280460544088f8e05fa6e",
+    "reason": "Synthetic control-user known-hosts path in the management-protocol fixture; it is not an operator or workstation path."
+  },
+  {
+    "path": "internal/productionruntime/protocol_test.go",
+    "line": 811,
+    "rule": "PATH001",
+    "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
+    "reason": "Synthetic control-user credential path in the management-protocol fixture; it is not an operator or workstation path."
+  },
+  {
+    "path": "internal/networkjail/connect_parser.go",
+    "line": 131,
+    "rule": "HOST001",
+    "sha256": "13adf60c4f98c1f3be4bcbf48bce8c3f7bdcd7270c5a22654eb5508b2080179f",
+    "reason": "Task 6 synthetic hostname or fixed redacted diagnostic token required by parser normalization tests; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/connect_parser.go",
+    "line": 171,
+    "rule": "HOST001",
+    "sha256": "b47b5354bcd0a7aa3d77de9d411d2dad9ae390e86fb271a0ebe1b34b58e41d0c",
+    "reason": "Task 6 synthetic hostname or fixed redacted diagnostic token required by parser normalization tests; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/connect_parser.go",
+    "line": 182,
+    "rule": "HOST001",
+    "sha256": "e99ddcad38ea02191139365e025c4658799e627f07963d312b52661b1a15dcec",
+    "reason": "Task 6 synthetic hostname or fixed redacted diagnostic token required by parser normalization tests; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/connect_parser.go",
+    "line": 188,
+    "rule": "HOST001",
+    "sha256": "344af2957268e349f9e7a83e49ba7503848ab39ba86afa6ed134e9e6a4ea5983",
+    "reason": "Task 6 synthetic hostname or fixed redacted diagnostic token required by parser normalization tests; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/dialer_test.go",
+    "line": 272,
+    "rule": "IP001",
+    "sha256": "fc14bbc03fc68d040fc4e0605374fd77248abdeaa1a6c2034ab7a3085f6b2411",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_linux_test.go",
+    "line": 16,
+    "rule": "DEPLOYID002",
+    "sha256": "881f9501ca0fb0e7bc3d2e8340008ee5275069a7760d940b5f9387f941223c98",
+    "reason": "Synthetic boot-identity fixture used to test monotonic-clock continuity and rollback handling; it is not a deployment identifier."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_linux_test.go",
+    "line": 25,
+    "rule": "DEPLOYID002",
+    "sha256": "9142a501671d3f580c4ba8268a2b06a3d3b996ae5d82022788d83895d6ad3c9a",
+    "reason": "Synthetic boot-identity fixture used to test monotonic-clock continuity and rollback handling; it is not a deployment identifier."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_test.go",
+    "line": 6,
+    "rule": "DEPLOYID002",
+    "sha256": "d755b894f9d97069b2f60248615f29fb31490c4ce22b5157a7148cafcdd320aa",
+    "reason": "Synthetic boot-identity fixture used to test monotonic-clock continuity and rollback handling; it is not a deployment identifier."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_test.go",
+    "line": 16,
+    "rule": "DEPLOYID002",
+    "sha256": "83975b899348fa7b0680cadb79ab375301a848772517b670023e7f6473d720df",
+    "reason": "Synthetic boot-identity fixture used to test monotonic-clock continuity and rollback handling; it is not a deployment identifier."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_test.go",
+    "line": 17,
+    "rule": "DEPLOYID002",
+    "sha256": "b4ff341f71190c81593cbc67bb94f048c0b9452209af2b01bb56c2ed90d7f60d",
+    "reason": "Synthetic boot-identity fixture used to test monotonic-clock continuity and rollback handling; it is not a deployment identifier."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_test.go",
+    "line": 18,
+    "rule": "DEPLOYID002",
+    "sha256": "0e55a87c286c2e81f3380e8606cfad8d00199ba141e30f0cf031c6108fc13982",
+    "reason": "Synthetic boot-identity fixture used to test monotonic-clock continuity and rollback handling; it is not a deployment identifier."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go",
+    "line": 77,
+    "rule": "IP001",
+    "sha256": "62a81db37809141080372cac107170c4279b3503da4a2ebacf1cf7eebfb5a5b8",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go",
+    "line": 78,
+    "rule": "IP001",
+    "sha256": "834bad4c9cec07229720f90295abfd30de823f7324fa3303ae0d696e2b2a5ae0",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go",
+    "line": 79,
+    "rule": "IP001",
+    "sha256": "b2806501ee71a2eb15f3743cf7ecf53bdda912d0fb01dc6b58c6d3c6e7c65e8c",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go",
+    "line": 80,
+    "rule": "IP001",
+    "sha256": "106c9cf7bfad0f4c1f1109458f7af335d7f912e0d915b8fe5feed4a94ff8d7ed",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go",
+    "line": 81,
+    "rule": "IP001",
+    "sha256": "964a596889add1d1440fbd4ec1ecc4c0c2c113b8b692658e07e1f8731c8f1e38",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go",
+    "line": 89,
+    "rule": "IP001",
+    "sha256": "74e5108852aeb52edda8fd9d0c855f93a9cbfa08c8ce5a8d150e31d19a3c576f",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 14,
+    "rule": "IP001",
+    "sha256": "4ec3bfce838a1f7d434336c7db6b374f05d59ddb3aaf203a683bb9bd4e8b1501",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 15,
+    "rule": "IP001",
+    "sha256": "e5758685b69bc5cbf6af7f53f28385048c0a8b525e62d35ae4797cb86bf62e1d",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 16,
+    "rule": "IP001",
+    "sha256": "53687801c5c1c6192bc23928742e18c87e95cf468f25a9458f9a4024a048f41c",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 17,
+    "rule": "IP001",
+    "sha256": "664c04b8150935d952e764fb3d6e2dbacd874c1284d4432b2d66ea4145e7a0b5",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 18,
+    "rule": "IP001",
+    "sha256": "1672964915ce44938f920bed5381809e5557356729a8ca5f41253b061beb6b57",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 19,
+    "rule": "IP001",
+    "sha256": "f974f950d3dd05ffb2cf5d45c1dbb05ccad0781f99e10ef4dca239a5d3605959",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 20,
+    "rule": "IP001",
+    "sha256": "e76f4854e9ff29525014f9090f73929b3d8782a89664ae880725f2647c888c32",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 21,
+    "rule": "IP001",
+    "sha256": "27d9845a2750727fde01f65f7c44261f2f3c332609079d49ef24ffb4a99414f2",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 22,
+    "rule": "IP001",
+    "sha256": "c989a0707c79ee40d891f224532e1f4bb074ca7a3c04f50d51843f5a641d3f76",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 23,
+    "rule": "IP001",
+    "sha256": "9c4eda9cf3391f68b69713c8b756bc17e27a7aae328262890aeaebdfb2517719",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 24,
+    "rule": "IP001",
+    "sha256": "412668cd467425216a86a9cede71343b0a95f3f3bdfcf50a1a76625bdb410433",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 25,
+    "rule": "IP001",
+    "sha256": "9451c56e485bbdec39cb19f09b898b7a3ca617e50737bb3c756b71a9c2630a0a",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 26,
+    "rule": "IP001",
+    "sha256": "2fa445d2b51b427fea98062b9ac7697135e7678ec5deb3d22cf31f035e9a91a4",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 27,
+    "rule": "IP001",
+    "sha256": "36216d9ce106085deb21775c48138c05e44f48d77f8f3f94b84316f7c2be9020",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 28,
+    "rule": "IP001",
+    "sha256": "d663b5b10ff0e50ce99a851d1fbe155a3db77c4d28d7559f0c3ffbcc19bf8477",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 29,
+    "rule": "IP001",
+    "sha256": "5f0b149c9603b8b3f5df269e2fe7878f4028b5a3bbd897473fc04fafe30a8340",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 30,
+    "rule": "IP001",
+    "sha256": "5153d7198514ab2c54e3be29845af595f52bccc661661f1614b38a37d528834d",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 31,
+    "rule": "IP001",
+    "sha256": "9f4de2ffd0238c29f38b3bff1d72a11658e35cb51a283d2e28b5a421c2e7854c",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 32,
+    "rule": "IP001",
+    "sha256": "23e419680918e72a8d599547a9a4eabc6f646f193eb23b716f9c91c539837d8d",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 33,
+    "rule": "IP001",
+    "sha256": "caad4918871b8f835900363c5e973fd5c4f45390f29fc2725cfaeb88d9e2c462",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 34,
+    "rule": "IP001",
+    "sha256": "223cc19cbe3f1a85268eebe9736e5dc3d1b170ceeac855d25c2dd11479a4f726",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 35,
+    "rule": "IP001",
+    "sha256": "bedec596093abb1fa89b80e92e85338552292f7e68dde63f06eb776bb65c08d2",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 36,
+    "rule": "IP001",
+    "sha256": "da94966a9d854a60ac0dd62ca973747fa2831be5c1925ce60ad30b8456c0b33a",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 37,
+    "rule": "IP001",
+    "sha256": "78f3df6e4f852b8e58515674ae65a70151ba9cbe483c0bddd23a7d7924460c42",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 38,
+    "rule": "IP001",
+    "sha256": "e96731237fb97dd8f1cab5e397ce8357f35f5e1d4d5659eb97fb3ee7c08fe6bb",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 39,
+    "rule": "IP001",
+    "sha256": "34d52beb7c3cfd521ef470df5e275c78bfc805cbbf04d4e629bc9a60b5972865",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 48,
+    "rule": "IP001",
+    "sha256": "e8ccbdf01141514e48ee3779a3eba0431599f72715e27c99f884b1ccab691ab8",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 66,
+    "rule": "IP001",
+    "sha256": "032d2106b43d123209c86f6efe7a354961ed1abbea807e530fb2759e1478678d",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 80,
+    "rule": "HOST001",
+    "sha256": "9a4db3cf6084560e81e0c9bb12593d3faf413d76895d26eabbcbdb91ed15cd5a",
+    "reason": "Task 6 synthetic hostname or fixed redacted diagnostic token required by parser normalization tests; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 96,
+    "rule": "IP001",
+    "sha256": "2ba6fb8dc6a5e9c8a2bbff352a81c86c58e2eb245a0a2a0e98c37c13217e4f9f",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 97,
+    "rule": "IP001",
+    "sha256": "39142eb3ed6102db69c1ce4e2003ef1b88db7f4c565e717f3bd873d278f54ad2",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 99,
+    "rule": "IP001",
+    "sha256": "646687c2852371a0583bfd040d91b965309721dcc01d5f2ee6834302eb1464c9",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 127,
+    "rule": "IP001",
+    "sha256": "3c3ab9065fb04cd2754b1c867beb473067a729757bde1b88e66e90ccb3ea2516",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 138,
+    "rule": "IP001",
+    "sha256": "3c3ab9065fb04cd2754b1c867beb473067a729757bde1b88e66e90ccb3ea2516",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go",
+    "line": 160,
+    "rule": "IP001",
+    "sha256": "3c3ab9065fb04cd2754b1c867beb473067a729757bde1b88e66e90ccb3ea2516",
+    "reason": "Task 6 standard address literal used by the closed runtime policy or its synthetic deny/allow verification; it is not deployment data."
+  },
+  {
+    "path": "scripts/prepare-task6-images.sh",
+    "line": 47,
+    "rule": "PATH001",
+    "sha256": "0ecfd98650200ab3ab2cd69efb05deeb046552b940e1403002f22907500a2830",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "scripts/prepare-task6-images.sh",
+    "line": 48,
+    "rule": "PATH001",
+    "sha256": "205e96057328302f581bc2634a14a8160d7584223184ccce43696ddc434259fa",
+    "reason": "Task 6 container-internal or private temporary build path required by the closed image/runtime contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile",
+    "line": 42,
+    "rule": "PATH001",
+    "sha256": "19ddcd3c40b5a0dff3b8e409b2959f5d94186b9614d35c4d5fd968f8e6df12be",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile",
+    "line": 91,
+    "rule": "PATH001",
+    "sha256": "7d66787c67f77e0a3d8a5b192cf339a82301cd5dd635b12fe2e1d5f21de989d1",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile",
+    "line": 92,
+    "rule": "PATH001",
+    "sha256": "e1bb92c460358d1e9087b6fb82d6c96647e78dcb2d59f24d3e138cfdc0f1da79",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile",
+    "line": 94,
+    "rule": "PATH001",
+    "sha256": "1faddca08a7a2959110a04bcd483e0bc26156d465c3308de40a154088f960b86",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile",
+    "line": 96,
+    "rule": "PATH001",
+    "sha256": "5b390b21f45135b223f9df284bf80f6725b54f55942dd4d757f9f1e875899149",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile",
+    "line": 97,
+    "rule": "PATH001",
+    "sha256": "d1471c44a855e831a71659029fcfb211f3a03ac4da95224d154036c86898d12d",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile",
+    "line": 98,
+    "rule": "PATH001",
+    "sha256": "f377165bd95d06492865403df7782d32a596cb40a2f9731a6142cdaa4a8acce3",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile",
+    "line": 131,
+    "rule": "PATH001",
+    "sha256": "022d4093d1e3ec105971109045908bdf427fe41dc4223734a00c7a8a77b5dfd8",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile",
+    "line": 132,
+    "rule": "PATH001",
+    "sha256": "269106b34e4751752f394a11831a3151e84c461c3ecae0f900f334c2b0311336",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile",
+    "line": 133,
+    "rule": "PATH001",
+    "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/README.md",
+    "line": 34,
+    "rule": "PATH001",
+    "sha256": "aab4e4c4ef3020bb7b7d016fd18fe1256fff8119467eaf7bd811336ea003f28d",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "scripts/ci/check_runner_debian_snapshot.py",
+    "line": 328,
+    "rule": "PATH001",
+    "sha256": "ce4e12cebd8d03b5172c72a490883d924d264a929705d84322d4445f39102829",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "scripts/ci/check_runner_debian_snapshot.py",
+    "line": 352,
+    "rule": "PATH001",
+    "sha256": "a64b1b1b93e9cc02517be92d96e8d374b0bba6fca1fa6e29523319b1dfd122b2",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile@c399c1e0cb43d8ec042da565033881a66e4273b5",
+    "line": 42,
+    "rule": "PATH001",
+    "sha256": "19ddcd3c40b5a0dff3b8e409b2959f5d94186b9614d35c4d5fd968f8e6df12be",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@c399c1e0cb43d8ec042da565033881a66e4273b5",
+    "line": 91,
+    "rule": "PATH001",
+    "sha256": "7d66787c67f77e0a3d8a5b192cf339a82301cd5dd635b12fe2e1d5f21de989d1",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@c399c1e0cb43d8ec042da565033881a66e4273b5",
+    "line": 92,
+    "rule": "PATH001",
+    "sha256": "e1bb92c460358d1e9087b6fb82d6c96647e78dcb2d59f24d3e138cfdc0f1da79",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@c399c1e0cb43d8ec042da565033881a66e4273b5",
+    "line": 94,
+    "rule": "PATH001",
+    "sha256": "1faddca08a7a2959110a04bcd483e0bc26156d465c3308de40a154088f960b86",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@c399c1e0cb43d8ec042da565033881a66e4273b5",
+    "line": 96,
+    "rule": "PATH001",
+    "sha256": "5b390b21f45135b223f9df284bf80f6725b54f55942dd4d757f9f1e875899149",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@c399c1e0cb43d8ec042da565033881a66e4273b5",
+    "line": 97,
+    "rule": "PATH001",
+    "sha256": "d1471c44a855e831a71659029fcfb211f3a03ac4da95224d154036c86898d12d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@c399c1e0cb43d8ec042da565033881a66e4273b5",
+    "line": 98,
+    "rule": "PATH001",
+    "sha256": "f377165bd95d06492865403df7782d32a596cb40a2f9731a6142cdaa4a8acce3",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@c399c1e0cb43d8ec042da565033881a66e4273b5",
+    "line": 122,
+    "rule": "PATH001",
+    "sha256": "022d4093d1e3ec105971109045908bdf427fe41dc4223734a00c7a8a77b5dfd8",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@c399c1e0cb43d8ec042da565033881a66e4273b5",
+    "line": 123,
+    "rule": "PATH001",
+    "sha256": "269106b34e4751752f394a11831a3151e84c461c3ecae0f900f334c2b0311336",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@c399c1e0cb43d8ec042da565033881a66e4273b5",
+    "line": 124,
+    "rule": "PATH001",
+    "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@2c37fdbac1c6555a5235eb84e4798c527ab22866",
+    "line": 42,
+    "rule": "PATH001",
+    "sha256": "19ddcd3c40b5a0dff3b8e409b2959f5d94186b9614d35c4d5fd968f8e6df12be",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@2c37fdbac1c6555a5235eb84e4798c527ab22866",
+    "line": 91,
+    "rule": "PATH001",
+    "sha256": "7d66787c67f77e0a3d8a5b192cf339a82301cd5dd635b12fe2e1d5f21de989d1",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@2c37fdbac1c6555a5235eb84e4798c527ab22866",
+    "line": 92,
+    "rule": "PATH001",
+    "sha256": "e1bb92c460358d1e9087b6fb82d6c96647e78dcb2d59f24d3e138cfdc0f1da79",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@2c37fdbac1c6555a5235eb84e4798c527ab22866",
+    "line": 94,
+    "rule": "PATH001",
+    "sha256": "1faddca08a7a2959110a04bcd483e0bc26156d465c3308de40a154088f960b86",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@2c37fdbac1c6555a5235eb84e4798c527ab22866",
+    "line": 96,
+    "rule": "PATH001",
+    "sha256": "5b390b21f45135b223f9df284bf80f6725b54f55942dd4d757f9f1e875899149",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@2c37fdbac1c6555a5235eb84e4798c527ab22866",
+    "line": 97,
+    "rule": "PATH001",
+    "sha256": "d1471c44a855e831a71659029fcfb211f3a03ac4da95224d154036c86898d12d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@2c37fdbac1c6555a5235eb84e4798c527ab22866",
+    "line": 98,
+    "rule": "PATH001",
+    "sha256": "f377165bd95d06492865403df7782d32a596cb40a2f9731a6142cdaa4a8acce3",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@2c37fdbac1c6555a5235eb84e4798c527ab22866",
+    "line": 127,
+    "rule": "PATH001",
+    "sha256": "022d4093d1e3ec105971109045908bdf427fe41dc4223734a00c7a8a77b5dfd8",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@2c37fdbac1c6555a5235eb84e4798c527ab22866",
+    "line": 128,
+    "rule": "PATH001",
+    "sha256": "269106b34e4751752f394a11831a3151e84c461c3ecae0f900f334c2b0311336",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@2c37fdbac1c6555a5235eb84e4798c527ab22866",
+    "line": 129,
+    "rule": "PATH001",
+    "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/README.md@403c59a9b8c5b4cb4a6ff2cc48c66f8937334c9c",
+    "line": 34,
+    "rule": "PATH001",
+    "sha256": "aab4e4c4ef3020bb7b7d016fd18fe1256fff8119467eaf7bd811336ea003f28d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/ci/check_runner_debian_snapshot.py@732b28117e7852d42fcd3c78137b7c74553ed97a",
+    "line": 328,
+    "rule": "PATH001",
+    "sha256": "ce4e12cebd8d03b5172c72a490883d924d264a929705d84322d4445f39102829",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/ci/check_runner_debian_snapshot.py@732b28117e7852d42fcd3c78137b7c74553ed97a",
+    "line": 352,
+    "rule": "PATH001",
+    "sha256": "a64b1b1b93e9cc02517be92d96e8d374b0bba6fca1fa6e29523319b1dfd122b2",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/main.go@fd7e270e4c89b503f1c83a172d2151911f2560ea",
+    "line": 40,
+    "rule": "IP001",
+    "sha256": "7742ab1dc84fb69d1c6c180f8cf039c24ff2929e2ef054aefb57cbe5572679ed",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay.go@52f9f8df79486aa39fdb0a63d29ecc41f5aa6025",
+    "line": 42,
+    "rule": "IP001",
+    "sha256": "b786c176d47a83e7b4441a302ac696f316abe9f81f7cb4813fe99851d568d853",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay.go@52f9f8df79486aa39fdb0a63d29ecc41f5aa6025",
+    "line": 47,
+    "rule": "IP001",
+    "sha256": "9cf3f9374331f40c39fdea72bc7d5036202e00a5e0cc3400a50ebbec8eadf6d4",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay.go@68131d0cb61230e46a32f6e573c112bad4b51954",
+    "line": 42,
+    "rule": "IP001",
+    "sha256": "b786c176d47a83e7b4441a302ac696f316abe9f81f7cb4813fe99851d568d853",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay.go@68131d0cb61230e46a32f6e573c112bad4b51954",
+    "line": 47,
+    "rule": "IP001",
+    "sha256": "9cf3f9374331f40c39fdea72bc7d5036202e00a5e0cc3400a50ebbec8eadf6d4",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay.go@766de547dbfe427eedc30be339f70e58bcf1ecb4",
+    "line": 50,
+    "rule": "IP001",
+    "sha256": "b786c176d47a83e7b4441a302ac696f316abe9f81f7cb4813fe99851d568d853",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay.go@766de547dbfe427eedc30be339f70e58bcf1ecb4",
+    "line": 55,
+    "rule": "IP001",
+    "sha256": "9cf3f9374331f40c39fdea72bc7d5036202e00a5e0cc3400a50ebbec8eadf6d4",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@06cba8d20295948a7c1dd6406bb7ce50aeaf65ea",
+    "line": 133,
+    "rule": "IP001",
+    "sha256": "eb4c7b14607625fa0760c34b9645f3d450ea7c0aa07adedbaa80694d3e5e3b45",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@06cba8d20295948a7c1dd6406bb7ce50aeaf65ea",
+    "line": 139,
+    "rule": "IP001",
+    "sha256": "91855c1978a4b257c9712748a1e7b4b820c08ae30f3c6e940b1c499457d81eea",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@06cba8d20295948a7c1dd6406bb7ce50aeaf65ea",
+    "line": 140,
+    "rule": "IP001",
+    "sha256": "8600094ed00b7526ebb4fc1922306d1e1c72769f3cc4dc0567b47b3c424afd27",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@06cba8d20295948a7c1dd6406bb7ce50aeaf65ea",
+    "line": 141,
+    "rule": "IP001",
+    "sha256": "dc55ef4f5d0f4f7c6295fdaf94c8409f06def6096dd6ab37addb78a3a36c5799",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@06cba8d20295948a7c1dd6406bb7ce50aeaf65ea",
+    "line": 143,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@06cba8d20295948a7c1dd6406bb7ce50aeaf65ea",
+    "line": 144,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@06cba8d20295948a7c1dd6406bb7ce50aeaf65ea",
+    "line": 155,
+    "rule": "IP001",
+    "sha256": "f5e033b0b0539f383adb418a1338921a906fca0fdb26c0dc868166259abf6d30",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@06cba8d20295948a7c1dd6406bb7ce50aeaf65ea",
+    "line": 90,
+    "rule": "IP001",
+    "sha256": "fae7866dd601a14984e982e03d6ab5acfbd630e201390d559c5bbf03e563ce4c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 133,
+    "rule": "IP001",
+    "sha256": "eb4c7b14607625fa0760c34b9645f3d450ea7c0aa07adedbaa80694d3e5e3b45",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 139,
+    "rule": "IP001",
+    "sha256": "91855c1978a4b257c9712748a1e7b4b820c08ae30f3c6e940b1c499457d81eea",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 140,
+    "rule": "IP001",
+    "sha256": "8600094ed00b7526ebb4fc1922306d1e1c72769f3cc4dc0567b47b3c424afd27",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 141,
+    "rule": "IP001",
+    "sha256": "dc55ef4f5d0f4f7c6295fdaf94c8409f06def6096dd6ab37addb78a3a36c5799",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 143,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 144,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 155,
+    "rule": "IP001",
+    "sha256": "f5e033b0b0539f383adb418a1338921a906fca0fdb26c0dc868166259abf6d30",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 90,
+    "rule": "IP001",
+    "sha256": "fae7866dd601a14984e982e03d6ab5acfbd630e201390d559c5bbf03e563ce4c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@b97f09f0181361dc0ff72a0196e623be3ecfad67",
+    "line": 117,
+    "rule": "IP001",
+    "sha256": "eb4c7b14607625fa0760c34b9645f3d450ea7c0aa07adedbaa80694d3e5e3b45",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@b97f09f0181361dc0ff72a0196e623be3ecfad67",
+    "line": 123,
+    "rule": "IP001",
+    "sha256": "91855c1978a4b257c9712748a1e7b4b820c08ae30f3c6e940b1c499457d81eea",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@b97f09f0181361dc0ff72a0196e623be3ecfad67",
+    "line": 124,
+    "rule": "IP001",
+    "sha256": "8600094ed00b7526ebb4fc1922306d1e1c72769f3cc4dc0567b47b3c424afd27",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@b97f09f0181361dc0ff72a0196e623be3ecfad67",
+    "line": 125,
+    "rule": "IP001",
+    "sha256": "dc55ef4f5d0f4f7c6295fdaf94c8409f06def6096dd6ab37addb78a3a36c5799",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@b97f09f0181361dc0ff72a0196e623be3ecfad67",
+    "line": 127,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@b97f09f0181361dc0ff72a0196e623be3ecfad67",
+    "line": 128,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@b97f09f0181361dc0ff72a0196e623be3ecfad67",
+    "line": 139,
+    "rule": "IP001",
+    "sha256": "f5e033b0b0539f383adb418a1338921a906fca0fdb26c0dc868166259abf6d30",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@b97f09f0181361dc0ff72a0196e623be3ecfad67",
+    "line": 75,
+    "rule": "IP001",
+    "sha256": "fae7866dd601a14984e982e03d6ab5acfbd630e201390d559c5bbf03e563ce4c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@d7a2f06ce963983d7755609031939a60f2a1a65f",
+    "line": 117,
+    "rule": "IP001",
+    "sha256": "eb4c7b14607625fa0760c34b9645f3d450ea7c0aa07adedbaa80694d3e5e3b45",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@d7a2f06ce963983d7755609031939a60f2a1a65f",
+    "line": 123,
+    "rule": "IP001",
+    "sha256": "91855c1978a4b257c9712748a1e7b4b820c08ae30f3c6e940b1c499457d81eea",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@d7a2f06ce963983d7755609031939a60f2a1a65f",
+    "line": 124,
+    "rule": "IP001",
+    "sha256": "8600094ed00b7526ebb4fc1922306d1e1c72769f3cc4dc0567b47b3c424afd27",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@d7a2f06ce963983d7755609031939a60f2a1a65f",
+    "line": 125,
+    "rule": "IP001",
+    "sha256": "dc55ef4f5d0f4f7c6295fdaf94c8409f06def6096dd6ab37addb78a3a36c5799",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@d7a2f06ce963983d7755609031939a60f2a1a65f",
+    "line": 127,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@d7a2f06ce963983d7755609031939a60f2a1a65f",
+    "line": 128,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@d7a2f06ce963983d7755609031939a60f2a1a65f",
+    "line": 139,
+    "rule": "IP001",
+    "sha256": "f5e033b0b0539f383adb418a1338921a906fca0fdb26c0dc868166259abf6d30",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@d7a2f06ce963983d7755609031939a60f2a1a65f",
+    "line": 75,
+    "rule": "IP001",
+    "sha256": "fae7866dd601a14984e982e03d6ab5acfbd630e201390d559c5bbf03e563ce4c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-verifier/main_test.go@a417d8d72561c5816fdea36189a85a12120ea5e9",
+    "line": 196,
+    "rule": "IP001",
+    "sha256": "f487a02c6ea45f43b9927be5224f5e32bf9d7cc0ece5dc55823f4685bf132fc4",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-verifier/main_test.go@a417d8d72561c5816fdea36189a85a12120ea5e9",
+    "line": 209,
+    "rule": "IP001",
+    "sha256": "805d6cee062eb2c8715a964cb18894718f992dd002dbdbe32708a00263b9012c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-verifier/main_test.go@a417d8d72561c5816fdea36189a85a12120ea5e9",
+    "line": 212,
+    "rule": "IP001",
+    "sha256": "545c5a952e3234d0bcf38104ff1a4d77dec3708713fa7ba00367832c14880950",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-verifier/main_test.go@a417d8d72561c5816fdea36189a85a12120ea5e9",
+    "line": 230,
+    "rule": "IP001",
+    "sha256": "270e1dc51e1c50fd04238642beaddbb095d775996b2bcd87fce244f27a30f148",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-verifier/probe.go@93607b9acb249e46512568a223109d8a177a458b",
+    "line": 19,
+    "rule": "IP001",
+    "sha256": "15befea3bafe942f794cc3c047f952d6e0dadd06493707a6fa9d2bd73c50c61d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@504a9c865eb35654def0a297c05c2b3b25b80895",
+    "line": 43,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@504a9c865eb35654def0a297c05c2b3b25b80895",
+    "line": 53,
+    "rule": "URI001",
+    "sha256": "5e037138d3d5a8ce0c020abf12cb3e4cb477a71f32e9e681c982059b19cb1dbe",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@504a9c865eb35654def0a297c05c2b3b25b80895",
+    "line": 74,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@8b1f84f55e0ca93eb850359f2f8195a95e007e5b",
+    "line": 22,
+    "rule": "PATH001",
+    "sha256": "147f6e09bcb8e87738389282b75bc075790bfbf50da5983023e9c07bf4fc7d3a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@8b1f84f55e0ca93eb850359f2f8195a95e007e5b",
+    "line": 28,
+    "rule": "PATH001",
+    "sha256": "1a2d97b69ad244c249dd3ee042eca73cb85272dad09652cebb105ce45429126e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@8b1f84f55e0ca93eb850359f2f8195a95e007e5b",
+    "line": 34,
+    "rule": "PATH001",
+    "sha256": "691cf119e808abd6b7fa0f9d6031cb7bc13e06d017071e441fcacbf69406239a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@8b1f84f55e0ca93eb850359f2f8195a95e007e5b",
+    "line": 35,
+    "rule": "PATH001",
+    "sha256": "e4bb86f8cbea9f07c6f306ff66cb00ea02be40a226c47236f4b87a74703df6ea",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@df1609cae460fb48990b90079ebf7dad9506c0eb",
+    "line": 20,
+    "rule": "PATH001",
+    "sha256": "147f6e09bcb8e87738389282b75bc075790bfbf50da5983023e9c07bf4fc7d3a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@df1609cae460fb48990b90079ebf7dad9506c0eb",
+    "line": 26,
+    "rule": "PATH001",
+    "sha256": "1a2d97b69ad244c249dd3ee042eca73cb85272dad09652cebb105ce45429126e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@df1609cae460fb48990b90079ebf7dad9506c0eb",
+    "line": 32,
+    "rule": "PATH001",
+    "sha256": "691cf119e808abd6b7fa0f9d6031cb7bc13e06d017071e441fcacbf69406239a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@df1609cae460fb48990b90079ebf7dad9506c0eb",
+    "line": 33,
+    "rule": "PATH001",
+    "sha256": "e4bb86f8cbea9f07c6f306ff66cb00ea02be40a226c47236f4b87a74703df6ea",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@7acfaadd9c48a2f849a2744cc7c330fc91f1a833",
+    "line": 31,
+    "rule": "PATH001",
+    "sha256": "7a0072a519592966b56eeacc2db97d8fcc93542d142a4734a9cfdabb342cb9f7",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@7acfaadd9c48a2f849a2744cc7c330fc91f1a833",
+    "line": 32,
+    "rule": "PATH001",
+    "sha256": "9b17ff8c7b915d926e8b445fb001b3986343d488d95a9f6cfe0921a4125a8aef",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@7acfaadd9c48a2f849a2744cc7c330fc91f1a833",
+    "line": 33,
+    "rule": "PATH001",
+    "sha256": "1da40cd4daf6d36ccef84c01a2543db2102f6c381474ea2c4bfa1cb24fab5215",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@b1be2db3ea318fd70ca92b5db084a07e13a813c3",
+    "line": 33,
+    "rule": "PATH001",
+    "sha256": "7a0072a519592966b56eeacc2db97d8fcc93542d142a4734a9cfdabb342cb9f7",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@b1be2db3ea318fd70ca92b5db084a07e13a813c3",
+    "line": 34,
+    "rule": "PATH001",
+    "sha256": "9b17ff8c7b915d926e8b445fb001b3986343d488d95a9f6cfe0921a4125a8aef",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@b1be2db3ea318fd70ca92b5db084a07e13a813c3",
+    "line": 35,
+    "rule": "PATH001",
+    "sha256": "1da40cd4daf6d36ccef84c01a2543db2102f6c381474ea2c4bfa1cb24fab5215",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@e65ceabec94cec4ff6f16f59f6d9565c2b8849a6",
+    "line": 33,
+    "rule": "PATH001",
+    "sha256": "7a0072a519592966b56eeacc2db97d8fcc93542d142a4734a9cfdabb342cb9f7",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@e65ceabec94cec4ff6f16f59f6d9565c2b8849a6",
+    "line": 34,
+    "rule": "PATH001",
+    "sha256": "9b17ff8c7b915d926e8b445fb001b3986343d488d95a9f6cfe0921a4125a8aef",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@e65ceabec94cec4ff6f16f59f6d9565c2b8849a6",
+    "line": 35,
+    "rule": "PATH001",
+    "sha256": "1da40cd4daf6d36ccef84c01a2543db2102f6c381474ea2c4bfa1cb24fab5215",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@53d1ffa93b29d09d787c9e020cc64d4348070b7a",
+    "line": 19,
+    "rule": "PATH001",
+    "sha256": "064d2d683e90459dd23219ed26af81cc66a7938ca894ad67664be3807d718f94",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@53d1ffa93b29d09d787c9e020cc64d4348070b7a",
+    "line": 24,
+    "rule": "PATH001",
+    "sha256": "1a2d97b69ad244c249dd3ee042eca73cb85272dad09652cebb105ce45429126e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@53d1ffa93b29d09d787c9e020cc64d4348070b7a",
+    "line": 27,
+    "rule": "PATH001",
+    "sha256": "691cf119e808abd6b7fa0f9d6031cb7bc13e06d017071e441fcacbf69406239a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@53d1ffa93b29d09d787c9e020cc64d4348070b7a",
+    "line": 28,
+    "rule": "PATH001",
+    "sha256": "e4bb86f8cbea9f07c6f306ff66cb00ea02be40a226c47236f4b87a74703df6ea",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@e977a736af2edb2d713b58208d569000cb647db2",
+    "line": 21,
+    "rule": "PATH001",
+    "sha256": "064d2d683e90459dd23219ed26af81cc66a7938ca894ad67664be3807d718f94",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@e977a736af2edb2d713b58208d569000cb647db2",
+    "line": 26,
+    "rule": "PATH001",
+    "sha256": "1a2d97b69ad244c249dd3ee042eca73cb85272dad09652cebb105ce45429126e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@e977a736af2edb2d713b58208d569000cb647db2",
+    "line": 29,
+    "rule": "PATH001",
+    "sha256": "691cf119e808abd6b7fa0f9d6031cb7bc13e06d017071e441fcacbf69406239a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@e977a736af2edb2d713b58208d569000cb647db2",
+    "line": 30,
+    "rule": "PATH001",
+    "sha256": "e4bb86f8cbea9f07c6f306ff66cb00ea02be40a226c47236f4b87a74703df6ea",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/archive/manifest_test.go@1e096acc447f07f4472de2adc01057314b282a59",
+    "line": 51,
+    "rule": "MAIL001",
+    "sha256": "b35442bdc16bbb4fbb1adb6e8f90894437162daff3fcdec537f08cca8ec5c99e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/archive/manifest_test.go@1e096acc447f07f4472de2adc01057314b282a59",
+    "line": 51,
+    "rule": "URI001",
+    "sha256": "b35442bdc16bbb4fbb1adb6e8f90894437162daff3fcdec537f08cca8ec5c99e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/runtime_test.go@7026a8925cc3c99fe5342d9e29625c9c9e59a4f6",
+    "line": 110,
+    "rule": "SECRET_TOKEN",
+    "sha256": "34f317cbc1bff952b1c727b0662d18fdb45b78831d61ebbc4c03e11a1cb8e214",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/runtime_test.go@7026a8925cc3c99fe5342d9e29625c9c9e59a4f6",
+    "line": 124,
+    "rule": "SECRET_TOKEN",
+    "sha256": "99f53307af793f01cab070a29ab23491c6e45a6d955c080c5a8087230a1e8e33",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/runtime_test.go@7026a8925cc3c99fe5342d9e29625c9c9e59a4f6",
+    "line": 135,
+    "rule": "SECRET_TOKEN",
+    "sha256": "0c142679f8942c7b9bf6f473175db8812ad7e1951db0d5190e64f3c1f4f6f9f9",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/runtime_test.go@7026a8925cc3c99fe5342d9e29625c9c9e59a4f6",
+    "line": 136,
+    "rule": "SECRET_TOKEN",
+    "sha256": "7a52f96d6570e65f49461996da0b6b53646bd83acb186230a33acc84ca578377",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/runtime_test.go@7026a8925cc3c99fe5342d9e29625c9c9e59a4f6",
+    "line": 221,
+    "rule": "SECRET_TOKEN",
+    "sha256": "94dc9ad1ecb93e87131689be623f80b8974fdea762d494b6f626cbdcff4ae776",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/runtime_test.go@7026a8925cc3c99fe5342d9e29625c9c9e59a4f6",
+    "line": 25,
+    "rule": "SECRET_TOKEN",
+    "sha256": "0c142679f8942c7b9bf6f473175db8812ad7e1951db0d5190e64f3c1f4f6f9f9",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/runtime_test.go@7026a8925cc3c99fe5342d9e29625c9c9e59a4f6",
+    "line": 94,
+    "rule": "SECRET_TOKEN",
+    "sha256": "54b92bf977dacedd3c5c95dba5c1e44e830109834544dc549929b29a4e2279e9",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/githubscale/adapter_contract_test.go@3a89c7dd981536a26ea9f7f18f1cada1cb8adf04",
+    "line": 886,
+    "rule": "IP001",
+    "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/githubscale/adapter_contract_test.go@f0dcaf5d2133465fceb0ffe950b546793fca2252",
+    "line": 400,
+    "rule": "DEPLOYID002",
+    "sha256": "e2e13385f08f6ba881e094ed01a1ec85892e870d084b4b357a1c26f15f7a2e48",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/broker_runtime_test.go@9c9d6a5ff2827c1b0f8eb46a87a06bb78ef564ee",
+    "line": 476,
+    "rule": "IP001",
+    "sha256": "7a4d3a2fd0213bb7aac4328007e6cb30fcf7f52b2b39cc7121294ea655839937",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/connect_parser.go@35091b4e63590df52de78d0f00600bffd7e943bb",
+    "line": 131,
+    "rule": "HOST001",
+    "sha256": "13adf60c4f98c1f3be4bcbf48bce8c3f7bdcd7270c5a22654eb5508b2080179f",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/connect_parser.go@35091b4e63590df52de78d0f00600bffd7e943bb",
+    "line": 171,
+    "rule": "HOST001",
+    "sha256": "b47b5354bcd0a7aa3d77de9d411d2dad9ae390e86fb271a0ebe1b34b58e41d0c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/connect_parser.go@35091b4e63590df52de78d0f00600bffd7e943bb",
+    "line": 182,
+    "rule": "HOST001",
+    "sha256": "e99ddcad38ea02191139365e025c4658799e627f07963d312b52661b1a15dcec",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/connect_parser.go@35091b4e63590df52de78d0f00600bffd7e943bb",
+    "line": 188,
+    "rule": "HOST001",
+    "sha256": "344af2957268e349f9e7a83e49ba7503848ab39ba86afa6ed134e9e6a4ea5983",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/dialer_test.go@e79c6a144428e8a06f417b3d7d56d827c2097ba3",
+    "line": 272,
+    "rule": "IP001",
+    "sha256": "fc14bbc03fc68d040fc4e0605374fd77248abdeaa1a6c2034ab7a3085f6b2411",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_linux_test.go@557e3a28a3ad1deaa814c70777ca508f709825d1",
+    "line": 16,
+    "rule": "DEPLOYID002",
+    "sha256": "881f9501ca0fb0e7bc3d2e8340008ee5275069a7760d940b5f9387f941223c98",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_linux_test.go@557e3a28a3ad1deaa814c70777ca508f709825d1",
+    "line": 25,
+    "rule": "DEPLOYID002",
+    "sha256": "9142a501671d3f580c4ba8268a2b06a3d3b996ae5d82022788d83895d6ad3c9a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_test.go@2268660f8b0b5f63ad4efe37990d181bfed78e41",
+    "line": 16,
+    "rule": "DEPLOYID002",
+    "sha256": "83975b899348fa7b0680cadb79ab375301a848772517b670023e7f6473d720df",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_test.go@2268660f8b0b5f63ad4efe37990d181bfed78e41",
+    "line": 17,
+    "rule": "DEPLOYID002",
+    "sha256": "b4ff341f71190c81593cbc67bb94f048c0b9452209af2b01bb56c2ed90d7f60d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_test.go@2268660f8b0b5f63ad4efe37990d181bfed78e41",
+    "line": 18,
+    "rule": "DEPLOYID002",
+    "sha256": "0e55a87c286c2e81f3380e8606cfad8d00199ba141e30f0cf031c6108fc13982",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/permit_clock_test.go@2268660f8b0b5f63ad4efe37990d181bfed78e41",
+    "line": 6,
+    "rule": "DEPLOYID002",
+    "sha256": "d755b894f9d97069b2f60248615f29fb31490c4ce22b5157a7148cafcdd320aa",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go@b37c3f6c1071223160b5ace6b10dced94d6e7fd8",
+    "line": 77,
+    "rule": "IP001",
+    "sha256": "62a81db37809141080372cac107170c4279b3503da4a2ebacf1cf7eebfb5a5b8",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go@b37c3f6c1071223160b5ace6b10dced94d6e7fd8",
+    "line": 78,
+    "rule": "IP001",
+    "sha256": "834bad4c9cec07229720f90295abfd30de823f7324fa3303ae0d696e2b2a5ae0",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go@b37c3f6c1071223160b5ace6b10dced94d6e7fd8",
+    "line": 79,
+    "rule": "IP001",
+    "sha256": "b2806501ee71a2eb15f3743cf7ecf53bdda912d0fb01dc6b58c6d3c6e7c65e8c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go@b37c3f6c1071223160b5ace6b10dced94d6e7fd8",
+    "line": 80,
+    "rule": "IP001",
+    "sha256": "106c9cf7bfad0f4c1f1109458f7af335d7f912e0d915b8fe5feed4a94ff8d7ed",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go@b37c3f6c1071223160b5ace6b10dced94d6e7fd8",
+    "line": 81,
+    "rule": "IP001",
+    "sha256": "964a596889add1d1440fbd4ec1ecc4c0c2c113b8b692658e07e1f8731c8f1e38",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/policy_artifact_test.go@b37c3f6c1071223160b5ace6b10dced94d6e7fd8",
+    "line": 89,
+    "rule": "IP001",
+    "sha256": "74e5108852aeb52edda8fd9d0c855f93a9cbfa08c8ce5a8d150e31d19a3c576f",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 127,
+    "rule": "IP001",
+    "sha256": "3c3ab9065fb04cd2754b1c867beb473067a729757bde1b88e66e90ccb3ea2516",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 138,
+    "rule": "IP001",
+    "sha256": "3c3ab9065fb04cd2754b1c867beb473067a729757bde1b88e66e90ccb3ea2516",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 14,
+    "rule": "IP001",
+    "sha256": "4ec3bfce838a1f7d434336c7db6b374f05d59ddb3aaf203a683bb9bd4e8b1501",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 15,
+    "rule": "IP001",
+    "sha256": "e5758685b69bc5cbf6af7f53f28385048c0a8b525e62d35ae4797cb86bf62e1d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 16,
+    "rule": "IP001",
+    "sha256": "53687801c5c1c6192bc23928742e18c87e95cf468f25a9458f9a4024a048f41c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 160,
+    "rule": "IP001",
+    "sha256": "3c3ab9065fb04cd2754b1c867beb473067a729757bde1b88e66e90ccb3ea2516",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 17,
+    "rule": "IP001",
+    "sha256": "664c04b8150935d952e764fb3d6e2dbacd874c1284d4432b2d66ea4145e7a0b5",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 18,
+    "rule": "IP001",
+    "sha256": "1672964915ce44938f920bed5381809e5557356729a8ca5f41253b061beb6b57",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 19,
+    "rule": "IP001",
+    "sha256": "f974f950d3dd05ffb2cf5d45c1dbb05ccad0781f99e10ef4dca239a5d3605959",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 20,
+    "rule": "IP001",
+    "sha256": "e76f4854e9ff29525014f9090f73929b3d8782a89664ae880725f2647c888c32",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 21,
+    "rule": "IP001",
+    "sha256": "27d9845a2750727fde01f65f7c44261f2f3c332609079d49ef24ffb4a99414f2",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 22,
+    "rule": "IP001",
+    "sha256": "c989a0707c79ee40d891f224532e1f4bb074ca7a3c04f50d51843f5a641d3f76",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 23,
+    "rule": "IP001",
+    "sha256": "9c4eda9cf3391f68b69713c8b756bc17e27a7aae328262890aeaebdfb2517719",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 24,
+    "rule": "IP001",
+    "sha256": "412668cd467425216a86a9cede71343b0a95f3f3bdfcf50a1a76625bdb410433",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 25,
+    "rule": "IP001",
+    "sha256": "9451c56e485bbdec39cb19f09b898b7a3ca617e50737bb3c756b71a9c2630a0a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 26,
+    "rule": "IP001",
+    "sha256": "2fa445d2b51b427fea98062b9ac7697135e7678ec5deb3d22cf31f035e9a91a4",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 27,
+    "rule": "IP001",
+    "sha256": "36216d9ce106085deb21775c48138c05e44f48d77f8f3f94b84316f7c2be9020",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 28,
+    "rule": "IP001",
+    "sha256": "d663b5b10ff0e50ce99a851d1fbe155a3db77c4d28d7559f0c3ffbcc19bf8477",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 29,
+    "rule": "IP001",
+    "sha256": "5f0b149c9603b8b3f5df269e2fe7878f4028b5a3bbd897473fc04fafe30a8340",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 30,
+    "rule": "IP001",
+    "sha256": "5153d7198514ab2c54e3be29845af595f52bccc661661f1614b38a37d528834d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 31,
+    "rule": "IP001",
+    "sha256": "9f4de2ffd0238c29f38b3bff1d72a11658e35cb51a283d2e28b5a421c2e7854c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 32,
+    "rule": "IP001",
+    "sha256": "23e419680918e72a8d599547a9a4eabc6f646f193eb23b716f9c91c539837d8d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 33,
+    "rule": "IP001",
+    "sha256": "caad4918871b8f835900363c5e973fd5c4f45390f29fc2725cfaeb88d9e2c462",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 34,
+    "rule": "IP001",
+    "sha256": "223cc19cbe3f1a85268eebe9736e5dc3d1b170ceeac855d25c2dd11479a4f726",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 35,
+    "rule": "IP001",
+    "sha256": "bedec596093abb1fa89b80e92e85338552292f7e68dde63f06eb776bb65c08d2",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 36,
+    "rule": "IP001",
+    "sha256": "da94966a9d854a60ac0dd62ca973747fa2831be5c1925ce60ad30b8456c0b33a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 37,
+    "rule": "IP001",
+    "sha256": "78f3df6e4f852b8e58515674ae65a70151ba9cbe483c0bddd23a7d7924460c42",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 38,
+    "rule": "IP001",
+    "sha256": "e96731237fb97dd8f1cab5e397ce8357f35f5e1d4d5659eb97fb3ee7c08fe6bb",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 39,
+    "rule": "IP001",
+    "sha256": "34d52beb7c3cfd521ef470df5e275c78bfc805cbbf04d4e629bc9a60b5972865",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 48,
+    "rule": "IP001",
+    "sha256": "e8ccbdf01141514e48ee3779a3eba0431599f72715e27c99f884b1ccab691ab8",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 66,
+    "rule": "IP001",
+    "sha256": "032d2106b43d123209c86f6efe7a354961ed1abbea807e530fb2759e1478678d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 80,
+    "rule": "HOST001",
+    "sha256": "9a4db3cf6084560e81e0c9bb12593d3faf413d76895d26eabbcbdb91ed15cd5a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 96,
+    "rule": "IP001",
+    "sha256": "2ba6fb8dc6a5e9c8a2bbff352a81c86c58e2eb245a0a2a0e98c37c13217e4f9f",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 97,
+    "rule": "IP001",
+    "sha256": "39142eb3ed6102db69c1ce4e2003ef1b88db7f4c565e717f3bd873d278f54ad2",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/ranges_test.go@bafcddf01a1ae6a6e3bf8dfa77ba97fbaf4aaec6",
+    "line": 99,
+    "rule": "IP001",
+    "sha256": "646687c2852371a0583bfd040d91b965309721dcc01d5f2ee6834302eb1464c9",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/redaction/redaction_test.go@eea1cfaf4dd6d52e0e04b6d51b69666a697692b2",
+    "line": 212,
+    "rule": "PATH001",
+    "sha256": "c2cf29b82ab83a203f24c1cdc8ad27a02a42ffb1eb06d6da82e688462fa8aaad",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 100,
+    "rule": "IP001",
+    "sha256": "b4370eac8fce3bc86558476378ee0765cb8fcc2d6d8b2de7ea97fcce0f5348e7",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 105,
+    "rule": "IP001",
+    "sha256": "cba6fc3f6e86e3e05eaa64bfa058bcd38f5ab0c2a5caf3e5e23c806ae5764ccf",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 79,
+    "rule": "IP001",
+    "sha256": "9b88549a6fde5cc15b08a20e7dcf36aa4ab3687569c561d9cff5a7400809f026",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 82,
+    "rule": "IP001",
+    "sha256": "8887959055c0f6d0043fb7dc96ba7fc69d1a9207235a9338fc6b64acaaf20511",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 86,
+    "rule": "IP001",
+    "sha256": "abf230aae1a534259928fba5a9d30384a0c2099ada2e849273c6141d4eb76f35",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 88,
+    "rule": "IP001",
+    "sha256": "a231662b5bfbbd44cee4e64bee12cc9ecdcf40f5a09909be0e17569f0fd3cd69",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 92,
+    "rule": "IP001",
+    "sha256": "4259a197f2252945995265096967170135195928b2525709436d208b32056058",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 93,
+    "rule": "IP001",
+    "sha256": "70490c03be9f80fbf5f22c3d3ed7f73775328ff93ac93f6e00a89561f8416018",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 94,
+    "rule": "IP001",
+    "sha256": "add1479361805b75deffaaa12fc67b41eac1997e21eac163a6569276e7fe3b21",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 95,
+    "rule": "IP001",
+    "sha256": "8e5bb8c2a6177b5c25d0016cf81abe5c85eb77c1231c3229a95081b9628eef00",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 96,
+    "rule": "IP001",
+    "sha256": "04eb763b13ba79ab05047a3302ad3ee0dfcefe9425ed736f8c0b801836f4db8c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 97,
+    "rule": "IP001",
+    "sha256": "40168b35cd60e998444cb0b0746b56072f11f22955f3e04deb9a5dade88ec5e2",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 98,
+    "rule": "IP001",
+    "sha256": "9c539607cd79c852f82a80fc0fb1cfb8364b3fb086ddd68b09be8947ae59d7e0",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/_sanitize_normalize.py@0eabf56b29660efaeab3bd0c265ff6a11f0eecc6",
+    "line": 99,
+    "rule": "IP001",
+    "sha256": "0acf6f059d37488e229d4999a57d9d5f5b48d6eec66b14f234e4d32b34a546d1",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/prepare-task6-images.sh@52b8e20397141f6c806923e598531546dc22ab21",
+    "line": 47,
+    "rule": "PATH001",
+    "sha256": "0ecfd98650200ab3ab2cd69efb05deeb046552b940e1403002f22907500a2830",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/prepare-task6-images.sh@52b8e20397141f6c806923e598531546dc22ab21",
+    "line": 48,
+    "rule": "PATH001",
+    "sha256": "205e96057328302f581bc2634a14a8160d7584223184ccce43696ddc434259fa",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "tests/config/schema-validation.test.mjs@f50e95d017cbe33c840f1d545881bbc63c378e55",
+    "line": 89,
+    "rule": "SECRET_TOKEN",
+    "sha256": "2ebfae6629d50448ab2c0e92a5d512d32b9481afe16b0552ad3bac222678722a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@66a109250097898e48ac2514a6d269d9b2a9cd3d",
+    "line": 42,
+    "rule": "PATH001",
+    "sha256": "19ddcd3c40b5a0dff3b8e409b2959f5d94186b9614d35c4d5fd968f8e6df12be",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@66a109250097898e48ac2514a6d269d9b2a9cd3d",
+    "line": 91,
+    "rule": "PATH001",
+    "sha256": "7d66787c67f77e0a3d8a5b192cf339a82301cd5dd635b12fe2e1d5f21de989d1",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@66a109250097898e48ac2514a6d269d9b2a9cd3d",
+    "line": 92,
+    "rule": "PATH001",
+    "sha256": "e1bb92c460358d1e9087b6fb82d6c96647e78dcb2d59f24d3e138cfdc0f1da79",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@66a109250097898e48ac2514a6d269d9b2a9cd3d",
+    "line": 94,
+    "rule": "PATH001",
+    "sha256": "1faddca08a7a2959110a04bcd483e0bc26156d465c3308de40a154088f960b86",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@66a109250097898e48ac2514a6d269d9b2a9cd3d",
+    "line": 96,
+    "rule": "PATH001",
+    "sha256": "5b390b21f45135b223f9df284bf80f6725b54f55942dd4d757f9f1e875899149",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@66a109250097898e48ac2514a6d269d9b2a9cd3d",
+    "line": 97,
+    "rule": "PATH001",
+    "sha256": "d1471c44a855e831a71659029fcfb211f3a03ac4da95224d154036c86898d12d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@66a109250097898e48ac2514a6d269d9b2a9cd3d",
+    "line": 98,
+    "rule": "PATH001",
+    "sha256": "f377165bd95d06492865403df7782d32a596cb40a2f9731a6142cdaa4a8acce3",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@66a109250097898e48ac2514a6d269d9b2a9cd3d",
+    "line": 129,
+    "rule": "PATH001",
+    "sha256": "022d4093d1e3ec105971109045908bdf427fe41dc4223734a00c7a8a77b5dfd8",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@66a109250097898e48ac2514a6d269d9b2a9cd3d",
+    "line": 130,
+    "rule": "PATH001",
+    "sha256": "269106b34e4751752f394a11831a3151e84c461c3ecae0f900f334c2b0311336",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@66a109250097898e48ac2514a6d269d9b2a9cd3d",
+    "line": 131,
+    "rule": "PATH001",
+    "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/controller_runtime_test.go@43ee10fba085d30dae03e1b29edcce1f673e505d",
+    "line": 396,
+    "rule": "PATH001",
+    "sha256": "35bd47b9faf483bc169dd53ad66685f8cabfb64fcf3280460544088f8e05fa6e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/controller_runtime_test.go@43ee10fba085d30dae03e1b29edcce1f673e505d",
+    "line": 415,
+    "rule": "PATH001",
+    "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@711681a3b907fe9fdba7eb36de2ee38b880e43b0",
+    "line": 118,
+    "rule": "IP001",
+    "sha256": "3f8543ada814c70561177b4f2561732c4137da899ec6510999f18cbcb108b901",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@711681a3b907fe9fdba7eb36de2ee38b880e43b0",
+    "line": 134,
+    "rule": "PATH001",
+    "sha256": "2e74a3140ec5147478770a0edfe20e6bebffa411ef24832c3669e592e49e0ac6",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@711681a3b907fe9fdba7eb36de2ee38b880e43b0",
+    "line": 145,
+    "rule": "PATH001",
+    "sha256": "9d245372f7ea710453cb3ef6dda15f2334ec5f6d31b9bc432b57d336c6874fe3",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@711681a3b907fe9fdba7eb36de2ee38b880e43b0",
+    "line": 516,
+    "rule": "PATH001",
+    "sha256": "35bd47b9faf483bc169dd53ad66685f8cabfb64fcf3280460544088f8e05fa6e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@711681a3b907fe9fdba7eb36de2ee38b880e43b0",
+    "line": 535,
+    "rule": "PATH001",
+    "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/productionruntime/process_authority_test.go@1804f4d79ec77e67c1fc0a11410522b23b2494c8",
+    "line": 523,
+    "rule": "DEPLOYID002",
+    "sha256": "8ae86d89cd5a96a67f4ef2633a66abd876cde701b62391c5bddb08517385520b",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/productionruntime/protocol_test.go@cb1baa032ec99f7fcc6d1ae873f5f652ba83e085",
+    "line": 792,
+    "rule": "PATH001",
+    "sha256": "35bd47b9faf483bc169dd53ad66685f8cabfb64fcf3280460544088f8e05fa6e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/productionruntime/protocol_test.go@cb1baa032ec99f7fcc6d1ae873f5f652ba83e085",
+    "line": 811,
+    "rule": "PATH001",
+    "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4360c1e7c7daa1b21a830407db54c8505a5be716",
+    "line": 42,
+    "rule": "PATH001",
+    "sha256": "19ddcd3c40b5a0dff3b8e409b2959f5d94186b9614d35c4d5fd968f8e6df12be",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4360c1e7c7daa1b21a830407db54c8505a5be716",
+    "line": 91,
+    "rule": "PATH001",
+    "sha256": "7d66787c67f77e0a3d8a5b192cf339a82301cd5dd635b12fe2e1d5f21de989d1",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4360c1e7c7daa1b21a830407db54c8505a5be716",
+    "line": 92,
+    "rule": "PATH001",
+    "sha256": "e1bb92c460358d1e9087b6fb82d6c96647e78dcb2d59f24d3e138cfdc0f1da79",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4360c1e7c7daa1b21a830407db54c8505a5be716",
+    "line": 94,
+    "rule": "PATH001",
+    "sha256": "1faddca08a7a2959110a04bcd483e0bc26156d465c3308de40a154088f960b86",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4360c1e7c7daa1b21a830407db54c8505a5be716",
+    "line": 96,
+    "rule": "PATH001",
+    "sha256": "5b390b21f45135b223f9df284bf80f6725b54f55942dd4d757f9f1e875899149",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4360c1e7c7daa1b21a830407db54c8505a5be716",
+    "line": 97,
+    "rule": "PATH001",
+    "sha256": "d1471c44a855e831a71659029fcfb211f3a03ac4da95224d154036c86898d12d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4360c1e7c7daa1b21a830407db54c8505a5be716",
+    "line": 98,
+    "rule": "PATH001",
+    "sha256": "f377165bd95d06492865403df7782d32a596cb40a2f9731a6142cdaa4a8acce3",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4360c1e7c7daa1b21a830407db54c8505a5be716",
+    "line": 131,
+    "rule": "PATH001",
+    "sha256": "022d4093d1e3ec105971109045908bdf427fe41dc4223734a00c7a8a77b5dfd8",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4360c1e7c7daa1b21a830407db54c8505a5be716",
+    "line": 132,
+    "rule": "PATH001",
+    "sha256": "269106b34e4751752f394a11831a3151e84c461c3ecae0f900f334c2b0311336",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4360c1e7c7daa1b21a830407db54c8505a5be716",
+    "line": 133,
+    "rule": "PATH001",
+    "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/controller_runtime_test.go@1b74180852fd1300db4c75411cad5409d834652e",
+    "line": 396,
+    "rule": "PATH001",
+    "sha256": "35bd47b9faf483bc169dd53ad66685f8cabfb64fcf3280460544088f8e05fa6e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/controller_runtime_test.go@1b74180852fd1300db4c75411cad5409d834652e",
+    "line": 415,
+    "rule": "PATH001",
+    "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/controller_runtime_test.go@5702e2af8a5a064d8fcf07777c4ebea38f1c3542",
+    "line": 396,
+    "rule": "PATH001",
+    "sha256": "35bd47b9faf483bc169dd53ad66685f8cabfb64fcf3280460544088f8e05fa6e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/config/controller_runtime_test.go@5702e2af8a5a064d8fcf07777c4ebea38f1c3542",
+    "line": 415,
+    "rule": "PATH001",
+    "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@5e362f97642af5a29cee27a1bb77a9dfed14200b",
+    "line": 121,
+    "rule": "IP001",
+    "sha256": "3f8543ada814c70561177b4f2561732c4137da899ec6510999f18cbcb108b901",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@5e362f97642af5a29cee27a1bb77a9dfed14200b",
+    "line": 137,
+    "rule": "PATH001",
+    "sha256": "2e74a3140ec5147478770a0edfe20e6bebffa411ef24832c3669e592e49e0ac6",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@5e362f97642af5a29cee27a1bb77a9dfed14200b",
+    "line": 148,
+    "rule": "PATH001",
+    "sha256": "9d245372f7ea710453cb3ef6dda15f2334ec5f6d31b9bc432b57d336c6874fe3",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@5e362f97642af5a29cee27a1bb77a9dfed14200b",
+    "line": 519,
+    "rule": "PATH001",
+    "sha256": "35bd47b9faf483bc169dd53ad66685f8cabfb64fcf3280460544088f8e05fa6e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@5e362f97642af5a29cee27a1bb77a9dfed14200b",
+    "line": 538,
+    "rule": "PATH001",
+    "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@c9032bf43dd9d870cdacdc0a0c1da9280ae8ea90",
+    "line": 121,
+    "rule": "IP001",
+    "sha256": "3f8543ada814c70561177b4f2561732c4137da899ec6510999f18cbcb108b901",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@c9032bf43dd9d870cdacdc0a0c1da9280ae8ea90",
+    "line": 137,
+    "rule": "PATH001",
+    "sha256": "2e74a3140ec5147478770a0edfe20e6bebffa411ef24832c3669e592e49e0ac6",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@c9032bf43dd9d870cdacdc0a0c1da9280ae8ea90",
+    "line": 148,
+    "rule": "PATH001",
+    "sha256": "9d245372f7ea710453cb3ef6dda15f2334ec5f6d31b9bc432b57d336c6874fe3",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@c9032bf43dd9d870cdacdc0a0c1da9280ae8ea90",
+    "line": 519,
+    "rule": "PATH001",
+    "sha256": "35bd47b9faf483bc169dd53ad66685f8cabfb64fcf3280460544088f8e05fa6e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/hostruntime/private_overlay_test.go@c9032bf43dd9d870cdacdc0a0c1da9280ae8ea90",
+    "line": 538,
+    "rule": "PATH001",
+    "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/networkjail/dialer_test.go@2f61f1c00e1571a2f273fe738586185f49f0b7d7",
+    "line": 382,
+    "rule": "IP001",
+    "sha256": "fc14bbc03fc68d040fc4e0605374fd77248abdeaa1a6c2034ab7a3085f6b2411",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/productionruntime/protocol_test.go@17626df0d61ad2bb7b37cd5d51fabd5896d1f895",
+    "line": 802,
+    "rule": "PATH001",
+    "sha256": "35bd47b9faf483bc169dd53ad66685f8cabfb64fcf3280460544088f8e05fa6e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/productionruntime/protocol_test.go@17626df0d61ad2bb7b37cd5d51fabd5896d1f895",
+    "line": 821,
+    "rule": "PATH001",
+    "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
   }
 ]

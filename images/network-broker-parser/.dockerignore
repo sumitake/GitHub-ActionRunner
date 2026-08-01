@@ -1,0 +1,5 @@
+**
+!Dockerfile
+!.dockerignore
+!build/
+!build/portable-ghar-network-broker-parser

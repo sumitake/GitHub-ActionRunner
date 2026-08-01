@@ -4,131 +4,236 @@ on:
     tags:
       - "v*"
 permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  release:
+  release-admission:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 10
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: read
     concurrency:
-      group: ${{ github.workflow }}-release-${{ github.ref }}
+      group: ${{ github.workflow }}-release-admission-${{ github.ref }}-${{ github.run_id }}
       cancel-in-progress: true
-    env:
-      GOTOOLCHAIN: go1.26.5
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      source_commit: ${{ steps.identity.outputs.source_commit }}
+      source_tree: ${{ steps.identity.outputs.source_tree }}
+      tag_object: ${{ steps.identity.outputs.tag_object }}
     steps:
-      - name: Checkout
+      - name: Checkout exact tag
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - name: Resolve release version
-        id: version
-        run: 'version="${GITHUB_REF_NAME#v}"; test -n "$version" || { echo "release tag must be v<version>"; exit 1; }; printf "version=%s\n" "$version" >>"$GITHUB_OUTPUT"'
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+      - name: Validate signed tag and freeze source identity
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; if [ "$GITHUB_REF_TYPE" != "tag" ]; then echo "signed tag required"; exit 1; fi; if ! [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then echo "signed tag required"; exit 1; fi; source_commit="$(git rev-parse HEAD)"; source_tree="$(git rev-parse "HEAD^{tree}")"; test "$source_commit" = "$GITHUB_SHA" || exit 1; gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" >"$RUNNER_TEMP/tag-ref.json"; tag_object="$(jq -er ''.object | select(.type == "tag") | .sha'' "$RUNNER_TEMP/tag-ref.json")"; gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" >"$RUNNER_TEMP/tag-object.json"; jq -e --arg tag "$GITHUB_REF_NAME" --arg commit "$source_commit" ''.tag == $tag and .object.type == "commit" and .object.sha == $commit and .verification.verified == true'' "$RUNNER_TEMP/tag-object.json" >/dev/null; version="${GITHUB_REF_NAME#v}"; mkdir -m 700 "$RUNNER_TEMP/release-admission"; jq -cS ''.runtime.runner_release'' release/manifest.json >"$RUNNER_TEMP/release-admission/runner-release.json"; test "$(wc -l <"$RUNNER_TEMP/release-admission/runner-release.json")" -eq 1; printf "version=%s\nsource_commit=%s\nsource_tree=%s\ntag_object=%s\n" "$version" "$source_commit" "$source_tree" "$tag_object" >>"$GITHUB_OUTPUT"'
+      - name: Upload exact baseline runner manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-runner-manifest
+          path: ${{ runner.temp }}/release-admission/runner-release.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: false
+
+  release-build-a:
+    needs:
+      - release-admission
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-release-build-a-${{ github.ref }}-${{ github.run_id }}
+      cancel-in-progress: true
+    outputs:
+      tree_tar_sha256: ${{ steps.package.outputs.tree_tar_sha256 }}
+    env:
+      GOTOOLCHAIN: go1.26.5
+      SOURCE_COMMIT: ${{ needs.release-admission.outputs.source_commit }}
+      SOURCE_TREE: ${{ needs.release-admission.outputs.source_tree }}
+      RELEASE_VERSION: ${{ needs.release-admission.outputs.version }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.release-admission.outputs.source_commit }}
+      - name: Prove exact source identity
+        run: 'set -euo pipefail; test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"; test "$(git rev-parse "HEAD^{tree}")" = "$SOURCE_TREE"'
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version-file: .nvmrc
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
       - name: Install Bats
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bats
-      - name: Check gofmt
-        run: unformatted="$(find . -type f -name '*.go' -not -path './.git/*' -print0 | xargs -0 gofmt -l)" && test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
-      - name: go vet
-        run: go vet ./...
-      - name: go test
-        run: go test ./...
-      - name: go test -race
-        run: go test -race ./...
-      - name: staticcheck
-        run: go tool staticcheck ./...
-      - name: govulncheck
-        run: go tool govulncheck ./...
-      - name: Worker lint
-        run: npm run worker:lint
-      - name: Worker typecheck
-        run: npm run worker:typecheck
-      - name: Worker test
-        run: npm run worker:test
-      - name: ShellCheck
-        run: find scripts deploy -type f -name '*.sh' -print0 | xargs -0 -r shellcheck
-      - name: shfmt diff
-        run: go tool shfmt -d scripts
-      - name: Bats
-        run: bats tests/shell
-      - name: Validate JSON and YAML parse
-        run: 'node -e "const {parseAllDocuments} = require(''yaml''); const fs = require(''fs''); const {execSync} = require(''child_process''); const files = execSync(''git ls-files'').toString(''utf8'').split(''\n'').filter(f => /\.(json|jsonc|ya?ml)$/.test(f)); let failed = false; for (const f of files) { const text = fs.readFileSync(f, ''utf8''); const docs = parseAllDocuments(text, {strict: true}); for (const d of docs) { if (d.errors && d.errors.length) { failed = true; console.error(f + '': '' + d.errors.length + '' parse error(s)''); } } } if (failed) process.exit(1); console.log(''validated '' + files.length + '' JSON/YAML files'');"'
-      - name: Schema tests
-        run: npm run schema:test && npm run schema:validate
-      - name: actionlint
-        run: go tool actionlint .github/workflows/*.yml
-      - name: Docs lint
-        run: npm run lint:docs
-      - name: Format check
-        run: npm run format:check
-      - name: SPDX headers
-        run: 'for f in scripts/check_workflow_policy.py scripts/ci/*.sh; do grep -q ''^# SPDX-License-Identifier: MPL-2.0$'' "$f" || { printf ''%s: missing SPDX-License-Identifier header\n'' "$f"; exit 1; }; done'
-      - name: Workflow policy
-        run: python3 scripts/check_workflow_policy.py .github/workflows
-      - name: Repository metadata
-        run: python3 scripts/check_repository_metadata.py --root .
-      - name: Python unit tests
-        run: find tests -name 'test_*.py' -not -path '*/__pycache__/*' | sed 's/\.py$//; s#/#.#g' | xargs python3 -m unittest -v
-      - name: Sanitize tracked source
-        run: python3 scripts/sanitize_public.py --tracked
-      - name: Check image manifest
-        run: bash scripts/ci/check-images.sh
-      - name: Trivy source scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,secret
-          severity: HIGH,CRITICAL
-          exit-code: 1
-      - name: Package source archive
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: bash scripts/release/package-source.sh "$VERSION" dist
-      - name: Trivy dist scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: dist
-          scanners: vuln,secret
-          severity: HIGH,CRITICAL
-          exit-code: 1
-      - name: Sanitize archive members
-        run: python3 scripts/sanitize_public.py --generated dist
-      - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          path: .
-          format: spdx-json
-          output-file: dist/portable-ghar-${{ steps.version.outputs.version }}.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-      - name: Third-party license inventory
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: jq -r '["package", "version", "licenseConcluded", "licenseDeclared"], (.packages[]? | [.name, (.versionInfo // "-"), (.licenseConcluded // "-"), (.licenseDeclared // "-")]) | @tsv' "dist/portable-ghar-$VERSION.spdx.json" >"dist/portable-ghar-$VERSION.licenses.txt"
-      - name: SHA-256 checksums
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: cd dist && sha256sum "portable-ghar-$VERSION.tar.gz" "portable-ghar-$VERSION.spdx.json" "portable-ghar-$VERSION.licenses.txt" >"portable-ghar-$VERSION.checksums.txt"
-      - name: Attest provenance
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
-        with:
-          subject-path: dist/portable-ghar-${{ steps.version.outputs.version }}.*
-          predicate-type: https://slsa.dev/provenance/v1
-          predicate: "{}"
-      - name: Publish immutable release
+        uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+      - name: Download exact runner manifest
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "portable-ghar $VERSION" --notes "Reproducible source release with SPDX SBOM, third-party license inventory, SHA-256 checksums, and a signed provenance attestation. Releases are immutable once published." "dist/portable-ghar-$VERSION.tar.gz" "dist/portable-ghar-$VERSION.spdx.json" "dist/portable-ghar-$VERSION.licenses.txt" "dist/portable-ghar-$VERSION.checksums.txt"
+        run: 'set -euo pipefail; mkdir -m 700 "$RUNNER_TEMP/release-runner"; gh run download "$GITHUB_RUN_ID" --name release-runner-manifest --dir "$RUNNER_TEMP/release-runner"; test "$(find "$RUNNER_TEMP/release-runner" -type f | wc -l)" -eq 1; test -f "$RUNNER_TEMP/release-runner/runner-release.json"'
+      - name: Rehearse product runtime and package deterministic tree
+        id: package
+        run: 'set -euo pipefail; export GOCACHE="$RUNNER_TEMP/workflow-go-build-a" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-a"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind product --version "$RELEASE_VERSION" --runner-manifest "$RUNNER_TEMP/release-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
+      - name: Upload rebuild A
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-rebuild-a
+          path: ${{ runner.temp }}/publication-tree.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: false
+
+  release-build-b:
+    needs:
+      - release-admission
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-release-build-b-${{ github.ref }}-${{ github.run_id }}
+      cancel-in-progress: true
+    outputs:
+      tree_tar_sha256: ${{ steps.package.outputs.tree_tar_sha256 }}
+    env:
+      GOTOOLCHAIN: go1.26.5
+      SOURCE_COMMIT: ${{ needs.release-admission.outputs.source_commit }}
+      SOURCE_TREE: ${{ needs.release-admission.outputs.source_tree }}
+      RELEASE_VERSION: ${{ needs.release-admission.outputs.version }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.release-admission.outputs.source_commit }}
+      - name: Prove exact source identity
+        run: 'set -euo pipefail; test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"; test "$(git rev-parse "HEAD^{tree}")" = "$SOURCE_TREE"'
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install Bats
+        uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+      - name: Download exact runner manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; mkdir -m 700 "$RUNNER_TEMP/release-runner"; gh run download "$GITHUB_RUN_ID" --name release-runner-manifest --dir "$RUNNER_TEMP/release-runner"; test "$(find "$RUNNER_TEMP/release-runner" -type f | wc -l)" -eq 1; test -f "$RUNNER_TEMP/release-runner/runner-release.json"'
+      - name: Rehearse product runtime and package deterministic tree
+        id: package
+        run: 'set -euo pipefail; export GOCACHE="$RUNNER_TEMP/workflow-go-build-b" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-b"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind product --version "$RELEASE_VERSION" --runner-manifest "$RUNNER_TEMP/release-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
+      - name: Upload rebuild B
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-rebuild-b
+          path: ${{ runner.temp }}/publication-tree.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: false
+
+  release-compare-attest:
+    needs:
+      - release-admission
+      - release-build-a
+      - release-build-b
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    concurrency:
+      group: ${{ github.workflow }}-release-compare-attest-${{ github.ref }}-${{ github.run_id }}
+      cancel-in-progress: true
+    outputs:
+      publication_bundle_sha256: ${{ steps.compare.outputs.publication_bundle_sha256 }}
+    env:
+      SOURCE_COMMIT: ${{ needs.release-admission.outputs.source_commit }}
+      SOURCE_TREE: ${{ needs.release-admission.outputs.source_tree }}
+      REBUILD_A_SHA256: ${{ needs.release-build-a.outputs.tree_tar_sha256 }}
+      REBUILD_B_SHA256: ${{ needs.release-build-b.outputs.tree_tar_sha256 }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.release-admission.outputs.source_commit }}
+      - name: Prove exact source identity
+        run: 'set -euo pipefail; test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"; test "$(git rev-parse "HEAD^{tree}")" = "$SOURCE_TREE"'
+      - name: Download independent rebuilds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; mkdir -m 700 "$RUNNER_TEMP/rebuild-a" "$RUNNER_TEMP/rebuild-b"; gh run download "$GITHUB_RUN_ID" --name release-rebuild-a --dir "$RUNNER_TEMP/rebuild-a"; gh run download "$GITHUB_RUN_ID" --name release-rebuild-b --dir "$RUNNER_TEMP/rebuild-b"; test -f "$RUNNER_TEMP/rebuild-a/publication-tree.tar"; test -f "$RUNNER_TEMP/rebuild-b/publication-tree.tar"; test "$(find "$RUNNER_TEMP/rebuild-a" -type f | wc -l)" -eq 1; test "$(find "$RUNNER_TEMP/rebuild-b" -type f | wc -l)" -eq 1'
+      - name: Compare rebuilds and prepare exact attestation membership
+        id: compare
+        run: 'set -euo pipefail; test "$(sha256sum "$RUNNER_TEMP/rebuild-a/publication-tree.tar" | awk ''{print $1}'')" = "$REBUILD_A_SHA256"; test "$(sha256sum "$RUNNER_TEMP/rebuild-b/publication-tree.tar" | awk ''{print $1}'')" = "$REBUILD_B_SHA256"; test "$REBUILD_A_SHA256" = "$REBUILD_B_SHA256"; python3 -c "import pathlib,sys,tarfile; t=tarfile.open(sys.argv[1],''r:''); m=t.getmembers(); n=[x.name for x in m]; assert m and len(n)==len(set(n)); assert all(x.isfile() or x.isdir() for x in m); assert all(not pathlib.PurePosixPath(x).is_absolute() and ''..'' not in pathlib.PurePosixPath(x).parts for x in n)" "$RUNNER_TEMP/rebuild-a/publication-tree.tar"; python3 -c "import pathlib,sys,tarfile; t=tarfile.open(sys.argv[1],''r:''); m=t.getmembers(); n=[x.name for x in m]; assert m and len(n)==len(set(n)); assert all(x.isfile() or x.isdir() for x in m); assert all(not pathlib.PurePosixPath(x).is_absolute() and ''..'' not in pathlib.PurePosixPath(x).parts for x in n)" "$RUNNER_TEMP/rebuild-b/publication-tree.tar"; mkdir -m 700 "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"; tar -xf "$RUNNER_TEMP/rebuild-a/publication-tree.tar" -C "$RUNNER_TEMP/a" --no-same-owner; tar -xf "$RUNNER_TEMP/rebuild-b/publication-tree.tar" -C "$RUNNER_TEMP/b" --no-same-owner; scripts/release/compare-runtime-rebuilds.sh "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"; cp "$RUNNER_TEMP/rebuild-a/publication-tree.tar" "$RUNNER_TEMP/publication-bundle.tar"; test "$(sha256sum "$RUNNER_TEMP/publication-bundle.tar" | awk ''{print $1}'')" = "$REBUILD_A_SHA256"; (cd "$RUNNER_TEMP" && jq -r ''.subjects[] | "\(.sha256)  \(.path)"'' a/provenance-subjects.json >attestation-checksums.txt && printf "%s  provenance-subjects.json\n" "$(sha256sum a/provenance-subjects.json | awk ''{print $1}'')" >>attestation-checksums.txt && LC_ALL=C sort -k2,2 -o attestation-checksums.txt attestation-checksums.txt); printf "publication_bundle_sha256=%s\n" "$REBUILD_A_SHA256" >>"$GITHUB_OUTPUT"'
+      - name: Attest exact runtime provenance subjects
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-checksums: ${{ runner.temp }}/attestation-checksums.txt
+          show-summary: true
+      - name: Upload comparator-validated publication bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-publication-bundle
+          path: ${{ runner.temp }}/publication-bundle.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: false
+
+  release:
+    needs:
+      - release-admission
+      - release-compare-attest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+    concurrency:
+      group: ${{ github.workflow }}-release-${{ github.ref }}-${{ github.run_id }}
+      cancel-in-progress: true
+    env:
+      SOURCE_COMMIT: ${{ needs.release-admission.outputs.source_commit }}
+      SOURCE_TREE: ${{ needs.release-admission.outputs.source_tree }}
+      RELEASE_VERSION: ${{ needs.release-admission.outputs.version }}
+      TAG_OBJECT: ${{ needs.release-admission.outputs.tag_object }}
+      PUBLICATION_BUNDLE_SHA256: ${{ needs.release-compare-attest.outputs.publication_bundle_sha256 }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ needs.release-admission.outputs.source_commit }}
+      - name: Prove exact source identity
+        run: 'set -euo pipefail; test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"; test "$(git rev-parse "HEAD^{tree}")" = "$SOURCE_TREE"; test "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" = "$SOURCE_COMMIT"'
+      - name: Download and validate comparator-approved bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; mkdir -m 700 "$RUNNER_TEMP/publication"; gh run download "$GITHUB_RUN_ID" --name release-publication-bundle --dir "$RUNNER_TEMP/publication"; test -f "$RUNNER_TEMP/publication/publication-bundle.tar"; test "$(find "$RUNNER_TEMP/publication" -type f | wc -l)" -eq 1; test "$(sha256sum "$RUNNER_TEMP/publication/publication-bundle.tar" | awk ''{print $1}'')" = "$PUBLICATION_BUNDLE_SHA256"; python3 -c "import pathlib,sys,tarfile; t=tarfile.open(sys.argv[1],''r:''); m=t.getmembers(); n=[x.name for x in m]; assert m and len(n)==len(set(n)); assert all(x.isfile() or x.isdir() for x in m); assert all(not pathlib.PurePosixPath(x).is_absolute() and ''..'' not in pathlib.PurePosixPath(x).parts for x in n)" "$RUNNER_TEMP/publication/publication-bundle.tar"; mkdir -m 700 "$RUNNER_TEMP/publication/tree"; tar -xf "$RUNNER_TEMP/publication/publication-bundle.tar" -C "$RUNNER_TEMP/publication/tree" --no-same-owner; scripts/release/compare-runtime-rebuilds.sh "$RUNNER_TEMP/publication/tree" "$RUNNER_TEMP/publication/tree"; jq -e --arg version "$RELEASE_VERSION" --arg commit "$SOURCE_COMMIT" --arg tree "$SOURCE_TREE" ''.release_kind == "product" and .version == $version and .source.commit == $commit and .source.tree == $tree'' "$RUNNER_TEMP/publication/tree/runtime-release.json" >/dev/null'
+      - name: Mint release-settings read token
+        id: release-settings-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PORTABLE_GHAR_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PORTABLE_GHAR_RELEASE_APP_PRIVATE_KEY }}
+          permission-administration: read
+      - name: Publish immutable product release
+        env:
+          PGHAR_RELEASE_SETTINGS_TOKEN: ${{ steps.release-settings-token.outputs.token }}
+          PGHAR_RELEASE_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; scripts/release/publish-runtime-release.sh --release-kind product --repository "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --target-commit "$SOURCE_COMMIT" --product-tag-object "$TAG_OBJECT" --tree "$RUNNER_TEMP/publication/tree"'

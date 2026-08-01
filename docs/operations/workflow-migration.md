@@ -7,10 +7,9 @@ assumes the components in
 [Architecture overview](../architecture/overview.md) and the boundaries
 in [Trust boundaries](../security/trust-boundaries.md).
 
-Phase 1 of this repository ships no consumer-workflow migration tooling.
-This page describes the intended migration contract the later canary and
-migration phase implements; it is not a claim that any repository has
-been migrated onto this contract today.
+Phase 2 source does not yet ship the later consumer-workflow migration
+phase. This page describes its intended migration contract; it is not a
+claim that any repository has been migrated onto this contract today.
 
 ## Stable required checks
 

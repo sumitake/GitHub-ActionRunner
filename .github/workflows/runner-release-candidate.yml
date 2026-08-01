@@ -1,0 +1,249 @@
+name: Runner Release Candidate
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types:
+      - observe-runner-release
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  runner-candidate-admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-runner-candidate-admission-${{ github.ref }}-${{ github.run_id }}
+      cancel-in-progress: true
+    outputs:
+      candidate: ${{ steps.observe.outputs.candidate }}
+      runner_version: ${{ steps.observe.outputs.runner_version }}
+      evidence: ${{ steps.observe.outputs.evidence }}
+      artifact_version: ${{ steps.observe.outputs.artifact_version }}
+      source_commit: ${{ steps.observe.outputs.source_commit }}
+      source_tree: ${{ steps.observe.outputs.source_tree }}
+    steps:
+      - name: Validate trusted dispatch
+        env:
+          PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR: ${{ vars.PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR }}
+          PORTABLE_GHAR_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: 'set -euo pipefail; test -n "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; test "$GITHUB_ACTOR" = "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; test -n "$PORTABLE_GHAR_DEFAULT_BRANCH"; test "$GITHUB_REF" = "refs/heads/$PORTABLE_GHAR_DEFAULT_BRANCH"; python3 -B -c ''import json,os,pathlib,stat; fail=lambda:(_ for _ in ()).throw(ValueError("event")); path=pathlib.Path(os.environ["GITHUB_EVENT_PATH"]); info=path.lstat(); raw=path.read_bytes(); (stat.S_ISREG(info.st_mode) and not path.is_symlink() and info.st_nlink == 1 and 0 < len(raw) <= 1048576) or fail(); hook=lambda pairs:dict(pairs) if len(pairs) == len({key for key,_value in pairs}) else fail(); event=json.loads(raw.decode("utf-8","strict"),object_pairs_hook=hook,parse_constant=lambda _value:fail()); type(event) is dict or fail(); name=os.environ["GITHUB_EVENT_NAME"]; repository_dispatch=name == "repository_dispatch" and event.get("action") == "observe-runner-release" and type(event.get("client_payload")) is dict and len(event["client_payload"]) == 0; workflow_dispatch=name == "workflow_dispatch" and "action" not in event and "client_payload" not in event and ("inputs" not in event or event["inputs"] is None or type(event["inputs"]) is dict and len(event["inputs"]) == 0); (repository_dispatch or workflow_dispatch) or fail()'''
+      - name: Checkout exact default-branch source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Observe exact official runner release
+        id: observe
+        run: 'set -euo pipefail; source_commit="$(git rev-parse HEAD)"; source_tree="$(git rev-parse "HEAD^{tree}")"; test "$source_commit" = "$GITHUB_SHA"; mkdir -m 700 "$RUNNER_TEMP/runner-candidate"; set +e; scripts/release/observe-runner-release.sh --current-manifest release/manifest.json --output "$RUNNER_TEMP/runner-candidate/runner-release.json"; observer_rc=$?; set -e; if [ "$observer_rc" -eq 3 ]; then printf "candidate=false\nsource_commit=%s\nsource_tree=%s\n" "$source_commit" "$source_tree" >>"$GITHUB_OUTPUT"; exit 0; fi; test "$observer_rc" -eq 0; test -f "$RUNNER_TEMP/runner-candidate/runner-release.json"; runner_version="$(jq -er ''.version'' "$RUNNER_TEMP/runner-candidate/runner-release.json")"; evidence="$(jq -er ''.observation_evidence'' "$RUNNER_TEMP/runner-candidate/runner-release.json")"; [[ "$runner_version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; [[ "$evidence" =~ ^[0-9a-f]{64}$ ]]; artifact_version="${runner_version#v}-runner.${evidence}"; printf "candidate=true\nrunner_version=%s\nevidence=%s\nartifact_version=%s\nsource_commit=%s\nsource_tree=%s\n" "$runner_version" "$evidence" "$artifact_version" "$source_commit" "$source_tree" >>"$GITHUB_OUTPUT"'
+      - name: Upload exact candidate manifest
+        if: steps.observe.outputs.candidate == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runner-candidate-manifest
+          path: ${{ runner.temp }}/runner-candidate/runner-release.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: false
+
+  runner-candidate-build-a:
+    needs:
+      - runner-candidate-admission
+    if: needs.runner-candidate-admission.outputs.candidate == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-runner-candidate-build-a-${{ github.ref }}-${{ github.run_id }}
+      cancel-in-progress: true
+    outputs:
+      tree_tar_sha256: ${{ steps.package.outputs.tree_tar_sha256 }}
+    env:
+      GOTOOLCHAIN: go1.26.5
+      SOURCE_COMMIT: ${{ needs.runner-candidate-admission.outputs.source_commit }}
+      SOURCE_TREE: ${{ needs.runner-candidate-admission.outputs.source_tree }}
+      ARTIFACT_VERSION: ${{ needs.runner-candidate-admission.outputs.artifact_version }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.runner-candidate-admission.outputs.source_commit }}
+      - name: Prove exact source identity
+        run: 'set -euo pipefail; test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"; test "$(git rev-parse "HEAD^{tree}")" = "$SOURCE_TREE"'
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install Bats
+        uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+      - name: Download exact candidate manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; mkdir -m 700 "$RUNNER_TEMP/candidate-runner"; gh run download "$GITHUB_RUN_ID" --name runner-candidate-manifest --dir "$RUNNER_TEMP/candidate-runner"; test "$(find "$RUNNER_TEMP/candidate-runner" -type f | wc -l)" -eq 1; test -f "$RUNNER_TEMP/candidate-runner/runner-release.json"'
+      - name: Rehearse candidate runtime and package deterministic tree
+        id: package
+        run: 'set -euo pipefail; export GOCACHE="$RUNNER_TEMP/workflow-go-build-a" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-a"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind candidate --version "$ARTIFACT_VERSION" --runner-manifest "$RUNNER_TEMP/candidate-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
+      - name: Upload candidate rebuild A
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runner-candidate-rebuild-a
+          path: ${{ runner.temp }}/publication-tree.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: false
+
+  runner-candidate-build-b:
+    needs:
+      - runner-candidate-admission
+    if: needs.runner-candidate-admission.outputs.candidate == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-runner-candidate-build-b-${{ github.ref }}-${{ github.run_id }}
+      cancel-in-progress: true
+    outputs:
+      tree_tar_sha256: ${{ steps.package.outputs.tree_tar_sha256 }}
+    env:
+      GOTOOLCHAIN: go1.26.5
+      SOURCE_COMMIT: ${{ needs.runner-candidate-admission.outputs.source_commit }}
+      SOURCE_TREE: ${{ needs.runner-candidate-admission.outputs.source_tree }}
+      ARTIFACT_VERSION: ${{ needs.runner-candidate-admission.outputs.artifact_version }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.runner-candidate-admission.outputs.source_commit }}
+      - name: Prove exact source identity
+        run: 'set -euo pipefail; test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"; test "$(git rev-parse "HEAD^{tree}")" = "$SOURCE_TREE"'
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install Bats
+        uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+      - name: Download exact candidate manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; mkdir -m 700 "$RUNNER_TEMP/candidate-runner"; gh run download "$GITHUB_RUN_ID" --name runner-candidate-manifest --dir "$RUNNER_TEMP/candidate-runner"; test "$(find "$RUNNER_TEMP/candidate-runner" -type f | wc -l)" -eq 1; test -f "$RUNNER_TEMP/candidate-runner/runner-release.json"'
+      - name: Rehearse candidate runtime and package deterministic tree
+        id: package
+        run: 'set -euo pipefail; export GOCACHE="$RUNNER_TEMP/workflow-go-build-b" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-b"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind candidate --version "$ARTIFACT_VERSION" --runner-manifest "$RUNNER_TEMP/candidate-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
+      - name: Upload candidate rebuild B
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runner-candidate-rebuild-b
+          path: ${{ runner.temp }}/publication-tree.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: false
+
+  runner-candidate-compare-attest:
+    needs:
+      - runner-candidate-admission
+      - runner-candidate-build-a
+      - runner-candidate-build-b
+    if: needs.runner-candidate-admission.outputs.candidate == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    concurrency:
+      group: ${{ github.workflow }}-runner-candidate-compare-attest-${{ github.ref }}-${{ github.run_id }}
+      cancel-in-progress: true
+    outputs:
+      publication_bundle_sha256: ${{ steps.compare.outputs.publication_bundle_sha256 }}
+    env:
+      SOURCE_COMMIT: ${{ needs.runner-candidate-admission.outputs.source_commit }}
+      SOURCE_TREE: ${{ needs.runner-candidate-admission.outputs.source_tree }}
+      REBUILD_A_SHA256: ${{ needs.runner-candidate-build-a.outputs.tree_tar_sha256 }}
+      REBUILD_B_SHA256: ${{ needs.runner-candidate-build-b.outputs.tree_tar_sha256 }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.runner-candidate-admission.outputs.source_commit }}
+      - name: Prove exact source identity
+        run: 'set -euo pipefail; test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"; test "$(git rev-parse "HEAD^{tree}")" = "$SOURCE_TREE"'
+      - name: Download independent candidate rebuilds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; mkdir -m 700 "$RUNNER_TEMP/rebuild-a" "$RUNNER_TEMP/rebuild-b"; gh run download "$GITHUB_RUN_ID" --name runner-candidate-rebuild-a --dir "$RUNNER_TEMP/rebuild-a"; gh run download "$GITHUB_RUN_ID" --name runner-candidate-rebuild-b --dir "$RUNNER_TEMP/rebuild-b"; test -f "$RUNNER_TEMP/rebuild-a/publication-tree.tar"; test -f "$RUNNER_TEMP/rebuild-b/publication-tree.tar"; test "$(find "$RUNNER_TEMP/rebuild-a" -type f | wc -l)" -eq 1; test "$(find "$RUNNER_TEMP/rebuild-b" -type f | wc -l)" -eq 1'
+      - name: Compare candidate rebuilds and prepare exact attestation membership
+        id: compare
+        run: 'set -euo pipefail; test "$(sha256sum "$RUNNER_TEMP/rebuild-a/publication-tree.tar" | awk ''{print $1}'')" = "$REBUILD_A_SHA256"; test "$(sha256sum "$RUNNER_TEMP/rebuild-b/publication-tree.tar" | awk ''{print $1}'')" = "$REBUILD_B_SHA256"; test "$REBUILD_A_SHA256" = "$REBUILD_B_SHA256"; python3 -c "import pathlib,sys,tarfile; t=tarfile.open(sys.argv[1],''r:''); m=t.getmembers(); n=[x.name for x in m]; assert m and len(n)==len(set(n)); assert all(x.isfile() or x.isdir() for x in m); assert all(not pathlib.PurePosixPath(x).is_absolute() and ''..'' not in pathlib.PurePosixPath(x).parts for x in n)" "$RUNNER_TEMP/rebuild-a/publication-tree.tar"; python3 -c "import pathlib,sys,tarfile; t=tarfile.open(sys.argv[1],''r:''); m=t.getmembers(); n=[x.name for x in m]; assert m and len(n)==len(set(n)); assert all(x.isfile() or x.isdir() for x in m); assert all(not pathlib.PurePosixPath(x).is_absolute() and ''..'' not in pathlib.PurePosixPath(x).parts for x in n)" "$RUNNER_TEMP/rebuild-b/publication-tree.tar"; mkdir -m 700 "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"; tar -xf "$RUNNER_TEMP/rebuild-a/publication-tree.tar" -C "$RUNNER_TEMP/a" --no-same-owner; tar -xf "$RUNNER_TEMP/rebuild-b/publication-tree.tar" -C "$RUNNER_TEMP/b" --no-same-owner; scripts/release/compare-runtime-rebuilds.sh "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"; cp "$RUNNER_TEMP/rebuild-a/publication-tree.tar" "$RUNNER_TEMP/publication-bundle.tar"; test "$(sha256sum "$RUNNER_TEMP/publication-bundle.tar" | awk ''{print $1}'')" = "$REBUILD_A_SHA256"; (cd "$RUNNER_TEMP" && jq -r ''.subjects[] | "\(.sha256)  \(.path)"'' a/provenance-subjects.json >attestation-checksums.txt && printf "%s  provenance-subjects.json\n" "$(sha256sum a/provenance-subjects.json | awk ''{print $1}'')" >>attestation-checksums.txt && LC_ALL=C sort -k2,2 -o attestation-checksums.txt attestation-checksums.txt); printf "publication_bundle_sha256=%s\n" "$REBUILD_A_SHA256" >>"$GITHUB_OUTPUT"'
+      - name: Attest exact candidate provenance subjects
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-checksums: ${{ runner.temp }}/attestation-checksums.txt
+          show-summary: true
+      - name: Upload comparator-validated candidate bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runner-candidate-publication-bundle
+          path: ${{ runner.temp }}/publication-bundle.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: false
+
+  runner-candidate-publish:
+    needs:
+      - runner-candidate-admission
+      - runner-candidate-compare-attest
+    if: needs.runner-candidate-admission.outputs.candidate == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+    concurrency:
+      group: ${{ github.workflow }}-runner-candidate-publish-${{ github.ref }}-${{ github.run_id }}
+      cancel-in-progress: true
+    env:
+      SOURCE_COMMIT: ${{ needs.runner-candidate-admission.outputs.source_commit }}
+      SOURCE_TREE: ${{ needs.runner-candidate-admission.outputs.source_tree }}
+      RUNNER_VERSION: ${{ needs.runner-candidate-admission.outputs.runner_version }}
+      EVIDENCE: ${{ needs.runner-candidate-admission.outputs.evidence }}
+      ARTIFACT_VERSION: ${{ needs.runner-candidate-admission.outputs.artifact_version }}
+      PUBLICATION_BUNDLE_SHA256: ${{ needs.runner-candidate-compare-attest.outputs.publication_bundle_sha256 }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.runner-candidate-admission.outputs.source_commit }}
+      - name: Prove exact source identity
+        run: 'set -euo pipefail; test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"; test "$(git rev-parse "HEAD^{tree}")" = "$SOURCE_TREE"'
+      - name: Download and validate comparator-approved candidate bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; mkdir -m 700 "$RUNNER_TEMP/publication"; gh run download "$GITHUB_RUN_ID" --name runner-candidate-publication-bundle --dir "$RUNNER_TEMP/publication"; test -f "$RUNNER_TEMP/publication/publication-bundle.tar"; test "$(find "$RUNNER_TEMP/publication" -type f | wc -l)" -eq 1; test "$(sha256sum "$RUNNER_TEMP/publication/publication-bundle.tar" | awk ''{print $1}'')" = "$PUBLICATION_BUNDLE_SHA256"; python3 -c "import pathlib,sys,tarfile; t=tarfile.open(sys.argv[1],''r:''); m=t.getmembers(); n=[x.name for x in m]; assert m and len(n)==len(set(n)); assert all(x.isfile() or x.isdir() for x in m); assert all(not pathlib.PurePosixPath(x).is_absolute() and ''..'' not in pathlib.PurePosixPath(x).parts for x in n)" "$RUNNER_TEMP/publication/publication-bundle.tar"; mkdir -m 700 "$RUNNER_TEMP/publication/tree"; tar -xf "$RUNNER_TEMP/publication/publication-bundle.tar" -C "$RUNNER_TEMP/publication/tree" --no-same-owner; scripts/release/compare-runtime-rebuilds.sh "$RUNNER_TEMP/publication/tree" "$RUNNER_TEMP/publication/tree"; jq -e --arg version "$ARTIFACT_VERSION" --arg commit "$SOURCE_COMMIT" --arg tree "$SOURCE_TREE" --arg runner "$RUNNER_VERSION" --arg evidence "$EVIDENCE" ''.release_kind == "candidate" and .version == $version and .source.commit == $commit and .source.tree == $tree and .runner_release.version == $runner and .runner_release.observation_evidence == $evidence'' "$RUNNER_TEMP/publication/tree/runtime-release.json" >/dev/null'
+      - name: Mint release-settings read token
+        id: release-settings-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PORTABLE_GHAR_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PORTABLE_GHAR_RELEASE_APP_PRIVATE_KEY }}
+          permission-administration: read
+      - name: Publish immutable runner candidate
+        env:
+          PGHAR_RELEASE_SETTINGS_TOKEN: ${{ steps.release-settings-token.outputs.token }}
+          PGHAR_RELEASE_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; tag="runner-candidate-v${RUNNER_VERSION#v}-$EVIDENCE-$SOURCE_COMMIT"; scripts/release/publish-runtime-release.sh --release-kind candidate --repository "$GITHUB_REPOSITORY" --tag "$tag" --target-commit "$SOURCE_COMMIT" --tree "$RUNNER_TEMP/publication/tree"'

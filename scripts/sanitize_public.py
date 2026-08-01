@@ -162,6 +162,9 @@ def compute_file_hash(raw: bytes) -> str:
 
 REQUIRED_ALLOWLIST_KEYS = {"path", "line", "rule", "sha256", "reason"}
 _SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+_HISTORICAL_ALLOWLIST_PATH_RE = re.compile(
+    r"\A[^@]+@[0-9a-f]{40}(?:!.+)?\Z"
+)
 
 
 class AllowlistError(Exception):
@@ -229,6 +232,12 @@ def load_allowlist(path: Path) -> AllowlistIndex:
             raise AllowlistError(f"entry #{i} path must be a non-empty string")
         if any(ch in path_val for ch in "*?[]"):
             raise AllowlistError(f"entry #{i} path {path_val!r} contains a wildcard -- exact paths only")
+        if "@" in path_val and not _HISTORICAL_ALLOWLIST_PATH_RE.fullmatch(
+            path_val
+        ):
+            raise AllowlistError(
+                f"entry #{i} historical path must carry one complete 40-character blob OID"
+            )
         if not (isinstance(line_val, int) or (isinstance(line_val, str) and (line_val == "file" or re.fullmatch(r"\d+-\d+", line_val)))):
             raise AllowlistError(f"entry #{i} line must be an int, 'file', or 'A-B' span string")
         if not isinstance(rule_val, str) or rule_val not in KNOWN_RULES:
@@ -988,6 +997,67 @@ def check_generated_manifest(repo_root: Path, generated_args: list[str]) -> list
 # H10 -- history + metadata scan
 # ---------------------------------------------------------------------------
 
+PUBLIC_HISTORY_METADATA_LINES = frozenset(
+    {
+        "".join(("GitHub <noreply", "@github.com>")),
+        "".join(
+            (
+                "John Osumi <931193+sumitake",
+                "@users.noreply.github.com>",
+            )
+        ),
+        "".join(
+            (
+                "dependabot[bot] <49699333+dependabot[bot]",
+                "@users.noreply.github.com>",
+            )
+        ),
+        "".join(("Signed-off-by: dependabot[bot] <support", "@github.com>")),
+        "".join(
+            (
+                "Co-Authored-By: Claude Fable 5 <noreply",
+                "@anthropic.com>",
+            )
+        ),
+        "".join(
+            (
+                "Co-authored-by: Claude Fable 5 <noreply",
+                "@anthropic.com>",
+            )
+        ),
+        "".join(
+            (
+                "Conduct, changelog, third-party-notices placeholder, "
+                "CODEOWNERS (* ",
+                "@",
+                CANONICAL_OWNER,
+                "),",
+            )
+        ),
+    }
+)
+
+
+def _history_blob_label(original_path: str, finding_path: str, blob_oid: str) -> str:
+    if not re.fullmatch(r"[0-9a-f]{40}", blob_oid):
+        raise ValueError("historical blob OID must be complete lowercase hex")
+    if finding_path == original_path:
+        suffix = ""
+    elif finding_path.startswith(original_path + "!"):
+        suffix = finding_path[len(original_path) :]
+    else:
+        raise ValueError("historical finding escaped its original path")
+    return f"{original_path}@{blob_oid}{suffix}"
+
+
+def _scan_public_history_metadata(value: str, label: str) -> list[Finding]:
+    findings = scan_text_content(value, label, fixture=False)
+    return [
+        finding._replace(rule="HISTORY_META")
+        for finding in findings
+        if finding.content not in PUBLIC_HISTORY_METADATA_LINES
+    ]
+
 
 def scan_history(repo_root: Path) -> list[Finding]:
     out: list[Finding] = []
@@ -1025,12 +1095,21 @@ def scan_history(repo_root: Path) -> list[Finding]:
                 continue
             _, size = info
             if size > MAX_FILE_BYTES:
-                out.append(Finding(f"{path}@{sha[:8]}", "file", "SIZE_LIMIT", "historical blob exceeds size cap (fail closed)", ""))
+                out.append(Finding(f"{path}@{sha}", "file", "SIZE_LIMIT", "historical blob exceeds size cap (fail closed)", ""))
                 continue
             content = subprocess.run(["git", "cat-file", "blob", sha], cwd=str(repo_root), capture_output=True, check=True).stdout
             fixture = is_fixture_path(path)
-            label = f"{path}@{sha[:8]}"
-            out += scan_bytes_as_file(content, label, fixture=fixture)
+            historical_findings = scan_bytes_as_file(
+                content,
+                path,
+                fixture=fixture,
+            )
+            out += [
+                finding._replace(
+                    path=_history_blob_label(path, finding.path, sha)
+                )
+                for finding in historical_findings
+            ]
 
     # Commit metadata: subject, body, author/committer identity.
     log = _run_git(["log", "--all", "--format=%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%s%x1f%b%x1e"], repo_root)
@@ -1043,17 +1122,23 @@ def scan_history(repo_root: Path) -> list[Finding]:
             continue
         sha, an, ae, cn, ce, subject, body = fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6]
         label = f"<commit {sha[:8]}>"
-        for field_name, value in (("author", an + " " + ae), ("committer", cn + " " + ce), ("subject", subject), ("body", body)):
-            for f in scan_text_content(value, f"{label}#{field_name}", fixture=False):
-                out.append(f._replace(rule="HISTORY_META"))
+        for field_name, value in (
+            ("author", f"{an} <{ae}>"),
+            ("committer", f"{cn} <{ce}>"),
+            ("subject", subject),
+            ("body", body),
+        ):
+            out += _scan_public_history_metadata(
+                value,
+                f"{label}#{field_name}",
+            )
 
     # Tag names + annotations.
     tag_out = _run_git(["tag", "-l", "-n999"], repo_root)
     for line in tag_out.splitlines():
         if not line.strip():
             continue
-        for f in scan_text_content(line, "<tag>", fixture=False):
-            out.append(f._replace(rule="HISTORY_META"))
+        out += _scan_public_history_metadata(line, "<tag>")
 
     # Branch names (local + remote-tracking).
     for ref_kind in ("refs/heads", "refs/remotes"):
@@ -1061,8 +1146,7 @@ def scan_history(repo_root: Path) -> list[Finding]:
         for line in refs.splitlines():
             if not line.strip():
                 continue
-            for f in scan_text_content(line, "<branch-name>", fixture=False):
-                out.append(f._replace(rule="HISTORY_META"))
+            out += _scan_public_history_metadata(line, "<branch-name>")
 
     # Deleted-file path strings (identifier-bearing filenames survive even
     # though the blob walk above already covers their *content*).

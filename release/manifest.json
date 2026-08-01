@@ -1,4 +1,386 @@
 {
   "version": 1,
-  "subjects": ["portable-ghar-*.tar.gz"]
+  "subjects": ["portable-ghar-*.tar.gz"],
+  "runtime": {
+    "schema_version": 1,
+    "platform": "linux/amd64",
+    "debian_snapshot": "20250101T000000Z",
+    "runner_release": {
+      "schema_version": 1,
+      "version": "v2.336.0",
+      "tag_ref_sha": "98aabcd429c4e8402406c56ce2d26387fed3b9ce",
+      "source_commit_sha": "98aabcd429c4e8402406c56ce2d26387fed3b9ce",
+      "linux_x64_asset_name": "actions-runner-linux-x64-2.336.0.tar.gz",
+      "linux_x64_asset_size": 226035903,
+      "linux_x64_asset_digest": "sha256:04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d",
+      "published_at": "2026-07-20T17:45:55Z",
+      "command_settings_sha256": "937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08",
+      "observation_evidence": "62ca14dfc4584bf56fe235b973546eb4e08f05c93529859c556ff604eb3f5ed9"
+    },
+    "tools": {
+      "buildx": {
+        "version": "v0.36.0",
+        "asset_name": "buildx-v0.36.0.linux-amd64",
+        "sha256": "07823fdfcd82a41be90155a8b16876c1a780a6462de805a9f3f63b3119ccfb99",
+        "source_url": "https://github.com/docker/buildx/releases/download/v0.36.0/buildx-v0.36.0.linux-amd64"
+      },
+      "buildkit": {
+        "image": "moby/buildkit:v0.32.0@sha256:1f8167fcb0eca5b7126353d35299386945cbb8949cc516c592a49f80cfce4fa2",
+        "platform_digest": "sha256:af9560645cde6da2d0c5be4ebe5b2ec67ab63269ae4d4561b4afd49d9d8121fe"
+      },
+      "syft": {
+        "version": "v1.50.0",
+        "asset_name": "syft_1.50.0_linux_amd64.tar.gz",
+        "sha256": "bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788",
+        "source_url": "https://github.com/anchore/syft/releases/download/v1.50.0/syft_1.50.0_linux_amd64.tar.gz"
+      },
+      "trivy": {
+        "version": "v0.72.0",
+        "asset_name": "trivy_0.72.0_Linux-64bit.tar.gz",
+        "sha256": "bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea",
+        "source_url": "https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz"
+      }
+    },
+    "binaries": [
+      {
+        "name": "portable-ghar",
+        "package": "./cmd/portable-ghar"
+      },
+      {
+        "name": "portable-ghar-controller",
+        "package": "./cmd/portable-ghar-controller"
+      },
+      {
+        "name": "portable-ghar-fleet-fence",
+        "package": "./cmd/portable-ghar-fleet-fence"
+      },
+      {
+        "name": "portable-ghar-network-adapter",
+        "package": "./cmd/portable-ghar-network-adapter"
+      },
+      {
+        "name": "portable-ghar-network-broker-dialer",
+        "package": "./cmd/portable-ghar-network-broker-dialer"
+      },
+      {
+        "name": "portable-ghar-network-broker-parser",
+        "package": "./cmd/portable-ghar-network-broker-parser"
+      },
+      {
+        "name": "portable-ghar-network-helper",
+        "package": "./cmd/portable-ghar-network-helper"
+      },
+      {
+        "name": "portable-ghar-network-verifier",
+        "package": "./cmd/portable-ghar-network-verifier"
+      },
+      {
+        "name": "portable-ghar-runner-gate",
+        "package": "./cmd/portable-ghar-runner-gate"
+      },
+      {
+        "name": "portable-ghar-runtime-lock",
+        "package": "./cmd/portable-ghar-runtime-lock"
+      },
+      {
+        "name": "portable-ghar-watchdog",
+        "package": "./cmd/portable-ghar-watchdog"
+      }
+    ],
+    "images": [
+      {
+        "name": "network-adapter",
+        "context": "images/network-adapter",
+        "dockerfile": "images/network-adapter/Dockerfile"
+      },
+      {
+        "name": "network-broker-dialer",
+        "context": "images/network-broker-dialer",
+        "dockerfile": "images/network-broker-dialer/Dockerfile"
+      },
+      {
+        "name": "network-broker-parser",
+        "context": "images/network-broker-parser",
+        "dockerfile": "images/network-broker-parser/Dockerfile"
+      },
+      {
+        "name": "network-helper",
+        "context": "images/network-helper",
+        "dockerfile": "images/network-helper/Dockerfile"
+      },
+      {
+        "name": "network-verifier",
+        "context": "images/network-verifier",
+        "dockerfile": "images/network-verifier/Dockerfile"
+      },
+      {
+        "name": "runner",
+        "context": "images/runner",
+        "dockerfile": "images/runner/Dockerfile"
+      }
+    ],
+    "candidate_protected_files": [
+      {
+        "path": "cmd/portable-ghar-runner-gate/main_test.go",
+        "identity_inventory_sha256": "9da71622a1eae040ff4aed7b3c6f8f63653aa6e3dd296b725fad5d2242a9ac3a"
+      },
+      {
+        "path": "cmd/portable-ghar-runtime-lock/main_test.go",
+        "identity_inventory_sha256": "226ba6f91d89cd8aadddaf18117803516f6ff7a0e0444a6e452c10320c6ce960"
+      },
+      {
+        "path": "docs/superpowers/plans/2026-07-11-controller-runtime.md",
+        "identity_inventory_sha256": "226845e4b7609970ca8d566236c5798aa7a9db4542a38d39868dcc19b31c8794"
+      },
+      {
+        "path": "docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md",
+        "identity_inventory_sha256": "4d17e271f3e35b16a72bcc16bc580d1e660ef8a436402b8dc2e69fa33fc08e81"
+      },
+      {
+        "path": "internal/archive/runner_archive_test.go",
+        "identity_inventory_sha256": "7f02482a0700a88de2a215f032a2900658d63dc97ad99982ba2c3f9159ac00f5"
+      },
+      {
+        "path": "internal/buildinfo/pins.go",
+        "identity_inventory_sha256": "75f13a3085422ec5f015fc4aa59cfb7d93d6a30d7c1818389eb76b878ffa75cb"
+      },
+      {
+        "path": "internal/buildinfo/pins_test.go",
+        "identity_inventory_sha256": "cc1dc96a05475d00dd1777dfddb998f2c48bb2058525a1f071e56371f24c3cca"
+      },
+      {
+        "path": "internal/runtimelock/lock_test.go",
+        "identity_inventory_sha256": "01a83aaf0965f411ddbec63718b754561fc55942f98e6b6022b0ad49a4ba762d"
+      },
+      {
+        "path": "internal/upgrade/model_test.go",
+        "identity_inventory_sha256": "17a2ec153c66dfa24330d2062e474634b564379cb1663676f494c182dc1c9b14"
+      },
+      {
+        "path": "internal/upgrade/runner_release_test.go",
+        "identity_inventory_sha256": "fdf3d8a7f5816cfcc35415bda62e4ee895aa1b7f43c3bc2d86ffc3c18ae8db01"
+      },
+      {
+        "path": "tests/boundaries/runtime_boundary_test.go",
+        "identity_inventory_sha256": "57b85fcaf4d11630cbba9c2d78530c9d398acf7a5238376e82cf457e2e2c1c70"
+      },
+      {
+        "path": "tests/integration/testenv/closed_command_test.go",
+        "identity_inventory_sha256": "0dadf6d6b3bd21b9fd8fccb4c6645b04c2b52647b2e5faa0795efd9babc93042"
+      },
+      {
+        "path": "tests/integration/testenv/closed_runtime_scanner_test.go",
+        "identity_inventory_sha256": "9da71622a1eae040ff4aed7b3c6f8f63653aa6e3dd296b725fad5d2242a9ac3a"
+      },
+      {
+        "path": "tests/shell/fetch-runner.bats",
+        "identity_inventory_sha256": "183775b6df7efe70fed1f9eaadeef5ade6e4750991b3fc4c6ca24742116fdd28"
+      },
+      {
+        "path": "tests/shell/prepare-task5-images.bats",
+        "identity_inventory_sha256": "9da71622a1eae040ff4aed7b3c6f8f63653aa6e3dd296b725fad5d2242a9ac3a"
+      },
+      {
+        "path": "tests/shell/publish-runtime-release.bats",
+        "identity_inventory_sha256": "bbed62b480a375662cf3cf3137b59319a3b3dba93b68dc0f10eb134d31e5e2f3"
+      },
+      {
+        "path": "tests/shell/runner-release.bats",
+        "identity_inventory_sha256": "13aeec9306d5ca39840ee9b1fb7c5af35369a599e8f78be8a83f757868f27c4f"
+      },
+      {
+        "path": "tests/shell/runtime-release.bats",
+        "identity_inventory_sha256": "e90954e7e0bd2dfaf9ae4f988a2292610ca72c82d19421c787f2af1ceb3d1bd7"
+      }
+    ],
+    "candidate_substitutions": [
+      {
+        "path": "cmd/portable-ghar-runner-gate/main_test.go",
+        "token": "version_bare",
+        "count": 2,
+        "replace": false
+      },
+      {
+        "path": "cmd/portable-ghar-runtime-lock/main_test.go",
+        "token": "version_bare",
+        "count": 13,
+        "replace": true
+      },
+      {
+        "path": "cmd/portable-ghar-runtime-lock/main_test.go",
+        "token": "linux_x64_sha256",
+        "count": 3,
+        "replace": true
+      },
+      {
+        "path": "cmd/portable-ghar-runtime-lock/main_test.go",
+        "token": "source_commit",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "cmd/portable-ghar-runtime-lock/main_test.go",
+        "token": "command_settings_sha256",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "docs/superpowers/plans/2026-07-11-controller-runtime.md",
+        "token": "version_bare",
+        "count": 5,
+        "replace": false
+      },
+      {
+        "path": "docs/superpowers/plans/2026-07-11-controller-runtime.md",
+        "token": "linux_x64_sha256",
+        "count": 3,
+        "replace": false
+      },
+      {
+        "path": "docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md",
+        "token": "version_bare",
+        "count": 1,
+        "replace": false
+      },
+      {
+        "path": "internal/archive/runner_archive_test.go",
+        "token": "linux_x64_sha256",
+        "count": 1,
+        "replace": false
+      },
+      {
+        "path": "internal/buildinfo/pins.go",
+        "token": "version_bare",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "internal/buildinfo/pins.go",
+        "token": "linux_x64_sha256",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "internal/buildinfo/pins.go",
+        "token": "source_commit",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "internal/buildinfo/pins.go",
+        "token": "command_settings_sha256",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "internal/buildinfo/pins_test.go",
+        "token": "version_bare",
+        "count": 2,
+        "replace": true
+      },
+      {
+        "path": "internal/buildinfo/pins_test.go",
+        "token": "linux_x64_sha256",
+        "count": 2,
+        "replace": true
+      },
+      {
+        "path": "internal/buildinfo/pins_test.go",
+        "token": "source_commit",
+        "count": 2,
+        "replace": true
+      },
+      {
+        "path": "internal/buildinfo/pins_test.go",
+        "token": "command_settings_sha256",
+        "count": 2,
+        "replace": true
+      },
+      {
+        "path": "internal/runtimelock/lock_test.go",
+        "token": "version_bare",
+        "count": 2,
+        "replace": true
+      },
+      {
+        "path": "internal/upgrade/model_test.go",
+        "token": "version_bare",
+        "count": 22,
+        "replace": false
+      },
+      {
+        "path": "internal/upgrade/runner_release_test.go",
+        "token": "version_bare",
+        "count": 13,
+        "replace": false
+      },
+      {
+        "path": "tests/boundaries/runtime_boundary_test.go",
+        "token": "version_bare",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "tests/boundaries/runtime_boundary_test.go",
+        "token": "linux_x64_sha256",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "tests/boundaries/runtime_boundary_test.go",
+        "token": "source_commit",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "tests/integration/testenv/closed_command_test.go",
+        "token": "version_bare",
+        "count": 7,
+        "replace": false
+      },
+      {
+        "path": "tests/integration/testenv/closed_runtime_scanner_test.go",
+        "token": "version_bare",
+        "count": 2,
+        "replace": false
+      },
+      {
+        "path": "tests/shell/fetch-runner.bats",
+        "token": "version_bare",
+        "count": 4,
+        "replace": true
+      },
+      {
+        "path": "tests/shell/fetch-runner.bats",
+        "token": "linux_x64_sha256",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "tests/shell/prepare-task5-images.bats",
+        "token": "version_bare",
+        "count": 2,
+        "replace": false
+      },
+      {
+        "path": "tests/shell/publish-runtime-release.bats",
+        "token": "version_bare",
+        "count": 5,
+        "replace": false
+      },
+      {
+        "path": "tests/shell/runner-release.bats",
+        "token": "version_bare",
+        "count": 7,
+        "replace": false
+      },
+      {
+        "path": "tests/shell/runtime-release.bats",
+        "token": "version_bare",
+        "count": 4,
+        "replace": false
+      }
+    ],
+    "license_exceptions": []
+  }
 }

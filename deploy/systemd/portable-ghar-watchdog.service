@@ -1,0 +1,28 @@
+[Unit]
+Description=Portable GHAR disabled-only watchdog cycle
+After=local-fs.target
+RequiresMountsFor=/ABSOLUTE/PORTABLE_GHAR/STATE
+ConditionPathExists=/ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json
+ConditionPathExists=/ABSOLUTE/PORTABLE_GHAR/RELEASE/runtime-manifest.json
+ConditionFileIsExecutable=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-watchdog
+
+[Service]
+Type=oneshot
+# The watchdog starts the disabled controller under ProcessAuthority; setsid
+# does not leave this unit cgroup, so only the watchdog main process is reaped.
+# Controller stop remains identity-bound to ProcessAuthority.
+KillMode=process
+ExecStart=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-watchdog run --private /ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json --manifest /ABSOLUTE/PORTABLE_GHAR/RELEASE/runtime-manifest.json
+TimeoutStartSec=2min
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ReadWritePaths=/ABSOLUTE/PORTABLE_GHAR/STATE /ABSOLUTE/PORTABLE_GHAR/LOGS

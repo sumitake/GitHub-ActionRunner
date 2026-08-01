@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -501,6 +502,10 @@ class H10History(unittest.TestCase):
         run("commit", "-q", "-m", f"add secret {mk_ghp()} for CI")
         (self.repo / "secret.txt").unlink()
         run("commit", "-q", "-am", "remove secret file")
+        (self.repo / ".github").mkdir()
+        (self.repo / ".github" / "CODEOWNERS").write_text("* @sumitake\n")
+        run("add", ".github/CODEOWNERS")
+        run("commit", "-q", "-m", "add canonical codeowners")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -508,11 +513,77 @@ class H10History(unittest.TestCase):
     def test_deleted_blob_still_reachable_and_scanned(self):
         findings = sp.scan_history(self.repo)
         paths = {f.path for f in findings}
-        self.assertTrue(any("secret.txt@" in p for p in paths), paths)
+        self.assertTrue(
+            any(re.fullmatch(r"secret[.]txt@[0-9a-f]{40}", p) for p in paths),
+            paths,
+        )
+
+    def test_historical_policy_uses_original_codeowners_path(self):
+        findings = sp.scan_history(self.repo)
+        self.assertFalse(
+            any(
+                finding.path.startswith(".github/CODEOWNERS@")
+                and finding.rule == "REPO_IDENTITY"
+                for finding in findings
+            ),
+            findings,
+        )
+
+    def test_historical_allowance_requires_full_blob_oid_label(self):
+        finding = next(
+            finding
+            for finding in sp.scan_history(self.repo)
+            if finding.path.startswith("secret.txt@")
+        )
+        current_path_allowance = sp.AllowlistIndex(
+            [
+                {
+                    "path": "secret.txt",
+                    "line": finding.line,
+                    "rule": finding.rule,
+                    "sha256": sp.compute_line_hash(finding.content),
+                    "reason": "current path must not suppress history",
+                }
+            ]
+        )
+        self.assertEqual([finding], current_path_allowance.filter([finding]))
+        exact_history_allowance = sp.AllowlistIndex(
+            [
+                {
+                    "path": finding.path,
+                    "line": finding.line,
+                    "rule": finding.rule,
+                    "sha256": sp.compute_line_hash(finding.content),
+                    "reason": "exact immutable history fixture",
+                }
+            ]
+        )
+        self.assertEqual([], exact_history_allowance.filter([finding]))
 
     def test_commit_message_identifier_caught(self):
         findings = sp.scan_history(self.repo)
         self.assertTrue(any(f.rule == "HISTORY_META" and "subject" in f.path for f in findings), findings)
+
+    def test_public_history_metadata_allowance_is_literal_and_closed(self):
+        for allowed in sp.PUBLIC_HISTORY_METADATA_LINES:
+            with self.subTest(allowed=allowed):
+                self.assertEqual(
+                    [],
+                    sp._scan_public_history_metadata(allowed, "<commit>#body"),
+                )
+        near_misses = (
+            "john Osumi <931193+sumitake@users.noreply.github.com>",
+            "John Osumi <931193+sumitake@users.noreply.github.com> intruder@corp.invalid",
+            "Conduct, changelog, CODEOWNERS (* @sumitake-extra),",
+        )
+        for near_miss in near_misses:
+            with self.subTest(near_miss=near_miss):
+                self.assertTrue(
+                    sp._scan_public_history_metadata(
+                        near_miss,
+                        "<commit>#body",
+                    )
+                )
 
 
 class H11GeneratedManifest(unittest.TestCase):
@@ -669,6 +740,21 @@ class H14AllowlistModel(unittest.TestCase):
 
     def test_wildcard_path_rejected(self):
         p = self._write_allowlist([{"path": "docs/*", "line": 1, "rule": "IP001", "sha256": "0" * 64, "reason": "x"}])
+        with self.assertRaises(sp.AllowlistError):
+            sp.load_allowlist(p)
+
+    def test_short_historical_blob_oid_rejected(self):
+        p = self._write_allowlist(
+            [
+                {
+                    "path": "notes.md@01234567",
+                    "line": 1,
+                    "rule": "IP001",
+                    "sha256": "0" * 64,
+                    "reason": "short OID must never be accepted",
+                }
+            ]
+        )
         with self.assertRaises(sp.AllowlistError):
             sp.load_allowlist(p)
 

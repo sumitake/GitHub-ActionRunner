@@ -1,0 +1,12 @@
+[Unit]
+Description=Portable GHAR watchdog cadence template
+
+[Timer]
+OnBootSec=<OPERATOR_APPROVED_BOOT_DELAY>
+OnUnitActiveSec=<OPERATOR_APPROVED_CADENCE>
+AccuracySec=1s
+Persistent=false
+Unit=portable-ghar-watchdog.service
+
+[Install]
+WantedBy=timers.target

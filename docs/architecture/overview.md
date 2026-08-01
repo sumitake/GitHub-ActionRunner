@@ -8,12 +8,14 @@ credentials. The authoritative, review-gated design record lives at
 `docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md`; this
 page is a truthful summary of it, not a replacement for it.
 
-Phase 1 (this repository state) ships governance, schemas, sanitization
-tooling, hosted CI, and this documentation set. It contains no runner
-controller, no host integration, and no Cloudflare Worker deployment. See
+Phase 2 source now includes the local controller, isolation components,
+host adapters, conformance harnesses, and release tooling described here.
+It remains pre-deployment: Linux/Docker operational evidence, the
+operator-approved sizing tuple, external failover and migration, and live
+activation are later gates. See
 [Trust boundaries](../security/trust-boundaries.md) for the companion
-security model, and the [operations runbooks](../operations/operations.md)
-for how the shipped system is intended to be run once later phases land.
+security model and the [operations runbooks](../operations/operations.md)
+for the source-ready lifecycle contracts.
 
 ## Components
 

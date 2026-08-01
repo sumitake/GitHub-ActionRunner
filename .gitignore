@@ -8,6 +8,24 @@ worker/worker-configuration.d.ts
 # Local Go build/test cache artifacts
 /tmp/
 *.out
+images/runner/build/
+images/runner/.build.*
+images/network-adapter/build/
+images/network-adapter/.build.*
+images/.task5-prepare.lock/
+images/network-helper/build/
+images/network-helper/.build.*
+images/network-verifier/build/
+images/network-verifier/.build.*
+images/network-broker-parser/build/
+images/network-broker-parser/.build.*
+images/network-broker-dialer/build/
+images/network-broker-dialer/.build.*
+images/trust/.build.*
+images/.task6-prepare.lock/
+images/synthetic-listener/build/
+images/synthetic-listener/.build.*
+images/.task11-prepare.lock/
 
 # Environment, keys, private overlay, state, databases, caches (never committed)
 .env
@@ -17,7 +35,7 @@ worker/worker-configuration.d.ts
 secrets/
 private-overlay/
 *.local.*
-state/
+/state/
 *.sqlite
 *.sqlite-*
 *.db

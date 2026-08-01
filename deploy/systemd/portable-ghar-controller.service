@@ -1,0 +1,31 @@
+[Unit]
+Description=Portable GHAR disabled controller observer
+After=local-fs.target
+RequiresMountsFor=/ABSOLUTE/PORTABLE_GHAR/STATE
+ConditionPathExists=/ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json
+ConditionPathExists=/ABSOLUTE/PORTABLE_GHAR/RELEASE/runtime-manifest.json
+ConditionFileIsExecutable=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-controller
+StartLimitIntervalSec=60s
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-controller run --config /ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json --database /ABSOLUTE/PORTABLE_GHAR/STATE/controller.sqlite
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/ABSOLUTE/PORTABLE_GHAR/STATE /ABSOLUTE/PORTABLE_GHAR/LOGS
+
+[Install]
+WantedBy=multi-user.target

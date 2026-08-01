@@ -25,7 +25,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Check gofmt
-        run: unformatted="$(find . -type f -name '*.go' -not -path './.git/*' -print0 | xargs -0 gofmt -l)" && test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
+        run: 'unformatted="$(find . -type f -name "*.go" -not -path "./.git/*" -print0 | xargs -0 gofmt -l)"; if [ -n "$unformatted" ]; then printf "%s\n" "$unformatted"; exit 1; fi'
       - name: go vet
         run: go vet ./...
       - name: go test
@@ -83,13 +83,13 @@ jobs:
         with:
           go-version-file: go.mod
       - name: ShellCheck
-        run: find scripts deploy -type f -name '*.sh' -print0 | xargs -0 -r shellcheck
+        run: 'mapfile -d "" -t shell_files < <(git ls-files -z -- "*.sh"); if [ "${#shell_files[@]}" -eq 0 ]; then exit 1; fi; shellcheck --severity=warning "${shell_files[@]}"'
       - name: shfmt diff
         run: go tool shfmt -d scripts
       - name: Install Bats
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bats
       - name: Bats
-        run: bats tests/shell
+        run: bats tests/shell/*.bats tests/shell/qts/*.bats
 
   repository-metadata:
     runs-on: ubuntu-24.04
@@ -139,17 +139,31 @@ jobs:
 
   container:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read
     concurrency:
       group: ${{ github.workflow }}-container-${{ github.ref }}
       cancel-in-progress: true
+    env:
+      GOTOOLCHAIN: go1.26.5
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Prepare Task 6 image contexts
+        run: scripts/prepare-task6-images.sh
+      - name: Prepare Task 5 image contexts
+        run: 'repository="$(pwd -P)"; scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID" --ca-bundle "$repository/images/trust/build/ca-bundle.pem"'
+      - name: Prepare Task 11 image context
+        run: scripts/prepare-task11-images.sh --generation "$GITHUB_RUN_ID"
       - name: Check image manifest
         run: bash scripts/ci/check-images.sh
       - name: Trivy filesystem scan

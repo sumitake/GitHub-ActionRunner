@@ -1,0 +1,432 @@
+//go:build linux || darwin
+
+package networkjail
+
+import (
+	"context"
+	"net"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/sumitake/portable-ghar/internal/hostruntime"
+)
+
+type UnixAuthorityManager struct {
+	mu         sync.Mutex
+	authority  *PermitAuthority
+	maxClients uint32
+	timeout    time.Duration
+	active     map[string]*managedUnixAuthority
+}
+
+type managedUnixAuthority struct {
+	mu              sync.Mutex
+	server          *unixPermitServer
+	socketPin       *authoritySocketPin
+	socketPath      string
+	socket          hostruntime.SocketIdentity
+	slot            CapacitySlotID
+	generation      JobGeneration
+	closed          bool
+	socketRemoved   bool
+	socketPinClosed bool
+	deactivated     bool
+}
+
+type authorityUser struct {
+	uid       uint32
+	gid       uint32
+	nativeUID int
+	nativeGID int
+}
+
+func NewUnixAuthorityManager(
+	authority *PermitAuthority,
+	maxClients uint32,
+	timeout time.Duration,
+) (*UnixAuthorityManager, error) {
+	if authority == nil || maxClients == 0 ||
+		timeout <= 0 || timeout > maxPermitUnixTimeout {
+		return nil, ErrPermitAuthorityUnavailable
+	}
+	return &UnixAuthorityManager{
+		authority:  authority,
+		maxClients: maxClients,
+		timeout:    timeout,
+		active:     make(map[string]*managedUnixAuthority),
+	}, nil
+}
+
+func (manager *UnixAuthorityManager) Start(
+	ctx context.Context,
+	request authorityRequest,
+) (authorityLease, error) {
+	if manager == nil || ctx == nil || request.slotID == 0 ||
+		request.jobGeneration == 0 ||
+		!filepath.IsAbs(request.directory) ||
+		filepath.Clean(request.directory) != request.directory {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	user, err := parseAuthorityUser(request.user)
+	if err != nil {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	entries, err := os.ReadDir(request.directory)
+	if err != nil || len(entries) != 0 {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	directory, _, err := readAuthorityPathIdentity(request.directory, false)
+	if err != nil ||
+		directory.UID != user.uid ||
+		directory.GID != user.gid {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	socketPath := filepath.Join(request.directory, "dial-authority.sock")
+	if filepath.Dir(socketPath) != request.directory {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+
+	manager.mu.Lock()
+	if _, exists := manager.active[socketPath]; exists {
+		manager.mu.Unlock()
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	manager.active[socketPath] = nil
+	manager.mu.Unlock()
+	reserved := true
+	defer func() {
+		if reserved {
+			manager.mu.Lock()
+			if manager.active[socketPath] == nil {
+				delete(manager.active, socketPath)
+			}
+			manager.mu.Unlock()
+		}
+	}()
+
+	slot := CapacitySlotID(request.slotID)
+	generation := JobGeneration(request.jobGeneration)
+	if err := manager.authority.Activate(ctx, slot, generation); err != nil {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	activated := true
+	defer func() {
+		if activated {
+			recoveryCtx, cancel := setupRecoveryContext(ctx)
+			_ = manager.authority.Deactivate(recoveryCtx, slot, generation)
+			cancel()
+		}
+	}()
+	revision, err := manager.authority.ActiveRevision(ctx, slot, generation)
+	if err != nil {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	listener, err := net.ListenUnix(
+		"unix",
+		&net.UnixAddr{Name: socketPath, Net: "unix"},
+	)
+	if err != nil {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	listenerOpen := true
+	var socket hostruntime.SocketIdentity
+	var socketPin *authoritySocketPin
+	socketPinOpen := false
+	defer func() {
+		if listenerOpen {
+			_ = listener.Close()
+			if socketPin != nil {
+				_ = socketPin.remove()
+			}
+		}
+		if socketPinOpen {
+			_ = socketPin.close()
+		}
+	}()
+	socket, socketPin, err = finalizeAuthoritySocket(
+		listener,
+		socketPath,
+		request.directory,
+		directory,
+		user,
+	)
+	if err != nil {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	socketPinOpen = true
+	peer, err := currentAuthorityProcessIdentity()
+	if err != nil {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	proof, err := hostruntime.NewAuthorityProof(hostruntime.AuthorityBinding{
+		Version:        1,
+		CapacitySlotID: request.slotID,
+		JobGeneration:  request.jobGeneration,
+		LedgerRevision: revision,
+		Directory:      directory,
+		Socket:         socket,
+		Peer:           peer,
+	})
+	if err != nil {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	server, err := newUnixPermitServer(
+		manager.authority,
+		listener,
+		manager.maxClients,
+		manager.timeout,
+	)
+	if err != nil {
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	endpoint := &managedUnixAuthority{
+		server:     server,
+		socketPin:  socketPin,
+		socketPath: socketPath,
+		socket:     socket,
+		slot:       slot,
+		generation: generation,
+	}
+	server.start(context.Background())
+
+	manager.mu.Lock()
+	if manager.active[socketPath] != nil {
+		manager.mu.Unlock()
+		_ = endpoint.close()
+		return authorityLease{}, ErrPermitAuthorityUnavailable
+	}
+	manager.active[socketPath] = endpoint
+	manager.mu.Unlock()
+
+	reserved = false
+	activated = false
+	listenerOpen = false
+	socketPinOpen = false
+	return authorityLease{
+		proof:         proof,
+		slotID:        request.slotID,
+		jobGeneration: request.jobGeneration,
+		socketPath:    socketPath,
+		socket:        socket,
+		endpoint:      endpoint,
+		valid:         true,
+	}, nil
+}
+
+func finalizeAuthoritySocket(
+	listener *net.UnixListener,
+	socketPath string,
+	directoryPath string,
+	directory hostruntime.DirectoryIdentity,
+	user authorityUser,
+) (hostruntime.SocketIdentity, *authoritySocketPin, error) {
+	return finalizeAuthoritySocketWith(
+		listener,
+		socketPath,
+		directoryPath,
+		directory,
+		user,
+		openAuthoritySocketPin,
+	)
+}
+
+func finalizeAuthoritySocketWith(
+	listener *net.UnixListener,
+	socketPath string,
+	directoryPath string,
+	directory hostruntime.DirectoryIdentity,
+	user authorityUser,
+	openPin func(
+		string,
+		hostruntime.DirectoryIdentity,
+		hostruntime.SocketIdentity,
+	) (*authoritySocketPin, error),
+) (hostruntime.SocketIdentity, *authoritySocketPin, error) {
+	if listener == nil || socketPath == "" || directoryPath == "" ||
+		openPin == nil ||
+		user.nativeUID < 0 ||
+		user.nativeGID < 0 ||
+		uint64(user.nativeUID) != uint64(user.uid) ||
+		uint64(user.nativeGID) != uint64(user.gid) {
+		return hostruntime.SocketIdentity{}, nil,
+			ErrPermitAuthorityUnavailable
+	}
+	listener.SetUnlinkOnClose(true)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		return hostruntime.SocketIdentity{}, nil,
+			ErrPermitAuthorityUnavailable
+	}
+	_, socket, err := readAuthorityPathIdentity(socketPath, true)
+	if err == nil &&
+		(socket.UID != user.uid || socket.GID != user.gid) {
+		if err := os.Chown(socketPath, user.nativeUID, user.nativeGID); err != nil {
+			return hostruntime.SocketIdentity{}, nil,
+				ErrPermitAuthorityUnavailable
+		}
+		_, socket, err = readAuthorityPathIdentity(socketPath, true)
+	}
+	if err != nil ||
+		socket.Device != directory.Device ||
+		socket.UID != user.uid ||
+		socket.GID != user.gid {
+		return hostruntime.SocketIdentity{}, nil,
+			ErrPermitAuthorityUnavailable
+	}
+	socketPin, err := openPin(
+		directoryPath,
+		directory,
+		socket,
+	)
+	if err != nil {
+		pathDirectory, _, directoryErr := readAuthorityPathIdentity(
+			directoryPath,
+			false,
+		)
+		_, pathSocket, socketErr := readAuthorityPathIdentity(
+			socketPath,
+			true,
+		)
+		if directoryErr != nil ||
+			socketErr != nil ||
+			pathDirectory != directory ||
+			pathSocket != socket {
+			listener.SetUnlinkOnClose(false)
+		}
+		return hostruntime.SocketIdentity{}, nil,
+			ErrPermitAuthorityUnavailable
+	}
+	listener.SetUnlinkOnClose(false)
+	return socket, socketPin, nil
+}
+
+func (manager *UnixAuthorityManager) Stop(
+	ctx context.Context,
+	lease authorityLease,
+) error {
+	if manager == nil || ctx == nil || !lease.valid ||
+		lease.socketPath == "" || lease.endpoint == nil {
+		return ErrPermitAuthorityUnavailable
+	}
+	endpoint, ok := lease.endpoint.(*managedUnixAuthority)
+	if !ok || endpoint.socketPath != lease.socketPath ||
+		endpoint.socket != lease.socket {
+		return ErrPermitAuthorityUnavailable
+	}
+	manager.mu.Lock()
+	current, found := manager.active[lease.socketPath]
+	manager.mu.Unlock()
+	if !found {
+		endpoint.mu.Lock()
+		stopped := endpoint.closed &&
+			endpoint.socketRemoved &&
+			endpoint.socketPinClosed &&
+			endpoint.deactivated
+		endpoint.mu.Unlock()
+		if stopped {
+			return nil
+		}
+		return ErrPermitAuthorityUnavailable
+	}
+	if current != endpoint {
+		return ErrPermitAuthorityUnavailable
+	}
+
+	endpoint.mu.Lock()
+	defer endpoint.mu.Unlock()
+	if !endpoint.closed {
+		if endpoint.socketPin == nil ||
+			endpoint.socketPinClosed ||
+			endpoint.socketPin.verify() != nil {
+			return ErrPermitAuthorityUnavailable
+		}
+		if err := endpoint.server.close(); err != nil {
+			return ErrPermitAuthorityUnavailable
+		}
+		endpoint.closed = true
+	}
+	if !endpoint.socketRemoved {
+		if endpoint.socketPin == nil || endpoint.socketPinClosed {
+			return ErrPermitAuthorityUnavailable
+		}
+		if err := endpoint.socketPin.remove(); err != nil {
+			return ErrPermitAuthorityUnavailable
+		}
+		endpoint.socketRemoved = true
+	}
+	if !endpoint.deactivated {
+		if err := manager.authority.Deactivate(
+			ctx,
+			endpoint.slot,
+			endpoint.generation,
+		); err != nil {
+			return ErrPermitAuthorityUnavailable
+		}
+		endpoint.deactivated = true
+	}
+	pinCloseFailed := false
+	if !endpoint.socketPinClosed {
+		if endpoint.socketPin == nil {
+			return ErrPermitAuthorityUnavailable
+		}
+		if err := endpoint.socketPin.close(); err != nil {
+			pinCloseFailed = true
+		}
+		endpoint.socketPin = nil
+		endpoint.socketPinClosed = true
+	}
+	manager.mu.Lock()
+	if manager.active[lease.socketPath] == endpoint {
+		delete(manager.active, lease.socketPath)
+	}
+	manager.mu.Unlock()
+	if pinCloseFailed {
+		return ErrPermitAuthorityUnavailable
+	}
+	return nil
+}
+
+func (endpoint *managedUnixAuthority) close() error {
+	if endpoint == nil || endpoint.server == nil {
+		return nil
+	}
+	return endpoint.server.close()
+}
+
+func parseAuthorityUser(value string) (authorityUser, error) {
+	parts := strings.Split(value, ":")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return authorityUser{}, ErrPermitAuthorityUnavailable
+	}
+	uid, err := strconv.ParseUint(parts[0], 10, 32)
+	if err != nil || strconv.FormatUint(uid, 10) != parts[0] {
+		return authorityUser{}, ErrPermitAuthorityUnavailable
+	}
+	gid, err := strconv.ParseUint(parts[1], 10, 32)
+	if err != nil || strconv.FormatUint(gid, 10) != parts[1] {
+		return authorityUser{}, ErrPermitAuthorityUnavailable
+	}
+	nativeUID, err := strconv.Atoi(parts[0])
+	if err != nil ||
+		nativeUID < 0 ||
+		strconv.Itoa(nativeUID) != parts[0] {
+		return authorityUser{}, ErrPermitAuthorityUnavailable
+	}
+	nativeGID, err := strconv.Atoi(parts[1])
+	if err != nil ||
+		nativeGID < 0 ||
+		strconv.Itoa(nativeGID) != parts[1] {
+		return authorityUser{}, ErrPermitAuthorityUnavailable
+	}
+	return authorityUser{
+		uid:       uint32(uid),
+		gid:       uint32(gid),
+		nativeUID: nativeUID,
+		nativeGID: nativeGID,
+	}, nil
+}
+
+var _ authorityManager = (*UnixAuthorityManager)(nil)

@@ -9,10 +9,11 @@ here are synthetic and illustrative -- they describe the shape of an
 operator's positive read-back gate, not a real deployment's paths, hosts,
 or credentials.
 
-Phase 1 of this repository ships no runtime controller and no Cloudflare
-Worker deployment. This page describes the intended rollback contract the
-later runtime and failover phases implement; it is not a claim that any
-rollback described below has been exercised against a live deployment.
+Phase 2 source implements the local controller and host rollback seams,
+but no Cloudflare failover authority or live deployment has been
+activated. This page describes the complete intended rollback contract;
+it is not a claim that any rollback below has been exercised against a
+live deployment.
 
 ## Mutually exclusive rollback barrier
 

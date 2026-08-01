@@ -1,0 +1,14 @@
+{
+  "count": 1,
+  "value": [
+    {
+      "id": 42,
+      "name": "example-scaleset",
+      "runnerGroupId": 1,
+      "runnerGroupName": "default",
+      "labels": [
+        { "type": "System", "name": "not-example-scaleset" }
+      ]
+    }
+  ]
+}

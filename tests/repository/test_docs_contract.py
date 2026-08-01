@@ -317,6 +317,129 @@ class ProductionLifecycleContractTest(unittest.TestCase):
         self.assertIn("observer", text)
 
 
+class ControllerUpgradeContractTest(unittest.TestCase):
+    RELPATH = "docs/operations/controller-upgrade.md"
+    HEADINGS = [
+        "Authority and immutable identities",
+        "Hosted hold and directive sequence",
+        "Candidate build and qualification",
+        "Drain and quiescence",
+        "Journaled selection and restart recovery",
+        "Selection, canary, and enable gates",
+        "Execution packet boundary",
+    ]
+
+    def test_required_headings_in_order(self) -> None:
+        assert_sections(self, self.RELPATH, self.HEADINGS)
+
+    def test_no_unqualified_live_claims(self) -> None:
+        assert_no_unqualified_live_claims(self, self.RELPATH)
+
+    def test_links_to_architecture_trust_and_lifecycle_docs(self) -> None:
+        text = (REPO_ROOT / self.RELPATH).read_text(encoding="utf-8")
+        for target in (
+            "../architecture/overview.md",
+            "../security/trust-boundaries.md",
+            "production-lifecycle.md",
+        ):
+            self.assertIn(target, text)
+
+    def test_states_qts_build_and_listener_smoke_boundaries(self) -> None:
+        text = _normalized(self.RELPATH)
+        for term in (
+            "non admin",
+            "prebuilt",
+            "runner.listener",
+            "runner.worker",
+            "separately approved execution packet",
+        ):
+            self.assertIn(term, text)
+
+
+class ControllerRecoveryContractTest(unittest.TestCase):
+    RELPATH = "docs/operations/controller-recovery.md"
+    HEADINGS = [
+        "Initial read-back",
+        "Ambiguity and disabled acquisition",
+        "Dark observer recovery",
+        "Forward recovery and compensation",
+        "Hosted confirmation and rollback",
+        "Retained state and evidence",
+        "Execution packet boundary",
+    ]
+
+    def test_required_headings_in_order(self) -> None:
+        assert_sections(self, self.RELPATH, self.HEADINGS)
+
+    def test_no_unqualified_live_claims(self) -> None:
+        assert_no_unqualified_live_claims(self, self.RELPATH)
+
+    def test_links_to_architecture_trust_and_lifecycle_docs(self) -> None:
+        text = (REPO_ROOT / self.RELPATH).read_text(encoding="utf-8")
+        for target in (
+            "../architecture/overview.md",
+            "../security/trust-boundaries.md",
+            "production-lifecycle.md",
+        ):
+            self.assertIn(target, text)
+
+    def test_states_forward_only_recovery_and_no_runner_downgrade(self) -> None:
+        raw = (REPO_ROOT / self.RELPATH).read_text(encoding="utf-8").lower()
+        self.assertIn("status --json", raw)
+        text = _normalized(self.RELPATH)
+        for term in (
+            "fence header",
+            "holders",
+            "never decrement",
+            "incompatible runner",
+        ):
+            self.assertIn(term, text)
+
+
+class RunnerReleaseContractTest(unittest.TestCase):
+    RELPATH = "docs/operations/runner-release.md"
+    HEADINGS = [
+        "Automatic release path",
+        "Immutable candidate qualification",
+        "Maintenance response phases",
+        "Retry and operator hold",
+        "Forced-version-bump continuity",
+        "Reclamation and bounded retention",
+        "Unattended-operation dependencies",
+        "Execution packet boundary",
+    ]
+
+    def test_required_headings_in_order(self) -> None:
+        assert_sections(self, self.RELPATH, self.HEADINGS)
+
+    def test_no_unqualified_live_claims(self) -> None:
+        assert_no_unqualified_live_claims(self, self.RELPATH)
+
+    def test_links_to_architecture_trust_and_lifecycle_docs(self) -> None:
+        text = (REPO_ROOT / self.RELPATH).read_text(encoding="utf-8")
+        for target in (
+            "../architecture/overview.md",
+            "../security/trust-boundaries.md",
+            "production-lifecycle.md",
+        ):
+            self.assertIn(target, text)
+
+    def test_states_all_six_responses_and_unattended_dependencies(self) -> None:
+        text = _normalized(self.RELPATH)
+        for term in (
+            "wait hosted",
+            "stage permitted",
+            "replace permitted",
+            "canary permitted",
+            "enable permitted",
+            "complete",
+            "candidate rejected",
+            "phase 3",
+            "task 14",
+        ):
+            self.assertIn(term, text)
+
+
 class DeploymentAndRollbackContractTest(unittest.TestCase):
     RELPATH = "docs/operations/deployment-and-rollback.md"
     HEADINGS = [

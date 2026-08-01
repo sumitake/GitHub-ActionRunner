@@ -1,0 +1,13 @@
+**
+!Dockerfile
+!.dockerignore
+!build/
+!build/portable-ghar-network-helper
+!build/rootfs/
+!build/rootfs/**
+!build/legacy.layout
+!build/legacy.layout.sha256
+!build/legacy.sha256
+!build/legacy.manifest.json
+!build/packages.lock.json
+!build/packages.spdx.json

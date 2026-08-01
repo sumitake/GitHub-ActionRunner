@@ -2,12 +2,14 @@
 
 ## Project status
 
-Portable GHAR is **pre-deployment / experimental**. Phase 1 of the project
-ships no runner controller, no host integration, and no production
-deployment target -- it is build tooling, schemas, and repository policy
-only. There is currently no live, network-reachable instance of this
-software for anyone to attack; the security surface that exists today is
-the source tree, its CI pipeline, and its supply chain.
+Portable GHAR is **pre-deployment / experimental**. The repository
+contains the Phase 2 source implementation of the local controller,
+isolation runtime, host adapters, and release/conformance tooling, but
+positive Linux/Docker operational evidence, host sizing, external
+failover, migration, and live activation remain separate gates. There is
+currently no project-operated, network-reachable instance of this
+software; the public security surface is the source tree, its CI pipeline,
+its supply chain, and any independently built experimental artifact.
 
 That said, we still want to hear about anything that looks like a
 vulnerability -- in the code, in the CI/release pipeline, or in the

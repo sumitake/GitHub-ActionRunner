@@ -8,11 +8,10 @@ once a first tagged release is cut.
 
 ## [Unreleased]
 
-Portable GHAR is currently in the **pre-deployment foundation** phase
-(Phase 1): synthetic configuration contracts, enforceable public-source
-sanitization, and repository governance, with no runner controller, host
-integration, or production deployment target yet. Nothing in this section
-has shipped as a tagged release.
+Portable GHAR is currently **pre-deployment**. Phase 2 source is complete,
+but the Linux/Docker operational, forced-runner-version-bump, host-sizing,
+external-failover, migration, and live-activation gates remain incomplete.
+Nothing in this section has shipped as a tagged release.
 
 ### Added
 
@@ -25,5 +24,36 @@ has shipped as a tagged release.
   `CODE_OF_CONDUCT.md`, this changelog, `THIRD_PARTY_NOTICES.md`,
   `.github/CODEOWNERS`, a pull request template with a PUBLIC-SAFETY
   checklist, and structured GitHub issue forms.
+- A persisted, crash-reconciling controller with pinned scale-set
+  integration, bounded admission, one-job lifecycle, fleet fencing,
+  watchdog, and force-disabled dark-observer startup.
+- Per-job runner, adapter, broker, helper, verifier, and held-listener
+  components with durable dial authority and fail-closed egress gates.
+- QTS and systemd host-lifecycle seams, conformance and chaos harnesses,
+  immutable runner-release observation, and reproducible source/runtime
+  release tooling.
+- Source-ready operational runbooks, including bounded runner reclamation
+  and schema-versioned Grafana/InfluxDB observability requirements.
+
+### Security
+
+- Added replacement-resistant Unix-socket guards, exact connected-stream
+  framing, crash-safe journal locking, full-history public sanitization,
+  and hosted CI checks for Linux, containers, supply chain, and static
+  analysis.
+
+### Changed
+
+- Clarified the standalone product boundary: consumer repositories and
+  development-time collaboration or review tools are optional integrations,
+  never Portable GHAR build, test, release, deployment, or runtime
+  dependencies.
+- Bound runner creation, held-runner audit, conformance, listener exec, and the
+  post-JIT process to one exact TLS-only loopback proxy environment, while
+  rejecting plaintext proxy, duplicate, missing, altered, or ambient entries.
+- Revalidate the held lifecycle lease immediately before every watchdog stop or
+  disabled start so replaced lock identity cannot authorize a later mutation.
+- Limit the systemd watchdog oneshot to reaping its own process; controller
+  termination remains bound to the watchdog's process-identity authority.
 
 [Unreleased]: https://github.com/sumitake/portable-ghar/compare/main...HEAD

@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 -->
 
-- **Status:** Design complete and review-gated; implementation not started. Code generation remains gated on the executable design probes and a fresh distinct-family review of the current revision (section 22).
+- **Status:** Phase 2 source implementation complete; deferred Linux/Docker operational evidence, forced-runner-version-bump evidence, host sizing, external failover, migration, and live activation remain gated. No host activation is authorized.
 - **Repository:** `portable-ghar`
 - **License:** MPL-2.0
 - **Primary audience:** Operators running ephemeral GitHub Actions workloads on a Linux Docker host, with QNAP/QTS as the first reference host
@@ -15,6 +15,7 @@ The first implementation will:
 
 - use the public-preview `actions/scaleset` Go client behind a pinned internal adapter;
 - launch one fresh runner container per assigned job;
+- require scale-set `RunnerSetting.DisableUpdate=true` and manage runner releases through an external immutable candidate pipeline rather than in-place self-update;
 - keep Docker control, GitHub App credentials, and notification credentials outside job containers;
 - install and verify a unique egress jail before each runner listener starts;
 - use a host-level watchdog for local recovery;
@@ -24,6 +25,17 @@ The first implementation will:
 - keep public-repository CI on GitHub-hosted runners so the project never tests its own runner controller with untrusted pull-request code.
 
 This project is not an official GitHub project. Its scale-set integration depends on a public-preview upstream interface and must be presented as experimental until the compatibility and migration gates in this document pass.
+
+### 1.1 Standalone dependency boundary
+
+Portable GHAR source, builds, tests, release artifacts, deployment tools, and
+runtime depend only on this repository and its declared public dependencies.
+No consumer repository, collaboration broker, reviewer plugin, or developer
+workspace is a product dependency. Independent review tooling is replaceable
+development infrastructure, and deployment-time consumer workflows remain
+external integrations chosen from authenticated live inventory. Failure or
+absence of either cannot create a new Portable GHAR build, test, release, or
+runtime prerequisite.
 
 ## 2. Goals
 
@@ -37,6 +49,9 @@ This project is not an official GitHub project. Its scale-set integration depend
 8. Make the implementation portable across Linux Docker hosts through narrow host-adapter interfaces.
 9. Make the public repository safe to fork, inspect, build, and contribute to without exposing an operator's identity, topology, or deployment state.
 10. Produce reproducible binaries and images with checksums, SBOMs, provenance, and third-party license notices.
+11. Survive GitHub-forced runner version bumps without manual intervention or loss of the GitHub-hosted execution path.
+12. Reclaim every job-scoped cgroup, tmpfs, process, namespace, and workspace by whole-container destruction, with bounded steady-state host memory and no persistent runner work area.
+13. Keep every mandatory source and operational contract consumer-neutral so the platform can be built, tested, deployed, and operated without any unrelated repository or development tool.
 
 ## 3. Non-goals
 
@@ -48,6 +63,7 @@ This project is not an official GitHub project. Its scale-set integration depend
 - Supporting arbitrary QTS releases, kernels, CPU architectures, or Docker builds without a verified host profile.
 - Guaranteeing that automated scanners can prove the absence of every identifying value.
 - Providing a hosted Portable GHAR control-plane service.
+- Keeping a serving runner container current by deleting old-version files or updater staging in place.
 
 ## 4. Trust model
 
@@ -208,6 +224,36 @@ Capacity is expressed as resource units, not a count of pre-registered runners.
 - Host pressure can reduce available capacity but cannot silently raise it above configured limits.
 - Zero idle runner containers is the default.
 
+Runner tmpfs pages are charged to the enclosing memory cgroup. Tmpfs therefore
+has its own admission dimension and hard sub-limit, but is not additional free
+memory and is not added a second time to the same runner's host-RAM ceiling.
+Every host profile must carry one operator-approved sizing tuple covering
+`/runner` and `/tmp` tmpfs, runner memory and swap limits, maximum active
+concurrency, and upstream release-observation cadence. Configuration validation
+uses checked arithmetic and requires:
+
+```text
+runner_tmpfs_limit >= p99_runner_tmpfs_used + runner_tmpfs_margin
+runner_memory_limit >= p99_runner_cgroup_used + process_margin
+runner_tmpfs_limit + runner_other_tmpfs_limits + process_margin <= runner_memory_limit
+max_active * runner_memory_limit
+  + max_active * auxiliary_slot_memory
+  + idle_controller_and_watchdog
+  + candidate_build_and_smoke_peak
+  + host_and_gateway_reserve
+  <= usable_host_memory
+```
+
+Swap is a bounded degradation buffer and does not increase
+`usable_host_memory`. The RhoNAS incident supplies regression anchors, not
+defaults: 666 MiB idle `/runner` use, 2,162 MiB peak `/runner` use for one real
+post-fix job, a 32 GiB host, and six legacy slots. A 2 GiB runner memory limit
+cannot contain that measured `/runner` peak and is invalid regardless of a
+larger tmpfs mount. The temporary 5 GiB `/runner`, 4 GiB memory, and 6 GiB swap
+legacy accommodation is retained only as a migration bridge; Portable GHAR
+selects final values from representative p99 distributions and headroom rather
+than carrying the emergency high-water limits forward.
+
 Acquisition policy is persisted as `{mode, eligibleScaleSets, maxCapacity, repositoryPolicyRevision, repositoryPolicies, epoch}`, where `repositoryPolicies` is the per-repository `{alias, maxConcurrency, eligibilityState}` set and `repositoryPolicyRevision` is a monotonic counter bumped on any change to that set (including an eligibility latch). Every effective mode, eligibility, capacity, or repository-policy change uses one compare-and-set barrier: increment the epoch, cancel and join every older poller, invalidate its broker leases, and wait for zero acquisition critical sections before returning. Poll, acquire, and JIT calls have explicit deadlines. If any old operation ignores cancellation past the bounded shutdown deadline, the controller persists `fatal` with zero capacity and terminates its process; lifecycle tooling treats that transition as failed and proves process/runner quiescence before any fence handoff or restart.
 
 The public acquisition-policy digest is SHA-256 over exact UTF-8 bytes:
@@ -356,7 +402,75 @@ An upgrade proceeds through:
 11. restore self-hosted routing only after the external failover state machine
     confirms both the current-epoch canary and that acquisition-enabled proof.
 
-Host lifecycle changes use a durable operation journal with an idempotent operation ID and phase. A rerun resumes or compensates forward. Fence generations never decrement and raw fence snapshots are never restored. An upstream compatibility failure leaves acquisition disabled and hosted routing unchanged.
+Host lifecycle changes use a durable operation journal with an idempotent operation ID and phase. A rerun resumes or compensates forward. Fence generations never decrement and raw fence snapshots are never restored. An upstream compatibility failure leaves acquisition disabled and hosted routing unchanged. The prior immutable image remains retained as a rollback artifact, but the controller never selects an old runner image after its compatibility probe fails; in that case rollback restores the control plane while work remains hosted.
+
+### 6.5 Runner release lifecycle and reclamation
+
+The 2026-07-22 RhoNAS failure is a mandatory regression. A container copied
+runner `2.335.1` into a 3 GiB RAM-backed `/runner`, GitHub required `2.336.0`,
+and the listener self-updated in place. Both runner payloads plus a 666 MiB
+`_work/_update` staging tree exhausted the tmpfs when job work arrived. The
+`pull_request_target`/`pull_request` asymmetry and annotation-only ENOSPC signal
+are classified as runner-state evidence, not workflow-content evidence.
+
+Portable GHAR prevents recurrence with four layers:
+
+1. The scale-set compatibility probe requires exactly one configured label and
+   `RunnerSetting.DisableUpdate=true`. False, absent, unknown, or drifted
+   settings force zero acquisition.
+2. A scheduled default-branch observer checks the official runner release
+   source at the operator-approved cadence. It validates a monotonic tag and
+   immutable tag/ref, the unique Linux x64 asset name and size, the official
+   SHA-256 asset digest, and publication time. It creates no candidate for
+   incomplete, ambiguous, downgraded, or mismatched metadata.
+3. A trusted GitHub-hosted release workflow builds one exact-version immutable
+   candidate image, verifies `Runner.Listener --version`, rejects a second
+   runner payload or `_work/_update` residue, runs compatibility and
+   reclamation tests, and publishes a signed manifest, image digest, SBOM,
+   checksum, and provenance. Pull-request code and deployment secrets never
+   enter this workflow.
+4. The target observes only attested candidates. It preserves the selected and
+   prior immutable digests and publishes candidate state. The Worker enters its
+   hosted hold and exposes a read-only, short-lived, signed outbound
+   maintenance directive. Only `stage-permitted` after hosted read-back,
+   permit drain, queue clearance, and zero assigned jobs authorizes local
+   acquisition disable plus bounded candidate staging/qualification. Only a
+   later `replace-permitted`, after the exact candidate-qualified tuple is
+   persisted, authorizes quiescence and digest selection; later
+   `canary-permitted` and `enable-permitted` directives authorize the matching
+   local acquisition-policy transitions.
+   Each directive is bound to active enrollment/transition/permit/config
+   generations, the exact status-request control sequence and selected/
+   candidate manifest digests, the qualified tuple, policy digests, and server
+   expiry, and is re-fetched immediately before use. Pending, rejected,
+   interrupted, directive-unavailable, or GitHub-incompatible candidates leave
+   work hosted and the previous artifacts available. The journal resumes this
+   sequence after a crash or re-enrollment without operator intervention.
+   An existing operator-created hold strictly dominates runner-upgrade state:
+   release observations and permit drain persist, but the reason cannot change,
+   every directive remains `wait-hosted`, and no stage/select/auto-release
+   occurs. After authenticated operator release, only a fresh non-current
+   heartbeat may enter a new runner-upgrade hold.
+
+Portable GHAR does not rely on updater-file deletion inside a serving runner.
+After every success, cancellation, launch failure, ambiguous assignment,
+controller restart, or upgrade interruption, reclamation removes the whole
+container and positively verifies absence of its cgroup, `/runner`, `/tmp`,
+`_work`, `_work/_update`, descendants, and namespaces within the cleanup SLO.
+The default runner work area is bounded tmpfs. A disk-backed alternative needs
+separate review and must be an anonymous, size-bounded, one-container
+filesystem destroyed with that container; a reusable or unbounded NAS work
+path is unsupported. Immutable candidate and rollback images are bounded
+release artifacts under the storage-pressure contract, not job workspaces.
+
+On QTS, the normal path pulls the prebuilt attested image. A local fallback
+must not invoke `docker build` as the non-admin account: it runs as
+administrator or uses the separately qualified run/exec/commit recovery
+procedure rooted in the retained rollback image. The listener version and
+image digest are smoke-tested before selection. Portable GHAR itself has zero
+registered idle runners; migration tooling removes legacy idle containers
+(defined by absence of `Runner.Worker`) before an old-image registration can
+accept another job.
 
 ## 7. Per-job isolation
 
@@ -380,6 +494,11 @@ Every runner uses:
   read-only `/proc/sys`;
 - non-root execution when the verified host profile supports it; and
 - no automatic restart policy.
+
+A runner image contains one smoke-tested runner release, and its scale set
+disables in-place update. The runner has no persistent host work mount. Runner
+completion is not acknowledged as reclaimed until container, cgroup, tmpfs,
+workspace/update staging, processes, and namespaces are positively absent.
 
 A capability-less root profile may exist only as a named degraded profile when a host's filesystem behavior prevents non-root execution. It is never selected automatically, and its use must be visible in health and audit output.
 
@@ -719,6 +838,14 @@ through `T`, bounded log reserve, and host safety margin; shared filesystems are
 deduplicated before summing and all arithmetic is overflow-checked. Image staging
 or installation stops before the first write if
 any byte or inode reserve would be crossed.
+
+Runner job work is never charged to a persistent reusable NAS volume. The
+preferred profile uses bounded tmpfs and reclaims it by removing the whole
+container. Any separately approved disk-backed fallback is an anonymous,
+size-bounded one-container filesystem included in the slot and storage budgets
+and positively removed after the job. Immutable current/candidate/rollback
+images remain bounded operational artifacts in Docker root; they do not carry
+job work and are garbage-collected only after rollback retention permits it.
 
 The controller and watchdog re-read free bytes, free inodes, Docker-root usage,
 state/retained-ledger growth, and log growth before acquisition and on every
@@ -1278,6 +1405,7 @@ Every Action is pinned to a full commit SHA with a comment naming the reviewed r
 - Gitleaks full-history scan on push, pull request, weekly schedule, and manual dispatch.
 - OpenSSF Scorecard when its required permissions and publishing behavior are reviewed and pinned.
 - Scheduled upstream compatibility probes for the pinned scale-set and runner versions.
+- A scheduled default-branch runner-release observer that validates official immutable metadata, builds and qualifies one exact-version candidate on GitHub-hosted infrastructure, and publishes only signed/attested candidate subjects. It never executes pull-request code or mutates a deployment.
 
 ### 16.3 Dependency automation
 
@@ -1304,13 +1432,14 @@ A tag-triggered, narrowly permissioned workflow:
 8. publishes immutable artifacts and image digests; and
 9. verifies the public release payload with the sanitization gate.
 
-Upstream runner binaries, scale-set binaries, and action archives are never committed. Build inputs are pinned and verified by digest, and third-party license obligations are recorded.
+Upstream runner binaries, scale-set binaries, and action archives are never committed. Build inputs are pinned and verified by digest, and third-party license obligations are recorded. A runner-candidate release additionally attests the canonical official-release observation, exact runner asset digest, listener-version smoke result, single-payload/update-staging checks, and immutable candidate image digest.
 
 ## 17. Testing strategy
 
 ### 17.1 Unit and contract tests
 
 - Scale-set adapter message and compatibility fixtures.
+- Scale-set `RunnerSetting.DisableUpdate=true`, forced-version-bump, official-release metadata, monotonic version, and candidate-manifest contracts.
 - Assignment idempotency, duplicate delivery, and restart recovery.
 - Capacity ceilings, fairness, and starvation aging.
 - Configuration schema, unknown-field rejection, and secret-reference validation.
@@ -1333,6 +1462,8 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
 - Runner has no socket mount, host mount, device, or control-plane secret.
 - JIT values are absent from controller logs, job environment, and exported diagnostics.
 - One job completes, deregisters, and leaves no reusable workspace or credential material.
+- Success, cancellation, launch failure, controller restart, and upgrade interruption remove the whole runner container and positively eliminate its cgroup, tmpfs, `_work`, `_work/_update`, descendant processes, and namespaces.
+- Repeated representative jobs return memory, swap, tmpfs, process, container, and cgroup usage to the approved post-job baseline without a monotonic trend.
 - Controller restart reconciles assigned jobs without duplication.
 - Host watchdog recovers a dead controller but cannot mutate routing.
 
@@ -1351,6 +1482,7 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
 - Canary late success from an obsolete epoch.
 - Primary email failure, webhook failure, and both failing together.
 - Host reboot and watchdog recovery.
+- Runner release appears immediately after a job, during a job, during candidate staging, and after controller restart; pending/rejected/interrupted candidates keep the hosted path available and journal-resume without a partial selector.
 
 ### 17.4 Host conformance
 
@@ -1358,6 +1490,7 @@ A supported host must positively prove:
 
 - Docker/runtime version and required kernel features;
 - CPU, memory, PID, tmpfs, read-only-root, seccomp, and capability enforcement;
+- approved joint tmpfs/memory/swap/concurrency/cadence sizing with tmpfs charged inside the cgroup, including rejection of the 2,162 MiB-peak/2 GiB-cap incident fixture;
 - non-root or explicitly acknowledged degraded-root behavior;
 - checked free-byte/free-inode headroom on Docker-root, state, staging, scratch,
   rollback, and log filesystems, plus bounded log retention and recurring
@@ -1365,6 +1498,12 @@ A supported host must positively prove:
 - complete egress-policy enforcement from an actual runner namespace;
 - no access to host Docker control or private paths; and
 - reboot-persistent watchdog behavior.
+
+Sizing evidence includes at least 15 representative jobs over seven days and
+five consecutive complete stable days. The evidence must show bounded
+steady-state memory/swap/tmpfs/storage/process/container/cgroup use, successful
+whole-container reclamation, and no dependence on periodic host or service
+restart.
 
 Structural inspection alone is not sufficient.
 
@@ -1462,6 +1601,9 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 ### Runner isolation
 
 - A fresh container handles exactly one job and is destroyed.
+- The scale set explicitly disables in-place runner update; each immutable image contains one smoke-tested runner version and no updater staging.
+- Every terminal/interrupted path positively removes the runner container, cgroup, tmpfs mounts, `_work`, `_work/_update`, descendant processes, and namespaces within the cleanup SLO.
+- Runner job work uses no persistent reusable NAS storage; any approved disk fallback is anonymous, bounded, and destroyed with the container.
 - Untrusted code cannot access Docker control, host mounts, devices, or control-plane credentials.
 - QTS runner namespaces stay loopback-only and conntrack/table-empty; only the
   durably tokened broker creates bounded real sockets.
@@ -1477,6 +1619,7 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 - Fleet-wide capacity cannot exceed the configured ceiling, including every
   runner, adapter, held/running broker, dial-authority/socket/ledger allocation,
   and serialized helper/verifier transient peak.
+- The operator-approved tmpfs/memory/swap/concurrency/cadence tuple satisfies the measured p99 and host-memory inequalities with explicit reserve; tmpfs is enforced as a sub-limit of the memory cgroup and swap is not counted as RAM capacity.
 - Every acquisition-policy CAS returns only after old pollers/leases/critical sections are invalidated; an unjoinable upstream call makes the controller fatal and process-terminating rather than hanging or returning success.
 - Canary narrowing, watchdog/probe stops, host-pressure reductions, suspend, and observer startup all traverse that same barrier; no stale or ineligible poll can advertise, acquire, or generate JIT afterward.
 - Upstream compatibility failure prevents acquisition.
@@ -1505,6 +1648,7 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 - Governed legacy rollback uses the explicit `legacy` route after fence and
   legacy-canary proof; variable deletion cannot select local work.
 - Hosted routing remains safe when the canary cannot pass.
+- A GitHub-forced runner version bump is observed and qualified automatically; pending, rejected, interrupted, or incompatible candidates never make both the self-hosted and GitHub-hosted paths unavailable.
 
 ### Notifications
 
@@ -1522,6 +1666,7 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 - Both generations and their watchdogs honor one exclusive host-local fleet-generation fence during cutover and rollback.
 - Same-fleet guards use independent renewal records under one stable lock inode; dark deployment while `legacy` is active is observer-only and zero-capacity.
 - QTS lifecycle and retirement operations are journaled/target-matched, resume forward after crashes, and never decrement the fence generation.
+- Candidate selection preserves current and rollback image digests, smoke-tests `Runner.Listener --version` before switching, drains legacy idle registrations before they can take another job, and never invokes non-admin QTS `docker build`.
 
 ## 20. Residual risks and explicit non-claims
 
@@ -1531,6 +1676,8 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 | QTS proxy compatibility | CONNECT-only path is canary-proven per workflow; direct UDP/ICMP/IP, plaintext HTTP, SSH, SOCKS BIND/UDP, and non-proxy-aware tools remain unsupported. |
 | Broker parser compromise | Per-job capless/read-only sandbox, private-deny filter, strict parser/fuzz corpus, bounded resources, no Docker/job/controller access; no claim that parsing untrusted CONNECT is risk-free. |
 | Public-preview scale-set dependency | Exact pin, adapter isolation, contract fixtures, startup probes, hosted safe-stop before upgrades. |
+| GitHub forces a runner release before a candidate qualifies | Scale-set self-update disabled, scheduled official-release observer, immutable qualified candidates, bounded 30-day compatibility policy, and automatic hosted continuity; no claim that stale self-hosted capacity remains usable indefinitely. |
+| Tmpfs high-water or memory-cgroup pressure | Joint p99-based tmpfs/memory/swap/concurrency sizing, pressure-driven capacity reduction, whole-container reclamation, and hosted routing; emergency legacy limits are not treated as production proof. |
 | GitHub API outage during local failure | Persist desired route and retry; never claim unconfirmed failover. Immediate fallback cannot be guaranteed. |
 | Deployment identifier disclosure | Generic and private scans plus human review; no claim of perfect detection. |
 | Both notification channels unavailable | Persist delivery failures and retry; routing safety does not depend on notification success. |
@@ -1642,3 +1789,15 @@ Implementation remains gated on the outstanding executable probes —
 namespace-emptiness on a live Docker host, consumer workflow-expression
 fixtures, and repository-archive transition behavior — followed by a fresh
 independent distinct-family review of this exact revision.
+
+The 2026-07-22 incident amendment adds a separate pre-code review gate for the
+runner lifecycle and host-sizing surface. It replaces reliance on listener
+self-update with explicit scale-set `DisableUpdate=true`, an automatic
+official-release observer, immutable candidate qualification, externally held
+hosted continuity, whole-container reclamation, and joint
+tmpfs/memory/swap/concurrency/cadence approval. It also records that the
+temporary 5 GiB tmpfs/4 GiB memory/6 GiB swap accommodation is a migration
+bridge rather than the Portable GHAR baseline. This paragraph records the
+draft's scope only; convergence is not claimed until the exact revised
+plan/spec receive a synchronous distinct-family architecture review and its
+material findings are integrated.

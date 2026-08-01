@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: MPL-2.0
 #
 # TDD suite for scripts/ci/check-images.sh -- the manifest-driven container
-# image build/reproducibility gate. Asserts the real phase-1 manifest
-# ({"version":1,"images":[]}) passes explicitly without invoking docker,
-# and that every malformed-manifest class fails closed before any docker
-# invocation is attempted.
+# image build/reproducibility gate. Asserts an explicit empty manifest passes
+# without invoking Docker, the real manifest registers all Task-5/6/11 images,
+# and malformed manifests fail closed before any Docker invocation.
 
 setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -22,21 +21,36 @@ teardown() {
   [ -x "$SCRIPT" ]
 }
 
-@test "the real phase-1 manifest passes explicitly with zero registered images" {
-  run bash "$SCRIPT" "$REPO_ROOT/images/manifest.json"
+@test "an explicit empty manifest passes without invoking docker" {
+  printf '%s\n' '{"version":1,"images":[]}' >"$TMP_DIR/manifest.json"
+  run bash "$SCRIPT" "$TMP_DIR/manifest.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"registers no images"* ]]
 }
 
+@test "the real manifest registers all Task 5, Task 6, and Task 11 contexts" {
+  run jq -r '.images[].name' "$REPO_ROOT/images/manifest.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'network-adapter\nnetwork-broker-dialer\nnetwork-broker-parser\nnetwork-helper\nnetwork-verifier\nrunner\nsynthetic-listener' ]
+}
+
+@test "every compared Dockerfile declares the source epoch build argument" {
+  while IFS= read -r dockerfile; do
+    grep -q '^ARG SOURCE_DATE_EPOCH$' "$REPO_ROOT/$dockerfile"
+  done < <(jq -r '.images[].dockerfile' "$REPO_ROOT/images/manifest.json")
+}
+
 @test "default manifest path resolves relative to the current directory" {
-  cd "$REPO_ROOT"
+  mkdir -p "$TMP_DIR/images"
+  printf '%s\n' '{"version":1,"images":[]}' >"$TMP_DIR/images/manifest.json"
+  cd "$TMP_DIR"
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
 }
 
 @test "IMAGES_MANIFEST env override is honored" {
-  cd "$REPO_ROOT"
-  run env IMAGES_MANIFEST="$REPO_ROOT/images/manifest.json" bash "$SCRIPT"
+  printf '%s\n' '{"version":1,"images":[]}' >"$TMP_DIR/manifest.json"
+  run env IMAGES_MANIFEST="$TMP_DIR/manifest.json" bash "$SCRIPT"
   [ "$status" -eq 0 ]
 }
 
@@ -167,7 +181,59 @@ EOF
   # docker installed.
   mkdir -p "$TMP_DIR/bin"
   ln -s "$(command -v jq)" "$TMP_DIR/bin/jq"
+  ln -s "$(command -v python3)" "$TMP_DIR/bin/python3"
   run env PATH="$TMP_DIR/bin" "$(command -v bash)" "$SCRIPT" "$TMP_DIR/manifest.json"
   [ "$status" -ne 0 ]
   [[ "$output" == *"docker is required"* ]]
+}
+
+@test "both fixed-platform exports rewrite and verify the exact commit epoch" {
+  mkdir -p "$TMP_DIR/images/runner" "$TMP_DIR/bin"
+  printf 'FROM scratch\n' >"$TMP_DIR/images/runner/Dockerfile"
+  cat >"$TMP_DIR/manifest.json" <<EOF
+{
+  "version": 1,
+  "images": [
+    {"name": "runner", "context": "$TMP_DIR/images/runner", "dockerfile": "$TMP_DIR/images/runner/Dockerfile"}
+  ]
+}
+EOF
+  cat >"$TMP_DIR/bin/docker" <<'EOF'
+#!/bin/sh
+printf 'SOURCE_DATE_EPOCH=%s %s\n' "${SOURCE_DATE_EPOCH:-}" "$*" >>"$DOCKER_CALLS"
+if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+  case "$4" in
+    '{{.Id}}') printf '%s\n' 'sha256:fixed-image-id' ;;
+    '{{.Created}}') printf '%s\n' "$EXPECTED_CREATED" ;;
+    *) exit 1 ;;
+  esac
+fi
+EOF
+  chmod +x "$TMP_DIR/bin/docker"
+  ln -s "$(command -v jq)" "$TMP_DIR/bin/jq"
+  ln -s "$(command -v git)" "$TMP_DIR/bin/git"
+  ln -s "$(command -v python3)" "$TMP_DIR/bin/python3"
+  expected_epoch="$(git -C "$REPO_ROOT" show -s --format=%ct HEAD)"
+  expected_created="$(python3 - "$expected_epoch" <<'PY'
+import datetime
+import sys
+print(datetime.datetime.fromtimestamp(
+    int(sys.argv[1]),
+    datetime.timezone.utc,
+).strftime("%Y-%m-%dT%H:%M:%SZ"))
+PY
+)"
+
+  run env \
+    DOCKER_CALLS="$TMP_DIR/docker.calls" \
+    EXPECTED_CREATED="$expected_created" \
+    PATH="$TMP_DIR/bin" \
+    "$(command -v bash)" "$SCRIPT" "$TMP_DIR/manifest.json"
+
+  [ "$status" -eq 0 ]
+  [ "$(grep -c "^SOURCE_DATE_EPOCH=$expected_epoch buildx build " "$TMP_DIR/docker.calls")" -eq 2 ]
+  [ "$(grep -c -- "--platform linux/amd64 --no-cache --provenance=false --sbom=false --build-arg SOURCE_DATE_EPOCH=$expected_epoch" "$TMP_DIR/docker.calls")" -eq 2 ]
+  [ "$(grep -c -- "--output type=docker,name=portable-ghar-check-images:runner-" "$TMP_DIR/docker.calls")" -eq 2 ]
+  [ "$(grep -c -- "rewrite-timestamp=true" "$TMP_DIR/docker.calls")" -eq 2 ]
+  [ "$(grep -c -- "image inspect --format {{.Created}}" "$TMP_DIR/docker.calls")" -eq 2 ]
 }

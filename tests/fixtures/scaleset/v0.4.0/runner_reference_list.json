@@ -1,0 +1,10 @@
+{
+  "count": 1,
+  "value": [
+    {
+      "id": 501,
+      "name": "example-fleet-runner-0001",
+      "runnerScaleSetId": 42
+    }
+  ]
+}
