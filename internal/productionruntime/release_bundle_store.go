@@ -374,6 +374,28 @@ func (store *releaseBundleStore) InspectReleased(
 	return released, present, nil
 }
 
+func (store *releaseBundleStore) InspectReleasedDigest(
+	manifestDigest string,
+) (releaseBundleSnapshot, bool, error) {
+	if store == nil || !lowerHexDigest(manifestDigest) {
+		return releaseBundleSnapshot{}, false, ErrReleaseBundle
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.readyLocked() != nil {
+		return releaseBundleSnapshot{}, false, ErrReleaseBundle
+	}
+	released, present, err := inspectReleaseBundle(
+		store.releaseRoot,
+		manifestDigest,
+	)
+	if err != nil ||
+		present && released.manifestDigest != manifestDigest {
+		return releaseBundleSnapshot{}, false, ErrReleaseBundle
+	}
+	return released, present, nil
+}
+
 func (store *releaseBundleStore) Current() (
 	releaseBundleSnapshot,
 	bool,

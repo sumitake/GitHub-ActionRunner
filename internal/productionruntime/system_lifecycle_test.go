@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/cli"
+	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/fleetfence"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
 )
@@ -117,6 +118,7 @@ func TestReadGreenfieldContinuationReturnsExactDurableState(t *testing.T) {
 	got, present, err := readGreenfieldContinuation(
 		store,
 		binding,
+		nil,
 		manifest,
 	)
 	if err != nil {
@@ -150,6 +152,7 @@ func TestReadGreenfieldContinuationRejectsOneSidedState(t *testing.T) {
 	if _, _, err := readGreenfieldContinuation(
 		store,
 		binding,
+		nil,
 		manifest,
 	); !errors.Is(err, ErrLifecycleEffects) {
 		t.Fatalf("readGreenfieldContinuation() error = %v", err)
@@ -172,6 +175,7 @@ func TestReadGreenfieldContinuationRejectsCommittedNonterminalState(
 	if _, _, err := readGreenfieldContinuation(
 		store,
 		binding,
+		nil,
 		manifest,
 	); !errors.Is(err, ErrLifecycleEffects) {
 		t.Fatalf("readGreenfieldContinuation() error = %v", err)
@@ -237,6 +241,7 @@ func TestVerifyGreenfieldTerminalReturnsPersistedByteStableProof(t *testing.T) {
 		store,
 		authority,
 		binding,
+		nil,
 		manifest,
 	)
 	if err != nil {
@@ -302,6 +307,7 @@ func TestVerifyGreenfieldTerminalRejectsLiveStateDriftWithoutApply(t *testing.T)
 		store,
 		authority,
 		binding,
+		nil,
 		manifest,
 	); !errors.Is(err, ErrLifecycleEffects) {
 		t.Fatalf("verifyGreenfieldTerminal() error = %v", err)
@@ -589,6 +595,203 @@ func TestSealSystemTargetProofReturnsLivePortableProofForTerminalContinuation(
 	}
 }
 
+func TestSealSystemTargetProofPreservesUpgradeOperationAcrossSelectionCrash(
+	t *testing.T,
+) {
+	overlay, _ := protocolTestOverlay(t)
+	manifest := protocolTestManifest()
+	_, manifestDigest, err := hostruntime.MarshalRuntimeManifest(manifest)
+	if err != nil {
+		t.Fatalf("MarshalRuntimeManifest() error = %v", err)
+	}
+	overlay.Manifest.Digest = manifestDigest
+	_, revision, err := hostruntime.MarshalPrivateOverlay(overlay)
+	if err != nil {
+		t.Fatalf("MarshalPrivateOverlay() error = %v", err)
+	}
+	binding, prior, journal, reservation := upgradeContinuationFixture(
+		t,
+		revision,
+		manifest,
+	)
+	journal.Phase = hostruntime.OperationPhaseCurrentSelected
+	store := openProductionLifecycleTestStore(t)
+	persistGreenfieldContinuation(t, store, journal, reservation)
+
+	got, err := sealSystemTargetProof(
+		overlay,
+		revision,
+		manifest,
+		hostTargetState{
+			fencePresent:  true,
+			generation:    manifest.FleetGeneration,
+			activeFleet:   fleetfence.FleetPortable,
+			currentDigest: binding.TargetManifestDigest,
+		},
+		store,
+	)
+	if err != nil {
+		t.Fatalf("sealSystemTargetProof() error = %v", err)
+	}
+	want, err := sealTargetProofForState(
+		overlay,
+		revision,
+		hostTargetState{
+			fencePresent:  true,
+			generation:    manifest.FleetGeneration,
+			activeFleet:   fleetfence.FleetPortable,
+			currentDigest: binding.PriorManifestDigest,
+		},
+	)
+	if err != nil {
+		t.Fatalf("sealTargetProofForState() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("upgrade continuation proof = %#v, want %#v", got, want)
+	}
+	if journal.PriorManifest == nil ||
+		!reflect.DeepEqual(*journal.PriorManifest, prior) {
+		t.Fatal("upgrade fixture lost prior manifest")
+	}
+}
+
+func TestPortableContinuationMatchesLiveStateAllowsSelectReadbackBeforeJournalAdvance(
+	t *testing.T,
+) {
+	prior := strings.Repeat("1", 64)
+	target := strings.Repeat("2", 64)
+	greenfield := hostruntime.InstallDispositionGreenfieldPortable
+	upgrade := hostruntime.InstallDispositionUpgradePortable
+
+	tests := []struct {
+		name    string
+		binding hostruntime.OperationBinding
+		phase   hostruntime.OperationPhase
+		current *string
+		want    bool
+	}{
+		{
+			name: "greenfield select readback",
+			binding: hostruntime.OperationBinding{
+				InstallDisposition:   &greenfield,
+				TargetManifestDigest: &target,
+			},
+			phase:   hostruntime.OperationPhaseZeroProven,
+			current: &target,
+			want:    true,
+		},
+		{
+			name: "greenfield target before zero proof",
+			binding: hostruntime.OperationBinding{
+				InstallDisposition:   &greenfield,
+				TargetManifestDigest: &target,
+			},
+			phase:   hostruntime.OperationPhaseObserverStarted,
+			current: &target,
+			want:    false,
+		},
+		{
+			name: "upgrade select readback",
+			binding: hostruntime.OperationBinding{
+				InstallDisposition:   &upgrade,
+				PriorManifestDigest:  &prior,
+				TargetManifestDigest: &target,
+			},
+			phase:   hostruntime.OperationPhaseZeroProven,
+			current: &target,
+			want:    true,
+		},
+		{
+			name: "upgrade predecessor before select",
+			binding: hostruntime.OperationBinding{
+				InstallDisposition:   &upgrade,
+				PriorManifestDigest:  &prior,
+				TargetManifestDigest: &target,
+			},
+			phase:   hostruntime.OperationPhaseZeroProven,
+			current: &prior,
+			want:    true,
+		},
+		{
+			name: "upgrade target before zero proof",
+			binding: hostruntime.OperationBinding{
+				InstallDisposition:   &upgrade,
+				PriorManifestDigest:  &prior,
+				TargetManifestDigest: &target,
+			},
+			phase:   hostruntime.OperationPhaseObserverStarted,
+			current: &target,
+			want:    false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := portableContinuationMatchesLiveState(
+				test.binding,
+				test.phase,
+				test.current,
+			); got != test.want {
+				t.Fatalf(
+					"portableContinuationMatchesLiveState() = %t, want %t",
+					got,
+					test.want,
+				)
+			}
+		})
+	}
+}
+
+func TestSealSystemTargetProofReturnsLiveProofAfterUpgradeComplete(t *testing.T) {
+	overlay, _ := protocolTestOverlay(t)
+	manifest := protocolTestManifest()
+	_, manifestDigest, err := hostruntime.MarshalRuntimeManifest(manifest)
+	if err != nil {
+		t.Fatalf("MarshalRuntimeManifest() error = %v", err)
+	}
+	overlay.Manifest.Digest = manifestDigest
+	_, revision, err := hostruntime.MarshalPrivateOverlay(overlay)
+	if err != nil {
+		t.Fatalf("MarshalPrivateOverlay() error = %v", err)
+	}
+	binding, _, journal, reservation := upgradeContinuationFixture(
+		t,
+		revision,
+		manifest,
+	)
+	journal.Phase = hostruntime.OperationPhaseComplete
+	proof := strings.Repeat("9", 64)
+	reservation.State = hostruntime.ReservationStateCommitted
+	reservation.CommittedTargetProofDigest = &proof
+	reservation.UpdatedAt = reservation.UpdatedAt.Add(time.Second)
+	store := openProductionLifecycleTestStore(t)
+	persistGreenfieldContinuation(t, store, journal, reservation)
+	state := hostTargetState{
+		fencePresent:  true,
+		generation:    manifest.FleetGeneration,
+		activeFleet:   fleetfence.FleetPortable,
+		currentDigest: binding.TargetManifestDigest,
+	}
+
+	got, err := sealSystemTargetProof(
+		overlay,
+		revision,
+		manifest,
+		state,
+		store,
+	)
+	if err != nil {
+		t.Fatalf("sealSystemTargetProof() error = %v", err)
+	}
+	want, err := sealTargetProofForState(overlay, revision, state)
+	if err != nil {
+		t.Fatalf("sealTargetProofForState() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("terminal upgrade proof = %#v, want %#v", got, want)
+	}
+}
+
 func TestSelectGreenfieldReservationReusesDurableIdentity(t *testing.T) {
 	store := openProductionLifecycleTestStore(t)
 	binding, manifest, journal, persisted :=
@@ -605,6 +808,7 @@ func TestSelectGreenfieldReservationReusesDurableIdentity(t *testing.T) {
 	choice, err := selectGreenfieldReservation(
 		store,
 		binding,
+		nil,
 		manifest,
 		func() (hostruntime.StorageReservation, error) {
 			freshCalls++
@@ -644,6 +848,7 @@ func TestSelectGreenfieldReservationBuildsFreshOnlyWhenDurableStateAbsent(
 	choice, err := selectGreenfieldReservation(
 		store,
 		binding,
+		nil,
 		manifest,
 		func() (hostruntime.StorageReservation, error) {
 			freshCalls++
@@ -758,6 +963,147 @@ func TestGreenfieldEffectStateAdmitsOnlyExactWritablePredecessor(t *testing.T) {
 				t.Fatalf("effectState() = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestUpgradeEffectStateTracksExactCrashBoundaries(t *testing.T) {
+	t.Parallel()
+
+	priorDigest := strings.Repeat("a", 64)
+	priorRevision := strings.Repeat("b", 64)
+	target := greenfieldSystemTarget{
+		disposition:         hostruntime.InstallDispositionUpgradePortable,
+		manifestDigest:      strings.Repeat("c", 64),
+		revision:            strings.Repeat("d", 64),
+		priorManifestDigest: priorDigest,
+		priorRevision:       priorRevision,
+		terminalFence:       7,
+		overlay: hostruntime.PrivateOverlay{
+			Policy: hostruntime.PolicyOverlay{
+				AcquisitionDefault: "disabled",
+			},
+		},
+	}
+	base := greenfieldSnapshot{
+		fencePresent:   true,
+		generation:     7,
+		fleet:          fleetfence.FleetPortable,
+		stagedPresent:  true,
+		currentPresent: true,
+		current: releaseBundleSnapshot{
+			manifestDigest:  priorDigest,
+			overlayRevision: priorRevision,
+		},
+		watchdogPresent: true,
+		watchdogPrior:   true,
+		processPresent:  true,
+		processPrior:    true,
+		priorPolicy: controller.PolicyStatus{
+			Mode:     controller.AcquisitionEnabled,
+			Epoch:    3,
+			Digest:   strings.Repeat("e", 64),
+			Capacity: 4,
+		},
+	}
+	promoted := base
+	promoted.releasedPresent = true
+	disabled := promoted
+	disabled.priorPolicy.Mode = controller.AcquisitionDisabled
+	disabled.priorPolicy.Capacity = 0
+	disabled.priorPolicy.Epoch++
+	drained := disabled
+	drained.priorDrained = true
+	stopped := drained
+	stopped.processPresent = false
+	stopped.processPrior = false
+	targetWatchdog := stopped
+	targetWatchdog.watchdogPrior = false
+	targetWatchdog.watchdogTarget = true
+	targetObserver := targetWatchdog
+	targetObserver.processPresent = true
+	targetObserver.processTarget = true
+	zero := targetObserver
+	zero.zero = true
+	selected := zero
+	selected.current = releaseBundleSnapshot{
+		manifestDigest:  target.manifestDigest,
+		overlayRevision: target.revision,
+	}
+
+	tests := []struct {
+		name     string
+		effect   productionEffect
+		snapshot greenfieldSnapshot
+		want     hostruntime.LifecycleEffectState
+	}{
+		{"preflight present", effectPreflight, base, hostruntime.LifecycleEffectPresent},
+		{"promote predecessor", effectCandidatePromoted, base, hostruntime.LifecycleEffectAbsent},
+		{"promote crash readback", effectCandidatePromoted, promoted, hostruntime.LifecycleEffectPresent},
+		{"upgrade proof", effectUpgradeProven, promoted, hostruntime.LifecycleEffectPresent},
+		{"disable predecessor", effectPriorAcquisitionDisabled, promoted, hostruntime.LifecycleEffectAbsent},
+		{"disable crash readback", effectPriorAcquisitionDisabled, disabled, hostruntime.LifecycleEffectPresent},
+		{"drain predecessor", effectPriorDrained, disabled, hostruntime.LifecycleEffectAbsent},
+		{"drain crash readback", effectPriorDrained, drained, hostruntime.LifecycleEffectPresent},
+		{"stop predecessor", effectPriorControllerStopped, drained, hostruntime.LifecycleEffectAbsent},
+		{"stop crash readback", effectPriorControllerStopped, stopped, hostruntime.LifecycleEffectPresent},
+		{"quiescence proof", effectPriorQuiescenceProven, stopped, hostruntime.LifecycleEffectPresent},
+		{"fence proof", effectFencePortableProven, stopped, hostruntime.LifecycleEffectPresent},
+		{"watchdog predecessor", effectWatchdogInstalled, stopped, hostruntime.LifecycleEffectAbsent},
+		{"watchdog crash readback", effectWatchdogInstalled, targetWatchdog, hostruntime.LifecycleEffectPresent},
+		{"policy proof", effectPolicyDisabled, targetWatchdog, hostruntime.LifecycleEffectPresent},
+		{"observer predecessor", effectObserverStarted, targetWatchdog, hostruntime.LifecycleEffectAbsent},
+		{"observer crash readback", effectObserverStarted, targetObserver, hostruntime.LifecycleEffectPresent},
+		{"zero proof", effectZeroProven, zero, hostruntime.LifecycleEffectPresent},
+		{"selection predecessor", effectCurrentSelected, zero, hostruntime.LifecycleEffectAbsent},
+		{"selection crash readback", effectCurrentSelected, selected, hostruntime.LifecycleEffectPresent},
+		{"verified", effectVerified, selected, hostruntime.LifecycleEffectPresent},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := target.effectState(test.effect, test.snapshot); got != test.want {
+				t.Fatalf("effectState() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestUpgradeEffectStateRejectsForeignCurrentSelection(t *testing.T) {
+	t.Parallel()
+	target := greenfieldSystemTarget{
+		disposition:         hostruntime.InstallDispositionUpgradePortable,
+		manifestDigest:      strings.Repeat("a", 64),
+		revision:            strings.Repeat("b", 64),
+		priorManifestDigest: strings.Repeat("c", 64),
+		priorRevision:       strings.Repeat("d", 64),
+		terminalFence:       7,
+	}
+	snapshot := greenfieldSnapshot{
+		fencePresent:    true,
+		generation:      7,
+		fleet:           fleetfence.FleetPortable,
+		stagedPresent:   true,
+		releasedPresent: true,
+		currentPresent:  true,
+		current: releaseBundleSnapshot{
+			manifestDigest:  strings.Repeat("e", 64),
+			overlayRevision: target.priorRevision,
+		},
+		watchdogPresent: true,
+		watchdogPrior:   true,
+		processPresent:  true,
+		processPrior:    true,
+		priorPolicy: controller.PolicyStatus{
+			Mode:     controller.AcquisitionEnabled,
+			Epoch:    3,
+			Digest:   strings.Repeat("f", 64),
+			Capacity: 4,
+		},
+	}
+	if got := target.effectState(effectUpgradeProven, snapshot); got !=
+		hostruntime.LifecycleEffectAmbiguous {
+		t.Fatalf("effectState() = %q, want ambiguous", got)
 	}
 }
 
@@ -954,6 +1300,80 @@ func greenfieldContinuationFixture(
 	reservation.CreatedAt = now
 	reservation.UpdatedAt = now
 	return binding, manifest, journal, reservation
+}
+
+func upgradeContinuationFixture(
+	t *testing.T,
+	revision string,
+	manifest hostruntime.RuntimeManifest,
+) (
+	hostruntime.OperationBinding,
+	hostruntime.RuntimeManifest,
+	hostruntime.OperationJournal,
+	hostruntime.StorageReservation,
+) {
+	t.Helper()
+	prior := manifest
+	prior.ControllerSHA256 = strings.Repeat("7", 64)
+	_, priorDigest, err := hostruntime.MarshalRuntimeManifest(prior)
+	if err != nil {
+		t.Fatalf("MarshalRuntimeManifest(prior) error = %v", err)
+	}
+	_, targetDigest, err := hostruntime.MarshalRuntimeManifest(manifest)
+	if err != nil {
+		t.Fatalf("MarshalRuntimeManifest(target) error = %v", err)
+	}
+	disposition := hostruntime.InstallDispositionUpgradePortable
+	operationID, err := hostruntime.DeriveOperationID(
+		hostruntime.OperationKindInstall,
+		&disposition,
+		manifest.FleetGeneration,
+		&priorDigest,
+		&targetDigest,
+		fleetfence.FleetPortable,
+		revision,
+	)
+	if err != nil {
+		t.Fatalf("DeriveOperationID() error = %v", err)
+	}
+	binding := hostruntime.OperationBinding{
+		SchemaVersion:          1,
+		OperationID:            operationID,
+		Kind:                   hostruntime.OperationKindInstall,
+		InstallDisposition:     &disposition,
+		ExpectedGeneration:     manifest.FleetGeneration,
+		PriorManifestDigest:    &priorDigest,
+		TargetManifestDigest:   &targetDigest,
+		TargetFleet:            fleetfence.FleetPortable,
+		PrivateOverlayRevision: revision,
+	}
+	_, bindingDigest, err := hostruntime.MarshalOperationBinding(binding)
+	if err != nil {
+		t.Fatalf("MarshalOperationBinding() error = %v", err)
+	}
+	now := time.Date(2026, 7, 31, 15, 0, 0, 0, time.UTC)
+	journal := hostruntime.OperationJournal{
+		SchemaVersion:      1,
+		OperationID:        operationID,
+		BindingDigest:      bindingDigest,
+		Kind:               hostruntime.OperationKindInstall,
+		Phase:              hostruntime.OperationPhasePriorDrained,
+		CompensationPath:   nil,
+		ExpectedGeneration: manifest.FleetGeneration,
+		PriorManifest:      &prior,
+		TargetManifest:     &manifest,
+		TargetFleet:        fleetfence.FleetPortable,
+		StartedAt:          now,
+		UpdatedAt:          now,
+	}
+	reservation := validStorageReservationFixture()
+	reservation.OperationID = operationID
+	reservation.BindingDigest = bindingDigest
+	reservation.StorageBudgetDigest = manifest.StorageBudgetDigest
+	reservation.TargetManifestDigest = &targetDigest
+	reservation.CreatedAt = now
+	reservation.UpdatedAt = now
+	return binding, prior, journal, reservation
 }
 
 func persistGreenfieldContinuation(

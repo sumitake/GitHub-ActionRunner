@@ -2,14 +2,16 @@ package productionruntime
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/cli"
+	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/fleetfence"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
+	"github.com/sumitake/portable-ghar/internal/state"
 )
 
 type productionEffect uint8
@@ -26,6 +28,12 @@ const (
 	effectCandidateSmoked
 	effectCandidatePromoted
 	effectGreenfieldProven
+	effectUpgradeProven
+	effectPriorAcquisitionDisabled
+	effectPriorDrained
+	effectPriorControllerStopped
+	effectPriorQuiescenceProven
+	effectFencePortableProven
 	effectFencePortable
 	effectWatchdogInstalled
 	effectPolicyDisabled
@@ -45,6 +53,12 @@ var productionPhaseEffects = map[hostruntime.OperationPhase]productionEffect{
 	hostruntime.OperationPhasePriorRetained:               effectCandidatePromoted,
 	hostruntime.OperationPhaseDispositionGreenfieldProven: effectGreenfieldProven,
 	hostruntime.OperationPhasePriorAbsenceProven:          effectGreenfieldProven,
+	hostruntime.OperationPhaseDispositionUpgradeProven:    effectUpgradeProven,
+	hostruntime.OperationPhasePriorAcquisitionDisabled:    effectPriorAcquisitionDisabled,
+	hostruntime.OperationPhasePriorDrained:                effectPriorDrained,
+	hostruntime.OperationPhasePriorControllerStopped:      effectPriorControllerStopped,
+	hostruntime.OperationPhasePriorQuiescenceProven:       effectPriorQuiescenceProven,
+	hostruntime.OperationPhaseFencePortableProven:         effectFencePortableProven,
 	hostruntime.OperationPhaseFencePortable:               effectFencePortable,
 	hostruntime.OperationPhaseWatchdogInstalled:           effectWatchdogInstalled,
 	hostruntime.OperationPhasePolicyDisabled:              effectPolicyDisabled,
@@ -89,6 +103,7 @@ func (backend *productionLifecycleBackend) ApplyPhase(
 }
 
 type greenfieldSystemTarget struct {
+	disposition    hostruntime.InstallDisposition
 	overlay        hostruntime.PrivateOverlay
 	revision       string
 	manifest       hostruntime.RuntimeManifest
@@ -97,14 +112,19 @@ type greenfieldSystemTarget struct {
 	pollInterval   time.Duration
 	now            func() time.Time
 
-	releases     *releaseBundleStore
-	fence        *fleetfence.Store
-	storage      *SystemStorageProbe
-	docker       hostruntime.ManagedQuiescence
-	process      *ProcessAuthority
-	processStore *PinnedProcessRecordStore
-	watchdog     *watchdogMarkerStore
-	probe        DisabledControllerProbe
+	releases            *releaseBundleStore
+	fence               *fleetfence.Store
+	storage             *SystemStorageProbe
+	docker              hostruntime.ManagedQuiescence
+	process             *ProcessAuthority
+	priorProcess        *ProcessAuthority
+	processStore        *PinnedProcessRecordStore
+	watchdog            *watchdogMarkerStore
+	probe               DisabledControllerProbe
+	priorAdmin          lifecycleControllerAdmin
+	priorOverlay        *hostruntime.PrivateOverlay
+	priorRevision       string
+	priorManifestDigest string
 }
 
 type greenfieldSnapshot struct {
@@ -118,10 +138,19 @@ type greenfieldSnapshot struct {
 	current         releaseBundleSnapshot
 
 	watchdogPresent bool
+	watchdogPrior   bool
+	watchdogTarget  bool
 	watchdog        hostruntime.ArtifactProjection
 	processPresent  bool
+	processPrior    bool
+	processTarget   bool
 	processRecord   ProcessRecord
 	processIdentity string
+	priorPolicy     controller.PolicyStatus
+	priorDrained    bool
+	assignedJobs    uint64
+	runningJobs     uint64
+	activeListeners uint64
 	zero            bool
 	policyEpoch     uint64
 	filesystems     []hostruntime.LifecycleFilesystemIdentity
@@ -137,7 +166,7 @@ func invokeSystemLifecycle(
 ) (hostruntime.HostActionResult, error) {
 	switch action {
 	case cli.ActionInstall:
-		return invokeGreenfieldInstall(
+		return invokePortableInstall(
 			ctx,
 			overlay,
 			revision,
@@ -157,7 +186,7 @@ func invokeSystemLifecycle(
 	}
 }
 
-func invokeGreenfieldInstall(
+func invokePortableInstall(
 	ctx context.Context,
 	overlay hostruntime.PrivateOverlay,
 	revision string,
@@ -167,12 +196,24 @@ func invokeGreenfieldInstall(
 	if ctx == nil ||
 		ctx.Err() != nil ||
 		target.InstallDisposition == nil ||
-		*target.InstallDisposition !=
-			hostruntime.InstallDispositionGreenfieldPortable ||
-		target.FenceGeneration != 0 ||
-		target.ActiveFleet != fleetfence.FleetNone ||
-		target.CurrentManifestDigest != nil ||
 		!overlay.Resources.RunnerSizing.OperatorApproved {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	disposition := *target.InstallDisposition
+	if disposition != hostruntime.InstallDispositionGreenfieldPortable &&
+		disposition != hostruntime.InstallDispositionUpgradePortable {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	if disposition == hostruntime.InstallDispositionGreenfieldPortable &&
+		(target.FenceGeneration != 0 ||
+			target.ActiveFleet != fleetfence.FleetNone ||
+			target.CurrentManifestDigest != nil) {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	if disposition == hostruntime.InstallDispositionUpgradePortable &&
+		(target.FenceGeneration == 0 ||
+			target.ActiveFleet != fleetfence.FleetPortable ||
+			target.CurrentManifestDigest == nil) {
 		return hostruntime.HostActionResult{}, ErrProtocol
 	}
 	manifest, manifestDocument, manifestDigest, err :=
@@ -181,11 +222,14 @@ func invokeGreenfieldInstall(
 		len(manifestDocument) == 0 ||
 		manifestDigest != arguments.ManifestDigest ||
 		manifestDigest != overlay.Manifest.Digest ||
-		manifest.FleetGeneration != 1 ||
+		(disposition == hostruntime.InstallDispositionGreenfieldPortable &&
+			manifest.FleetGeneration != 1) ||
+		(disposition == hostruntime.InstallDispositionUpgradePortable &&
+			manifest.FleetGeneration != target.FenceGeneration) ||
 		!runtimeManifestMatchesOverlay(manifest, overlay) {
 		return hostruntime.HostActionResult{}, ErrProtocol
 	}
-	binding, terminalGeneration, err := fixedGreenfieldBinding(
+	binding, terminalGeneration, err := fixedInstallBinding(
 		target,
 		manifestDigest,
 		revision,
@@ -194,7 +238,7 @@ func invokeGreenfieldInstall(
 		return hostruntime.HostActionResult{}, ErrProtocol
 	}
 
-	resources, request, err := openGreenfieldOperation(
+	resources, request, err := openInstallOperation(
 		ctx,
 		overlay,
 		revision,
@@ -213,6 +257,24 @@ func invokeGreenfieldInstall(
 			errors.Join(ErrProtocol, runErr, closeErr)
 	}
 	return result, nil
+}
+
+func fixedInstallBinding(
+	target cli.TargetProof,
+	manifestDigest string,
+	revision string,
+) (hostruntime.OperationBinding, uint64, error) {
+	if target.InstallDisposition == nil {
+		return hostruntime.OperationBinding{}, 0, ErrLifecycleEffects
+	}
+	switch *target.InstallDisposition {
+	case hostruntime.InstallDispositionGreenfieldPortable:
+		return fixedGreenfieldBinding(target, manifestDigest, revision)
+	case hostruntime.InstallDispositionUpgradePortable:
+		return fixedUpgradeBinding(target, manifestDigest, revision)
+	default:
+		return hostruntime.OperationBinding{}, 0, ErrLifecycleEffects
+	}
 }
 
 func fixedGreenfieldBinding(
@@ -253,6 +315,113 @@ func fixedGreenfieldBinding(
 	return binding, terminalGeneration, nil
 }
 
+func fixedUpgradeBinding(
+	target cli.TargetProof,
+	manifestDigest string,
+	revision string,
+) (hostruntime.OperationBinding, uint64, error) {
+	operationID, terminalGeneration, terminalFleet, err :=
+		cli.ExpectedOperation(
+			cli.ActionInstall,
+			target,
+			manifestDigest,
+			revision,
+		)
+	if err != nil ||
+		terminalFleet != fleetfence.FleetPortable ||
+		target.InstallDisposition == nil ||
+		*target.InstallDisposition !=
+			hostruntime.InstallDispositionUpgradePortable ||
+		target.CurrentManifestDigest == nil ||
+		*target.CurrentManifestDigest == manifestDigest {
+		return hostruntime.OperationBinding{}, 0, ErrLifecycleEffects
+	}
+	priorManifest := *target.CurrentManifestDigest
+	targetManifest := manifestDigest
+	disposition := hostruntime.InstallDispositionUpgradePortable
+	binding := hostruntime.OperationBinding{
+		SchemaVersion:          1,
+		OperationID:            operationID,
+		Kind:                   hostruntime.OperationKindInstall,
+		InstallDisposition:     &disposition,
+		ExpectedGeneration:     target.FenceGeneration,
+		PriorManifestDigest:    &priorManifest,
+		TargetManifestDigest:   &targetManifest,
+		TargetFleet:            fleetfence.FleetPortable,
+		PrivateOverlayRevision: revision,
+	}
+	if _, _, err := hostruntime.MarshalOperationBinding(binding); err != nil {
+		return hostruntime.OperationBinding{}, 0, ErrLifecycleEffects
+	}
+	return binding, terminalGeneration, nil
+}
+
+func loadPriorReleaseForInstall(
+	releases *releaseBundleStore,
+	binding hostruntime.OperationBinding,
+	targetOverlay hostruntime.PrivateOverlay,
+	targetManifest hostruntime.RuntimeManifest,
+) (
+	*hostruntime.RuntimeManifest,
+	*hostruntime.PrivateOverlay,
+	string,
+	error,
+) {
+	if releases == nil || binding.InstallDisposition == nil {
+		return nil, nil, "", ErrLifecycleEffects
+	}
+	switch *binding.InstallDisposition {
+	case hostruntime.InstallDispositionGreenfieldPortable:
+		if binding.PriorManifestDigest != nil {
+			return nil, nil, "", ErrLifecycleEffects
+		}
+		return nil, nil, "", nil
+	case hostruntime.InstallDispositionUpgradePortable:
+		if binding.PriorManifestDigest == nil ||
+			binding.TargetManifestDigest == nil ||
+			*binding.PriorManifestDigest ==
+				*binding.TargetManifestDigest {
+			return nil, nil, "", ErrLifecycleEffects
+		}
+	default:
+		return nil, nil, "", ErrLifecycleEffects
+	}
+	current, present, err := releases.InspectReleasedDigest(
+		*binding.PriorManifestDigest,
+	)
+	if err != nil ||
+		!present ||
+		current.manifestDigest != *binding.PriorManifestDigest ||
+		!lowerHexDigest(current.overlayRevision) {
+		return nil, nil, "", ErrLifecycleEffects
+	}
+	priorManifest, parsedManifestDigest, err :=
+		hostruntime.ParseRuntimeManifest(
+			current.manifestDocument,
+			maximumReleaseManifestBytes,
+		)
+	if err != nil ||
+		parsedManifestDigest != current.manifestDigest ||
+		priorManifest.FleetGeneration != binding.ExpectedGeneration ||
+		priorManifest.FleetGeneration != targetManifest.FleetGeneration {
+		return nil, nil, "", ErrLifecycleEffects
+	}
+	priorOverlay, parsedRevision, err := hostruntime.ParsePrivateOverlay(
+		current.overlayDocument,
+		maximumReleaseOverlayBytes,
+	)
+	if err != nil ||
+		parsedRevision != current.overlayRevision ||
+		priorOverlay.Manifest.Digest != current.manifestDigest ||
+		priorOverlay.Paths != targetOverlay.Paths ||
+		priorOverlay.Target != targetOverlay.Target ||
+		!priorOverlay.Resources.RunnerSizing.OperatorApproved ||
+		!runtimeManifestMatchesOverlay(priorManifest, priorOverlay) {
+		return nil, nil, "", ErrLifecycleEffects
+	}
+	return &priorManifest, &priorOverlay, parsedRevision, nil
+}
+
 type greenfieldInstallResources struct {
 	engine       hostruntime.LifecycleEngine
 	lifecycle    *hostruntime.LifecycleStore
@@ -262,7 +431,7 @@ type greenfieldInstallResources struct {
 	watchdog     *watchdogMarkerStore
 }
 
-func openGreenfieldOperation(
+func openInstallOperation(
 	ctx context.Context,
 	overlay hostruntime.PrivateOverlay,
 	revision string,
@@ -295,6 +464,16 @@ func openGreenfieldOperation(
 		manifestDigest,
 		revision,
 	); err != nil || !present {
+		return fail(ErrProtocol)
+	}
+	priorManifest, priorOverlay, priorRevision, err :=
+		loadPriorReleaseForInstall(
+			releases,
+			binding,
+			overlay,
+			manifest,
+		)
+	if err != nil {
 		return fail(ErrProtocol)
 	}
 	if _, err := digestPinnedExecutable(
@@ -330,6 +509,7 @@ func openGreenfieldOperation(
 	reservation, err := selectGreenfieldReservation(
 		lifecycle,
 		binding,
+		priorManifest,
 		manifest,
 		func() (hostruntime.StorageReservation, error) {
 			return BuildStorageReservation(
@@ -366,12 +546,32 @@ func openGreenfieldOperation(
 		return fail(ErrProtocol)
 	}
 	resources.fence = fence
-	if _, present, err := fence.InspectOptional(ctx); err != nil ||
-		(!reservation.continuationPresent && present) {
+	fenceSnapshot, fencePresent, err := fence.InspectOptional(ctx)
+	if err != nil {
 		return fail(ErrProtocol)
 	}
-	if _, present, err := releases.Current(); err != nil ||
-		(!reservation.continuationPresent && present) {
+	current, currentPresent, err := releases.Current()
+	if err != nil {
+		return fail(ErrProtocol)
+	}
+	switch *binding.InstallDisposition {
+	case hostruntime.InstallDispositionGreenfieldPortable:
+		if !reservation.continuationPresent &&
+			(fencePresent || currentPresent) {
+			return fail(ErrProtocol)
+		}
+	case hostruntime.InstallDispositionUpgradePortable:
+		if !fencePresent ||
+			fenceSnapshot.Header.Generation != binding.ExpectedGeneration ||
+			fenceSnapshot.Header.ActiveFleet != fleetfence.FleetPortable ||
+			!currentPresent ||
+			(current.manifestDigest != *binding.PriorManifestDigest &&
+				current.manifestDigest != *binding.TargetManifestDigest) ||
+			(!reservation.continuationPresent &&
+				current.manifestDigest != *binding.PriorManifestDigest) {
+			return fail(ErrProtocol)
+		}
+	default:
 		return fail(ErrProtocol)
 	}
 
@@ -380,8 +580,16 @@ func openGreenfieldOperation(
 		return fail(ErrProtocol)
 	}
 	resources.processStore = processStore
-	if _, _, present, err := processStore.Read(ctx); err != nil ||
-		(!reservation.continuationPresent && present) {
+	_, _, processPresent, err := processStore.Read(ctx)
+	if err != nil ||
+		(!reservation.continuationPresent &&
+			*binding.InstallDisposition ==
+				hostruntime.InstallDispositionGreenfieldPortable &&
+			processPresent) ||
+		(!reservation.continuationPresent &&
+			*binding.InstallDisposition ==
+				hostruntime.InstallDispositionUpgradePortable &&
+			!processPresent) {
 		return fail(ErrProtocol)
 	}
 	kernel, err := NewSystemProcessKernel()
@@ -394,50 +602,84 @@ func openGreenfieldOperation(
 	if err != nil || processGrace <= 0 {
 		return fail(ErrProtocol)
 	}
-	releaseOverlayPath := filepath.Join(
-		overlay.Paths.ReleaseRoot,
-		manifestDigest,
-		releaseOverlayName,
-	)
-	controllerDigest, err := digestPinnedExecutable(
-		overlay.Commands.ControllerBinary,
-	)
-	if err != nil ||
-		controllerDigest != manifest.ControllerSHA256 {
-		return fail(ErrProtocol)
+	newAuthority := func(
+		boundOverlay hostruntime.PrivateOverlay,
+		boundRevision string,
+		boundManifest hostruntime.RuntimeManifest,
+		boundDigest string,
+	) (*ProcessAuthority, string, error) {
+		releaseOverlayPath := filepath.Join(
+			boundOverlay.Paths.ReleaseRoot,
+			boundDigest,
+			releaseOverlayName,
+		)
+		controllerDigest, err := digestPinnedExecutable(
+			boundOverlay.Commands.ControllerBinary,
+		)
+		if err != nil || controllerDigest != boundManifest.ControllerSHA256 {
+			return nil, "", ErrProtocol
+		}
+		authority, err := NewProcessAuthority(ProcessAuthorityConfig{
+			Store:  processStore,
+			Kernel: kernel,
+			Binding: ProcessBinding{
+				PrivateOverlayRevision: boundRevision,
+				ManifestDigest:         boundDigest,
+				ActiveFleet:            fleetfence.FleetPortable,
+				FenceGeneration:        boundManifest.FleetGeneration,
+			},
+			Launch: ControllerLaunch{
+				ControllerBinary: boundOverlay.Commands.ControllerBinary,
+				PrivateOverlay:   releaseOverlayPath,
+				DatabasePath:     boundOverlay.Paths.DatabasePath,
+				StdoutLog: filepath.Join(
+					boundOverlay.Paths.LogRoot,
+					"controller.stdout.log",
+				),
+				StderrLog: filepath.Join(
+					boundOverlay.Paths.LogRoot,
+					"controller.stderr.log",
+				),
+				ExecutableDigest: controllerDigest,
+			},
+			Timing: ProcessTiming{
+				PollInterval: pollInterval,
+				TermGrace:    processGrace,
+				KillGrace:    processGrace,
+				CleanupGrace: processGrace,
+			},
+		})
+		return authority, releaseOverlayPath, err
 	}
-	process, err := NewProcessAuthority(ProcessAuthorityConfig{
-		Store:  processStore,
-		Kernel: kernel,
-		Binding: ProcessBinding{
-			PrivateOverlayRevision: revision,
-			ManifestDigest:         manifestDigest,
-			ActiveFleet:            fleetfence.FleetPortable,
-			FenceGeneration:        manifest.FleetGeneration,
-		},
-		Launch: ControllerLaunch{
-			ControllerBinary: overlay.Commands.ControllerBinary,
-			PrivateOverlay:   releaseOverlayPath,
-			DatabasePath:     overlay.Paths.DatabasePath,
-			StdoutLog: filepath.Join(
-				overlay.Paths.LogRoot,
-				"controller.stdout.log",
-			),
-			StderrLog: filepath.Join(
-				overlay.Paths.LogRoot,
-				"controller.stderr.log",
-			),
-			ExecutableDigest: controllerDigest,
-		},
-		Timing: ProcessTiming{
-			PollInterval: pollInterval,
-			TermGrace:    processGrace,
-			KillGrace:    processGrace,
-			CleanupGrace: processGrace,
-		},
-	})
+	process, releaseOverlayPath, err := newAuthority(
+		overlay,
+		revision,
+		manifest,
+		manifestDigest,
+	)
 	if err != nil {
 		return fail(ErrProtocol)
+	}
+	var priorProcess *ProcessAuthority
+	var priorAdmin lifecycleControllerAdmin
+	if priorManifest != nil && priorOverlay != nil {
+		var priorOverlayPath string
+		priorProcess, priorOverlayPath, err = newAuthority(
+			*priorOverlay,
+			priorRevision,
+			*priorManifest,
+			*binding.PriorManifestDigest,
+		)
+		if err != nil {
+			return fail(ErrProtocol)
+		}
+		priorAdmin, err = NewSystemDisabledControllerProbe(
+			priorOverlay.Commands.ControllerBinary,
+			priorOverlayPath,
+		)
+		if err != nil {
+			return fail(ErrProtocol)
+		}
 	}
 
 	watchdog, err := openWatchdogMarkerStore(overlay.Paths.StateRoot)
@@ -445,15 +687,32 @@ func openGreenfieldOperation(
 		return fail(ErrProtocol)
 	}
 	resources.watchdog = watchdog
-	watchdogBinding := watchdogMarkerBinding{
+	targetWatchdogBinding := watchdogMarkerBinding{
 		PrivateOverlayRevision: revision,
 		ManifestDigest:         manifestDigest,
 		WatchdogBinary:         overlay.Commands.WatchdogBinary,
 	}
-	if _, present, err := watchdog.Inspect(
-		watchdogBinding,
-	); err != nil || (!reservation.continuationPresent && present) {
-		return fail(ErrProtocol)
+	if priorOverlay == nil {
+		if _, present, err := watchdog.Inspect(
+			targetWatchdogBinding,
+		); err != nil || (!reservation.continuationPresent && present) {
+			return fail(ErrProtocol)
+		}
+	} else {
+		priorWatchdogBinding := watchdogMarkerBinding{
+			PrivateOverlayRevision: priorRevision,
+			ManifestDigest:         *binding.PriorManifestDigest,
+			WatchdogBinary:         priorOverlay.Commands.WatchdogBinary,
+		}
+		_, matched, present, err := watchdog.InspectOneOf(
+			priorWatchdogBinding,
+			targetWatchdogBinding,
+		)
+		if err != nil ||
+			!present ||
+			(!reservation.continuationPresent && matched != 0) {
+			return fail(ErrProtocol)
+		}
 	}
 
 	docker, err := hostruntime.NewDockerCLI(
@@ -465,7 +724,10 @@ func openGreenfieldOperation(
 		},
 		commandRunner,
 	)
-	if err != nil || docker.ProveManagedQuiescence(ctx) != nil {
+	if err != nil ||
+		(*binding.InstallDisposition ==
+			hostruntime.InstallDispositionGreenfieldPortable &&
+			docker.ProveManagedQuiescence(ctx) != nil) {
 		return fail(ErrProtocol)
 	}
 	probe, err := NewSystemDisabledControllerProbe(
@@ -478,6 +740,7 @@ func openGreenfieldOperation(
 
 	backend := &productionLifecycleBackend{
 		target: &greenfieldSystemTarget{
+			disposition:    *binding.InstallDisposition,
 			overlay:        overlay,
 			revision:       revision,
 			manifest:       manifest,
@@ -490,9 +753,19 @@ func openGreenfieldOperation(
 			storage:        storage,
 			docker:         docker,
 			process:        process,
+			priorProcess:   priorProcess,
 			processStore:   processStore,
 			watchdog:       watchdog,
 			probe:          probe,
+			priorAdmin:     priorAdmin,
+			priorOverlay:   priorOverlay,
+			priorRevision:  priorRevision,
+			priorManifestDigest: func() string {
+				if binding.PriorManifestDigest == nil {
+					return ""
+				}
+				return *binding.PriorManifestDigest
+			}(),
 		},
 	}
 	effects, err := NewLifecycleEffects(backend)
@@ -514,7 +787,7 @@ func openGreenfieldOperation(
 	}
 	request = hostruntime.LifecycleRequest{
 		Binding:        binding,
-		PriorManifest:  nil,
+		PriorManifest:  priorManifest,
 		TargetManifest: &manifest,
 		Reservation:    reservation.request,
 	}
@@ -560,15 +833,15 @@ func (target *greenfieldSystemTarget) observe(
 		ctx.Err() != nil ||
 		binding.Kind != hostruntime.OperationKindInstall ||
 		binding.InstallDisposition == nil ||
-		*binding.InstallDisposition !=
-			hostruntime.InstallDispositionGreenfieldPortable {
+		*binding.InstallDisposition != target.disposition ||
+		(target.disposition !=
+			hostruntime.InstallDispositionGreenfieldPortable &&
+			target.disposition !=
+				hostruntime.InstallDispositionUpgradePortable) {
 		return hostruntime.LifecycleEffectObservation{},
 			ErrLifecycleEffects
 	}
-	snapshot, err := target.snapshot(
-		ctx,
-		effect >= effectZeroProven,
-	)
+	snapshot, err := target.snapshot(ctx, effect)
 	if err != nil {
 		return hostruntime.LifecycleEffectObservation{},
 			errors.Join(ErrLifecycleEffects, err)
@@ -625,6 +898,10 @@ func (target *greenfieldSystemTarget) apply(
 			target.revision,
 		)
 	case effectFencePortable:
+		if target.disposition !=
+			hostruntime.InstallDispositionGreenfieldPortable {
+			return ErrLifecycleEffects
+		}
 		request := fleetfence.HandoffRequest{
 			From:               fleetfence.FleetNone,
 			To:                 fleetfence.FleetPortable,
@@ -642,7 +919,62 @@ func (target *greenfieldSystemTarget) apply(
 			return ErrLifecycleEffects
 		}
 		return nil
+	case effectPriorAcquisitionDisabled:
+		if target.disposition !=
+			hostruntime.InstallDispositionUpgradePortable ||
+			target.priorAdmin == nil {
+			return ErrLifecycleEffects
+		}
+		status, err := target.priorAdmin.Disable(ctx)
+		if err != nil ||
+			status.Mode != controller.AcquisitionDisabled ||
+			status.Capacity != 0 {
+			return ErrLifecycleEffects
+		}
+		return nil
+	case effectPriorDrained:
+		if target.disposition !=
+			hostruntime.InstallDispositionUpgradePortable ||
+			target.priorAdmin == nil ||
+			target.priorAdmin.Drain(ctx) != nil {
+			return ErrLifecycleEffects
+		}
+		return nil
+	case effectPriorControllerStopped:
+		if target.disposition !=
+			hostruntime.InstallDispositionUpgradePortable ||
+			target.priorProcess == nil {
+			return ErrLifecycleEffects
+		}
+		inspection, err := target.priorProcess.Inspect(ctx)
+		if err != nil || inspection.State != ProcessRunning ||
+			!lowerHexDigest(inspection.ProcessIdentity) ||
+			target.priorProcess.Stop(
+				ctx,
+				inspection.ProcessIdentity,
+			) != nil {
+			return ErrLifecycleEffects
+		}
+		return nil
 	case effectWatchdogInstalled:
+		if target.disposition ==
+			hostruntime.InstallDispositionUpgradePortable {
+			if target.priorOverlay == nil {
+				return ErrLifecycleEffects
+			}
+			return target.watchdog.Replace(
+				watchdogMarkerBinding{
+					PrivateOverlayRevision: target.priorRevision,
+					ManifestDigest:         target.priorManifestDigest,
+					WatchdogBinary:         target.priorOverlay.Commands.WatchdogBinary,
+				},
+				watchdogMarkerBinding{
+					PrivateOverlayRevision: target.revision,
+					ManifestDigest:         target.manifestDigest,
+					WatchdogBinary:         target.overlay.Commands.WatchdogBinary,
+				},
+			)
+		}
 		return target.watchdog.Install(watchdogMarkerBinding{
 			PrivateOverlayRevision: target.revision,
 			ManifestDigest:         target.manifestDigest,
@@ -670,9 +1002,12 @@ func (target *greenfieldSystemTarget) apply(
 
 func (target *greenfieldSystemTarget) snapshot(
 	ctx context.Context,
-	requireZeroProbe bool,
+	effect productionEffect,
 ) (greenfieldSnapshot, error) {
 	var snapshot greenfieldSnapshot
+	if target == nil || ctx == nil || ctx.Err() != nil {
+		return snapshot, ErrLifecycleEffects
+	}
 	header, fencePresent, err := target.fence.InspectOptional(ctx)
 	if err != nil {
 		return snapshot, ErrLifecycleEffects
@@ -703,42 +1038,88 @@ func (target *greenfieldSystemTarget) snapshot(
 	if err != nil {
 		return greenfieldSnapshot{}, ErrLifecycleEffects
 	}
-	snapshot.watchdog, snapshot.watchdogPresent, err =
-		target.watchdog.Inspect(watchdogMarkerBinding{
-			PrivateOverlayRevision: target.revision,
-			ManifestDigest:         target.manifestDigest,
-			WatchdogBinary:         target.overlay.Commands.WatchdogBinary,
-		})
-	if err != nil {
-		return greenfieldSnapshot{}, ErrLifecycleEffects
+	targetWatchdog := watchdogMarkerBinding{
+		PrivateOverlayRevision: target.revision,
+		ManifestDigest:         target.manifestDigest,
+		WatchdogBinary:         target.overlay.Commands.WatchdogBinary,
 	}
-	processInspection, err := target.process.Inspect(ctx)
-	if err != nil && processInspection.State != ProcessAbsent {
-		return greenfieldSnapshot{}, ErrLifecycleEffects
-	}
-	record, identity, recordPresent, err :=
-		target.processStore.Read(ctx)
-	if err != nil {
-		return greenfieldSnapshot{}, ErrLifecycleEffects
-	}
-	switch processInspection.State {
-	case ProcessAbsent:
-		if recordPresent {
+	if target.disposition ==
+		hostruntime.InstallDispositionUpgradePortable {
+		if target.priorOverlay == nil || target.priorProcess == nil {
 			return greenfieldSnapshot{}, ErrLifecycleEffects
 		}
-	case ProcessRunning:
-		if !recordPresent ||
-			identity != processInspection.ProcessIdentity {
+		priorWatchdog := watchdogMarkerBinding{
+			PrivateOverlayRevision: target.priorRevision,
+			ManifestDigest:         target.priorManifestDigest,
+			WatchdogBinary:         target.priorOverlay.Commands.WatchdogBinary,
+		}
+		var matched int
+		snapshot.watchdog, matched, snapshot.watchdogPresent, err =
+			target.watchdog.InspectOneOf(priorWatchdog, targetWatchdog)
+		if err == nil && snapshot.watchdogPresent {
+			snapshot.watchdogPrior = matched == 0
+			snapshot.watchdogTarget = matched == 1
+		}
+	} else {
+		snapshot.watchdog, snapshot.watchdogPresent, err =
+			target.watchdog.Inspect(targetWatchdog)
+		snapshot.watchdogTarget = snapshot.watchdogPresent
+	}
+	if err != nil {
+		return greenfieldSnapshot{}, ErrLifecycleEffects
+	}
+	record, identity, recordPresent, err := target.processStore.Read(ctx)
+	if err != nil {
+		return greenfieldSnapshot{}, ErrLifecycleEffects
+	}
+	if recordPresent {
+		var authority *ProcessAuthority
+		switch {
+		case target.priorProcess != nil &&
+			processRecordMatchesBinding(record, target.priorProcess.binding):
+			authority = target.priorProcess
+			snapshot.processPrior = true
+		case target.process != nil &&
+			processRecordMatchesBinding(record, target.process.binding):
+			authority = target.process
+			snapshot.processTarget = true
+		default:
+			return greenfieldSnapshot{}, ErrLifecycleEffects
+		}
+		inspection, inspectErr := authority.Inspect(ctx)
+		if inspectErr != nil ||
+			inspection.State != ProcessRunning ||
+			identity != inspection.ProcessIdentity {
 			return greenfieldSnapshot{}, ErrLifecycleEffects
 		}
 		snapshot.processPresent = true
 		snapshot.processRecord = record
 		snapshot.processIdentity = identity
-	default:
-		return greenfieldSnapshot{}, ErrLifecycleEffects
 	}
-	if err := target.docker.ProveManagedQuiescence(ctx); err != nil {
-		return greenfieldSnapshot{}, ErrLifecycleEffects
+	if target.disposition ==
+		hostruntime.InstallDispositionUpgradePortable {
+		status, summary, inspectErr := target.inspectDurableState(ctx)
+		if inspectErr != nil {
+			return greenfieldSnapshot{}, ErrLifecycleEffects
+		}
+		snapshot.priorPolicy = status
+		snapshot.policyEpoch = status.Epoch
+		snapshot.assignedJobs = summary.AssignedJobs
+		snapshot.runningJobs = summary.RunningJobs
+		snapshot.activeListeners = summary.UnassignedReleasedListeners
+		snapshot.priorDrained = summary.RunningJobs == 0 &&
+			summary.UnassignedReleasedListeners == 0
+		if snapshot.processPrior {
+			live, liveErr := target.priorAdmin.Policy(ctx)
+			if liveErr != nil || live != status {
+				return greenfieldSnapshot{}, ErrLifecycleEffects
+			}
+		}
+	}
+	if target.effectRequiresManagedQuiescence(effect) {
+		if err := target.docker.ProveManagedQuiescence(ctx); err != nil {
+			return greenfieldSnapshot{}, ErrLifecycleEffects
+		}
 	}
 	availability, err := target.storage.Snapshot(ctx)
 	if err != nil {
@@ -751,19 +1132,125 @@ func (target *greenfieldSystemTarget) snapshot(
 	for index, observation := range availability {
 		snapshot.filesystems[index] = observation.Filesystem
 	}
-	snapshot.policyEpoch = target.overlay.Resources.PolicyRevision
+	if snapshot.policyEpoch == 0 {
+		snapshot.policyEpoch = target.overlay.Resources.PolicyRevision
+	}
+	requireZeroProbe := effect == effectZeroProven ||
+		effect == effectCurrentSelected ||
+		effect == effectVerified
 	if requireZeroProbe {
-		if !snapshot.processPresent {
+		if !snapshot.processTarget {
 			return greenfieldSnapshot{}, ErrLifecycleEffects
 		}
-		observation, err := observeDisabledZero(ctx, target.probe)
-		if err != nil {
+		observation, observeErr := observeDisabledZero(ctx, target.probe)
+		if observeErr != nil {
+			return greenfieldSnapshot{}, ErrLifecycleEffects
+		}
+		if target.disposition ==
+			hostruntime.InstallDispositionUpgradePortable &&
+			(observation.PolicyEpoch != snapshot.priorPolicy.Epoch ||
+				observation.PolicyDigest != snapshot.priorPolicy.Digest ||
+				snapshot.priorPolicy.Mode != controller.AcquisitionDisabled ||
+				snapshot.priorPolicy.Capacity != 0) {
 			return greenfieldSnapshot{}, ErrLifecycleEffects
 		}
 		snapshot.zero = true
 		snapshot.policyEpoch = observation.PolicyEpoch
 	}
 	return snapshot, nil
+}
+
+func (target *greenfieldSystemTarget) inspectDurableState(
+	ctx context.Context,
+) (controller.PolicyStatus, state.OperationalSummary, error) {
+	var empty state.OperationalSummary
+	limits, err := lifecycleHistoryLimits(target.overlay.Resources.History)
+	if err != nil {
+		return controller.PolicyStatus{}, empty, ErrLifecycleEffects
+	}
+	store, err := state.OpenReadOnlyWithHistoryLimits(
+		target.overlay.Paths.DatabasePath,
+		limits,
+	)
+	if err != nil {
+		return controller.PolicyStatus{}, empty, ErrLifecycleEffects
+	}
+	policy, policyErr := store.AcquisitionPolicy(ctx)
+	summary, summaryErr := store.OperationalSummary(ctx, target.now())
+	closeErr := store.Close()
+	if policyErr != nil || summaryErr != nil || closeErr != nil {
+		return controller.PolicyStatus{}, empty, ErrLifecycleEffects
+	}
+	canonical, err := controller.CanonicalizeAcquisitionPolicy(policy)
+	if err != nil || canonical.Epoch == 0 {
+		return controller.PolicyStatus{}, empty, ErrLifecycleEffects
+	}
+	digest, err := controller.AcquisitionPolicyDigest(canonical)
+	if err != nil {
+		return controller.PolicyStatus{}, empty, ErrLifecycleEffects
+	}
+	status := controller.PolicyStatus{
+		Mode:     canonical.Mode,
+		Epoch:    canonical.Epoch,
+		Digest:   hex.EncodeToString(digest[:]),
+		Capacity: canonical.MaxCapacity,
+	}
+	if !validControllerPolicyStatus(status) {
+		return controller.PolicyStatus{}, empty, ErrLifecycleEffects
+	}
+	return status, summary, nil
+}
+
+func lifecycleHistoryLimits(
+	history hostruntime.HistoryOverlay,
+) (state.HistoryLimits, error) {
+	minRetention, err := time.ParseDuration(history.MinRetention)
+	if err != nil {
+		return state.HistoryLimits{}, ErrLifecycleEffects
+	}
+	maintenanceCadence, err := time.ParseDuration(history.MaintenanceCadence)
+	if err != nil {
+		return state.HistoryLimits{}, ErrLifecycleEffects
+	}
+	limits := state.HistoryLimits{
+		MinRetention:                 minRetention,
+		MaxHistoryRows:               history.MaxHistoryRows,
+		MaxHistoryLogicalBytes:       history.MaxHistoryLogicalBytes,
+		MaxNetworkLedgerRows:         history.MaxNetworkLedgerRows,
+		MaxNetworkLedgerLogicalBytes: history.MaxNetworkLedgerLogicalBytes,
+		InflightReserveRows:          history.InflightReserveRows,
+		InflightReserveLogicalBytes:  history.InflightReserveLogicalBytes,
+		GCBatchRows:                  history.GCBatchRows,
+		NetworkGCBatchRows:           history.NetworkGCBatchRows,
+		VacuumBatchPages:             history.VacuumBatchPages,
+		MaintenanceCadence:           maintenanceCadence,
+	}
+	if state.ValidateHistoryLimits(limits) != nil {
+		return state.HistoryLimits{}, ErrLifecycleEffects
+	}
+	return limits, nil
+}
+
+func (target *greenfieldSystemTarget) effectRequiresManagedQuiescence(
+	effect productionEffect,
+) bool {
+	if target.disposition ==
+		hostruntime.InstallDispositionGreenfieldPortable {
+		return true
+	}
+	switch effect {
+	case effectPriorQuiescenceProven,
+		effectFencePortableProven,
+		effectWatchdogInstalled,
+		effectPolicyDisabled,
+		effectObserverStarted,
+		effectZeroProven,
+		effectCurrentSelected,
+		effectVerified:
+		return true
+	default:
+		return false
+	}
 }
 
 func observeDisabledZero(
@@ -812,6 +1299,7 @@ type greenfieldReservationBuilder func() (
 func selectGreenfieldReservation(
 	store *hostruntime.LifecycleStore,
 	binding hostruntime.OperationBinding,
+	priorManifest *hostruntime.RuntimeManifest,
 	manifest hostruntime.RuntimeManifest,
 	buildFresh greenfieldReservationBuilder,
 ) (greenfieldReservationChoice, error) {
@@ -821,6 +1309,7 @@ func selectGreenfieldReservation(
 	continuation, present, err := readGreenfieldContinuation(
 		store,
 		binding,
+		priorManifest,
 		manifest,
 	)
 	if err != nil {
@@ -855,14 +1344,11 @@ func selectGreenfieldReservation(
 func readGreenfieldContinuation(
 	store *hostruntime.LifecycleStore,
 	binding hostruntime.OperationBinding,
+	priorManifest *hostruntime.RuntimeManifest,
 	manifest hostruntime.RuntimeManifest,
 ) (greenfieldContinuation, bool, error) {
 	if store == nil ||
 		binding.InstallDisposition == nil ||
-		*binding.InstallDisposition !=
-			hostruntime.InstallDispositionGreenfieldPortable ||
-		binding.ExpectedGeneration != 0 ||
-		binding.PriorManifestDigest != nil ||
 		binding.TargetManifestDigest == nil ||
 		binding.TargetFleet != fleetfence.FleetPortable {
 		return greenfieldContinuation{}, false, ErrLifecycleEffects
@@ -870,6 +1356,17 @@ func readGreenfieldContinuation(
 	_, manifestDigest, err := hostruntime.MarshalRuntimeManifest(manifest)
 	if err != nil || manifestDigest != *binding.TargetManifestDigest {
 		return greenfieldContinuation{}, false, ErrLifecycleEffects
+	}
+	if priorManifest == nil && binding.PriorManifestDigest != nil {
+		return greenfieldContinuation{}, false, ErrLifecycleEffects
+	}
+	if priorManifest != nil {
+		_, priorDigest, err := hostruntime.MarshalRuntimeManifest(*priorManifest)
+		if err != nil ||
+			binding.PriorManifestDigest == nil ||
+			priorDigest != *binding.PriorManifestDigest {
+			return greenfieldContinuation{}, false, ErrLifecycleEffects
+		}
 	}
 	journalDocument, journalErr := store.ReadCanonical(
 		hostruntime.LifecycleJournals,
@@ -913,6 +1410,7 @@ func readGreenfieldContinuation(
 	if err != nil || validateGreenfieldContinuation(
 		continuation,
 		binding,
+		priorManifest,
 		manifest,
 	) != nil {
 		return greenfieldContinuation{}, false, ErrLifecycleEffects
@@ -923,12 +1421,16 @@ func readGreenfieldContinuation(
 func validateGreenfieldContinuation(
 	continuation greenfieldContinuation,
 	binding hostruntime.OperationBinding,
+	priorManifest *hostruntime.RuntimeManifest,
 	manifest hostruntime.RuntimeManifest,
 ) error {
 	if hostruntime.ValidateOperationJournalAgainstBinding(
 		continuation.journal,
 		binding,
-	) != nil || validateGreenfieldReservation(
+	) != nil || !manifestPointersEqualForLifecycle(
+		continuation.journal.PriorManifest,
+		priorManifest,
+	) || validateGreenfieldReservation(
 		continuation.reservation,
 		binding,
 		manifest,
@@ -952,6 +1454,23 @@ func validateGreenfieldContinuation(
 		return ErrLifecycleEffects
 	}
 	return nil
+}
+
+func manifestPointersEqualForLifecycle(
+	left *hostruntime.RuntimeManifest,
+	right *hostruntime.RuntimeManifest,
+) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	leftDocument, leftDigest, leftErr :=
+		hostruntime.MarshalRuntimeManifest(*left)
+	rightDocument, rightDigest, rightErr :=
+		hostruntime.MarshalRuntimeManifest(*right)
+	return leftErr == nil &&
+		rightErr == nil &&
+		leftDigest == rightDigest &&
+		string(leftDocument) == string(rightDocument)
 }
 
 func validateGreenfieldReservation(
@@ -985,6 +1504,7 @@ func verifyGreenfieldTerminal(
 	store *hostruntime.LifecycleStore,
 	effects hostruntime.LifecycleEffectAuthority,
 	binding hostruntime.OperationBinding,
+	priorManifest *hostruntime.RuntimeManifest,
 	manifest hostruntime.RuntimeManifest,
 ) (string, string, error) {
 	if ctx == nil || ctx.Err() != nil || store == nil || effects == nil {
@@ -993,6 +1513,7 @@ func verifyGreenfieldTerminal(
 	continuation, present, err := readGreenfieldContinuation(
 		store,
 		binding,
+		priorManifest,
 		manifest,
 	)
 	if err != nil ||
@@ -1066,6 +1587,10 @@ func (target *greenfieldSystemTarget) effectPresent(
 	effect productionEffect,
 	snapshot greenfieldSnapshot,
 ) bool {
+	if target.disposition ==
+		hostruntime.InstallDispositionUpgradePortable {
+		return target.upgradeEffectPresent(effect, snapshot)
+	}
 	baseline := !snapshot.fencePresent &&
 		snapshot.generation == 0 &&
 		snapshot.fleet == fleetfence.FleetNone &&
@@ -1150,6 +1675,10 @@ func (target *greenfieldSystemTarget) effectAbsent(
 	effect productionEffect,
 	snapshot greenfieldSnapshot,
 ) bool {
+	if target.disposition ==
+		hostruntime.InstallDispositionUpgradePortable {
+		return target.upgradeEffectAbsent(effect, snapshot)
+	}
 	baseline := !snapshot.fencePresent &&
 		snapshot.generation == 0 &&
 		snapshot.fleet == fleetfence.FleetNone &&
@@ -1189,6 +1718,199 @@ func (target *greenfieldSystemTarget) effectAbsent(
 	}
 }
 
+func (target *greenfieldSystemTarget) upgradeEffectPresent(
+	effect productionEffect,
+	snapshot greenfieldSnapshot,
+) bool {
+	priorServing := target.upgradePriorServing(snapshot)
+	priorStopped := target.upgradePriorStopped(snapshot)
+	targetStopped := target.upgradeTargetStopped(snapshot)
+	targetRunningPriorSelected := target.upgradeTargetRunning(
+		snapshot,
+		false,
+	)
+	targetRunningSelected := target.upgradeTargetRunning(
+		snapshot,
+		true,
+	)
+	switch effect {
+	case effectPreflight, effectCandidateStaged, effectCandidateSmoked:
+		return priorServing && !snapshot.releasedPresent
+	case effectCandidatePromoted, effectUpgradeProven:
+		return priorServing && snapshot.releasedPresent
+	case effectPriorAcquisitionDisabled:
+		return priorServing &&
+			snapshot.releasedPresent &&
+			snapshot.priorPolicy.Mode == controller.AcquisitionDisabled &&
+			snapshot.priorPolicy.Capacity == 0
+	case effectPriorDrained:
+		return priorServing &&
+			snapshot.releasedPresent &&
+			snapshot.priorPolicy.Mode == controller.AcquisitionDisabled &&
+			snapshot.priorPolicy.Capacity == 0 &&
+			snapshot.priorDrained
+	case effectPriorControllerStopped,
+		effectPriorQuiescenceProven,
+		effectFencePortableProven:
+		return priorStopped
+	case effectWatchdogInstalled, effectPolicyDisabled:
+		return targetStopped &&
+			target.overlay.Policy.AcquisitionDefault == "disabled"
+	case effectObserverStarted:
+		return targetRunningPriorSelected
+	case effectZeroProven:
+		return targetRunningPriorSelected && snapshot.zero
+	case effectCurrentSelected, effectVerified:
+		return targetRunningSelected && snapshot.zero
+	default:
+		return false
+	}
+}
+
+func (target *greenfieldSystemTarget) upgradeEffectAbsent(
+	effect productionEffect,
+	snapshot greenfieldSnapshot,
+) bool {
+	priorServing := target.upgradePriorServing(snapshot)
+	priorStopped := target.upgradePriorStopped(snapshot)
+	targetStopped := target.upgradeTargetStopped(snapshot)
+	targetRunningPriorSelected := target.upgradeTargetRunning(
+		snapshot,
+		false,
+	)
+	switch effect {
+	case effectCandidatePromoted:
+		return priorServing && !snapshot.releasedPresent
+	case effectPriorAcquisitionDisabled:
+		return priorServing &&
+			snapshot.releasedPresent &&
+			(snapshot.priorPolicy.Mode == controller.AcquisitionEnabled ||
+				snapshot.priorPolicy.Mode == controller.AcquisitionCanaryOnly)
+	case effectPriorDrained:
+		return priorServing &&
+			snapshot.releasedPresent &&
+			snapshot.priorPolicy.Mode == controller.AcquisitionDisabled &&
+			snapshot.priorPolicy.Capacity == 0 &&
+			!snapshot.priorDrained
+	case effectPriorControllerStopped:
+		return priorServing &&
+			snapshot.releasedPresent &&
+			snapshot.priorPolicy.Mode == controller.AcquisitionDisabled &&
+			snapshot.priorPolicy.Capacity == 0 &&
+			snapshot.priorDrained
+	case effectWatchdogInstalled:
+		return priorStopped
+	case effectObserverStarted:
+		return targetStopped
+	case effectCurrentSelected:
+		return targetRunningPriorSelected && snapshot.zero
+	default:
+		return false
+	}
+}
+
+func (target *greenfieldSystemTarget) upgradePriorServing(
+	snapshot greenfieldSnapshot,
+) bool {
+	return target.upgradeCommon(snapshot) &&
+		target.currentMatches(
+			snapshot,
+			target.priorManifestDigest,
+			target.priorRevision,
+		) &&
+		snapshot.watchdogPresent &&
+		snapshot.watchdogPrior &&
+		!snapshot.watchdogTarget &&
+		snapshot.processPresent &&
+		snapshot.processPrior &&
+		!snapshot.processTarget
+}
+
+func (target *greenfieldSystemTarget) upgradePriorStopped(
+	snapshot greenfieldSnapshot,
+) bool {
+	return target.upgradeCommon(snapshot) &&
+		snapshot.releasedPresent &&
+		target.currentMatches(
+			snapshot,
+			target.priorManifestDigest,
+			target.priorRevision,
+		) &&
+		snapshot.watchdogPresent &&
+		snapshot.watchdogPrior &&
+		!snapshot.watchdogTarget &&
+		!snapshot.processPresent &&
+		!snapshot.processPrior &&
+		!snapshot.processTarget &&
+		snapshot.priorPolicy.Mode == controller.AcquisitionDisabled &&
+		snapshot.priorPolicy.Capacity == 0 &&
+		snapshot.priorDrained
+}
+
+func (target *greenfieldSystemTarget) upgradeTargetStopped(
+	snapshot greenfieldSnapshot,
+) bool {
+	return target.upgradeCommon(snapshot) &&
+		snapshot.releasedPresent &&
+		target.currentMatches(
+			snapshot,
+			target.priorManifestDigest,
+			target.priorRevision,
+		) &&
+		snapshot.watchdogPresent &&
+		!snapshot.watchdogPrior &&
+		snapshot.watchdogTarget &&
+		!snapshot.processPresent &&
+		!snapshot.processPrior &&
+		!snapshot.processTarget &&
+		snapshot.priorPolicy.Mode == controller.AcquisitionDisabled &&
+		snapshot.priorPolicy.Capacity == 0 &&
+		snapshot.priorDrained
+}
+
+func (target *greenfieldSystemTarget) upgradeTargetRunning(
+	snapshot greenfieldSnapshot,
+	selected bool,
+) bool {
+	digest := target.priorManifestDigest
+	revision := target.priorRevision
+	if selected {
+		digest = target.manifestDigest
+		revision = target.revision
+	}
+	return target.upgradeCommon(snapshot) &&
+		snapshot.releasedPresent &&
+		target.currentMatches(snapshot, digest, revision) &&
+		snapshot.watchdogPresent &&
+		!snapshot.watchdogPrior &&
+		snapshot.watchdogTarget &&
+		snapshot.processPresent &&
+		!snapshot.processPrior &&
+		snapshot.processTarget &&
+		snapshot.priorPolicy.Mode == controller.AcquisitionDisabled &&
+		snapshot.priorPolicy.Capacity == 0 &&
+		snapshot.priorDrained
+}
+
+func (target *greenfieldSystemTarget) upgradeCommon(
+	snapshot greenfieldSnapshot,
+) bool {
+	return snapshot.fencePresent &&
+		snapshot.generation == target.terminalFence &&
+		snapshot.fleet == fleetfence.FleetPortable &&
+		snapshot.stagedPresent
+}
+
+func (target *greenfieldSystemTarget) currentMatches(
+	snapshot greenfieldSnapshot,
+	manifestDigest string,
+	overlayRevision string,
+) bool {
+	return snapshot.currentPresent &&
+		snapshot.current.manifestDigest == manifestDigest &&
+		snapshot.current.overlayRevision == overlayRevision
+}
+
 func (target *greenfieldSystemTarget) postcondition(
 	binding hostruntime.OperationBinding,
 	phase hostruntime.OperationPhase,
@@ -1209,13 +1931,32 @@ func (target *greenfieldSystemTarget) postcondition(
 	}
 	processes := []hostruntime.ProcessProjection{}
 	if snapshot.processPresent {
+		role := "disabled-observer"
+		acquisitionCapable := false
+		if snapshot.processPrior {
+			role = "prior-controller"
+			acquisitionCapable =
+				snapshot.priorPolicy.Mode == controller.AcquisitionEnabled ||
+					snapshot.priorPolicy.Mode == controller.AcquisitionCanaryOnly
+		}
 		processes = append(processes, hostruntime.ProcessProjection{
-			Role:               "disabled-observer",
+			Role:               role,
 			PID:                snapshot.processRecord.PID,
-			StartIdentity:      strconv.FormatUint(snapshot.processRecord.StartTimeTicks, 10),
+			StartIdentity:      snapshot.processIdentity,
 			ExecutableDigest:   snapshot.processRecord.ExecutableDigest,
-			AcquisitionCapable: false,
+			AcquisitionCapable: acquisitionCapable,
 		})
+	}
+	policyManifestDigest := target.overlay.Policy.ManifestDigest
+	if snapshot.watchdogPrior && target.priorOverlay != nil {
+		policyManifestDigest = target.priorOverlay.Policy.ManifestDigest
+	}
+	acquisitionEnabled :=
+		snapshot.priorPolicy.Mode == controller.AcquisitionEnabled ||
+			snapshot.priorPolicy.Mode == controller.AcquisitionCanaryOnly
+	controllerProcesses := uint64(0)
+	if snapshot.processPresent {
+		controllerProcesses = 1
 	}
 	postcondition := hostruntime.TargetPostcondition{
 		SchemaVersion:          1,
@@ -1231,13 +1972,17 @@ func (target *greenfieldSystemTarget) postcondition(
 		Artifacts:              artifacts,
 		Processes:              processes,
 		Policy: hostruntime.PolicyProjection{
-			PolicyManifestDigest: target.overlay.Policy.ManifestDigest,
+			PolicyManifestDigest: policyManifestDigest,
 			TransitionEpoch:      snapshot.policyEpoch,
-			AcquisitionEnabled:   false,
-			PendingAcquisitions:  0,
-			ActiveListeners:      0,
+			AcquisitionEnabled:   acquisitionEnabled,
+			PendingAcquisitions:  snapshot.activeListeners,
+			ActiveListeners:      snapshot.activeListeners,
 		},
-		Quiescence: hostruntime.QuiescenceProjection{},
+		Quiescence: hostruntime.QuiescenceProjection{
+			ControllerProcesses: controllerProcesses,
+			RunnerProcesses:     snapshot.runningJobs,
+			PendingAcquisitions: snapshot.activeListeners,
+		},
 		ObservedAt: target.now(),
 	}
 	if snapshot.currentPresent {
@@ -1308,29 +2053,41 @@ func verifyInstalledTarget(
 		!runtimeManifestMatchesOverlay(manifest, overlay) {
 		return hostruntime.HostActionResult{}, ErrProtocol
 	}
-	entry, err := sealTargetProofForState(
-		overlay,
-		revision,
-		hostTargetState{},
-	)
+	layout, err := hostruntime.LifecycleStoreLayoutFromPrivateOverlay(overlay)
 	if err != nil {
 		return hostruntime.HostActionResult{}, ErrProtocol
 	}
-	binding, terminalGeneration, err := fixedGreenfieldBinding(
-		entry,
-		manifestDigest,
-		revision,
-	)
-	if err != nil || terminalGeneration != manifest.FleetGeneration {
+	lookup, err := hostruntime.OpenLifecycleStoreLayout(layout, false)
+	if err != nil {
 		return hostruntime.HostActionResult{}, ErrProtocol
 	}
-	resources, _, err := openGreenfieldOperation(
+	choice, present, selectErr := selectPortableInstallContinuation(
+		lookup,
+		revision,
+		manifest,
+	)
+	lookupCloseErr := lookup.Close()
+	if selectErr != nil ||
+		lookupCloseErr != nil ||
+		!present ||
+		choice.continuation.journal.Phase !=
+			hostruntime.OperationPhaseComplete ||
+		choice.continuation.reservation.State !=
+			hostruntime.ReservationStateCommitted ||
+		!portableContinuationMatchesLiveState(
+			choice.binding,
+			choice.continuation.journal.Phase,
+			target.CurrentManifestDigest,
+		) {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	resources, _, err := openInstallOperation(
 		ctx,
 		overlay,
 		revision,
 		manifest,
 		manifestDigest,
-		binding,
+		choice.binding,
 		false,
 	)
 	if err != nil {
@@ -1340,7 +2097,8 @@ func verifyInstalledTarget(
 		ctx,
 		resources.lifecycle,
 		resources.engine.Effects,
-		binding,
+		choice.binding,
+		choice.priorManifest,
 		manifest,
 	)
 	closeErr := resources.Close()

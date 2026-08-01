@@ -117,6 +117,85 @@ func (store *watchdogMarkerStore) Install(
 	return nil
 }
 
+// Replace atomically moves an exact existing watchdog binding to one exact
+// replacement. It is idempotent only when either the prior or target binding
+// is positively read back; any third binding fails closed.
+func (store *watchdogMarkerStore) Replace(
+	prior watchdogMarkerBinding,
+	target watchdogMarkerBinding,
+) error {
+	if store == nil ||
+		!validWatchdogMarkerBinding(prior) ||
+		!validWatchdogMarkerBinding(target) ||
+		prior == target {
+		return ErrWatchdogMarker
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.readyLocked() != nil {
+		return ErrWatchdogMarker
+	}
+	_, matched, present, err := store.inspectOneOfLocked(prior, target)
+	if err != nil || !present {
+		return ErrWatchdogMarker
+	}
+	if matched == 1 {
+		return nil
+	}
+	document, err := expectedWatchdogMarker(target)
+	if err != nil {
+		return ErrWatchdogMarker
+	}
+	if err := store.root.Remove(watchdogMarkerTempName); err != nil &&
+		!errors.Is(err, os.ErrNotExist) {
+		return ErrWatchdogMarker
+	}
+	if err := writeReleaseFile(
+		store.root,
+		watchdogMarkerTempName,
+		document,
+	); err != nil {
+		return ErrWatchdogMarker
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = store.root.Remove(watchdogMarkerTempName)
+		}
+	}()
+	if err := store.root.Rename(
+		watchdogMarkerTempName,
+		watchdogMarkerName,
+	); err != nil ||
+		syncReleaseRoot(store.root) != nil {
+		return ErrWatchdogMarker
+	}
+	cleanup = false
+	_, matched, present, err = store.inspectOneOfLocked(prior, target)
+	if err != nil || !present || matched != 1 {
+		return ErrWatchdogMarker
+	}
+	return nil
+}
+
+func (store *watchdogMarkerStore) InspectOneOf(
+	bindings ...watchdogMarkerBinding,
+) (hostruntime.ArtifactProjection, int, bool, error) {
+	if store == nil || len(bindings) == 0 {
+		return hostruntime.ArtifactProjection{}, -1, false,
+			ErrWatchdogMarker
+	}
+	for _, binding := range bindings {
+		if !validWatchdogMarkerBinding(binding) {
+			return hostruntime.ArtifactProjection{}, -1, false,
+				ErrWatchdogMarker
+		}
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.inspectOneOfLocked(bindings...)
+}
+
 func (store *watchdogMarkerStore) Close() error {
 	if store == nil {
 		return nil
@@ -140,17 +219,31 @@ func (store *watchdogMarkerStore) Close() error {
 func (store *watchdogMarkerStore) inspectLocked(
 	binding watchdogMarkerBinding,
 ) (hostruntime.ArtifactProjection, bool, error) {
-	if store.readyLocked() != nil {
+	artifact, matched, present, err := store.inspectOneOfLocked(binding)
+	if err != nil || !present {
+		return artifact, present, err
+	}
+	if matched != 0 {
 		return hostruntime.ArtifactProjection{}, false,
+			ErrWatchdogMarker
+	}
+	return artifact, true, nil
+}
+
+func (store *watchdogMarkerStore) inspectOneOfLocked(
+	bindings ...watchdogMarkerBinding,
+) (hostruntime.ArtifactProjection, int, bool, error) {
+	if store.readyLocked() != nil {
+		return hostruntime.ArtifactProjection{}, -1, false,
 			ErrWatchdogMarker
 	}
 	if _, err := store.root.Lstat(watchdogMarkerName); errors.Is(
 		err,
 		os.ErrNotExist,
 	) {
-		return hostruntime.ArtifactProjection{}, false, nil
+		return hostruntime.ArtifactProjection{}, -1, false, nil
 	} else if err != nil {
-		return hostruntime.ArtifactProjection{}, false,
+		return hostruntime.ArtifactProjection{}, -1, false,
 			ErrWatchdogMarker
 	}
 	document, identity, err := readReleaseFile(
@@ -159,17 +252,31 @@ func (store *watchdogMarkerStore) inspectLocked(
 		watchdogMarkerMaxBytes,
 	)
 	if err != nil {
-		return hostruntime.ArtifactProjection{}, false,
+		return hostruntime.ArtifactProjection{}, -1, false,
 			ErrWatchdogMarker
 	}
-	expected, err := expectedWatchdogMarker(binding)
-	if err != nil || !bytes.Equal(document, expected) {
-		return hostruntime.ArtifactProjection{}, false,
+	matched := -1
+	for index, binding := range bindings {
+		expected, expectedErr := expectedWatchdogMarker(binding)
+		if expectedErr != nil {
+			return hostruntime.ArtifactProjection{}, -1, false,
+				ErrWatchdogMarker
+		}
+		if bytes.Equal(document, expected) {
+			if matched >= 0 {
+				return hostruntime.ArtifactProjection{}, -1, false,
+					ErrWatchdogMarker
+			}
+			matched = index
+		}
+	}
+	if matched < 0 {
+		return hostruntime.ArtifactProjection{}, -1, false,
 			ErrWatchdogMarker
 	}
 	major, minor, ok := releaseDeviceNumbers(identity.device)
 	if !ok {
-		return hostruntime.ArtifactProjection{}, false,
+		return hostruntime.ArtifactProjection{}, -1, false,
 			ErrWatchdogMarker
 	}
 	contentDigest := digestArtifact(
@@ -190,11 +297,11 @@ func (store *watchdogMarkerStore) inspectLocked(
 	artifactIdentity, err :=
 		hostruntime.DeriveArtifactIdentity(artifact)
 	if err != nil {
-		return hostruntime.ArtifactProjection{}, false,
+		return hostruntime.ArtifactProjection{}, -1, false,
 			ErrWatchdogMarker
 	}
 	artifact.IdentityDigest = &artifactIdentity
-	return artifact, true, nil
+	return artifact, matched, true, nil
 }
 
 func (store *watchdogMarkerStore) readyLocked() error {

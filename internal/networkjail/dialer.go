@@ -82,7 +82,19 @@ func (dialer *BrokerDialer) DialFrame(
 	}
 
 	for _, address := range answers {
-		permit, err := dialer.requestPermit(ctx)
+		dialer.sequenceMu.Lock()
+		if dialer.sequence == PermitSequence(math.MaxUint64) {
+			dialer.sequenceMu.Unlock()
+			return nil, ErrPermitSequence
+		}
+		dialer.sequence++
+		permit, err := dialer.permits.Request(ctx, DialPermitRequest{
+			SlotID:        dialer.slot,
+			JobGeneration: dialer.generation,
+			Class:         DialClassJob,
+			Sequence:      dialer.sequence,
+		})
+		dialer.sequenceMu.Unlock()
 		if err != nil || !permit.validFor(dialer.slot, DialClassJob) {
 			return nil, errors.New("networkjail: dial permit unavailable")
 		}
@@ -102,21 +114,6 @@ func (dialer *BrokerDialer) DialFrame(
 		}
 	}
 	return nil, errors.New("networkjail: upstream unavailable")
-}
-
-func (dialer *BrokerDialer) requestPermit(ctx context.Context) (Permit, error) {
-	dialer.sequenceMu.Lock()
-	defer dialer.sequenceMu.Unlock()
-	if dialer.sequence == PermitSequence(math.MaxUint64) {
-		return Permit{}, ErrPermitSequence
-	}
-	dialer.sequence++
-	return dialer.permits.Request(ctx, DialPermitRequest{
-		SlotID:        dialer.slot,
-		JobGeneration: dialer.generation,
-		Class:         DialClassJob,
-		Sequence:      dialer.sequence,
-	})
 }
 
 func (permit Permit) validFor(slot CapacitySlotID, class DialClass) bool {

@@ -26,6 +26,12 @@ type DisabledControllerProbe interface {
 	Observe(context.Context) (DisabledControllerObservation, error)
 }
 
+type lifecycleControllerAdmin interface {
+	Policy(context.Context) (controller.PolicyStatus, error)
+	Disable(context.Context) (controller.PolicyStatus, error)
+	Drain(context.Context) error
+}
+
 type SystemDisabledControllerProbe struct {
 	binary       string
 	binaryDigest string
@@ -54,16 +60,97 @@ func NewSystemDisabledControllerProbe(
 func (probe *SystemDisabledControllerProbe) Observe(
 	ctx context.Context,
 ) (DisabledControllerObservation, error) {
+	status, err := probe.Policy(ctx)
+	if err != nil ||
+		status.Mode != controller.AcquisitionDisabled ||
+		status.Capacity != 0 {
+		return DisabledControllerObservation{}, ErrControllerProbe
+	}
+	return DisabledControllerObservation{
+		PolicyEpoch:  status.Epoch,
+		PolicyDigest: status.Digest,
+	}, nil
+}
+
+func (probe *SystemDisabledControllerProbe) Policy(
+	ctx context.Context,
+) (controller.PolicyStatus, error) {
+	document, err := probe.run(ctx, "probe")
+	if err != nil {
+		return controller.PolicyStatus{}, ErrControllerProbe
+	}
+	var status controller.PolicyStatus
+	if !parseControllerPolicy(document, &status) {
+		return controller.PolicyStatus{}, ErrControllerProbe
+	}
+	return status, nil
+}
+
+func (probe *SystemDisabledControllerProbe) Disable(
+	ctx context.Context,
+) (controller.PolicyStatus, error) {
+	before, err := probe.Policy(ctx)
+	if err != nil {
+		return controller.PolicyStatus{}, ErrControllerProbe
+	}
+	if before.Mode == controller.AcquisitionDisabled {
+		return before, nil
+	}
+	if before.Mode != controller.AcquisitionEnabled &&
+		before.Mode != controller.AcquisitionCanaryOnly {
+		return controller.PolicyStatus{}, ErrControllerProbe
+	}
+	document, err := probe.run(
+		ctx,
+		"acquisition",
+		"--set",
+		"disabled",
+		"--expected",
+		string(before.Mode),
+		"--json",
+	)
+	if err != nil {
+		return controller.PolicyStatus{}, ErrControllerProbe
+	}
+	var after controller.PolicyStatus
+	if !parseControllerPolicy(document, &after) ||
+		after.Mode != controller.AcquisitionDisabled ||
+		after.Capacity != 0 ||
+		after.Epoch <= before.Epoch {
+		return controller.PolicyStatus{}, ErrControllerProbe
+	}
+	return after, nil
+}
+
+func (probe *SystemDisabledControllerProbe) Drain(ctx context.Context) error {
+	document, err := probe.run(ctx, "drain", "--policy", "wait")
+	if err != nil || !bytes.Equal(document, []byte("{\"status\":\"ok\"}\n")) {
+		return ErrControllerProbe
+	}
+	status, err := probe.Policy(ctx)
+	if err != nil ||
+		status.Mode != controller.AcquisitionDisabled ||
+		status.Capacity != 0 {
+		return ErrControllerProbe
+	}
+	return nil
+}
+
+func (probe *SystemDisabledControllerProbe) run(
+	ctx context.Context,
+	arguments ...string,
+) ([]byte, error) {
 	if probe == nil ||
 		ctx == nil ||
-		ctx.Err() != nil {
-		return DisabledControllerObservation{}, ErrControllerProbe
+		ctx.Err() != nil ||
+		len(arguments) == 0 {
+		return nil, ErrControllerProbe
 	}
 	beforeDigest, err := digestPinnedExecutable(probe.binary)
 	if err != nil || beforeDigest != probe.binaryDigest {
-		return DisabledControllerObservation{}, ErrControllerProbe
+		return nil, ErrControllerProbe
 	}
-	command := exec.Command(probe.binary, "probe")
+	command := exec.Command(probe.binary, arguments...)
 	command.Env = []string{
 		"LANG=C",
 		"LC_ALL=C",
@@ -79,7 +166,7 @@ func (probe *SystemDisabledControllerProbe) Observe(
 	if err := command.Start(); err != nil ||
 		command.Process == nil ||
 		command.Process.Pid <= 0 {
-		return DisabledControllerObservation{}, ErrControllerProbe
+		return nil, ErrControllerProbe
 	}
 	waited := make(chan error, 1)
 	go func() {
@@ -101,29 +188,49 @@ func (probe *SystemDisabledControllerProbe) Observe(
 		stdout.overflow ||
 		stderr.overflow ||
 		len(stderr.bytes) != 0 {
-		return DisabledControllerObservation{}, ErrControllerProbe
+		return nil, ErrControllerProbe
 	}
-	var status controller.PolicyStatus
-	document := stdout.bytes
+	return append([]byte(nil), stdout.bytes...), nil
+}
+
+func parseControllerPolicy(
+	document []byte,
+	status *controller.PolicyStatus,
+) bool {
+	if status == nil {
+		return false
+	}
 	if len(document) < 2 ||
 		document[len(document)-1] != '\n' ||
 		bytes.IndexByte(document[:len(document)-1], '\n') >= 0 ||
-		!decodeClosed(document[:len(document)-1], &status) {
-		return DisabledControllerObservation{}, ErrControllerProbe
+		!decodeClosed(document[:len(document)-1], status) {
+		return false
 	}
-	canonical, err := json.Marshal(status)
+	canonical, err := json.Marshal(*status)
 	if err != nil ||
 		!bytes.Equal(canonical, document[:len(document)-1]) ||
-		status.Mode != controller.AcquisitionDisabled ||
-		status.Epoch == 0 ||
-		!lowerHexDigest(status.Digest) ||
-		status.Capacity != 0 {
-		return DisabledControllerObservation{}, ErrControllerProbe
+		!validControllerPolicyStatus(*status) {
+		return false
 	}
-	return DisabledControllerObservation{
-		PolicyEpoch:  status.Epoch,
-		PolicyDigest: status.Digest,
-	}, nil
+	return true
+}
+
+func validControllerPolicyStatus(status controller.PolicyStatus) bool {
+	if status.Epoch == 0 ||
+		!lowerHexDigest(status.Digest) ||
+		status.Capacity < 0 {
+		return false
+	}
+	switch status.Mode {
+	case controller.AcquisitionDisabled:
+		return status.Capacity == 0
+	case controller.AcquisitionCanaryOnly:
+		return status.Capacity == 1
+	case controller.AcquisitionEnabled:
+		return status.Capacity > 0
+	default:
+		return false
+	}
 }
 
 type probeBoundedBuffer struct {
@@ -149,3 +256,4 @@ func (buffer *probeBoundedBuffer) Write(document []byte) (int, error) {
 }
 
 var _ DisabledControllerProbe = (*SystemDisabledControllerProbe)(nil)
+var _ lifecycleControllerAdmin = (*SystemDisabledControllerProbe)(nil)

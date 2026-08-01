@@ -464,6 +464,7 @@ func sealGreenfieldContinuationProof(
 		validateGreenfieldContinuation(
 			continuation,
 			binding,
+			nil,
 			manifest,
 		) != nil ||
 		!greenfieldContinuationMatchesLiveState(
@@ -486,60 +487,36 @@ func sealSystemTargetProof(
 	if !state.fencePresent {
 		return sealTargetProofForState(overlay, revision, state)
 	}
-	entry, err := sealTargetProofForState(
-		overlay,
-		revision,
-		hostTargetState{},
-	)
-	if err != nil {
-		return cli.TargetProof{}, ErrProtocol
-	}
-	_, manifestDigest, err := hostruntime.MarshalRuntimeManifest(manifest)
-	if err != nil {
-		return cli.TargetProof{}, ErrProtocol
-	}
-	binding, terminalGeneration, err := fixedGreenfieldBinding(
-		entry,
-		manifestDigest,
-		revision,
-	)
-	if err != nil || terminalGeneration != manifest.FleetGeneration {
-		return cli.TargetProof{}, ErrProtocol
-	}
 	if lifecycle != nil {
-		continuation, present, readErr := readGreenfieldContinuation(
+		choice, present, readErr := selectPortableInstallContinuation(
 			lifecycle,
-			binding,
+			revision,
 			manifest,
 		)
 		if readErr != nil {
 			return cli.TargetProof{}, ErrProtocol
 		}
 		if present {
-			if continuation.journal.Phase ==
+			entry, entryErr := continuationEntryProof(
+				overlay,
+				revision,
+				choice.binding,
+			)
+			if entryErr != nil ||
+				!portableContinuationMatchesLiveState(
+					choice.binding,
+					choice.continuation.journal.Phase,
+					state.currentDigest,
+				) {
+				return cli.TargetProof{}, ErrProtocol
+			}
+			if choice.continuation.journal.Phase ==
 				hostruntime.OperationPhaseComplete &&
-				continuation.reservation.State ==
+				choice.continuation.reservation.State ==
 					hostruntime.ReservationStateCommitted {
-				if validateGreenfieldContinuation(
-					continuation,
-					binding,
-					manifest,
-				) != nil ||
-					!greenfieldContinuationMatchesLiveState(
-						continuation.journal.Phase,
-						state.currentDigest,
-						manifestDigest,
-					) {
-					return cli.TargetProof{}, ErrProtocol
-				}
+				return sealTargetProofForState(overlay, revision, state)
 			} else {
-				return sealGreenfieldContinuationProof(
-					overlay,
-					revision,
-					state,
-					manifest,
-					continuation,
-				)
+				return entry, nil
 			}
 		}
 	}
@@ -547,6 +524,229 @@ func sealSystemTargetProof(
 		return cli.TargetProof{}, ErrProtocol
 	}
 	return sealTargetProofForState(overlay, revision, state)
+}
+
+type portableInstallContinuationChoice struct {
+	binding       hostruntime.OperationBinding
+	priorManifest *hostruntime.RuntimeManifest
+	continuation  greenfieldContinuation
+}
+
+func selectPortableInstallContinuation(
+	store *hostruntime.LifecycleStore,
+	overlayRevision string,
+	manifest hostruntime.RuntimeManifest,
+) (portableInstallContinuationChoice, bool, error) {
+	var empty portableInstallContinuationChoice
+	if store == nil || !lowerHexDigest(overlayRevision) {
+		return empty, false, ErrProtocol
+	}
+	_, manifestDigest, err := hostruntime.MarshalRuntimeManifest(manifest)
+	if err != nil {
+		return empty, false, ErrProtocol
+	}
+	journalNames, err := store.ListCanonicalNames(hostruntime.LifecycleJournals)
+	if err != nil {
+		return empty, false, ErrProtocol
+	}
+	reservationNames, err := store.ListCanonicalNames(
+		hostruntime.LifecycleReservations,
+	)
+	if err != nil {
+		return empty, false, ErrProtocol
+	}
+	journalIDs, ok := watchdogLifecycleInventory(
+		journalNames,
+		".journal.json",
+	)
+	if !ok {
+		return empty, false, ErrProtocol
+	}
+	reservationIDs, ok := watchdogLifecycleInventory(
+		reservationNames,
+		".reservation.json",
+	)
+	if !ok || !sameWatchdogInventory(journalIDs, reservationIDs) {
+		return empty, false, ErrProtocol
+	}
+	candidates := make([]portableInstallContinuationChoice, 0, 1)
+	for operationID, journalName := range journalIDs {
+		journalDocument, readErr := store.ReadCanonical(
+			hostruntime.LifecycleJournals,
+			journalName,
+			maximumProductionLifecycleJournalBytes,
+		)
+		if readErr != nil {
+			return empty, false, ErrProtocol
+		}
+		journal, _, parseErr := hostruntime.ParseOperationJournal(
+			journalDocument,
+			maximumProductionLifecycleJournalBytes,
+		)
+		if parseErr != nil || journal.OperationID != operationID {
+			return empty, false, ErrProtocol
+		}
+		reservationDocument, readErr := store.ReadCanonical(
+			hostruntime.LifecycleReservations,
+			reservationIDs[operationID],
+			maximumProductionLifecycleReservationBytes,
+		)
+		if readErr != nil {
+			return empty, false, ErrProtocol
+		}
+		reservation, _, parseErr := hostruntime.ParseStorageReservation(
+			reservationDocument,
+			maximumProductionLifecycleReservationBytes,
+		)
+		if parseErr != nil ||
+			reservation.OperationID != operationID ||
+			reservation.BindingDigest != journal.BindingDigest ||
+			!watchdogReservationMatchesJournal(reservation, journal) {
+			return empty, false, ErrProtocol
+		}
+		if journal.Kind != hostruntime.OperationKindInstall ||
+			journal.TargetManifest == nil {
+			continue
+		}
+		_, targetDigest, digestErr := hostruntime.MarshalRuntimeManifest(
+			*journal.TargetManifest,
+		)
+		if digestErr != nil || targetDigest != manifestDigest {
+			continue
+		}
+		binding, bindingErr := watchdogInstallBinding(
+			journal,
+			overlayRevision,
+		)
+		if bindingErr != nil ||
+			binding.InstallDisposition == nil ||
+			(*binding.InstallDisposition !=
+				hostruntime.InstallDispositionGreenfieldPortable &&
+				*binding.InstallDisposition !=
+					hostruntime.InstallDispositionUpgradePortable) ||
+			!watchdogTargetGenerationMatches(binding, manifest) {
+			return empty, false, ErrProtocol
+		}
+		var priorManifest *hostruntime.RuntimeManifest
+		if journal.PriorManifest != nil {
+			copy := *journal.PriorManifest
+			priorManifest = &copy
+		}
+		continuation, present, continuationErr := readGreenfieldContinuation(
+			store,
+			binding,
+			priorManifest,
+			manifest,
+		)
+		if continuationErr != nil || !present {
+			return empty, false, ErrProtocol
+		}
+		candidates = append(candidates, portableInstallContinuationChoice{
+			binding:       binding,
+			priorManifest: priorManifest,
+			continuation:  continuation,
+		})
+	}
+	if len(candidates) == 0 {
+		return empty, false, nil
+	}
+	if len(candidates) != 1 {
+		return empty, false, ErrProtocol
+	}
+	return candidates[0], true, nil
+}
+
+func continuationEntryProof(
+	overlay hostruntime.PrivateOverlay,
+	revision string,
+	binding hostruntime.OperationBinding,
+) (cli.TargetProof, error) {
+	if binding.InstallDisposition == nil {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	var state hostTargetState
+	switch *binding.InstallDisposition {
+	case hostruntime.InstallDispositionGreenfieldPortable:
+	case hostruntime.InstallDispositionUpgradePortable:
+		if binding.PriorManifestDigest == nil ||
+			binding.ExpectedGeneration == 0 {
+			return cli.TargetProof{}, ErrProtocol
+		}
+		state = hostTargetState{
+			fencePresent:  true,
+			generation:    binding.ExpectedGeneration,
+			activeFleet:   fleetfence.FleetPortable,
+			currentDigest: cloneTargetDigest(binding.PriorManifestDigest),
+		}
+	default:
+		return cli.TargetProof{}, ErrProtocol
+	}
+	entry, err := sealTargetProofForState(overlay, revision, state)
+	if err != nil {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	derived, generation, err := fixedInstallBinding(
+		entry,
+		*binding.TargetManifestDigest,
+		revision,
+	)
+	if err != nil || generation == 0 || !reflect.DeepEqual(derived, binding) {
+		return cli.TargetProof{}, ErrProtocol
+	}
+	return entry, nil
+}
+
+func portableContinuationMatchesLiveState(
+	binding hostruntime.OperationBinding,
+	phase hostruntime.OperationPhase,
+	currentDigest *string,
+) bool {
+	if binding.InstallDisposition == nil ||
+		binding.TargetManifestDigest == nil {
+		return false
+	}
+	switch *binding.InstallDisposition {
+	case hostruntime.InstallDispositionGreenfieldPortable:
+		return greenfieldContinuationMatchesLiveState(
+			phase,
+			currentDigest,
+			*binding.TargetManifestDigest,
+		)
+	case hostruntime.InstallDispositionUpgradePortable:
+		if binding.PriorManifestDigest == nil || currentDigest == nil {
+			return false
+		}
+		switch phase {
+		case hostruntime.OperationPhasePrepared,
+			hostruntime.OperationPhasePreflightProven,
+			hostruntime.OperationPhaseCandidateStaged,
+			hostruntime.OperationPhaseCandidateSmoked,
+			hostruntime.OperationPhasePriorRetained,
+			hostruntime.OperationPhaseDispositionUpgradeProven,
+			hostruntime.OperationPhasePriorAcquisitionDisabled,
+			hostruntime.OperationPhasePriorDrained,
+			hostruntime.OperationPhasePriorControllerStopped,
+			hostruntime.OperationPhasePriorQuiescenceProven,
+			hostruntime.OperationPhaseFencePortableProven,
+			hostruntime.OperationPhaseWatchdogInstalled,
+			hostruntime.OperationPhasePolicyDisabled,
+			hostruntime.OperationPhaseObserverStarted:
+			return *currentDigest == *binding.PriorManifestDigest
+		case hostruntime.OperationPhaseZeroProven:
+			return *currentDigest == *binding.PriorManifestDigest ||
+				*currentDigest == *binding.TargetManifestDigest
+		case hostruntime.OperationPhaseCurrentSelected:
+			return *currentDigest == *binding.PriorManifestDigest ||
+				*currentDigest == *binding.TargetManifestDigest
+		case hostruntime.OperationPhaseVerified,
+			hostruntime.OperationPhaseComplete:
+			return *currentDigest == *binding.TargetManifestDigest
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
 
 func greenfieldContinuationMatchesLiveState(
@@ -558,9 +758,11 @@ func greenfieldContinuationMatchesLiveState(
 	case hostruntime.OperationPhaseFencePortable,
 		hostruntime.OperationPhaseWatchdogInstalled,
 		hostruntime.OperationPhasePolicyDisabled,
-		hostruntime.OperationPhaseObserverStarted,
-		hostruntime.OperationPhaseZeroProven:
+		hostruntime.OperationPhaseObserverStarted:
 		return currentDigest == nil
+	case hostruntime.OperationPhaseZeroProven:
+		return currentDigest == nil ||
+			*currentDigest == targetManifestDigest
 	case hostruntime.OperationPhaseCurrentSelected:
 		return currentDigest == nil ||
 			*currentDigest == targetManifestDigest
