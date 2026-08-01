@@ -72,6 +72,26 @@ func TestParseHostCommandAcceptsOnlyExactOrderedForms(t *testing.T) {
 	}
 }
 
+func TestSealTargetProofRejectsArm64Target(t *testing.T) {
+	t.Parallel()
+
+	overlay, revision := cliTestOverlay()
+	_, err := SealTargetProof(TargetProof{
+		SchemaVersion:          1,
+		PrivateOverlayRevision: revision,
+		HostIdentityDigest:     overlay.Target.HostIdentityDigest,
+		ControlIdentityDigest:  overlay.Target.ControlHostIdentityDigest,
+		OS:                     "linux",
+		Architecture:           "arm64",
+		ExpectedEUID:           0,
+		FenceGeneration:        0,
+		ActiveFleet:            fleetfence.FleetNone,
+	})
+	if !errors.Is(err, ErrHostCommandFailed) {
+		t.Fatalf("SealTargetProof() error = %v", err)
+	}
+}
+
 func TestRunHostCommandDeployProvesStagesThenInvokesExactBinding(t *testing.T) {
 	t.Parallel()
 

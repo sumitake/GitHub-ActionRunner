@@ -92,6 +92,9 @@ func (r *ExecCommandRunner) Run(ctx context.Context, argv []string, extraFiles [
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
+	if ctx.Err() != nil {
+		return Result{}, errors.New("hostruntime: command canceled")
+	}
 	if err := cmd.Start(); err != nil {
 		return Result{}, errors.New("hostruntime: command start failed")
 	}

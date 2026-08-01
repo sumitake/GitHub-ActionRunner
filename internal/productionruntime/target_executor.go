@@ -72,7 +72,9 @@ func (executor *SystemTargetHostExecutor) ExecuteTargetHost(
 
 	overlay, revision, err := executor.loadOverlay(request.PrivatePath)
 	if err != nil ||
-		!targetActionAllowed(overlay, request.Action) {
+		!targetActionAllowed(overlay, request.Action) ||
+		(request.ManifestPath != "" &&
+			request.ManifestPath != overlay.Manifest.Path) {
 		return hostruntime.HostActionResult{},
 			hostruntime.ErrTargetHostFailed
 	}

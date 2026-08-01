@@ -150,6 +150,63 @@ func TestSystemTargetHostExecutorRejectsUnsupportedActionBeforeHandler(
 	}
 }
 
+func TestSystemTargetHostExecutorRejectsManifestPathSubstitutionBeforeLoad(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	overlay, _ := protocolTestOverlay(t)
+	overlay.Manifest.Path = "/release/runtime-manifest.json"
+	_, revision, err := hostruntime.MarshalPrivateOverlay(overlay)
+	if err != nil {
+		t.Fatalf("MarshalPrivateOverlay() error = %v", err)
+	}
+	handler := &targetExecutorHandler{}
+	manifestLoads := 0
+	executor := newSystemTargetHostExecutor(
+		handler,
+		func(string) (
+			hostruntime.PrivateOverlay,
+			string,
+			error,
+		) {
+			return overlay, revision, nil
+		},
+		func(string) (
+			hostruntime.RuntimeManifest,
+			[]byte,
+			string,
+			error,
+		) {
+			manifestLoads++
+			return hostruntime.RuntimeManifest{}, nil, "", errors.New(
+				"manifest loader must not run",
+			)
+		},
+	)
+
+	if _, err := executor.ExecuteTargetHost(
+		context.Background(),
+		hostruntime.TargetHostRequest{
+			Action:       hostruntime.TargetInstall,
+			PrivatePath:  "/private/runtime.json",
+			ManifestPath: "/attacker/runtime-manifest.json",
+		},
+	); !errors.Is(err, hostruntime.ErrTargetHostFailed) {
+		t.Fatalf("ExecuteTargetHost() error = %v", err)
+	}
+	if manifestLoads != 0 ||
+		handler.proveCalls != 0 ||
+		handler.stageCalls != 0 ||
+		handler.invokeCalls != 0 {
+		t.Fatalf(
+			"manifest loads = %d, handler calls = %#v",
+			manifestLoads,
+			handler,
+		)
+	}
+}
+
 type targetExecutorHandler struct {
 	target cli.TargetProof
 	result hostruntime.HostActionResult

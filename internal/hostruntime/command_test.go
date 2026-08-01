@@ -67,6 +67,21 @@ func TestExecCommandRunnerRejectsRelativeOrNULArgv(t *testing.T) {
 	}
 }
 
+func TestExecCommandRunnerRejectsCanceledContextBeforeStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := NewExecCommandRunner().Run(
+		ctx,
+		[]string{"/does/not/run"},
+		nil,
+		nil,
+	)
+	if err == nil || err.Error() != "hostruntime: command canceled" {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 func TestExecCommandRunnerCancellationKillsOwnedProcessGroup(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {

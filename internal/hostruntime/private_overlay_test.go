@@ -46,6 +46,9 @@ func TestPrivateOverlayRejectsNoncanonicalAndIncompleteInputs(t *testing.T) {
 		"darwin target": func(overlay *PrivateOverlay) {
 			overlay.Target.OS = "darwin"
 		},
+		"arm64 target": func(overlay *PrivateOverlay) {
+			overlay.Target.Architecture = "arm64"
+		},
 		"same control host": func(overlay *PrivateOverlay) {
 			overlay.Target.ControlHostIdentityDigest =
 				overlay.Target.HostIdentityDigest

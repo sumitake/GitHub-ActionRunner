@@ -248,6 +248,13 @@ func (engine LifecycleEngine) Recover(
 			classified,
 		), lifecyclePublicError(classified)
 	}
+	if err := lease.Validate(); err != nil {
+		return engine.resultForError(
+			request.Binding,
+			prepared,
+			integrityLifecycleError(err),
+		), ErrLifecycleExecution
+	}
 	if prepared.journal.CompensationPath == nil {
 		source, err := engine.ensurePhaseApplied(ctx, request, prepared)
 		if err != nil {

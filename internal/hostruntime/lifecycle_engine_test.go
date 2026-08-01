@@ -188,7 +188,7 @@ func TestLifecycleEngineRecoverValidatesLeaseBeforePrepareOrEffects(t *testing.T
 		Store:        store,
 		Effects:      effects,
 		Storage:      allowTestStorage{},
-		Compensation: &testCompensationAuthority{},
+		Compensation: rejectTestCompensationAuthority{},
 		PollInterval: time.Millisecond,
 		Now: monotonicTestClock(
 			time.Date(2026, 7, 29, 12, 50, 0, 0, time.UTC),
@@ -224,6 +224,68 @@ func TestLifecycleEngineRecoverValidatesLeaseBeforePrepareOrEffects(t *testing.T
 	names, listErr := store.ListCanonicalNames(LifecycleJournals)
 	if listErr != nil || len(names) != 0 {
 		t.Fatalf("journal names = %v, error=%v", names, listErr)
+	}
+}
+
+type rejectTestCompensationAuthority struct{}
+
+func (rejectTestCompensationAuthority) AuthorizeCompensation(
+	context.Context,
+	OperationBinding,
+	OperationJournal,
+	TargetPostcondition,
+) (CompensationAuthorization, error) {
+	return CompensationAuthorization{}, errors.New("test compensation rejected")
+}
+
+func TestLifecycleEngineRecoverRevalidatesLeaseAfterPrepareBeforeEffects(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	binding := goldenUpgradeBinding(t)
+	store := openTestLifecycleStore(t)
+	effects := newTestLifecycleEffects(t, binding)
+	validateErr := errors.New("lease identity changed after prepare")
+	lease := &testLifecycleOperationLease{
+		validateErrors: []error{nil, validateErr},
+	}
+	engine := LifecycleEngine{
+		Store:        store,
+		Effects:      effects,
+		Storage:      allowTestStorage{},
+		Compensation: rejectTestCompensationAuthority{},
+		PollInterval: time.Millisecond,
+		Now: monotonicTestClock(
+			time.Date(2026, 7, 29, 12, 51, 0, 0, time.UTC),
+		),
+		leaseAcquire: func(
+			context.Context,
+			time.Duration,
+		) (lifecycleOperationLease, error) {
+			return lease, nil
+		},
+	}
+	request := lifecycleTestRequest(
+		t,
+		binding,
+		time.Date(2026, 7, 29, 12, 51, 0, 0, time.UTC),
+	)
+
+	result, err := engine.Recover(context.Background(), request)
+	if !errors.Is(err, ErrLifecycleExecution) ||
+		result.Status != HostActionFailed ||
+		result.ErrorClass != LifecycleErrorIntegrity ||
+		lease.validateCount != 2 ||
+		lease.closeCount != 1 ||
+		len(effects.countsCopy()) != 0 {
+		t.Fatalf(
+			"Recover() = %#v, error=%v, lease=%#v, effects=%#v",
+			result,
+			err,
+			lease,
+			effects.countsCopy(),
+		)
 	}
 }
 
@@ -582,14 +644,18 @@ func (allowTestStorage) Revalidate(
 }
 
 type testLifecycleOperationLease struct {
-	validateErr   error
-	closeErr      error
-	validateCount int
-	closeCount    int
+	validateErr    error
+	validateErrors []error
+	closeErr       error
+	validateCount  int
+	closeCount     int
 }
 
 func (lease *testLifecycleOperationLease) Validate() error {
 	lease.validateCount++
+	if lease.validateCount <= len(lease.validateErrors) {
+		return lease.validateErrors[lease.validateCount-1]
+	}
 	return lease.validateErr
 }
 

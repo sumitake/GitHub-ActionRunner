@@ -405,8 +405,7 @@ func MarshalPrivateOverlay(overlay PrivateOverlay) ([]byte, string, error) {
 func validatePrivateOverlay(overlay PrivateOverlay) error {
 	if overlay.SchemaVersion != privateOverlaySchemaVersion ||
 		overlay.Target.OS != "linux" ||
-		(overlay.Target.Architecture != "amd64" &&
-			overlay.Target.Architecture != "arm64") ||
+		overlay.Target.Architecture != "amd64" ||
 		overlay.Target.ExpectedEUID != 0 ||
 		!isLowerHex64(overlay.Target.HostIdentityDigest) ||
 		!isLowerHex64(overlay.Target.ControlHostIdentityDigest) ||

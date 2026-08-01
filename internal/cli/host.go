@@ -496,7 +496,7 @@ func validateTargetProofShape(proof TargetProof) error {
 		!validLowerDigest(proof.ControlIdentityDigest) ||
 		proof.HostIdentityDigest == proof.ControlIdentityDigest ||
 		proof.OS != "linux" ||
-		(proof.Architecture != "amd64" && proof.Architecture != "arm64") ||
+		proof.Architecture != "amd64" ||
 		proof.ExpectedEUID != 0 ||
 		!validFleet(proof.ActiveFleet) ||
 		proof.CurrentManifestDigest != nil &&
@@ -712,8 +712,7 @@ func readBoundedFile(path string, maxBytes int) ([]byte, error) {
 
 func validLoadedOverlayIdentity(overlay hostruntime.PrivateOverlay) bool {
 	return overlay.Target.OS == "linux" &&
-		(overlay.Target.Architecture == "amd64" ||
-			overlay.Target.Architecture == "arm64") &&
+		overlay.Target.Architecture == "amd64" &&
 		overlay.Target.ExpectedEUID == 0 &&
 		validLowerDigest(overlay.Target.HostIdentityDigest) &&
 		validLowerDigest(overlay.Target.ControlHostIdentityDigest) &&
