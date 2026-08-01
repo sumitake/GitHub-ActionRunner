@@ -594,7 +594,7 @@ constant.
 The exact Task 8A re-entry matrix is:
 
 | Live state | Exact lifecycle journal | Result |
-|---|---|---|
+| --- | --- | --- |
 | fence/current/process/watchdog absent | absent | admit fresh greenfield install |
 | incomplete portable greenfield state | matching operation binding | admit the same greenfield operation and continue with `Execute` |
 | incomplete portable greenfield state | absent, foreign, or ambiguous | fail before write |
@@ -720,11 +720,11 @@ GOCACHE=/private/tmp/portable-ghar-pr15-go-cache GOTOOLCHAIN=go1.26.5 \
 GOCACHE=/private/tmp/portable-ghar-pr15-go-cache GOTOOLCHAIN=go1.26.5 \
   go tool govulncheck ./...
 bats tests/shell/qts/*.bats
-./scripts/check-repository-metadata.sh
-./scripts/check-workflow-policy.sh
-./scripts/check-generated-artifacts.sh
-./scripts/check-sanitization.sh
-./scripts/check-secrets.sh
+python3 scripts/check_repository_metadata.py --root .
+python3 scripts/check_workflow_policy.py .github/workflows
+python3 scripts/ci/check_runner_debian_snapshot.py
+python3 scripts/sanitize_public.py --tracked
+./scripts/test-controller-runtime.sh --unit
 ```
 
 - Re-run all available container/source-only gates. A macOS skip is not a

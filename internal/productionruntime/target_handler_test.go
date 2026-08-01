@@ -334,7 +334,7 @@ func TestReleaseBundleStoreStagesAndSelectsExactBundle(t *testing.T) {
 			t.Fatalf("mkdir %s: %v", path, err)
 		}
 	}
-	overlay, revision := protocolTestOverlay(t)
+	overlay, _ := protocolTestOverlay(t)
 	manifest := protocolTestManifest()
 	manifestDocument, manifestDigest, err :=
 		hostruntime.MarshalRuntimeManifest(manifest)

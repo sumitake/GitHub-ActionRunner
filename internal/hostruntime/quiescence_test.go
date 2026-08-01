@@ -174,7 +174,8 @@ func TestProveManagedQuiescenceRejectsInvalidReceiverOrContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDockerCLI: %v", err)
 	}
-	if err := cli.ProveManagedQuiescence(nil); err == nil {
+	var nilContext context.Context
+	if err := cli.ProveManagedQuiescence(nilContext); err == nil {
 		t.Fatal("nil context accepted")
 	}
 }

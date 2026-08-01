@@ -122,7 +122,7 @@
     "candidate_protected_files": [
       {
         "path": "cmd/portable-ghar-runner-gate/main_test.go",
-        "identity_inventory_sha256": "44437b364d191653e3a62855a7c776bf6bb69f57583518ef5526abf730524ea8"
+        "identity_inventory_sha256": "9da71622a1eae040ff4aed7b3c6f8f63653aa6e3dd296b725fad5d2242a9ac3a"
       },
       {
         "path": "cmd/portable-ghar-runtime-lock/main_test.go",
@@ -197,7 +197,7 @@
       {
         "path": "cmd/portable-ghar-runner-gate/main_test.go",
         "token": "version_bare",
-        "count": 1,
+        "count": 2,
         "replace": false
       },
       {

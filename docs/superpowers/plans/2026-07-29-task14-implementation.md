@@ -1,5 +1,12 @@
 # Portable-GHAR Task 14 Implementation Plan
 
+> **Status:** The Phase 2 source implementation is present on the integration
+> branch and awaits final exact-head review, required checks, and normal merge.
+> The unchecked items below preserve the original execution sequence; they are
+> not a live evidence ledger. Linux/Docker rehearsal, reproducibility,
+> forced-runner-version-bump, immutable-release, numeric sizing/cadence, and
+> host-activation evidence remain deferred operator gates.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:executing-plans` to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.

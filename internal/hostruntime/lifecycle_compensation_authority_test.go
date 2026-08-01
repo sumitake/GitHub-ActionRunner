@@ -175,9 +175,8 @@ func lifecycleCompensationFixture(
 	if err != nil {
 		t.Fatalf("prepare() error = %v", err)
 	}
-	var source TargetPostcondition
 	for prepared.journal.Phase != OperationPhaseCurrentSelected {
-		source, err = engine.ensurePhaseApplied(
+		_, err = engine.ensurePhaseApplied(
 			context.Background(),
 			request,
 			prepared,
@@ -197,7 +196,7 @@ func lifecycleCompensationFixture(
 			)
 		}
 	}
-	source, err = engine.ensurePhaseApplied(
+	source, err := engine.ensurePhaseApplied(
 		context.Background(),
 		request,
 		prepared,

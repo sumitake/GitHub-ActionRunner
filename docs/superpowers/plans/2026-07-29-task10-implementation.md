@@ -1,6 +1,9 @@
 # Task 10 Implementation Plan: Crash-Resumable Host Lifecycle and Watchdog
 
-> Status: source design only. This plan authorizes no Docker, QTS, RhoNAS,
+> Status: the Phase 2 source implementation is present on the integration
+> branch and awaits final exact-head review, required checks, and normal merge.
+> The unchecked items below preserve the original execution sequence; they are
+> not a live evidence ledger. This plan authorizes no Docker, QTS, RhoNAS,
 > systemd, routing, release, deployment, service, selector, or host-
 > configuration mutation. It does not select any memory, tmpfs, swap, storage,
 > log, concurrency, or rebuild-cadence value. Those numeric choices and every
