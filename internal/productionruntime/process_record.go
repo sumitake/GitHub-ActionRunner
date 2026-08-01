@@ -13,8 +13,8 @@ import (
 const (
 	MaxProcessRecordBytes = 4 << 10
 
-	processRecordSchemaVersion = uint32(1)
-	processRecordDigestDomain  = "portable-ghar-process-record-v1"
+	processRecordSchemaVersion = uint32(2)
+	processRecordDigestDomain  = "portable-ghar-process-record-v2"
 )
 
 var ErrInvalidProcessRecord = errors.New(
@@ -25,6 +25,8 @@ type ProcessRecord struct {
 	SchemaVersion          uint32           `json:"schema_version"`
 	PID                    uint64           `json:"pid"`
 	PGID                   uint64           `json:"pgid"`
+	BootID                 string           `json:"boot_id"`
+	PIDNamespaceInode      uint64           `json:"pid_namespace_inode"`
 	StartTimeTicks         uint64           `json:"start_time_ticks"`
 	ExecutableDigest       string           `json:"executable_digest"`
 	ExecutableDevice       uint64           `json:"executable_device"`
@@ -86,6 +88,9 @@ func validProcessRecord(record ProcessRecord) bool {
 		record.PID <= uint64(math.MaxInt32) &&
 		record.PGID > 0 &&
 		record.PGID <= uint64(math.MaxInt32) &&
+		record.PGID == record.PID &&
+		validProcessRecordBootID(record.BootID) &&
+		record.PIDNamespaceInode > 0 &&
 		record.StartTimeTicks > 0 &&
 		lowerHexDigest(record.ExecutableDigest) &&
 		record.ExecutableDevice > 0 &&
@@ -95,4 +100,24 @@ func validProcessRecord(record ProcessRecord) bool {
 		(record.ActiveFleet == fleetfence.FleetPortable ||
 			record.ActiveFleet == fleetfence.FleetLegacy) &&
 		record.FenceGeneration > 0
+}
+
+func validProcessRecordBootID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for index, character := range []byte(value) {
+		switch index {
+		case 8, 13, 18, 23:
+			if character != '-' {
+				return false
+			}
+		default:
+			if (character < '0' || character > '9') &&
+				(character < 'a' || character > 'f') {
+				return false
+			}
+		}
+	}
+	return true
 }

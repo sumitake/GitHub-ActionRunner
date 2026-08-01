@@ -671,7 +671,7 @@ func TestRunnerImageVerificationIsNonAuthorizingAndRequiresInstalledRoot(t *test
 	}
 }
 
-func TestRunnerImageDiagnosticsOverlayIsExactAndDigestNeutral(t *testing.T) {
+func TestRunnerImageRuntimeOverlayIsExactAndDigestNeutral(t *testing.T) {
 	output, manifest, staging := installedRunnerImageFixture(t)
 	uid := uint32(os.Geteuid())
 	gid := uint32(os.Getegid())
@@ -686,14 +686,14 @@ func TestRunnerImageDiagnosticsOverlayIsExactAndDigestNeutral(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify strict baseline: %v", err)
 	}
-	if _, err := verifyRunnerImageDirectoryWithDiagnosticsOverlayForOwner(
+	if _, err := verifyRunnerImageDirectoryWithRuntimeOverlayForOwner(
 		output,
 		manifest,
 		47,
 		uid,
 		gid,
 	); err == nil {
-		t.Fatal("overlay verifier accepted a missing diagnostics overlay")
+		t.Fatal("overlay verifier accepted a missing runtime overlay")
 	}
 
 	addRunnerImageObject(t, output, func() {
@@ -701,7 +701,21 @@ func TestRunnerImageDiagnosticsOverlayIsExactAndDigestNeutral(t *testing.T) {
 			t.Fatalf("Symlink diagnostics overlay: %v", err)
 		}
 	})
-	overlaid, err := verifyRunnerImageDirectoryWithDiagnosticsOverlayForOwner(
+	if _, err := verifyRunnerImageDirectoryWithRuntimeOverlayForOwner(
+		output,
+		manifest,
+		47,
+		uid,
+		gid,
+	); err == nil {
+		t.Fatal("overlay verifier accepted a missing work overlay")
+	}
+	addRunnerImageObject(t, output, func() {
+		if err := os.Symlink("/runner/_work", filepath.Join(output, "_work")); err != nil {
+			t.Fatalf("Symlink work overlay: %v", err)
+		}
+	})
+	overlaid, err := verifyRunnerImageDirectoryWithRuntimeOverlayForOwner(
 		output,
 		manifest,
 		47,
@@ -740,31 +754,51 @@ func TestRunnerImageDiagnosticsOverlayIsExactAndDigestNeutral(t *testing.T) {
 	}
 }
 
-func TestRunnerImageDiagnosticsOverlayRejectsEveryOtherObject(t *testing.T) {
+func TestRunnerImageRuntimeOverlayRejectsEveryOtherObject(t *testing.T) {
 	tests := map[string]func(*testing.T, string){
+		"missing diagnostics": func(t *testing.T, output string) {
+			if err := os.Symlink("/runner/_work", filepath.Join(output, "_work")); err != nil {
+				t.Fatalf("Symlink work overlay: %v", err)
+			}
+		},
 		"relative target": func(t *testing.T, output string) {
 			if err := os.Symlink("runner/_diag", filepath.Join(output, "_diag")); err != nil {
 				t.Fatalf("Symlink relative diagnostics overlay: %v", err)
 			}
+			if err := os.Symlink("/runner/_work", filepath.Join(output, "_work")); err != nil {
+				t.Fatalf("Symlink work overlay: %v", err)
+			}
 		},
 		"wrong absolute target": func(t *testing.T, output string) {
-			if err := os.Symlink("/tmp/_diag", filepath.Join(output, "_diag")); err != nil {
-				t.Fatalf("Symlink wrong diagnostics overlay: %v", err)
+			if err := os.Symlink("/runner/_diag", filepath.Join(output, "_diag")); err != nil {
+				t.Fatalf("Symlink diagnostics overlay: %v", err)
+			}
+			if err := os.Symlink("/tmp/_work", filepath.Join(output, "_work")); err != nil {
+				t.Fatalf("Symlink wrong work overlay: %v", err)
 			}
 		},
 		"regular file": func(t *testing.T, output string) {
 			if err := os.WriteFile(filepath.Join(output, "_diag"), nil, 0o444); err != nil {
 				t.Fatalf("WriteFile diagnostics overlay: %v", err)
 			}
+			if err := os.Symlink("/runner/_work", filepath.Join(output, "_work")); err != nil {
+				t.Fatalf("Symlink work overlay: %v", err)
+			}
 		},
 		"directory": func(t *testing.T, output string) {
-			if err := os.Mkdir(filepath.Join(output, "_diag"), 0o555); err != nil {
-				t.Fatalf("Mkdir diagnostics overlay: %v", err)
+			if err := os.Symlink("/runner/_diag", filepath.Join(output, "_diag")); err != nil {
+				t.Fatalf("Symlink diagnostics overlay: %v", err)
+			}
+			if err := os.Mkdir(filepath.Join(output, "_work"), 0o555); err != nil {
+				t.Fatalf("Mkdir work overlay: %v", err)
 			}
 		},
 		"extra sibling": func(t *testing.T, output string) {
 			if err := os.Symlink("/runner/_diag", filepath.Join(output, "_diag")); err != nil {
 				t.Fatalf("Symlink diagnostics overlay: %v", err)
+			}
+			if err := os.Symlink("/runner/_work", filepath.Join(output, "_work")); err != nil {
+				t.Fatalf("Symlink work overlay: %v", err)
 			}
 			if err := os.WriteFile(filepath.Join(output, "unexpected"), nil, 0o444); err != nil {
 				t.Fatalf("WriteFile unexpected sibling: %v", err)
@@ -775,7 +809,7 @@ func TestRunnerImageDiagnosticsOverlayRejectsEveryOtherObject(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			output, manifest, _ := installedRunnerImageFixture(t)
 			addRunnerImageObject(t, output, func() { mutate(t, output) })
-			if _, err := verifyRunnerImageDirectoryWithDiagnosticsOverlayForOwner(
+			if _, err := verifyRunnerImageDirectoryWithRuntimeOverlayForOwner(
 				output,
 				manifest,
 				47,

@@ -392,13 +392,6 @@
     "reason": "Synthetic control-user credential path in the canonical private-overlay fixture; it is not an operator or workstation path."
   },
   {
-    "path": "internal/productionruntime/process_authority_test.go",
-    "line": 523,
-    "rule": "DEPLOYID002",
-    "sha256": "8ae86d89cd5a96a67f4ef2633a66abd876cde701b62391c5bddb08517385520b",
-    "reason": "Synthetic UUID-shaped Linux boot identifier required by the process-identity fixture; it is not a deployment identifier."
-  },
-  {
     "path": "internal/productionruntime/protocol_test.go",
     "line": 792,
     "rule": "PATH001",
@@ -841,21 +834,21 @@
   },
   {
     "path": "images/runner/Dockerfile",
-    "line": 129,
+    "line": 131,
     "rule": "PATH001",
     "sha256": "022d4093d1e3ec105971109045908bdf427fe41dc4223734a00c7a8a77b5dfd8",
     "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
   },
   {
     "path": "images/runner/Dockerfile",
-    "line": 130,
+    "line": 132,
     "rule": "PATH001",
     "sha256": "269106b34e4751752f394a11831a3151e84c461c3ecae0f900f334c2b0311336",
     "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
   },
   {
     "path": "images/runner/Dockerfile",
-    "line": 131,
+    "line": 133,
     "rule": "PATH001",
     "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
     "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."

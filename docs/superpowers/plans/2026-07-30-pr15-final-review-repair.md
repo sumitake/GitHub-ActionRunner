@@ -181,7 +181,7 @@ GOTOOLCHAIN=go1.26.5 go test -race ./internal/hostruntime -run 'Lifecycle|Recove
 GOTOOLCHAIN=go1.26.5 go test -race ./cmd/portable-ghar-fleet-fence -count=1
 ```
 
-## Task 4: Immutable runner diagnostics overlay
+## Task 4: Immutable runner runtime overlay
 
 **Files:**
 
@@ -191,20 +191,31 @@ GOTOOLCHAIN=go1.26.5 go test -race ./cmd/portable-ghar-fleet-fence -count=1
 
 **RED tests:**
 
-1. Admit exactly `/opt/actions-runner/_diag -> /runner/_diag` as the sole
-   post-manifest overlay; reject a relative, indirect, wrong-target, parent-
-   symlink, file, directory, or extra-entry variant.
-2. The runtime gate creates `/runner/_diag` only under the already-proven
+1. Admit both and exactly `/opt/actions-runner/_diag -> /runner/_diag` and
+   `/opt/actions-runner/_work -> /runner/_work` as the post-manifest overlay;
+   reject a missing, relative, indirect, wrong-target, parent-symlink, file,
+   directory, or extra-entry variant. Verify only each symlink inode under the
+   immutable image root; never follow either tmpfs target during image build.
+2. The listener smoke may create `_diag`, but after removing only `_diag` a
+   second strict image verification must reject `_work` or any other residue
+   before the exact two-link overlay is installed.
+3. The runtime gate creates `/runner/_diag` only under the already-proven
    ephemeral `/runner` tmpfs and requires directory mode `0700`, UID 65532,
    GID 65532, and unchanged device/inode across the pre-listener check.
-3. Wrong owner/mode/type/identity prevents listener start.
-4. Image verification still rejects every immutable runner binary/tree drift.
+   Its existing seed hydration creates the fresh `/runner/_work` root before
+   listener release.
+4. Wrong owner/mode/type/identity prevents listener start. Image verification
+   still rejects every immutable runner binary/tree drift, and the overlay
+   remains digest-neutral.
 
 **GREEN implementation:**
 
 - Keep the official archive/tree verification and version smoke first.
-- Remove smoke `_diag`, then create the one absolute symlink and re-run a
-  verifier mode that permits only this exact overlay path and target.
+- Remove smoke `_diag` only, rerun strict verification, require its version to
+  equal the original verified version, then create the exact `_diag` and
+  `_work` links and run the runtime-overlay verifier. Never delete `_work` to
+  make the build pass; its pre-overlay presence is evidence of unknown smoke
+  residue and must fail closed.
 - At runtime create/pin `/runner/_diag`, re-stat it immediately before
   listener execution, and never make `/opt/actions-runner` writable.
 - Use no persistent volume and choose no new tmpfs size.
@@ -634,14 +645,20 @@ only from their post-effect observation.
 **Exact process authority:**
 
 - Store one root-owned `0600` canonical process record under the declared
-  state root. It binds PID, PGID, `/proc/<pid>/stat` start token, pinned
-  executable digest/inode, private-overlay revision, manifest digest, fleet,
-  and nonzero generation; its digest is the watchdog `ProcessIdentity`.
+  state root. Its exact schema-v2 document binds boot ID, PID namespace inode,
+  PID, PGID, `/proc/<pid>/stat` start token, pinned executable digest/inode,
+  private-overlay revision, manifest digest, fleet, and nonzero generation;
+  its digest is the watchdog `ProcessIdentity`. Older, future, hybrid, or
+  unknown-field records are rejected rather than migrated in place.
 - Start the controller directly with fixed argv, a minimal environment,
   detached session/process group, bounded root-owned logs, and immediate
   record/readback. Never scan `/proc` by argv.
-- Stop only while PID, PGID, start token, executable, and record digest all
-  match. Hold the same descriptor-pinned state-root/record identity through
+- Stop only while two fresh complete observations agree and boot ID, PID
+  namespace, PID, live PGID, start token, executable, and record digest all
+  match. A process is absent only when process-start observation is unavailable
+  and an immediately following `getpgid` reports `ESRCH`; every mixed or
+  uncertain result is unavailable and never authorizes a signal. Hold the same
+  descriptor-pinned state-root/record identity through
   the decision, re-read the full record immediately before each signal, and
   signal the dedicated process group only while the direct process has not
   been reaped. The order is: revalidate → TERM → bounded wait → revalidate if

@@ -74,14 +74,14 @@ func VerifyInstalledRunnerImage() error {
 	return verifyInstalledRunnerImage(false)
 }
 
-// VerifyInstalledRunnerImageWithDiagnosticsOverlay verifies the final sealed
-// image shape. It requires the sole diagnostics overlay while binding the
-// original manifest and tree-lock tuple.
-func VerifyInstalledRunnerImageWithDiagnosticsOverlay() error {
+// VerifyInstalledRunnerImageWithRuntimeOverlay verifies the final sealed image
+// shape. It requires the exact runtime overlays while binding the original
+// manifest and tree-lock tuple.
+func VerifyInstalledRunnerImageWithRuntimeOverlay() error {
 	return verifyInstalledRunnerImage(true)
 }
 
-func verifyInstalledRunnerImage(withDiagnosticsOverlay bool) error {
+func verifyInstalledRunnerImage(withRuntimeOverlay bool) error {
 	layout := verificationLayout{
 		runnerRoot:        "/opt/actions-runner",
 		runnerManifest:    "/opt/portable-ghar/runner.tree-manifest.json",
@@ -99,8 +99,8 @@ func verifyInstalledRunnerImage(withDiagnosticsOverlay bool) error {
 		runner: func(root string, manifest seedarchive.RunnerTreeManifest, generation uint64) (imageProof, error) {
 			var verified seedarchive.RunnerImageVerification
 			var err error
-			if withDiagnosticsOverlay {
-				verified, err = seedarchive.VerifyRunnerImageDirectoryWithDiagnosticsOverlay(
+			if withRuntimeOverlay {
+				verified, err = seedarchive.VerifyRunnerImageDirectoryWithRuntimeOverlay(
 					root,
 					manifest,
 					generation,

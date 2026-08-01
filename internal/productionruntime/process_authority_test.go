@@ -74,6 +74,25 @@ func TestProcessAuthorityInspectRejectsBindingAndObservationDrift(t *testing.T) 
 			},
 		},
 		{
+			"boot-id",
+			func(_ *ProcessRecord, kernel *fakeProcessKernel) {
+				kernel.observation.Start.BootID =
+					"1" + kernel.observation.Start.BootID[1:]
+			},
+		},
+		{
+			"pid-namespace",
+			func(_ *ProcessRecord, kernel *fakeProcessKernel) {
+				kernel.observation.Start.PIDNamespaceInode++
+			},
+		},
+		{
+			"process-group",
+			func(_ *ProcessRecord, kernel *fakeProcessKernel) {
+				kernel.observation.PGID++
+			},
+		},
+		{
 			"unstable",
 			func(_ *ProcessRecord, kernel *fakeProcessKernel) {
 				kernel.observe = func(call int) (ProcessObservation, error) {
@@ -294,6 +313,54 @@ func TestProcessAuthorityStopPIDReuseSendsNoSignal(t *testing.T) {
 	}
 	if len(kernel.signals) != 0 || store.removeCalls != 0 {
 		t.Fatal("reused PID was signaled or removed")
+	}
+}
+
+func TestProcessAuthorityStopTupleDriftSendsNoSignal(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*ProcessObservation)
+	}{
+		{
+			"boot-id",
+			func(observation *ProcessObservation) {
+				observation.Start.BootID =
+					"1" + observation.Start.BootID[1:]
+			},
+		},
+		{
+			"pid-namespace",
+			func(observation *ProcessObservation) {
+				observation.Start.PIDNamespaceInode++
+			},
+		},
+		{
+			"process-group",
+			func(observation *ProcessObservation) { observation.PGID++ },
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			record := validProcessRecordFixture()
+			store := &fakeProcessRecordStore{record: &record}
+			kernel := newFakeProcessKernel(record)
+			test.mutate(&kernel.observation)
+			authority := newProcessAuthorityFixture(t, store, kernel)
+			_, identity, _ := MarshalProcessRecord(record)
+
+			if err := authority.Stop(
+				context.Background(),
+				identity,
+			); !errors.Is(err, ErrProcessIdentityDrift) {
+				t.Fatalf("Stop() error = %v", err)
+			}
+			if len(kernel.signals) != 0 || store.removeCalls != 0 {
+				t.Fatal("drifted process tuple was signaled or removed")
+			}
+		})
 	}
 }
 
@@ -519,9 +586,10 @@ func newFakeProcessKernel(record ProcessRecord) *fakeProcessKernel {
 	return &fakeProcessKernel{
 		observation: ProcessObservation{
 			Present: true,
+			PGID:    record.PGID,
 			Start: hostruntime.ProcessStartObservation{
-				BootID:             "01234567-89ab-cdef-0123-456789abcdef",
-				PIDNamespaceInode:  100,
+				BootID:             record.BootID,
+				PIDNamespaceInode:  record.PIDNamespaceInode,
 				PID:                record.PID,
 				StartTimeTicks:     record.StartTimeTicks,
 				ExecutableDigest:   record.ExecutableDigest,

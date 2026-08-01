@@ -49,11 +49,14 @@ type runnerImageEvidence interface {
 
 type runnerDirectoryOverlay struct {
 	diagnosticsSeen bool
+	workSeen        bool
 }
 
 const (
-	runnerDiagnosticsOverlayPath   = "_diag"
-	runnerDiagnosticsOverlayTarget = "/runner/_diag"
+	runnerRuntimeDiagnosticsPath   = "_diag"
+	runnerRuntimeDiagnosticsTarget = "/runner/_diag"
+	runnerRuntimeWorkPath          = "_work"
+	runnerRuntimeWorkTarget        = "/runner/_work"
 )
 
 func (VerifiedRunnerDirectory) runnerDirectoryAuthority() {}
@@ -123,16 +126,16 @@ func VerifyRunnerImageDirectory(
 	return verifyRunnerImageDirectoryForOwner(root, manifest, evidenceGeneration, 0, 0)
 }
 
-// VerifyRunnerImageDirectoryWithDiagnosticsOverlay proves the same immutable
-// image tuple while requiring the sole post-manifest root overlay
-// "_diag" -> "/runner/_diag". The overlay never contributes to the logical
-// manifest or tree-lock digest.
-func VerifyRunnerImageDirectoryWithDiagnosticsOverlay(
+// VerifyRunnerImageDirectoryWithRuntimeOverlay proves the same immutable image
+// tuple while requiring the exact post-manifest root overlays
+// "_diag" -> "/runner/_diag" and "_work" -> "/runner/_work". The overlays
+// never contribute to the logical manifest or tree-lock digest.
+func VerifyRunnerImageDirectoryWithRuntimeOverlay(
 	root string,
 	manifest RunnerTreeManifest,
 	evidenceGeneration uint64,
 ) (RunnerImageVerification, error) {
-	return verifyRunnerImageDirectoryWithDiagnosticsOverlayForOwner(
+	return verifyRunnerImageDirectoryWithRuntimeOverlayForOwner(
 		root,
 		manifest,
 		evidenceGeneration,
@@ -163,7 +166,7 @@ func verifyRunnerImageDirectoryForOwner(
 	return runnerImageVerification(verified), nil
 }
 
-func verifyRunnerImageDirectoryWithDiagnosticsOverlayForOwner(
+func verifyRunnerImageDirectoryWithRuntimeOverlayForOwner(
 	root string,
 	manifest RunnerTreeManifest,
 	evidenceGeneration uint64,
@@ -267,7 +270,7 @@ func verifyRunnerDirectory(
 	rootAfter, err := fstatFile(rootFile)
 	if err != nil || !rootBefore.stableEqual(rootAfter) ||
 		len(seen) != len(expected) ||
-		(overlay != nil && !overlay.diagnosticsSeen) {
+		(overlay != nil && (!overlay.diagnosticsSeen || !overlay.workSeen)) {
 		return VerifiedRunnerDirectory{}, errors.New("archive: runner directory root changed or tree incomplete")
 	}
 	manifestHash, err := runnerManifestDigest(manifest)
@@ -332,16 +335,29 @@ func walkVerifiedRunnerDirectory(
 		}
 		want, ok := expected[relative]
 		if !ok {
-			if prefix == "" && overlay != nil &&
-				!overlay.diagnosticsSeen &&
-				relative == runnerDiagnosticsOverlayPath {
-				target := []byte(runnerDiagnosticsOverlayTarget)
+			if prefix == "" && overlay != nil {
+				var target string
+				var seen *bool
+				switch relative {
+				case runnerRuntimeDiagnosticsPath:
+					target = runnerRuntimeDiagnosticsTarget
+					seen = &overlay.diagnosticsSeen
+				case runnerRuntimeWorkPath:
+					target = runnerRuntimeWorkTarget
+					seen = &overlay.workSeen
+				default:
+					return errors.New("archive: unexpected runner directory object")
+				}
+				if *seen {
+					return errors.New("archive: runner overlay duplicated")
+				}
+				targetBytes := []byte(target)
 				overlayEntry := RunnerTreeEntry{
-					Path:       runnerDiagnosticsOverlayPath,
+					Path:       relative,
 					Type:       RunnerEntrySymlink,
-					SHA256:     sha256String(target),
-					Size:       uint64(len(target)),
-					LinkTarget: runnerDiagnosticsOverlayTarget,
+					SHA256:     sha256String(targetBytes),
+					Size:       uint64(len(targetBytes)),
+					LinkTarget: target,
 				}
 				discardedLockLines := make([]string, 0, 1)
 				if err := verifyRunnerSymlink(
@@ -355,7 +371,7 @@ func walkVerifiedRunnerDirectory(
 				); err != nil {
 					return err
 				}
-				overlay.diagnosticsSeen = true
+				*seen = true
 				continue
 			}
 			return errors.New("archive: unexpected runner directory object")

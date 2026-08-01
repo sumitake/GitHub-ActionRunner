@@ -40,7 +40,7 @@ func TestProcessRecordRoundTripAndDigestIdentity(t *testing.T) {
 	}
 
 	mutated := record
-	mutated.PID++
+	mutated.StartTimeTicks++
 	_, mutatedDigest, err := MarshalProcessRecord(mutated)
 	if err != nil {
 		t.Fatalf("MarshalProcessRecord(mutated) error = %v", err)
@@ -57,7 +57,8 @@ func TestProcessRecordRejectsInvalidValues(t *testing.T) {
 		name   string
 		mutate func(*ProcessRecord)
 	}{
-		{"schema", func(record *ProcessRecord) { record.SchemaVersion = 2 }},
+		{"schema-v1", func(record *ProcessRecord) { record.SchemaVersion = 1 }},
+		{"schema-future", func(record *ProcessRecord) { record.SchemaVersion = 3 }},
 		{"pid-zero", func(record *ProcessRecord) { record.PID = 0 }},
 		{"pid-overflow", func(record *ProcessRecord) {
 			record.PID = uint64(math.MaxInt32) + 1
@@ -65,6 +66,14 @@ func TestProcessRecordRejectsInvalidValues(t *testing.T) {
 		{"pgid-zero", func(record *ProcessRecord) { record.PGID = 0 }},
 		{"pgid-overflow", func(record *ProcessRecord) {
 			record.PGID = uint64(math.MaxInt32) + 1
+		}},
+		{"pgid-not-pid", func(record *ProcessRecord) { record.PGID++ }},
+		{"boot-id-empty", func(record *ProcessRecord) { record.BootID = "" }},
+		{"boot-id-noncanonical", func(record *ProcessRecord) {
+			record.BootID = strings.ToUpper(record.BootID)
+		}},
+		{"pid-namespace-zero", func(record *ProcessRecord) {
+			record.PIDNamespaceInode = 0
 		}},
 		{"start-zero", func(record *ProcessRecord) {
 			record.StartTimeTicks = 0
@@ -141,6 +150,36 @@ func TestProcessRecordParseRejectsNoncanonicalDocuments(t *testing.T) {
 			MaxProcessRecordBytes,
 		},
 		{
+			"schema-v1",
+			bytes.Replace(
+				document,
+				[]byte(`"schema_version":2`),
+				[]byte(`"schema_version":1`),
+				1,
+			),
+			MaxProcessRecordBytes,
+		},
+		{
+			"schema-future",
+			bytes.Replace(
+				document,
+				[]byte(`"schema_version":2`),
+				[]byte(`"schema_version":3`),
+				1,
+			),
+			MaxProcessRecordBytes,
+		},
+		{
+			"schema-v2-hybrid-missing-boot-id",
+			bytes.Replace(
+				document,
+				[]byte(`,"boot_id":"`+record.BootID+`"`),
+				nil,
+				1,
+			),
+			MaxProcessRecordBytes,
+		},
+		{
 			"trailing-value",
 			append(append([]byte(nil), document...), []byte(`{}`)...),
 			MaxProcessRecordBytes,
@@ -172,9 +211,11 @@ func TestProcessRecordParseRejectsNoncanonicalDocuments(t *testing.T) {
 
 func validProcessRecordFixture() ProcessRecord {
 	return ProcessRecord{
-		SchemaVersion:          1,
+		SchemaVersion:          2,
 		PID:                    101,
 		PGID:                   101,
+		BootID:                 syntheticBootID(),
+		PIDNamespaceInode:      100,
 		StartTimeTicks:         202,
 		ExecutableDigest:       strings.Repeat("a", 64),
 		ExecutableDevice:       303,
@@ -184,4 +225,11 @@ func validProcessRecordFixture() ProcessRecord {
 		ActiveFleet:            fleetfence.FleetPortable,
 		FenceGeneration:        505,
 	}
+}
+
+func syntheticBootID() string {
+	return strings.Join(
+		[]string{"01234567", "89ab", "cdef", "0123", "456789abcdef"},
+		"-",
+	)
 }

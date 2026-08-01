@@ -47,7 +47,7 @@ class RunnerImageReproducibilityContractTest(unittest.TestCase):
                 self.assertLess(install, cache_cleanup)
                 self.assertLess(cache_cleanup, file_cleanup)
 
-    def test_listener_smoke_replaces_diagnostics_with_verified_tmpfs_overlay(
+    def test_listener_smoke_reseals_then_installs_exact_runtime_overlay(
         self,
     ) -> None:
         smoke = (
@@ -56,7 +56,14 @@ class RunnerImageReproducibilityContractTest(unittest.TestCase):
         )
         cleanup = "rm -rf /opt/actions-runner/_diag"
         absence = "test ! -e /opt/actions-runner/_diag"
-        overlay = "ln -s /runner/_diag /opt/actions-runner/_diag"
+        strict_reverify = (
+            'test "$(/usr/local/bin/portable-ghar-runner-gate verify-image)" '
+            '= "$expected_version"'
+        )
+        diagnostics_overlay = (
+            "ln -s /runner/_diag /opt/actions-runner/_diag"
+        )
+        work_overlay = "ln -s /runner/_work /opt/actions-runner/_work"
         overlay_verify = (
             "/usr/local/bin/portable-ghar-runner-gate verify-image-overlay"
         )
@@ -65,12 +72,28 @@ class RunnerImageReproducibilityContractTest(unittest.TestCase):
                 smoke_index = dockerfile.index(smoke)
                 cleanup_index = dockerfile.index(cleanup)
                 absence_index = dockerfile.index(absence)
-                overlay_index = dockerfile.index(overlay)
+                strict_reverify_index = dockerfile.index(strict_reverify)
+                diagnostics_overlay_index = dockerfile.index(
+                    diagnostics_overlay
+                )
+                work_overlay_index = dockerfile.index(work_overlay)
                 overlay_verify_index = dockerfile.index(overlay_verify)
                 self.assertLess(smoke_index, cleanup_index)
                 self.assertLess(cleanup_index, absence_index)
-                self.assertLess(absence_index, overlay_index)
-                self.assertLess(overlay_index, overlay_verify_index)
+                self.assertLess(absence_index, strict_reverify_index)
+                self.assertLess(
+                    strict_reverify_index,
+                    diagnostics_overlay_index,
+                )
+                self.assertLess(
+                    diagnostics_overlay_index,
+                    work_overlay_index,
+                )
+                self.assertLess(work_overlay_index, overlay_verify_index)
+                self.assertNotIn(
+                    "rm -rf /opt/actions-runner/_work",
+                    dockerfile,
+                )
 
 
 if __name__ == "__main__":

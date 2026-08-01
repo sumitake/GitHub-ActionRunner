@@ -78,6 +78,7 @@ type ProcessInspection struct {
 
 type ProcessObservation struct {
 	Present bool
+	PGID    uint64
 	Start   hostruntime.ProcessStartObservation
 }
 
@@ -164,7 +165,7 @@ func (authority *ProcessAuthority) Inspect(
 		return ProcessInspection{State: ProcessUnhealthy}, err
 	}
 	if !observation.Present ||
-		!processObservationMatchesRecord(observation.Start, record) {
+		!processObservationMatchesRecord(observation, record) {
 		return ProcessInspection{State: ProcessUnhealthy},
 			ErrProcessIdentityDrift
 	}
@@ -206,7 +207,8 @@ func (authority *ProcessAuthority) StartDisabled(
 	observed, err := authority.stableObserve(ctx, launched.PID)
 	if err != nil ||
 		!observed.Present ||
-		observed.Start != launched {
+		observed.Start != launched ||
+		observed.PGID != pgid {
 		return ProcessInspection{}, authority.cleanupStartFailure(
 			launched.PID,
 			pgid,
@@ -361,9 +363,15 @@ func (authority *ProcessAuthority) stableObserve(
 	if err != nil {
 		return ProcessObservation{}, ErrProcessObservationUnavailable
 	}
-	if first != second ||
-		first.Present && first.Start.PID != pid ||
-		!first.Present && first.Start != (hostruntime.ProcessStartObservation{}) {
+	if first != second {
+		return ProcessObservation{}, ErrProcessIdentityDrift
+	}
+	if first.Present {
+		if first.Start.PID != pid || first.PGID == 0 {
+			return ProcessObservation{}, ErrProcessIdentityDrift
+		}
+	} else if first.Start != (hostruntime.ProcessStartObservation{}) ||
+		first.PGID != 0 {
 		return ProcessObservation{}, ErrProcessIdentityDrift
 	}
 	return second, nil
@@ -381,7 +389,7 @@ func (authority *ProcessAuthority) preSignal(
 	if !observation.Present {
 		return false, nil
 	}
-	if !processObservationMatchesRecord(observation.Start, record) {
+	if !processObservationMatchesRecord(observation, record) {
 		return false, ErrProcessIdentityDrift
 	}
 	exact, err := authority.readExact(ctx, expectedIdentity)
@@ -406,7 +414,7 @@ func (authority *ProcessAuthority) waitDirect(
 		if !observation.Present {
 			return false, nil
 		}
-		if !processObservationMatchesRecord(observation.Start, record) {
+		if !processObservationMatchesRecord(observation, record) {
 			return false, ErrProcessIdentityDrift
 		}
 		select {
@@ -472,7 +480,7 @@ func (authority *ProcessAuthority) proveRunningExact(
 	if err != nil ||
 		!observation.Present ||
 		observation.Start != expectedStart ||
-		!processObservationMatchesRecord(observation.Start, record) {
+		!processObservationMatchesRecord(observation, record) {
 		return ErrProcessIdentityDrift
 	}
 	return nil
@@ -603,6 +611,8 @@ func processRecordFromLaunch(
 		SchemaVersion:          processRecordSchemaVersion,
 		PID:                    observation.PID,
 		PGID:                   pgid,
+		BootID:                 observation.BootID,
+		PIDNamespaceInode:      observation.PIDNamespaceInode,
 		StartTimeTicks:         observation.StartTimeTicks,
 		ExecutableDigest:       observation.ExecutableDigest,
 		ExecutableDevice:       observation.ExecutableDevice,
@@ -626,12 +636,17 @@ func processRecordMatchesBinding(
 }
 
 func processObservationMatchesRecord(
-	observation hostruntime.ProcessStartObservation,
+	observation ProcessObservation,
 	record ProcessRecord,
 ) bool {
-	return observation.PID == record.PID &&
-		observation.StartTimeTicks == record.StartTimeTicks &&
-		observation.ExecutableDigest == record.ExecutableDigest &&
-		observation.ExecutableDevice == record.ExecutableDevice &&
-		observation.ExecutableInode == record.ExecutableInode
+	return observation.Present &&
+		observation.Start.BootID == record.BootID &&
+		observation.Start.PIDNamespaceInode == record.PIDNamespaceInode &&
+		observation.Start.PID == record.PID &&
+		observation.Start.StartTimeTicks == record.StartTimeTicks &&
+		observation.Start.ExecutableDigest == record.ExecutableDigest &&
+		observation.Start.ExecutableDevice == record.ExecutableDevice &&
+		observation.Start.ExecutableInode == record.ExecutableInode &&
+		observation.PGID == record.PGID &&
+		observation.PGID == record.PID
 }

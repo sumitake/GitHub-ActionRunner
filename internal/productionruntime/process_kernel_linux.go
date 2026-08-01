@@ -5,6 +5,7 @@ package productionruntime
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"os/exec"
 	"strconv"
@@ -129,16 +130,49 @@ func (kernel *linuxProcessKernel) Observe(
 	if kernel == nil || ctx == nil || ctx.Err() != nil || pid == 0 {
 		return ProcessObservation{}, ErrProcessObservationUnavailable
 	}
-	observation, _, err :=
-		hostruntime.ObserveLinuxProcessStartIdentity(pid)
-	if err == nil {
+	observation, err := observeLinuxProcess(
+		pid,
+		hostruntime.ObserveLinuxProcessStartIdentity,
+		unix.Getpgid,
+	)
+	if err != nil {
+		return ProcessObservation{}, ErrProcessObservationUnavailable
+	}
+	return observation, nil
+}
+
+func observeLinuxProcess(
+	pid uint64,
+	observeStart func(
+		uint64,
+	) (hostruntime.ProcessStartObservation, string, error),
+	getpgid func(int) (int, error),
+) (ProcessObservation, error) {
+	if pid == 0 ||
+		pid > uint64(math.MaxInt32) ||
+		observeStart == nil ||
+		getpgid == nil {
+		return ProcessObservation{}, ErrProcessObservationUnavailable
+	}
+	start, _, startErr := observeStart(pid)
+	pgid, pgidErr := getpgid(int(pid))
+	if start == (hostruntime.ProcessStartObservation{}) &&
+		errors.Is(startErr, hostruntime.ErrProcessIdentityUnavailable) &&
+		errors.Is(pgidErr, unix.ESRCH) &&
+		pgid <= 0 {
+		return ProcessObservation{}, nil
+	}
+	if _, err := hostruntime.DeriveProcessStartIdentity(start); err == nil &&
+		startErr == nil &&
+		start.PID == pid &&
+		pgidErr == nil &&
+		pgid > 0 &&
+		uint64(pgid) <= uint64(math.MaxInt32) {
 		return ProcessObservation{
 			Present: true,
-			Start:   observation,
+			PGID:    uint64(pgid),
+			Start:   start,
 		}, nil
-	}
-	if errors.Is(err, hostruntime.ErrProcessIdentityUnavailable) {
-		return ProcessObservation{}, nil
 	}
 	return ProcessObservation{}, ErrProcessObservationUnavailable
 }

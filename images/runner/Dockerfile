@@ -123,7 +123,9 @@ RUN chmod 0555 /opt/actions-runner /opt/portable-ghar/seed-cache \
     && test "$installed_version" = "$expected_version" \
     && rm -rf /opt/actions-runner/_diag \
     && test ! -e /opt/actions-runner/_diag \
+    && test "$(/usr/local/bin/portable-ghar-runner-gate verify-image)" = "$expected_version" \
     && ln -s /runner/_diag /opt/actions-runner/_diag \
+    && ln -s /runner/_work /opt/actions-runner/_work \
     && /usr/local/bin/portable-ghar-runner-gate verify-image-overlay \
     && test ! -e /portable-ghar-bootstrap-ca.pem \
     && test -r /usr/share/portable-ghar/debian-snapshot.lock.json \

@@ -74,7 +74,7 @@ func defaultGateRuntime() gateRuntime {
 		namespace:          currentNetworkNamespace,
 		execListener:       execListenerProcess,
 		verifyImage:        imageverify.VerifyInstalledRunnerImage,
-		verifyImageOverlay: imageverify.VerifyInstalledRunnerImageWithDiagnosticsOverlay,
+		verifyImageOverlay: imageverify.VerifyInstalledRunnerImageWithRuntimeOverlay,
 		observeConformance: defaultRunnerConformance,
 	}
 }

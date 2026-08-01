@@ -345,6 +345,93 @@ func TestSystemWatchdogSupervisorStopsFenceNoneOnlyThroughExactRecord(
 	}
 }
 
+func TestSystemWatchdogSafeStopRejectsProcessTupleDriftBeforeSignal(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*ProcessObservation)
+	}{
+		{
+			"boot-id",
+			func(observation *ProcessObservation) {
+				observation.Start.BootID =
+					"1" + observation.Start.BootID[1:]
+			},
+		},
+		{
+			"pid-namespace",
+			func(observation *ProcessObservation) {
+				observation.Start.PIDNamespaceInode++
+			},
+		},
+		{
+			"process-group",
+			func(observation *ProcessObservation) { observation.PGID++ },
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			record := validProcessRecordFixture()
+			store := &fakeProcessRecordStore{record: &record}
+			kernel := newFakeProcessKernel(record)
+			test.mutate(&kernel.observation)
+			fence := &fakeSystemWatchdogFence{snapshot: fleetfence.Snapshot{
+				Header: fleetfence.Header{
+					Generation:  record.FenceGeneration,
+					ActiveFleet: record.ActiveFleet,
+				},
+			}}
+			authorityFactory := func(
+				binding ProcessBinding,
+			) (systemWatchdogProcess, error) {
+				config := validProcessAuthorityConfig(store, kernel)
+				config.Binding = binding
+				return NewProcessAuthority(config)
+			}
+			supervisor, err := newSystemWatchdogSupervisor(
+				systemWatchdogSupervisorConfig{
+					Fence:              fence,
+					Store:              store,
+					Authority:          authorityFactory,
+					Probe:              &fakeSystemWatchdogProbe{},
+					Quiescence:         &fakeSystemWatchdogQuiescence{},
+					OverlayRevision:    record.PrivateOverlayRevision,
+					ManifestDigest:     record.ManifestDigest,
+					ManifestGeneration: record.FenceGeneration,
+					OperationTimeout:   time.Second,
+				},
+			)
+			if err != nil {
+				t.Fatalf("newSystemWatchdogSupervisor() error = %v", err)
+			}
+			_, identity, err := MarshalProcessRecord(record)
+			if err != nil {
+				t.Fatalf("MarshalProcessRecord() error = %v", err)
+			}
+			observation := watchdog.Observation{
+				FenceGeneration: record.FenceGeneration,
+				ActiveFleet:     watchdog.FleetPortable,
+				Process:         watchdog.ProcessUnhealthy,
+				ProcessIdentity: identity,
+			}
+
+			if err := supervisor.SafeStop(
+				boundedSystemWatchdogContext(t),
+				observation,
+			); err == nil {
+				t.Fatal("SafeStop() accepted a drifted process tuple")
+			}
+			if len(kernel.signals) != 0 || store.removeCalls != 0 {
+				t.Fatal("SafeStop() signaled or removed a drifted process tuple")
+			}
+		})
+	}
+}
+
 func TestSystemWatchdogSupervisorStartAndProofUseLiveFenceAndPositiveZeros(
 	t *testing.T,
 ) {
