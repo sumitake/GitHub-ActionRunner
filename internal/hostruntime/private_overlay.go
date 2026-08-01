@@ -1010,7 +1010,8 @@ func validAllowedActions(actions []string) bool {
 	}
 	for index, action := range actions {
 		switch action {
-		case "install", "verify", "suspend", "resume", "rollback", "uninstall":
+		case "install", "verify", "suspend", "resume", "rollback", "uninstall",
+			"watchdog-install", "watchdog-uninstall":
 		default:
 			return false
 		}

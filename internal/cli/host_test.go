@@ -64,6 +64,8 @@ func TestParseHostCommandAcceptsOnlyExactOrderedForms(t *testing.T) {
 		{"suspend", "host", "--private", "/x", "--drain-policy=wait", "--hosted-confirmation", "/x"},
 		{"resume", "host", "--private", "/x", "--acquisition", "enabled"},
 		{"resume", "host", "--private", "/x", "--acquisition", "disabled", "extra"},
+		{"rollback", "host", "--private", "/x"},
+		{"uninstall", "host", "--private", "/x", "--retain-state"},
 	}
 	for _, args := range invalid {
 		if _, err := ParseHostCommand(args); !errors.Is(err, ErrHostUsage) {
@@ -332,6 +334,73 @@ func TestExpectedOperationKeepsLegacyInstallOnLegacyFence(t *testing.T) {
 			terminalFleet,
 			err,
 		)
+	}
+}
+
+func TestExpectedOperationDerivesTargetLocalRollbackAndUninstall(t *testing.T) {
+	t.Parallel()
+
+	current := strings.Repeat("c", 64)
+	revision := strings.Repeat("e", 64)
+	manifestDigest := strings.Repeat("d", 64)
+	for _, test := range []struct {
+		name               string
+		action             HostAction
+		activeFleet        fleetfence.Fleet
+		wantTerminalFleet  fleetfence.Fleet
+		wantGenerationBump bool
+	}{
+		{
+			name:               "rollback",
+			action:             ActionRollback,
+			activeFleet:        fleetfence.FleetPortable,
+			wantTerminalFleet:  fleetfence.FleetLegacy,
+			wantGenerationBump: true,
+		},
+		{
+			name:              "uninstall from none",
+			action:            ActionUninstall,
+			activeFleet:       fleetfence.FleetNone,
+			wantTerminalFleet: fleetfence.FleetNone,
+		},
+		{
+			name:              "uninstall from legacy",
+			action:            ActionUninstall,
+			activeFleet:       fleetfence.FleetLegacy,
+			wantTerminalFleet: fleetfence.FleetLegacy,
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			target := TargetProof{
+				FenceGeneration:       42,
+				ActiveFleet:           test.activeFleet,
+				CurrentManifestDigest: &current,
+			}
+			operationID, generation, fleet, err := ExpectedOperation(
+				test.action,
+				target,
+				manifestDigest,
+				revision,
+			)
+			wantGeneration := target.FenceGeneration
+			if test.wantGenerationBump {
+				wantGeneration++
+			}
+			if err != nil ||
+				!validLowerDigest(operationID) ||
+				generation != wantGeneration ||
+				fleet != test.wantTerminalFleet {
+				t.Fatalf(
+					"ExpectedOperation() = %q, %d, %q, %v",
+					operationID,
+					generation,
+					fleet,
+					err,
+				)
+			}
+		})
 	}
 }
 

@@ -424,6 +424,8 @@ func validControllerPrivateOverlay() hostruntime.PrivateOverlay {
 			"suspend",
 			"uninstall",
 			"verify",
+			"watchdog-install",
+			"watchdog-uninstall",
 		},
 	}
 }

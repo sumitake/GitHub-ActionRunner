@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const goldenPrivateOverlayRevision = "1e0755006f66749efedb618696dcc589832bb9f2ba3920f14466a7a5fda1bb75"
+const goldenPrivateOverlayRevision = "ab6f2e306924754d57e850052daa83ea0a6450dc352daeb3db812b7730620aab"
 
 func TestPrivateOverlayGolden(t *testing.T) {
 	t.Parallel()
@@ -547,6 +547,8 @@ func goldenPrivateOverlay() PrivateOverlay {
 			"suspend",
 			"uninstall",
 			"verify",
+			"watchdog-install",
+			"watchdog-uninstall",
 		},
 	}
 }

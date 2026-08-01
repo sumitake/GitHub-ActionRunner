@@ -178,6 +178,32 @@ func (store *watchdogMarkerStore) Replace(
 	return nil
 }
 
+func (store *watchdogMarkerStore) Remove(
+	binding watchdogMarkerBinding,
+) error {
+	if store == nil || !validWatchdogMarkerBinding(binding) {
+		return ErrWatchdogMarker
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.readyLocked() != nil {
+		return ErrWatchdogMarker
+	}
+	if _, present, err := store.inspectLocked(binding); err != nil {
+		return ErrWatchdogMarker
+	} else if !present {
+		return nil
+	}
+	if err := store.root.Remove(watchdogMarkerName); err != nil ||
+		syncReleaseRoot(store.root) != nil {
+		return ErrWatchdogMarker
+	}
+	if _, present, err := store.inspectLocked(binding); err != nil || present {
+		return ErrWatchdogMarker
+	}
+	return nil
+}
+
 func (store *watchdogMarkerStore) InspectOneOf(
 	bindings ...watchdogMarkerBinding,
 ) (hostruntime.ArtifactProjection, int, bool, error) {

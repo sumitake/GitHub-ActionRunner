@@ -39,7 +39,7 @@ func TestProtocolRejectsEmptyNoncanonicalAndMultipleFrames(t *testing.T) {
 	}
 }
 
-func TestInvokeArgumentsExposeOnlyPublicActionInputs(t *testing.T) {
+func TestInvokeArgumentsExposeOnlyClosedActionInputs(t *testing.T) {
 	t.Parallel()
 
 	got := make(map[string]struct{})
@@ -50,7 +50,10 @@ func TestInvokeArgumentsExposeOnlyPublicActionInputs(t *testing.T) {
 	want := map[string]struct{}{
 		"Acquisition":        {},
 		"DrainPolicy":        {},
+		"ExpectedGeneration": {},
 		"HostedConfirmation": {},
+		"LegacyCommandFile":  {},
+		"RetainState":        {},
 		"RequireZero":        {},
 		"ManifestDigest":     {},
 		"StageProofDigest":   {},
@@ -58,6 +61,27 @@ func TestInvokeArgumentsExposeOnlyPublicActionInputs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("InvokeArguments fields = %v, want %v", got, want)
+	}
+}
+
+func TestProtocolDoesNotExposeTargetOnlyLifecycleActions(t *testing.T) {
+	t.Parallel()
+
+	overlay, revision := protocolTestOverlay(t)
+	target := protocolTestTarget(t, overlay, revision)
+	for _, action := range []cli.HostAction{
+		cli.ActionRollback,
+		cli.ActionUninstall,
+	} {
+		if _, err := NewInvokeRequest(
+			overlay,
+			revision,
+			target,
+			action,
+			InvokeArguments{},
+		); !errors.Is(err, ErrProtocol) {
+			t.Fatalf("NewInvokeRequest(%q) error = %v", action, err)
+		}
 	}
 }
 
@@ -138,7 +162,7 @@ func TestProtocolRoundTripsProveStageAndInvoke(t *testing.T) {
 			action: cli.ActionSuspend,
 			arguments: InvokeArguments{
 				DrainPolicy:        "wait",
-				HostedConfirmation: "/private/hosted-confirmation.json",
+				HostedConfirmation: "/opt/portable/state/hosted-evidence/suspend.json",
 				RequireZero:        true,
 				ManifestDigest:     manifestDigest,
 				TargetProofDigest:  target.ProofDigest,
@@ -385,6 +409,21 @@ func (handler *protocolHandlerSpy) Invoke(
 ) (hostruntime.HostActionResult, error) {
 	handler.calls++
 	return hostruntime.HostActionResult{}, errors.New("unexpected invoke")
+}
+
+func (handler *protocolHandlerSpy) ChangeWatchdogMarker(
+	context.Context,
+	hostruntime.PrivateOverlay,
+	string,
+	cli.TargetProof,
+	hostruntime.TargetHostAction,
+	hostruntime.RuntimeManifest,
+	string,
+) (hostruntime.HostActionResult, error) {
+	handler.calls++
+	return hostruntime.HostActionResult{}, errors.New(
+		"unexpected watchdog marker change",
+	)
 }
 
 type zeroWriter struct{}
@@ -829,6 +868,8 @@ func protocolTestOverlay(
 			"suspend",
 			"uninstall",
 			"verify",
+			"watchdog-install",
+			"watchdog-uninstall",
 		},
 	}
 	_, revision, err := hostruntime.MarshalPrivateOverlay(overlay)
@@ -931,4 +972,18 @@ func (blockingProtocolHandler) Invoke(
 	InvokeArguments,
 ) (hostruntime.HostActionResult, error) {
 	return hostruntime.HostActionResult{}, errors.New("unexpected invoke")
+}
+
+func (blockingProtocolHandler) ChangeWatchdogMarker(
+	context.Context,
+	hostruntime.PrivateOverlay,
+	string,
+	cli.TargetProof,
+	hostruntime.TargetHostAction,
+	hostruntime.RuntimeManifest,
+	string,
+) (hostruntime.HostActionResult, error) {
+	return hostruntime.HostActionResult{}, errors.New(
+		"unexpected watchdog marker change",
+	)
 }

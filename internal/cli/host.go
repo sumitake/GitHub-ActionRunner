@@ -41,6 +41,10 @@ const (
 	ActionVerify
 	ActionSuspend
 	ActionResume
+	// ActionRollback and ActionUninstall are target-local lifecycle actions.
+	// ParseHostCommand and the SSH protocol intentionally never expose them.
+	ActionRollback
+	ActionUninstall
 )
 
 type HostRequest struct {
@@ -646,6 +650,40 @@ func expectedOperation(
 			return "", 0, "", ErrHostCommandFailed
 		}
 		return operationID, target.FenceGeneration + 1, fleetfence.FleetPortable, err
+	case ActionRollback:
+		if target.FenceGeneration == 0 ||
+			target.FenceGeneration == ^uint64(0) ||
+			target.ActiveFleet != fleetfence.FleetPortable ||
+			target.CurrentManifestDigest == nil {
+			return "", 0, "", ErrHostCommandFailed
+		}
+		operationID, err := hostruntime.DeriveOperationID(
+			hostruntime.OperationKindRollback,
+			nil,
+			target.FenceGeneration,
+			target.CurrentManifestDigest,
+			nil,
+			fleetfence.FleetLegacy,
+			revision,
+		)
+		return operationID, target.FenceGeneration + 1, fleetfence.FleetLegacy, err
+	case ActionUninstall:
+		if target.FenceGeneration == 0 ||
+			target.CurrentManifestDigest == nil ||
+			(target.ActiveFleet != fleetfence.FleetNone &&
+				target.ActiveFleet != fleetfence.FleetLegacy) {
+			return "", 0, "", ErrHostCommandFailed
+		}
+		operationID, err := hostruntime.DeriveOperationID(
+			hostruntime.OperationKindUninstall,
+			nil,
+			target.FenceGeneration,
+			target.CurrentManifestDigest,
+			nil,
+			target.ActiveFleet,
+			revision,
+		)
+		return operationID, target.FenceGeneration, target.ActiveFleet, err
 	default:
 		return "", 0, "", ErrHostCommandFailed
 	}
@@ -689,6 +727,10 @@ func (action HostAction) String() string {
 		return "suspend"
 	case ActionResume:
 		return "resume"
+	case ActionRollback:
+		return "rollback"
+	case ActionUninstall:
+		return "uninstall"
 	default:
 		return ""
 	}

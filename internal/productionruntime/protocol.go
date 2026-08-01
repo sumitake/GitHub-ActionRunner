@@ -39,7 +39,10 @@ const (
 type InvokeArguments struct {
 	Acquisition        string `json:"acquisition"`
 	DrainPolicy        string `json:"drain_policy"`
+	ExpectedGeneration uint64 `json:"expected_generation"`
 	HostedConfirmation string `json:"hosted_confirmation"`
+	LegacyCommandFile  string `json:"legacy_command_file"`
+	RetainState        bool   `json:"retain_state"`
 	RequireZero        bool   `json:"require_zero"`
 	ManifestDigest     string `json:"manifest_digest"`
 	StageProofDigest   string `json:"stage_proof_digest"`
@@ -105,6 +108,15 @@ type TargetHandler interface {
 		cli.TargetProof,
 		cli.HostAction,
 		InvokeArguments,
+	) (hostruntime.HostActionResult, error)
+	ChangeWatchdogMarker(
+		context.Context,
+		hostruntime.PrivateOverlay,
+		string,
+		cli.TargetProof,
+		hostruntime.TargetHostAction,
+		hostruntime.RuntimeManifest,
+		string,
 	) (hostruntime.HostActionResult, error)
 }
 
@@ -553,30 +565,72 @@ func validInvokeArguments(
 		return arguments.Acquisition == "disabled" &&
 			arguments.DrainPolicy == "" &&
 			arguments.HostedConfirmation == "" &&
+			arguments.ExpectedGeneration == 0 &&
+			arguments.LegacyCommandFile == "" &&
+			!arguments.RetainState &&
 			!arguments.RequireZero &&
 			lowerHexDigest(arguments.StageProofDigest)
 	case cli.ActionVerify:
 		return arguments.Acquisition == "" &&
 			arguments.DrainPolicy == "" &&
 			arguments.HostedConfirmation == "" &&
+			arguments.ExpectedGeneration == 0 &&
+			arguments.LegacyCommandFile == "" &&
+			!arguments.RetainState &&
 			arguments.RequireZero &&
 			arguments.StageProofDigest == ""
 	case cli.ActionSuspend:
 		return arguments.Acquisition == "" &&
 			(arguments.DrainPolicy == "wait" ||
 				arguments.DrainPolicy == "cancel") &&
-			canonicalPath(arguments.HostedConfirmation) &&
+			arguments.ExpectedGeneration == 0 &&
+			validHostedEvidencePath(overlay, arguments.HostedConfirmation) &&
+			arguments.LegacyCommandFile == "" &&
+			!arguments.RetainState &&
 			arguments.RequireZero &&
 			arguments.StageProofDigest == ""
 	case cli.ActionResume:
 		return arguments.Acquisition == "disabled" &&
 			arguments.DrainPolicy == "" &&
 			arguments.HostedConfirmation == "" &&
+			arguments.ExpectedGeneration == 0 &&
+			arguments.LegacyCommandFile == "" &&
+			!arguments.RetainState &&
+			!arguments.RequireZero &&
+			arguments.StageProofDigest == ""
+	case cli.ActionRollback:
+		return arguments.Acquisition == "" &&
+			arguments.DrainPolicy == "" &&
+			arguments.ExpectedGeneration != 0 &&
+			validHostedEvidencePath(overlay, arguments.HostedConfirmation) &&
+			overlay.Legacy != nil &&
+			arguments.LegacyCommandFile == overlay.Legacy.CommandFilePath &&
+			!arguments.RetainState &&
+			!arguments.RequireZero &&
+			arguments.StageProofDigest == ""
+	case cli.ActionUninstall:
+		return arguments.Acquisition == "" &&
+			arguments.DrainPolicy == "" &&
+			arguments.ExpectedGeneration == 0 &&
+			arguments.HostedConfirmation == "" &&
+			arguments.LegacyCommandFile == "" &&
+			arguments.RetainState &&
 			!arguments.RequireZero &&
 			arguments.StageProofDigest == ""
 	default:
 		return false
 	}
+}
+
+func validHostedEvidencePath(
+	overlay hostruntime.PrivateOverlay,
+	path string,
+) bool {
+	root := filepath.Join(overlay.Paths.StateRoot, "hosted-evidence")
+	return canonicalPath(path) &&
+		filepath.Dir(path) == root &&
+		filepath.Base(path) != "." &&
+		filepath.Base(path) != ".."
 }
 
 func hostActionName(action cli.HostAction) (string, bool) {

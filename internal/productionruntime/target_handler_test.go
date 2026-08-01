@@ -165,6 +165,255 @@ func TestSystemTargetHandlerInvokeRejectsDriftBeforeLifecycle(
 	}
 }
 
+func TestSystemTargetHandlerChangesWatchdogMarkerUnderStableLease(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	overlay, revision, target, manifest, manifestDigest, lifecycle :=
+		watchdogMarkerHandlerFixture(t)
+	proveCalls := 0
+	handler := newSystemTargetHandler(
+		func(
+			ctx context.Context,
+			gotOverlay hostruntime.PrivateOverlay,
+			gotRevision string,
+		) (cli.TargetProof, error) {
+			proveCalls++
+			if !reflect.DeepEqual(gotOverlay, overlay) ||
+				gotRevision != revision {
+				t.Fatalf("prove binding = %#v, %q", gotOverlay, gotRevision)
+			}
+			probe, err := hostruntime.OpenLifecycleStoreLayout(
+				hostruntime.LifecycleStoreLayout{
+					LockRoot:        overlay.Paths.StateRoot,
+					JournalRoot:     overlay.Paths.JournalRoot,
+					ReceiptRoot:     overlay.Paths.ReceiptRoot,
+					ReservationRoot: overlay.Paths.ReservationRoot,
+				},
+				false,
+			)
+			if err != nil {
+				t.Fatalf("OpenLifecycleStoreLayout(probe) error = %v", err)
+			}
+			defer func() {
+				if err := probe.Close(); err != nil {
+					t.Errorf("probe.Close() error = %v", err)
+				}
+			}()
+			probeCtx, cancel := context.WithTimeout(ctx, 25*time.Millisecond)
+			defer cancel()
+			lease, err := probe.Acquire(probeCtx, 5*time.Millisecond)
+			if err == nil {
+				_ = lease.Close()
+				t.Fatal("target reproof ran without the stable lifecycle lease")
+			}
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("probe.Acquire() error = %v", err)
+			}
+			return target, nil
+		},
+		nil,
+	)
+
+	var installResult hostruntime.HostActionResult
+	for attempt := 0; attempt < 2; attempt++ {
+		got, err := handler.ChangeWatchdogMarker(
+			context.Background(),
+			overlay,
+			revision,
+			target,
+			hostruntime.TargetWatchdogInstall,
+			manifest,
+			manifestDigest,
+		)
+		if err != nil {
+			t.Fatalf("ChangeWatchdogMarker(install) error = %v", err)
+		}
+		if attempt == 0 {
+			installResult = got
+		} else if !reflect.DeepEqual(got, installResult) {
+			t.Fatalf("idempotent install result = %#v, want %#v", got, installResult)
+		}
+	}
+	marker, err := openWatchdogMarkerStore(overlay.Paths.StateRoot)
+	if err != nil {
+		t.Fatalf("openWatchdogMarkerStore() error = %v", err)
+	}
+	binding := watchdogMarkerBinding{
+		PrivateOverlayRevision: revision,
+		ManifestDigest:         manifestDigest,
+		WatchdogBinary:         overlay.Commands.WatchdogBinary,
+	}
+	if _, present, err := marker.Inspect(binding); err != nil || !present {
+		t.Fatalf("marker after install = present %t, error %v", present, err)
+	}
+	if err := marker.Close(); err != nil {
+		t.Fatalf("marker.Close() error = %v", err)
+	}
+
+	var uninstallResult hostruntime.HostActionResult
+	for attempt := 0; attempt < 2; attempt++ {
+		got, err := handler.ChangeWatchdogMarker(
+			context.Background(),
+			overlay,
+			revision,
+			target,
+			hostruntime.TargetWatchdogUninstall,
+			manifest,
+			manifestDigest,
+		)
+		if err != nil {
+			t.Fatalf("ChangeWatchdogMarker(uninstall) error = %v", err)
+		}
+		if attempt == 0 {
+			uninstallResult = got
+		} else if !reflect.DeepEqual(got, uninstallResult) {
+			t.Fatalf("idempotent uninstall result = %#v, want %#v", got, uninstallResult)
+		}
+	}
+	marker, err = openWatchdogMarkerStore(overlay.Paths.StateRoot)
+	if err != nil {
+		t.Fatalf("openWatchdogMarkerStore() error = %v", err)
+	}
+	if _, present, err := marker.Inspect(binding); err != nil || present {
+		t.Fatalf("marker after uninstall = present %t, error %v", present, err)
+	}
+	if err := marker.Close(); err != nil {
+		t.Fatalf("marker.Close() error = %v", err)
+	}
+	if proveCalls != 4 {
+		t.Fatalf("prove calls = %d, want 4", proveCalls)
+	}
+	if installResult.OperationID != targetWatchdogOperationID(
+		hostruntime.TargetWatchdogInstall,
+		target,
+		manifestDigest,
+		revision,
+	) ||
+		uninstallResult.OperationID != targetWatchdogOperationID(
+			hostruntime.TargetWatchdogUninstall,
+			target,
+			manifestDigest,
+			revision,
+		) ||
+		installResult.JournalDigest == uninstallResult.JournalDigest {
+		t.Fatalf("watchdog results = install %#v, uninstall %#v", installResult, uninstallResult)
+	}
+	if err := lifecycle.Close(); err != nil {
+		t.Fatalf("lifecycle.Close() error = %v", err)
+	}
+}
+
+func TestSystemTargetHandlerRejectsOwnedLifecycleBeforeWatchdogMarker(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	overlay, revision, target, manifest, manifestDigest, lifecycle :=
+		watchdogMarkerHandlerFixture(t)
+	_, _, journal, reservation := greenfieldContinuationFixture(t)
+	persistGreenfieldContinuation(t, lifecycle, journal, reservation)
+	proveCalls := 0
+	handler := newSystemTargetHandler(
+		func(
+			context.Context,
+			hostruntime.PrivateOverlay,
+			string,
+		) (cli.TargetProof, error) {
+			proveCalls++
+			return target, nil
+		},
+		nil,
+	)
+	if _, err := handler.ChangeWatchdogMarker(
+		context.Background(),
+		overlay,
+		revision,
+		target,
+		hostruntime.TargetWatchdogInstall,
+		manifest,
+		manifestDigest,
+	); !errors.Is(err, ErrProtocol) {
+		t.Fatalf("ChangeWatchdogMarker() error = %v", err)
+	}
+	if proveCalls != 0 {
+		t.Fatalf("prove calls = %d, want 0 before ownership rejection", proveCalls)
+	}
+	if _, err := os.Stat(filepath.Join(
+		overlay.Paths.StateRoot,
+		watchdogMarkerName,
+	)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("watchdog marker exists after rejection: %v", err)
+	}
+	if err := lifecycle.Close(); err != nil {
+		t.Fatalf("lifecycle.Close() error = %v", err)
+	}
+}
+
+func watchdogMarkerHandlerFixture(
+	t *testing.T,
+) (
+	hostruntime.PrivateOverlay,
+	string,
+	cli.TargetProof,
+	hostruntime.RuntimeManifest,
+	string,
+	*hostruntime.LifecycleStore,
+) {
+	t.Helper()
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks() error = %v", err)
+	}
+	makeDirectory := func(name string) string {
+		path := filepath.Join(root, name)
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatalf("Mkdir(%q) error = %v", path, err)
+		}
+		return path
+	}
+	overlay, _ := protocolTestOverlay(t)
+	overlay.Paths.StateRoot = makeDirectory("state")
+	overlay.Paths.JournalRoot = makeDirectory("journal")
+	overlay.Paths.ReceiptRoot = makeDirectory("receipt")
+	overlay.Paths.ReservationRoot = makeDirectory("reservation")
+	overlay.Commands.WatchdogBinary = filepath.Join(root, "portable-ghar-watchdog")
+	if err := os.WriteFile(
+		overlay.Commands.WatchdogBinary,
+		[]byte("watchdog-binary"),
+		0o500,
+	); err != nil {
+		t.Fatalf("WriteFile(watchdog) error = %v", err)
+	}
+	manifest := protocolTestManifest()
+	_, manifestDigest, err := hostruntime.MarshalRuntimeManifest(manifest)
+	if err != nil {
+		t.Fatalf("MarshalRuntimeManifest() error = %v", err)
+	}
+	overlay.Manifest.Digest = manifestDigest
+	overlay.Policy.ManifestDigest = manifest.PolicyManifestDigest
+	_, revision, err := hostruntime.MarshalPrivateOverlay(overlay)
+	if err != nil {
+		t.Fatalf("MarshalPrivateOverlay() error = %v", err)
+	}
+	target := protocolTestTarget(t, overlay, revision)
+	lifecycle, err := hostruntime.OpenLifecycleStoreLayout(
+		hostruntime.LifecycleStoreLayout{
+			LockRoot:        overlay.Paths.StateRoot,
+			JournalRoot:     overlay.Paths.JournalRoot,
+			ReceiptRoot:     overlay.Paths.ReceiptRoot,
+			ReservationRoot: overlay.Paths.ReservationRoot,
+		},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("OpenLifecycleStoreLayout() error = %v", err)
+	}
+	return overlay, revision, target, manifest, manifestDigest, lifecycle
+}
+
 func TestInspectHostTargetStateDistinguishesGreenfieldAndPortable(
 	t *testing.T,
 ) {

@@ -196,6 +196,146 @@ func (handler *SystemTargetHandler) StageRelease(
 	return proof, nil
 }
 
+func (handler *SystemTargetHandler) ChangeWatchdogMarker(
+	ctx context.Context,
+	overlay hostruntime.PrivateOverlay,
+	revision string,
+	target cli.TargetProof,
+	action hostruntime.TargetHostAction,
+	manifest hostruntime.RuntimeManifest,
+	manifestDigest string,
+) (result hostruntime.HostActionResult, resultErr error) {
+	if handler == nil ||
+		handler.prove == nil ||
+		ctx == nil ||
+		ctx.Err() != nil ||
+		(action != hostruntime.TargetWatchdogInstall &&
+			action != hostruntime.TargetWatchdogUninstall) ||
+		!targetActionAllowed(overlay, action) ||
+		!targetProofMatchesOverlay(target, overlay, revision) {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	sealedTarget, err := cli.SealTargetProof(target)
+	if err != nil || sealedTarget.ProofDigest != target.ProofDigest {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	_, canonicalRevision, err := hostruntime.MarshalPrivateOverlay(overlay)
+	if err != nil || canonicalRevision != revision {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	_, canonicalManifestDigest, err :=
+		hostruntime.MarshalRuntimeManifest(manifest)
+	if err != nil ||
+		canonicalManifestDigest != manifestDigest ||
+		manifestDigest != overlay.Manifest.Digest ||
+		!runtimeManifestMatchesOverlay(manifest, overlay) {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	pollInterval, err := time.ParseDuration(
+		overlay.Fence.LockPollInterval,
+	)
+	if err != nil || pollInterval <= 0 || pollInterval > time.Second {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	layout, err := hostruntime.LifecycleStoreLayoutFromPrivateOverlay(overlay)
+	if err != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	lifecycle, err := hostruntime.OpenLifecycleStoreLayout(layout, false)
+	if err != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	defer func() {
+		if err := lifecycle.Close(); err != nil {
+			result = hostruntime.HostActionResult{}
+			resultErr = ErrProtocol
+		}
+	}()
+	lease, err := lifecycle.Acquire(ctx, pollInterval)
+	if err != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	defer func() {
+		if err := lease.Close(); err != nil {
+			result = hostruntime.HostActionResult{}
+			resultErr = ErrProtocol
+		}
+	}()
+	if err := lease.Validate(); err != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	ownership, err := hostruntime.InspectLifecycleOwnership(lifecycle)
+	if err != nil || ownership.Owned() {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	current, err := handler.ProveTarget(ctx, overlay, revision)
+	if err != nil || !reflect.DeepEqual(current, target) {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	marker, err := openWatchdogMarkerStore(overlay.Paths.StateRoot)
+	if err != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	defer func() {
+		if err := marker.Close(); err != nil {
+			result = hostruntime.HostActionResult{}
+			resultErr = ErrProtocol
+		}
+	}()
+	binding := watchdogMarkerBinding{
+		PrivateOverlayRevision: revision,
+		ManifestDigest:         manifestDigest,
+		WatchdogBinary:         overlay.Commands.WatchdogBinary,
+	}
+	if ctx.Err() != nil || lease.Validate() != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	switch action {
+	case hostruntime.TargetWatchdogInstall:
+		if err := marker.Install(binding); err != nil {
+			return hostruntime.HostActionResult{}, ErrProtocol
+		}
+		if _, present, err := marker.Inspect(binding); err != nil || !present {
+			return hostruntime.HostActionResult{}, ErrProtocol
+		}
+	case hostruntime.TargetWatchdogUninstall:
+		if err := marker.Remove(binding); err != nil {
+			return hostruntime.HostActionResult{}, ErrProtocol
+		}
+		if _, present, err := marker.Inspect(binding); err != nil || present {
+			return hostruntime.HostActionResult{}, ErrProtocol
+		}
+	default:
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	operationID := targetWatchdogOperationID(
+		action,
+		target,
+		manifestDigest,
+		revision,
+	)
+	if operationID == "" {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	proofDigest := target.ProofDigest
+	result = hostruntime.HostActionResult{
+		SchemaVersion: 1,
+		Status:        hostruntime.HostActionComplete,
+		OperationID:   operationID,
+		JournalDigest: digestArtifact(
+			"portable-ghar-watchdog-marker-result-v1",
+			[]byte(operationID),
+		),
+		TargetProofDigest: &proofDigest,
+		FenceGeneration:   target.FenceGeneration,
+		ActiveFleet:       target.ActiveFleet,
+	}
+	if _, _, err := hostruntime.MarshalHostActionResult(result); err != nil {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	return result, nil
+}
+
 func (handler *SystemTargetHandler) Invoke(
 	ctx context.Context,
 	overlay hostruntime.PrivateOverlay,
@@ -219,6 +359,10 @@ func (handler *SystemTargetHandler) Invoke(
 			overlay,
 			target.ProofDigest,
 		) {
+		return hostruntime.HostActionResult{}, ErrProtocol
+	}
+	if action == cli.ActionRollback &&
+		arguments.ExpectedGeneration != target.FenceGeneration {
 		return hostruntime.HostActionResult{}, ErrProtocol
 	}
 	current, err := handler.ProveTarget(ctx, overlay, revision)
@@ -282,6 +426,10 @@ func targetHostActionForCLI(action cli.HostAction) hostruntime.TargetHostAction 
 		return hostruntime.TargetSuspend
 	case cli.ActionResume:
 		return hostruntime.TargetResume
+	case cli.ActionRollback:
+		return hostruntime.TargetRollback
+	case cli.ActionUninstall:
+		return hostruntime.TargetUninstall
 	default:
 		return ""
 	}
