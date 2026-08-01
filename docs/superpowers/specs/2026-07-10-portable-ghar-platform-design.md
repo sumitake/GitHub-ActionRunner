@@ -26,6 +26,17 @@ The first implementation will:
 
 This project is not an official GitHub project. Its scale-set integration depends on a public-preview upstream interface and must be presented as experimental until the compatibility and migration gates in this document pass.
 
+### 1.1 Standalone dependency boundary
+
+Portable GHAR source, builds, tests, release artifacts, deployment tools, and
+runtime depend only on this repository and its declared public dependencies.
+No consumer repository, collaboration broker, reviewer plugin, or developer
+workspace is a product dependency. Independent review tooling is replaceable
+development infrastructure, and deployment-time consumer workflows remain
+external integrations chosen from authenticated live inventory. Failure or
+absence of either cannot create a new Portable GHAR build, test, release, or
+runtime prerequisite.
+
 ## 2. Goals
 
 1. Replace fixed, always-online runner slots with on-demand ephemeral runners.
@@ -40,6 +51,7 @@ This project is not an official GitHub project. Its scale-set integration depend
 10. Produce reproducible binaries and images with checksums, SBOMs, provenance, and third-party license notices.
 11. Survive GitHub-forced runner version bumps without manual intervention or loss of the GitHub-hosted execution path.
 12. Reclaim every job-scoped cgroup, tmpfs, process, namespace, and workspace by whole-container destruction, with bounded steady-state host memory and no persistent runner work area.
+13. Keep every mandatory source and operational contract consumer-neutral so the platform can be built, tested, deployed, and operated without any unrelated repository or development tool.
 
 ## 3. Non-goals
 

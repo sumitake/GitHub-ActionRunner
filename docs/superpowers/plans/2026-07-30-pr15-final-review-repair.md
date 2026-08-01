@@ -45,7 +45,9 @@ name, and HTTPS deadline contracts. This plan incorporates those constraints.
    phase authority returns a typed failure before effects.
 5. Phase 2 source completion is mergeable only when all local and hosted gates
    pass at one signed head, every PR review thread is resolved with evidence,
-   and a distinct-family Grok exact-diff review reports no material defect.
+   and an eligible read-only distinct-family exact-diff review reports no
+   material defect. Reviewer provider and transport are replaceable development
+   tooling, not Portable GHAR dependencies.
 6. After the normal PR merge and exact merge-commit readback, stop. Do not
    begin Phase 3, deployment, activation, or the deferred evidence PR.
 
@@ -751,8 +753,9 @@ python3 scripts/sanitize_public.py --tracked
 - Create deliberate signed crash-safe commits, push, and wait for all hosted
   checks at the exact head.
 - Seal the final base-to-head artifact (byte count + SHA-256), obtain a direct
-  xAI/Grok high-effort exact-diff review before Anthropic/Claude, and count only
-  a matching-digest substantive approval.
+  high-effort distinct-family exact-diff review through any eligible read-only
+  route, and count only a matching-digest substantive approval. The provider
+  and transport remain replaceable development tooling.
 - Merge PR #15 normally, never with admin bypass. Read back the PR merge commit,
   signature, `origin/main`, and all required checks.
 - Report the merged Phase 2 source checkpoint and the deferred Linux/Docker,

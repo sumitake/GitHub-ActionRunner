@@ -277,7 +277,7 @@ func writeHostedHoldEvidenceFixture(
 		FenceGeneration: 9,
 		Route:           "hosted",
 		HoldActive:      true,
-		Repositories:    []string{"keicrew", "workspace"},
+		Repositories:    []string{"example-readonly", "example-service"},
 		NotBefore:       now.Add(-time.Minute),
 		NotAfter:        now.Add(time.Minute),
 		ProofDigest:     strings.Repeat("a", 64),

@@ -35,6 +35,10 @@ not fabricate those deferred external proofs.
   closed commands.
 - Preserve the approved Grafana/InfluxDB activation contract as documentation
   only.
+- Do not add an unrelated repository, collaboration broker, reviewer plugin,
+  or developer workspace as a source, build, test, release, deployment, or
+  runtime dependency. Review transport remains replaceable development
+  tooling; its availability does not change Portable GHAR's product boundary.
 
 ## Threat and failure model
 
@@ -344,9 +348,11 @@ the declared trusted-root boundary rather than adding cosmetic copies.
    Debian snapshot, sanitizer, and controller aggregate checks.
 7. Re-run all source/container gates available on macOS. Record Linux/Docker
    skips as deferred, never as passes.
-8. Seal the exact base-to-head diff and obtain a direct high-effort xAI/Grok
-   exact-artifact adversarial review. Integrate any valid finding, rehash, and
-   obtain a matching-digest approval.
+8. Seal the exact base-to-head diff and obtain a direct high-effort
+   distinct-family exact-artifact adversarial review through any eligible
+   read-only reviewer route. Review provider and transport are replaceable
+   development tooling, not product dependencies. Integrate any valid finding,
+   rehash, and obtain a matching-digest approval.
 9. Create a signed crash-safe commit, push, reply to and resolve exact-head PR
    threads with focused evidence, pass hosted checks, and merge normally.
 

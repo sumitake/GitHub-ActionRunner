@@ -43,6 +43,16 @@ does not operate a shared control plane on anyone's behalf. Isolation is
 isolation; see [Trust boundaries](#trust-boundaries) for the full,
 explicit non-claims list.
 
+### Standalone boundary
+
+Portable GHAR's source, build, tests, release artifacts, deployment tools,
+and runtime are self-contained in this repository plus its declared public
+dependencies. No consumer repository, collaboration broker, reviewer plugin,
+or developer workspace is a required component. External review tools are
+replaceable development aids, and consumer repositories are optional workload
+integrations selected from a deployment's live inventory; neither is part of
+the Portable GHAR product or a prerequisite for Phase 2 source completeness.
+
 ## Architecture
 
 ```mermaid

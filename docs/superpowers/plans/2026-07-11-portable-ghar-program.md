@@ -340,11 +340,18 @@ unsupported browser/container jobs on `ubuntu-latest`.
 
 Canary order:
 
-1. the smallest public read-only, secretless build;
-2. workspace unit-test chain;
-3. workspace governance aggregate;
-4. application core and aggregate tests;
+1. the project-owned dedicated secretless recovery canary;
+2. one low-complexity, read-only consumer build or unit-test workload;
+3. one read-only multi-job aggregate workload, when eligible;
+4. one representative application core or aggregate workload;
 5. any write-capable deployment recorder only after separate review.
+
+No named consumer repository or workflow is mandatory. Portable GHAR source,
+build, test, release, and deployment gates never clone, import, or execute a
+consumer repository as an implementation dependency. Deployment canaries are
+selected at cutover time from authenticated live inventory according to the
+capability and risk classes above; an unavailable or ineligible consumer is
+skipped rather than becoming a Portable GHAR blocker.
 
 Fresh inventory immediately before migration is authoritative. A repository
 with no workflow that can route self-hosted is excluded from the private fleet

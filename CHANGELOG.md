@@ -42,4 +42,11 @@ Nothing in this section has shipped as a tagged release.
   and hosted CI checks for Linux, containers, supply chain, and static
   analysis.
 
+### Changed
+
+- Clarified the standalone product boundary: consumer repositories and
+  development-time collaboration or review tools are optional integrations,
+  never Portable GHAR build, test, release, deployment, or runtime
+  dependencies.
+
 [Unreleased]: https://github.com/sumitake/portable-ghar/compare/main...HEAD

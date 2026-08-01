@@ -669,9 +669,9 @@ gates.
 - Every implementation change is TDD: observe a targeted RED failure, make the
   smallest implementation change, rerun focused tests, then run the full local
   source gate.
-- Direct distinct-family review uses xAI/Grok before Anthropic/Claude. The
-  broker is bypassed only for this session as explicitly authorized; no broker
-  lifecycle state is read or changed.
+- Direct distinct-family review uses any eligible read-only route. Reviewer
+  provider and transport are replaceable development tooling; no collaboration
+  runtime lifecycle state is read or changed.
 
 ## Threat Model and Adversarial Classes
 
@@ -1053,13 +1053,14 @@ or unregistered file may remain.
   Expected on this macOS host: nonzero typed prerequisite failure. Record this
   as the still-open Linux/Docker gate, not a skip/pass.
 
-## Task 14.7: Exact Direct xAI/Grok Review and Signed Checkpoint
+## Task 14.7: Exact Distinct-Family Review and Signed Checkpoint
 
 - [ ] Seal the complete Task 14 diff plus this plan into one exact UTF-8
   artifact and record byte length/SHA-256.
-- [ ] Use the directly authenticated xAI/Grok CLI in read-only mode for an
-  exact-artifact code review. Require a substantive matching-digest verdict.
-  Do not use or mutate the managed broker.
+- [ ] Use any eligible direct, read-only distinct-family route for an exact-
+  artifact code review. Require a substantive matching-digest verdict. The
+  provider and transport are replaceable development tooling and must not
+  mutate product or runtime state.
 - [ ] Adjudicate every finding against exact source/tests. Material changes
   require a changed-artifact confirmation review. No matching approval means
   no checkpoint commit.
@@ -1088,9 +1089,9 @@ or unregistered file may remain.
     release-settings GitHub App variable/secret/installation are still
     operator configuration gates; and
   - no deployment or host mutation occurred.
-- [ ] Obtain exact-head distinct-family review with xAI/Grok before
-  Anthropic/Claude, satisfy required checks/compliance, resolve every review
-  thread, and merge without admin bypass.
+- [ ] Obtain exact-head distinct-family review through an eligible read-only
+  route, satisfy required checks/compliance, resolve every review thread, and
+  merge without admin bypass.
 - [ ] Read back the merge commit and `origin/main`.
 - [ ] Do not label the merge as **Phase 2 fully verified**.
 

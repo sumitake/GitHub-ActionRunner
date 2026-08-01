@@ -1783,7 +1783,7 @@ git status --short
 
 Expected: all source tests/vet pass; only Task 11 planned files differ.
 
-### Task 9: Obtain exact xAI/Grok review and create a signed source checkpoint
+### Task 9: Obtain exact distinct-family review and create a signed source checkpoint
 
 #### Step 1: Seal the exact review artifact
 
@@ -1797,9 +1797,11 @@ Include:
 - exact list of pending target proofs; and
 - statement that no host action or numeric choice occurred.
 
-Run a synchronous read-only xAI/Grok exact-artifact governance review. Accept
-only a substantive matching-digest result. If findings materially change the
-plan, return to the plan cross-check before implementation changes.
+Run a synchronous read-only distinct-family exact-artifact governance review
+through any eligible reviewer route. Accept only a substantive matching-digest
+result. The provider and transport are replaceable development tooling. If
+findings materially change the plan, return to the plan cross-check before
+implementation changes.
 
 #### Step 2: Verify after review
 
@@ -1918,8 +1920,8 @@ The Task 11 source checkpoint is complete when:
 - all Linux effect code is opt-in and closed;
 - synthetic and actual evidence cannot substitute for each other;
 - cleanup is mandatory, bounded, positively verified, and precedence-safe;
-- the exact source artifact receives matching-digest substantive xAI/Grok
-  review; and
+- the exact source artifact receives matching-digest substantive
+  distinct-family review through an eligible read-only route; and
 - the signed commit contains only planned source/test/plan files.
 
 Task 11's operational gate is complete only when a separately approved
