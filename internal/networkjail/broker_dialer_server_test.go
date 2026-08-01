@@ -16,6 +16,23 @@ type serverLiteralDialer struct {
 	calls      []DialRequest
 }
 
+type deadlinePermitClient struct {
+	entered chan time.Time
+}
+
+func (client *deadlinePermitClient) Request(
+	ctx context.Context,
+	_ DialPermitRequest,
+) (Permit, error) {
+	deadline, found := ctx.Deadline()
+	if !found {
+		deadline = time.Time{}
+	}
+	client.entered <- deadline
+	<-ctx.Done()
+	return Permit{}, ctx.Err()
+}
+
 func (dialer *serverLiteralDialer) DialLiteral(
 	_ context.Context,
 	address netip.Addr,
@@ -139,5 +156,77 @@ func TestBrokerControlServerRejectsInvalidFrameWithoutDial(t *testing.T) {
 	_ = controlClient.Close()
 	if err := <-done; err == nil {
 		t.Fatal("invalid control frame was accepted")
+	}
+}
+
+func TestBrokerControlServerPropagatesHandshakeDeadlineToPermit(t *testing.T) {
+	graph, _, err := Compile(validPolicyManifest())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	permits := &deadlinePermitClient{entered: make(chan time.Time, 1)}
+	literals := &fakeLiteralDialer{}
+	dialer, err := NewBrokerDialer(
+		graph,
+		7,
+		11,
+		&fakeResolver{},
+		literals,
+		permits,
+	)
+	if err != nil {
+		t.Fatalf("NewBrokerDialer: %v", err)
+	}
+	const handshakeTimeout = 100 * time.Millisecond
+	server, err := NewBrokerControlServer(dialer, BrokerControlConfig{
+		HandshakeTimeout: handshakeTimeout,
+		RelayTimeout:     time.Second,
+		MaxClients:       1,
+	})
+	if err != nil {
+		t.Fatalf("NewBrokerControlServer: %v", err)
+	}
+	controlClient, controlServer := net.Pipe()
+	defer controlClient.Close()
+	defer controlServer.Close()
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	started := time.Now()
+	go func() { done <- server.handleControl(parent, controlServer) }()
+	frame, err := EncodeDialRequest(DialRequest{
+		Host: publicV4(8, 8, 8, 8).String(),
+		Port: 443,
+	})
+	if err != nil {
+		t.Fatalf("EncodeDialRequest: %v", err)
+	}
+	if err := writeDialRequestFrame(controlClient, frame); err != nil {
+		t.Fatalf("writeDialRequestFrame: %v", err)
+	}
+	select {
+	case deadline := <-permits.entered:
+		if deadline.IsZero() || deadline.Before(started) ||
+			deadline.After(started.Add(2*handshakeTimeout)) {
+			t.Fatalf("permit deadline=%s started=%s", deadline, started)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("permit request did not enter")
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expired handshake returned nil error")
+		}
+	case <-time.After(500 * time.Millisecond):
+		cancel()
+		<-done
+		t.Fatal("handshake deadline did not cancel permit submission")
+	}
+	literals.mu.Lock()
+	literalCalls := len(literals.calls)
+	literals.mu.Unlock()
+	if literalCalls != 0 {
+		t.Fatalf("literal dials after permit deadline=%d", literalCalls)
 	}
 }

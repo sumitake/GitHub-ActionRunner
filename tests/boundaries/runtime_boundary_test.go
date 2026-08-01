@@ -1359,6 +1359,16 @@ func networkSurfaceSites(file parsedGoFile) []string {
 func brokerDialIssues(file parsedGoFile) []string {
 	var issues []string
 	permits := selectorCallPositions(file, "DialFrame", "Request")
+	permits = append(
+		permits,
+		nestedSelectorCallPositions(
+			file,
+			"DialFrame",
+			"dialer",
+			"sequencer",
+			"request",
+		)...,
+	)
 	dials := selectorCallPositions(file, "DialFrame", "DialLiteral")
 	if len(permits) != 1 || len(dials) != 1 || permits[0] > dials[0] {
 		issues = append(issues, "literal dial is not ordered after permit")
@@ -1958,6 +1968,43 @@ func selectorCallPositions(
 		}
 		selector, ok := call.Fun.(*ast.SelectorExpr)
 		if ok && selector.Sel.Name == selectorName {
+			positions = append(positions, call.Pos())
+		}
+		return true
+	})
+	return positions
+}
+
+func nestedSelectorCallPositions(
+	file parsedGoFile,
+	functionName,
+	receiverName,
+	fieldName,
+	selectorName string,
+) []token.Pos {
+	function, ok := functionDeclaration(file, functionName)
+	if !ok {
+		return nil
+	}
+	var positions []token.Pos
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		if _, nested := node.(*ast.FuncLit); nested {
+			return false
+		}
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != selectorName {
+			return true
+		}
+		field, ok := selector.X.(*ast.SelectorExpr)
+		if !ok || field.Sel.Name != fieldName {
+			return true
+		}
+		receiver, ok := field.X.(*ast.Ident)
+		if ok && receiver.Name == receiverName {
 			positions = append(positions, call.Pos())
 		}
 		return true

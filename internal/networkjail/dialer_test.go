@@ -19,6 +19,19 @@ type fakeResolver struct {
 	trace   *[]string
 }
 
+type notifyingResolver struct {
+	answer netip.Addr
+	calls  chan struct{}
+}
+
+func (resolver *notifyingResolver) Resolve(
+	context.Context,
+	string,
+) ([]netip.Addr, error) {
+	resolver.calls <- struct{}{}
+	return []netip.Addr{resolver.answer}, nil
+}
+
 func (resolver *fakeResolver) Resolve(
 	_ context.Context,
 	name string,
@@ -319,6 +332,109 @@ func TestBrokerDialerSerializesPermitSequenceAllocationAndSubmission(
 		permits.requests[0].Sequence != 1 ||
 		permits.requests[1].Sequence != 2 {
 		t.Fatalf("permit requests = %#v", permits.requests)
+	}
+}
+
+func TestBrokerDialerCanceledQueuedPermitDoesNotConsumeSequence(
+	t *testing.T,
+) {
+	graph, _, err := Compile(validPolicyManifest())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	resolver := &notifyingResolver{
+		answer: publicV4(8, 8, 8, 8),
+		calls:  make(chan struct{}, 3),
+	}
+	permits := &blockingPermitClient{
+		firstEntered:  make(chan struct{}),
+		secondEntered: make(chan struct{}),
+		releaseFirst:  make(chan struct{}),
+	}
+	dialer, err := NewBrokerDialer(
+		graph,
+		3,
+		7,
+		resolver,
+		&fakeLiteralDialer{},
+		permits,
+	)
+	if err != nil {
+		t.Fatalf("NewBrokerDialer: %v", err)
+	}
+	frame, err := EncodeDialRequest(DialRequest{
+		Host: "example.com",
+		Port: 443,
+	})
+	if err != nil {
+		t.Fatalf("EncodeDialRequest: %v", err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		connection, dialErr := dialer.DialFrame(context.Background(), frame)
+		if connection != nil {
+			_ = connection.Close()
+		}
+		firstDone <- dialErr
+	}()
+	select {
+	case <-permits.firstEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first permit request did not enter")
+	}
+	<-resolver.calls
+
+	secondContext, cancelSecond := context.WithCancel(context.Background())
+	secondDone := make(chan error, 1)
+	go func() {
+		connection, dialErr := dialer.DialFrame(secondContext, frame)
+		if connection != nil {
+			_ = connection.Close()
+		}
+		secondDone <- dialErr
+	}()
+	<-resolver.calls
+	cancelSecond()
+	select {
+	case dialErr := <-secondDone:
+		if dialErr == nil {
+			t.Fatal("canceled queued DialFrame returned nil error")
+		}
+	case <-time.After(250 * time.Millisecond):
+		close(permits.releaseFirst)
+		t.Fatal("canceled queued DialFrame remained blocked")
+	}
+	select {
+	case <-permits.secondEntered:
+		close(permits.releaseFirst)
+		t.Fatal("canceled queued DialFrame submitted a permit")
+	default:
+	}
+
+	close(permits.releaseFirst)
+	select {
+	case dialErr := <-firstDone:
+		if dialErr != nil {
+			t.Fatalf("first DialFrame: %v", dialErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first DialFrame did not finish after release")
+	}
+	connection, err := dialer.DialFrame(context.Background(), frame)
+	if err != nil {
+		t.Fatalf("third DialFrame: %v", err)
+	}
+	if connection != nil {
+		_ = connection.Close()
+	}
+	permits.mu.Lock()
+	requests := append([]DialPermitRequest(nil), permits.requests...)
+	permits.mu.Unlock()
+	if len(requests) != 2 ||
+		requests[0].Sequence != 1 ||
+		requests[1].Sequence != 2 {
+		t.Fatalf("permit requests = %#v, want sequences 1 and 2", requests)
 	}
 }
 

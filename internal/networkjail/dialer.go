@@ -3,10 +3,8 @@ package networkjail
 import (
 	"context"
 	"errors"
-	"math"
 	"net"
 	"net/netip"
-	"sync"
 )
 
 type Resolver interface {
@@ -28,9 +26,7 @@ type BrokerDialer struct {
 	resolver   Resolver
 	literals   LiteralDialer
 	permits    DialPermitClient
-
-	sequenceMu sync.Mutex
-	sequence   PermitSequence
+	sequencer  *PermitSequencer
 }
 
 func NewBrokerDialer(
@@ -52,6 +48,7 @@ func NewBrokerDialer(
 		resolver:   resolver,
 		literals:   literals,
 		permits:    permits,
+		sequencer:  NewPermitSequencer(),
 	}, nil
 }
 
@@ -59,6 +56,9 @@ func (dialer *BrokerDialer) DialFrame(
 	ctx context.Context,
 	frame []byte,
 ) (net.Conn, error) {
+	if ctx == nil || dialer == nil || dialer.sequencer == nil {
+		return nil, errors.New("networkjail: dial cancelled")
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, errors.New("networkjail: dial cancelled")
 	}
@@ -82,19 +82,14 @@ func (dialer *BrokerDialer) DialFrame(
 	}
 
 	for _, address := range answers {
-		dialer.sequenceMu.Lock()
-		if dialer.sequence == PermitSequence(math.MaxUint64) {
-			dialer.sequenceMu.Unlock()
-			return nil, ErrPermitSequence
-		}
-		dialer.sequence++
-		permit, err := dialer.permits.Request(ctx, DialPermitRequest{
+		permit, err := dialer.sequencer.request(ctx, dialer.permits, DialPermitRequest{
 			SlotID:        dialer.slot,
 			JobGeneration: dialer.generation,
 			Class:         DialClassJob,
-			Sequence:      dialer.sequence,
 		})
-		dialer.sequenceMu.Unlock()
+		if errors.Is(err, ErrPermitSequence) {
+			return nil, ErrPermitSequence
+		}
 		if err != nil || !permit.validFor(dialer.slot, DialClassJob) {
 			return nil, errors.New("networkjail: dial permit unavailable")
 		}

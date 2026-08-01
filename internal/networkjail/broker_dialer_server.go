@@ -72,13 +72,15 @@ func (server *BrokerControlServer) handleControl(
 	ctx context.Context,
 	control net.Conn,
 ) error {
-	if server == nil || control == nil {
+	if server == nil || ctx == nil || control == nil {
 		return errors.New("networkjail: broker control invalid")
 	}
 	deadline := time.Now().Add(server.config.HandshakeTimeout)
 	if bounded, found := ctx.Deadline(); found && bounded.Before(deadline) {
 		deadline = bounded
 	}
+	operationContext, cancelOperation := context.WithDeadline(ctx, deadline)
+	defer cancelOperation()
 	if err := control.SetDeadline(deadline); err != nil {
 		return errors.New("networkjail: broker control deadline failed")
 	}
@@ -86,7 +88,8 @@ func (server *BrokerControlServer) handleControl(
 	if err != nil {
 		return err
 	}
-	upstream, err := server.dialer.DialFrame(ctx, frame)
+	upstream, err := server.dialer.DialFrame(operationContext, frame)
+	cancelOperation()
 	zeroBytes(frame)
 	if err != nil || upstream == nil {
 		if upstream != nil {

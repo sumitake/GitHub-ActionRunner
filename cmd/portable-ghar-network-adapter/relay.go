@@ -50,6 +50,27 @@ func validateRelayEndpoints(endpoints []relayEndpoint) error {
 	return nil
 }
 
+type relayDeadline struct {
+	mu      sync.Mutex
+	left    net.Conn
+	right   net.Conn
+	timeout time.Duration
+}
+
+func (deadline *relayDeadline) refresh() error {
+	if deadline == nil || deadline.left == nil || deadline.right == nil ||
+		deadline.timeout <= 0 {
+		return errors.New("network-adapter: relay deadline invalid")
+	}
+	deadline.mu.Lock()
+	defer deadline.mu.Unlock()
+	expires := time.Now().Add(deadline.timeout)
+	if err := deadline.left.SetDeadline(expires); err != nil {
+		return err
+	}
+	return deadline.right.SetDeadline(expires)
+}
+
 func openBrokerGuard(
 	directory string,
 	binding relaycontract.Binding,
@@ -134,9 +155,15 @@ func relayDuplex(left, right net.Conn, timeout time.Duration) error {
 	if left == nil || right == nil || timeout <= 0 {
 		return errors.New("network-adapter: duplex inputs invalid")
 	}
+	deadline := &relayDeadline{left: left, right: right, timeout: timeout}
+	if err := deadline.refresh(); err != nil {
+		_ = left.Close()
+		_ = right.Close()
+		return errors.New("network-adapter: relay stream failed")
+	}
 	results := make(chan error, 2)
-	go func() { results <- copyHalf(right, left, timeout) }()
-	go func() { results <- copyHalf(left, right, timeout) }()
+	go func() { results <- copyHalf(right, left, deadline) }()
+	go func() { results <- copyHalf(left, right, deadline) }()
 	first := <-results
 	if first != nil {
 		_ = left.Close()
@@ -152,24 +179,30 @@ func relayDuplex(left, right net.Conn, timeout time.Duration) error {
 	return nil
 }
 
-func copyHalf(destination, source net.Conn, timeout time.Duration) error {
+func copyHalf(
+	destination,
+	source net.Conn,
+	deadline *relayDeadline,
+) error {
 	buffer := make([]byte, relayBufferBytes)
 	for {
-		if err := source.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-			return err
-		}
 		count, readErr := source.Read(buffer)
 		if count > 0 {
-			if err := destination.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+			if err := deadline.refresh(); err != nil {
 				return err
 			}
 			written := 0
 			for written < count {
-				next, err := destination.Write(buffer[written:count])
-				if err != nil || next <= 0 {
+				next, writeErr := destination.Write(buffer[written:count])
+				if next > 0 {
+					written += next
+					if err := deadline.refresh(); err != nil {
+						return err
+					}
+				}
+				if writeErr != nil || next <= 0 {
 					return errors.New("network-adapter: relay write failed")
 				}
-				written += next
 			}
 		}
 		if readErr == io.EOF {

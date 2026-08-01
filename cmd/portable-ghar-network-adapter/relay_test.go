@@ -274,6 +274,112 @@ func TestRelayDuplexBoundsSlowClient(t *testing.T) {
 	}
 }
 
+func TestRelayDuplexKeepsOneWayProgressAlive(t *testing.T) {
+	left, leftPeer := newTCPConnectionPair(t)
+	right, rightPeer := newTCPConnectionPair(t)
+	const timeout = 400 * time.Millisecond
+	for _, peer := range []*net.TCPConn{leftPeer, rightPeer} {
+		if err := peer.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			t.Fatalf("SetDeadline: %v", err)
+		}
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- relayDuplex(left, right, timeout) }()
+	started := time.Now()
+	for index := byte(0); index < 6; index++ {
+		if _, err := leftPeer.Write([]byte{index}); err != nil {
+			t.Fatalf("one-way Write[%d]: %v", index, err)
+		}
+		var received [1]byte
+		if _, err := io.ReadFull(rightPeer, received[:]); err != nil {
+			t.Fatalf("one-way Read[%d]: %v", index, err)
+		}
+		if received[0] != index {
+			t.Fatalf("one-way byte[%d]=%d", index, received[0])
+		}
+		if index < 5 {
+			time.Sleep(timeout / 4)
+		}
+	}
+	if elapsed := time.Since(started); elapsed <= timeout {
+		t.Fatalf("one-way transfer elapsed=%s, want >%s", elapsed, timeout)
+	}
+	if err := leftPeer.CloseWrite(); err != nil {
+		t.Fatalf("left CloseWrite: %v", err)
+	}
+	var eof [1]byte
+	if count, err := rightPeer.Read(eof[:]); count != 0 || err != io.EOF {
+		t.Fatalf("right EOF count=%d err=%v", count, err)
+	}
+	if err := rightPeer.CloseWrite(); err != nil {
+		t.Fatalf("right CloseWrite: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("relayDuplex: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("relayDuplex did not finish after both half-closes")
+	}
+}
+
+func TestRelayDuplexBoundsBlockedDestination(t *testing.T) {
+	left, leftPeer := net.Pipe()
+	right, rightPeer := net.Pipe()
+	defer leftPeer.Close()
+	defer rightPeer.Close()
+
+	done := make(chan error, 1)
+	go func() { done <- relayDuplex(left, right, 50*time.Millisecond) }()
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := leftPeer.Write(make([]byte, relayBufferBytes))
+		writeDone <- err
+	}()
+	select {
+	case <-writeDone:
+	case <-time.After(time.Second):
+		t.Fatal("source write did not reach the relay")
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("relayDuplex accepted a permanently blocked destination")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("relayDuplex did not bound a blocked destination")
+	}
+}
+
+func newTCPConnectionPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
+	t.Helper()
+	listener, err := net.ListenTCP(
+		"tcp4",
+		&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0},
+	)
+	if err != nil {
+		t.Fatalf("ListenTCP: %v", err)
+	}
+	peer, err := net.DialTCP("tcp4", nil, listener.Addr().(*net.TCPAddr))
+	if err != nil {
+		_ = listener.Close()
+		t.Fatalf("DialTCP: %v", err)
+	}
+	relay, err := listener.AcceptTCP()
+	_ = listener.Close()
+	if err != nil {
+		_ = peer.Close()
+		t.Fatalf("AcceptTCP: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = relay.Close()
+		_ = peer.Close()
+	})
+	return relay, peer
+}
+
 func dialTCPFixture(t *testing.T, listener *net.TCPListener) *net.TCPConn {
 	t.Helper()
 	connection, err := net.DialTCP("tcp4", nil, listener.Addr().(*net.TCPAddr))
