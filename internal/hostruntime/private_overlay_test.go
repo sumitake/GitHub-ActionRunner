@@ -62,6 +62,9 @@ func TestPrivateOverlayRejectsNoncanonicalAndIncompleteInputs(t *testing.T) {
 		"noncanonical duration": func(overlay *PrivateOverlay) {
 			overlay.Controller.AckTimeout = "1000ms"
 		},
+		"watchdog restart deadline exceeds service ceiling contract": func(overlay *PrivateOverlay) {
+			overlay.Watchdog.RestartDeadline = "1m0.000000001s"
+		},
 		"inline secret source": func(overlay *PrivateOverlay) {
 			overlay.Secrets[0].Ref.Source = "inline"
 		},

@@ -9,7 +9,7 @@ ConditionFileIsExecutable=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-watchdog
 [Service]
 Type=oneshot
 ExecStart=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-watchdog run --private /ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json --manifest /ABSOLUTE/PORTABLE_GHAR/RELEASE/runtime-manifest.json
-TimeoutStartSec=30s
+TimeoutStartSec=2min
 UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes

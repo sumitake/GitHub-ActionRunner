@@ -66,6 +66,11 @@ setup() {
   run grep -F "ConditionFileIsExecutable=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-watchdog" "$watchdog"
   [ "$status" -eq 0 ]
 
+  run grep -Fx "TimeoutStartSec=2min" "$watchdog"
+  [ "$status" -eq 0 ]
+  run grep -Fx "TimeoutStartSec=30s" "$watchdog"
+  [ "$status" -ne 0 ]
+
   unit_end="$(grep -n '^\[Service\]$' "$controller" | cut -d: -f1)"
   interval_line="$(grep -n '^StartLimitIntervalSec=' "$controller" | cut -d: -f1)"
   burst_line="$(grep -n '^StartLimitBurst=' "$controller" | cut -d: -f1)"

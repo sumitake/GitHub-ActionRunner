@@ -2,13 +2,34 @@ package hostruntime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/sumitake/portable-ghar/internal/linuxcap"
 )
+
+type cancelOnVerifierRun struct {
+	base   *scriptedCommandRunner
+	cancel context.CancelFunc
+}
+
+func (runner *cancelOnVerifierRun) Run(
+	ctx context.Context,
+	argv []string,
+	files []*os.File,
+	stdin io.Reader,
+) (Result, error) {
+	result, err := runner.base.Run(ctx, argv, files, stdin)
+	if len(argv) > 1 && argv[1] == "run" && slices.Contains(argv, "--rm") {
+		runner.cancel()
+	}
+	return result, err
+}
 
 func validVerifierSpec(adapter AdapterHandle, spec AdapterSpec) VerifierSpec {
 	return VerifierSpec{
@@ -104,9 +125,10 @@ func TestVerifyNetworkAdapterEmptyUsesClosedOneShotVerifier(t *testing.T) {
 	}
 }
 
-func TestVerifyNetworkAdapterEmptyRemovesAmbiguousLingeringVerifier(t *testing.T) {
+func TestVerifyNetworkAdapterEmptyRemovesProvenLingeringVerifierByID(t *testing.T) {
 	adapterSpec, cfg := validAdapterSpec(t)
 	adapterID := strings.Repeat("c", 64)
+	verifierID := strings.Repeat("d", 64)
 	namespace := NetworkNamespaceIdentity{Device: 11, Inode: 12}
 	reportWire := verifierNamespaceWire{
 		Version:      2,
@@ -120,11 +142,6 @@ func TestVerifyNetworkAdapterEmptyRemovesAmbiguousLingeringVerifier(t *testing.T
 	inspect := managedAdapterInspectJSON(adapterID, adapterSpec)
 	commands := &scriptedCommandRunner{results: []Result{
 		{Stdout: []byte(adapterID + "\n")},
-		{Stdout: []byte(inspect)},
-		{Stdout: report},
-		{Stdout: []byte("lingering-verifier-id\n")},
-		{Stdout: []byte("lingering-verifier-id\n")},
-		{},
 	}}
 	cli, err := NewDockerCLI(cfg, commands)
 	if err != nil {
@@ -135,6 +152,20 @@ func TestVerifyNetworkAdapterEmptyRemovesAmbiguousLingeringVerifier(t *testing.T
 		t.Fatalf("CreateNetworkAdapter: %v", err)
 	}
 	verifier := validVerifierSpec(adapter, adapterSpec)
+	name := verifierContainerName(adapter.nonce, "namespace-empty")
+	commands.results = append(commands.results,
+		Result{Stdout: []byte(inspect)},
+		Result{Stdout: report},
+		Result{Stdout: []byte(verifierID + "\n")},
+		Result{Stdout: []byte(verifierCleanupInspectJSON(
+			verifierID,
+			name,
+			verifier,
+			"namespace-empty",
+		))},
+		Result{},
+		Result{},
+	)
 
 	if _, err := cli.VerifyNetworkAdapterEmpty(
 		context.Background(),
@@ -143,23 +174,263 @@ func TestVerifyNetworkAdapterEmptyRemovesAmbiguousLingeringVerifier(t *testing.T
 	); err == nil {
 		t.Fatal("VerifyNetworkAdapterEmpty accepted ambiguous verifier lifetime")
 	}
-	name := verifierContainerName(adapter.nonce, "namespace-empty")
+	if got := commands.commands[3].argv; !slices.Equal(
+		got,
+		[]string{
+			cfg.DockerPath, "ps", "-a", "--no-trunc",
+			"--filter", "name=^/" + name + "$",
+			"--format", "{{.ID}}",
+		},
+	) {
+		t.Fatalf("inventory argv=%q", got)
+	}
 	if got := commands.commands[4].argv; !slices.Equal(
 		got,
-		[]string{cfg.DockerPath, "rm", "-f", name},
+		[]string{cfg.DockerPath, "inspect", "--type", "container", verifierID},
 	) {
-		t.Fatalf("cleanup argv=%q", got)
+		t.Fatalf("inspect argv=%q", got)
 	}
 	if got := commands.commands[5].argv; !slices.Equal(
 		got,
+		[]string{cfg.DockerPath, "rm", "-f", verifierID},
+	) {
+		t.Fatalf("cleanup argv=%q", got)
+	}
+	if got := commands.commands[6].argv; !slices.Equal(
+		got,
 		[]string{
-			cfg.DockerPath, "ps", "-a",
+			cfg.DockerPath, "ps", "-a", "--no-trunc",
 			"--filter", "name=^/" + name + "$",
 			"--format", "{{.ID}}",
 		},
 	) {
 		t.Fatalf("post-cleanup absence argv=%q", got)
 	}
+}
+
+func TestVerifyNetworkAdapterEmptyInventoriesAndCleansAfterRequestCancellation(t *testing.T) {
+	adapterSpec, cfg := validAdapterSpec(t)
+	adapterID := strings.Repeat("c", 64)
+	verifierID := strings.Repeat("d", 64)
+	inspect := managedAdapterInspectJSON(adapterID, adapterSpec)
+	base := &scriptedCommandRunner{results: []Result{
+		{Stdout: []byte(adapterID + "\n")},
+	}}
+	runner := &cancelOnVerifierRun{base: base}
+	cli, err := NewDockerCLI(cfg, runner)
+	if err != nil {
+		t.Fatalf("NewDockerCLI: %v", err)
+	}
+	adapter, err := cli.CreateNetworkAdapter(context.Background(), adapterSpec)
+	if err != nil {
+		t.Fatalf("CreateNetworkAdapter: %v", err)
+	}
+	verifier := validVerifierSpec(adapter, adapterSpec)
+	name := verifierContainerName(adapter.nonce, "namespace-empty")
+	base.results = append(base.results,
+		Result{Stdout: []byte(inspect)},
+		Result{ExitCode: 125, Stderr: []byte("request canceled")},
+		Result{Stdout: []byte(verifierID + "\n")},
+		Result{Stdout: []byte(verifierCleanupInspectJSON(
+			verifierID,
+			name,
+			verifier,
+			"namespace-empty",
+		))},
+		Result{},
+		Result{},
+	)
+	requestCtx, cancel := context.WithCancel(context.Background())
+	runner.cancel = cancel
+
+	if _, err := cli.VerifyNetworkAdapterEmpty(
+		requestCtx,
+		adapter,
+		verifier,
+	); err == nil {
+		t.Fatal("VerifyNetworkAdapterEmpty accepted canceled verifier run")
+	}
+	for index := 3; index <= 6; index++ {
+		observed := base.contexts[index]
+		if observed.canceled || !observed.hasDeadline {
+			t.Fatalf("cleanup context %d = %+v", index, observed)
+		}
+	}
+}
+
+func TestRunNetworkVerifierRejectsSuccessAfterRequestCancellation(t *testing.T) {
+	adapterSpec, cfg := validAdapterSpec(t)
+	adapterID := strings.Repeat("c", 64)
+	reportWire := verifierNamespaceWire{
+		Version:      2,
+		Capabilities: emptyVerifierCapabilities(),
+	}
+	reportWire.Namespace.Identity = NetworkNamespaceIdentity{Device: 11, Inode: 12}
+	reportWire.Namespace.LoopbackOnly = true
+	reportWire.Namespace.TablesEmpty = true
+	reportWire.Namespace.ConntrackEmpty = true
+	base := &scriptedCommandRunner{results: []Result{
+		{Stdout: []byte(adapterID + "\n")},
+	}}
+	runner := &cancelOnVerifierRun{base: base}
+	cli, err := NewDockerCLI(cfg, runner)
+	if err != nil {
+		t.Fatalf("NewDockerCLI: %v", err)
+	}
+	adapter, err := cli.CreateNetworkAdapter(context.Background(), adapterSpec)
+	if err != nil {
+		t.Fatalf("CreateNetworkAdapter: %v", err)
+	}
+	base.results = append(base.results,
+		Result{Stdout: canonicalJSONLine(t, reportWire)},
+		Result{},
+	)
+	requestCtx, cancel := context.WithCancel(context.Background())
+	runner.cancel = cancel
+
+	if _, err := cli.runNetworkVerifier(
+		requestCtx,
+		adapter.nonce,
+		adapter.id,
+		validVerifierSpec(adapter, adapterSpec),
+		"namespace-empty",
+		nil,
+	); err == nil {
+		t.Fatal("runNetworkVerifier accepted success after cancellation")
+	}
+}
+
+func TestVerifyNetworkAdapterEmptyDoesNotRemoveUnprovenLingeringVerifier(t *testing.T) {
+	tests := map[string]func([]byte) []byte{
+		"foreign labels": func(document []byte) []byte {
+			return []byte(strings.Replace(
+				string(document),
+				`"io.portable-ghar.managed":"true"`,
+				`"io.portable-ghar.managed":"false"`,
+				1,
+			))
+		},
+		"null entrypoint": func(document []byte) []byte {
+			return []byte(strings.Replace(
+				string(document),
+				`"Entrypoint":["`+verifierEntrypoint+`"]`,
+				`"Entrypoint":null`,
+				1,
+			))
+		},
+	}
+	for testName, mutate := range tests {
+		t.Run(testName, func(t *testing.T) {
+			adapterSpec, cfg := validAdapterSpec(t)
+			adapterID := strings.Repeat("c", 64)
+			verifierID := strings.Repeat("d", 64)
+			inspect := managedAdapterInspectJSON(adapterID, adapterSpec)
+			commands := &scriptedCommandRunner{results: []Result{
+				{Stdout: []byte(adapterID + "\n")},
+			}}
+			cli, err := NewDockerCLI(cfg, commands)
+			if err != nil {
+				t.Fatalf("NewDockerCLI: %v", err)
+			}
+			adapter, err := cli.CreateNetworkAdapter(context.Background(), adapterSpec)
+			if err != nil {
+				t.Fatalf("CreateNetworkAdapter: %v", err)
+			}
+			verifier := validVerifierSpec(adapter, adapterSpec)
+			name := verifierContainerName(adapter.nonce, "namespace-empty")
+			owned := []byte(verifierCleanupInspectJSON(
+				verifierID,
+				name,
+				verifier,
+				"namespace-empty",
+			))
+			commands.results = append(commands.results,
+				Result{Stdout: []byte(inspect)},
+				Result{ExitCode: 125, Stderr: []byte("name conflict")},
+				Result{Stdout: []byte(verifierID + "\n")},
+				Result{Stdout: mutate(owned)},
+			)
+
+			if _, err := cli.VerifyNetworkAdapterEmpty(
+				context.Background(),
+				adapter,
+				verifier,
+			); err == nil {
+				t.Fatal("VerifyNetworkAdapterEmpty accepted unproven verifier")
+			}
+			for _, command := range commands.commands[1:] {
+				if len(command.argv) > 1 && command.argv[1] == "rm" {
+					t.Fatalf("unproven verifier removed with argv=%q", command.argv)
+				}
+			}
+		})
+	}
+}
+
+func TestVerifyNetworkAdapterEmptyDoesNotRemoveMalformedInventory(t *testing.T) {
+	for testName, inventory := range map[string]string{
+		"short id":     "deadbeef\n",
+		"multiple ids": strings.Repeat("d", 64) + "\n" + strings.Repeat("e", 64) + "\n",
+	} {
+		t.Run(testName, func(t *testing.T) {
+			adapterSpec, cfg := validAdapterSpec(t)
+			adapterID := strings.Repeat("c", 64)
+			inspect := managedAdapterInspectJSON(adapterID, adapterSpec)
+			commands := &scriptedCommandRunner{results: []Result{
+				{Stdout: []byte(adapterID + "\n")},
+				{Stdout: []byte(inspect)},
+				{ExitCode: 125, Stderr: []byte("name conflict")},
+				{Stdout: []byte(inventory)},
+			}}
+			cli, err := NewDockerCLI(cfg, commands)
+			if err != nil {
+				t.Fatalf("NewDockerCLI: %v", err)
+			}
+			adapter, err := cli.CreateNetworkAdapter(context.Background(), adapterSpec)
+			if err != nil {
+				t.Fatalf("CreateNetworkAdapter: %v", err)
+			}
+			if _, err := cli.VerifyNetworkAdapterEmpty(
+				context.Background(),
+				adapter,
+				validVerifierSpec(adapter, adapterSpec),
+			); err == nil {
+				t.Fatal("VerifyNetworkAdapterEmpty accepted malformed inventory")
+			}
+			if len(commands.commands) != 4 {
+				t.Fatalf("malformed inventory reached cleanup: %q", commands.commands)
+			}
+		})
+	}
+}
+
+func verifierCleanupInspectJSON(
+	id string,
+	name string,
+	spec VerifierSpec,
+	operation string,
+) string {
+	document := []map[string]any{{
+		"Id":   id,
+		"Name": "/" + name,
+		"Config": map[string]any{
+			"Image":      spec.Image,
+			"Entrypoint": []string{verifierEntrypoint},
+			"Cmd":        []string{operation},
+			"Labels": map[string]string{
+				"io.portable-ghar.managed":          "true",
+				"io.portable-ghar.kind":             "network-verifier",
+				"io.portable-ghar.build-id":         spec.BuildID,
+				"io.portable-ghar.fleet-generation": fmt.Sprint(spec.FleetGeneration),
+				"io.portable-ghar.slot":             spec.SlotIdentity,
+			},
+		},
+	}}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }
 
 func TestVerifyNetworkEgressBindsBothNamespacesParserAndPolicy(t *testing.T) {

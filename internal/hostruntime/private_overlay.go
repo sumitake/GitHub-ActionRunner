@@ -17,6 +17,7 @@ import (
 const (
 	privateOverlaySchemaVersion = uint32(1)
 	privateOverlayDomain        = "portable-ghar-private-overlay-v1"
+	maxWatchdogRestartDeadline  = time.Minute
 )
 
 var ErrInvalidPrivateOverlay = errors.New("hostruntime: invalid private overlay")
@@ -816,8 +817,12 @@ func validFenceTimings(timings FenceTimingOverlay) bool {
 }
 
 func validWatchdogOverlay(watchdog WatchdogOverlay) bool {
+	restartDeadline, restartDeadlineOK := canonicalDuration(
+		watchdog.RestartDeadline,
+	)
 	return validCanonicalDuration(watchdog.Cadence) &&
-		validCanonicalDuration(watchdog.RestartDeadline) &&
+		restartDeadlineOK &&
+		restartDeadline <= maxWatchdogRestartDeadline &&
 		validCanonicalDuration(watchdog.ProcessGrace) &&
 		validCanonicalDuration(watchdog.HealthMaxAge) &&
 		watchdog.Logs.MaxBytes > 0 &&

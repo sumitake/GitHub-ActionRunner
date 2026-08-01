@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strconv"
 
 	"github.com/sumitake/portable-ghar/internal/linuxcap"
@@ -489,15 +490,28 @@ func (c *DockerCLI) runNetworkVerifier(
 		nil,
 		stdin,
 	)
-	absenceErr := c.proveVerifierGone(ctx, name)
-	if runErr != nil || result.ExitCode != 0 || result.Signaled ||
+	inventoryCtx, cancelInventory := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		cleanupTimeout,
+	)
+	residualID, inventoryErr := c.verifierContainerID(inventoryCtx, name)
+	cancelInventory()
+	if ctx.Err() != nil || runErr != nil || result.ExitCode != 0 || result.Signaled ||
 		result.StdoutTruncated || result.StderrTruncated ||
 		len(result.Stderr) != 0 ||
 		len(result.Stdout) == 0 ||
 		len(result.Stdout) > maxVerifierResultBytes ||
-		absenceErr != nil {
-		if absenceErr != nil {
-			_ = c.removeVerifier(ctx, name)
+		inventoryErr != nil || residualID != "" {
+		if inventoryErr == nil && residualID != "" {
+			_ = c.removeVerifier(ctx, verifierCleanupIdentity{
+				ContainerID:     residualID,
+				Name:            name,
+				Image:           spec.Image,
+				BuildID:         spec.BuildID,
+				FleetGeneration: spec.FleetGeneration,
+				SlotIdentity:    spec.SlotIdentity,
+				Operation:       operation,
+			})
 		}
 		return nil, errors.New("hostruntime: network verifier failed")
 	}
@@ -545,11 +559,22 @@ func (c *DockerCLI) proveVerifierGone(
 	ctx context.Context,
 	name string,
 ) error {
+	id, err := c.verifierContainerID(ctx, name)
+	if err != nil || id != "" {
+		return errors.New("hostruntime: network verifier absence unproven")
+	}
+	return nil
+}
+
+func (c *DockerCLI) verifierContainerID(
+	ctx context.Context,
+	name string,
+) (string, error) {
 	result, err := c.runner.Run(
 		ctx,
 		[]string{
-			c.cfg.DockerPath, "ps", "-a",
-			"--filter", "name=^/" + name + "$",
+			c.cfg.DockerPath, "ps", "-a", "--no-trunc",
+			"--filter", "name=^/" + regexp.QuoteMeta(name) + "$",
 			"--format", "{{.ID}}",
 		},
 		nil,
@@ -557,28 +582,107 @@ func (c *DockerCLI) proveVerifierGone(
 	)
 	if err != nil || result.ExitCode != 0 || result.Signaled ||
 		result.StdoutTruncated || result.StderrTruncated ||
-		len(result.Stdout) != 0 || len(result.Stderr) != 0 {
-		return errors.New("hostruntime: network verifier absence unproven")
+		len(result.Stderr) != 0 {
+		return "", errors.New("hostruntime: network verifier inventory failed")
 	}
-	return nil
+	if len(result.Stdout) == 0 {
+		return "", nil
+	}
+	id, err := parseContainerID(result.Stdout)
+	if err != nil {
+		return "", errors.New("hostruntime: network verifier inventory invalid")
+	}
+	return id, nil
 }
 
-func (c *DockerCLI) removeVerifier(parent context.Context, name string) error {
+type verifierCleanupIdentity struct {
+	ContainerID     string
+	Name            string
+	Image           string
+	BuildID         string
+	FleetGeneration uint64
+	SlotIdentity    string
+	Operation       string
+}
+
+type verifierCleanupInspect struct {
+	ID     string `json:"Id"`
+	Name   string `json:"Name"`
+	Config struct {
+		Image      string            `json:"Image"`
+		Labels     map[string]string `json:"Labels"`
+		Entrypoint []string          `json:"Entrypoint"`
+		Cmd        []string          `json:"Cmd"`
+	} `json:"Config"`
+}
+
+func (c *DockerCLI) removeVerifier(
+	parent context.Context,
+	expected verifierCleanupIdentity,
+) error {
 	ctx, cancel := context.WithTimeout(
 		context.WithoutCancel(parent),
 		cleanupTimeout,
 	)
 	defer cancel()
-	_, _ = c.runner.Run(
+	inspectResult, inspectErr := c.runner.Run(
 		ctx,
-		[]string{c.cfg.DockerPath, "rm", "-f", name},
+		[]string{
+			c.cfg.DockerPath,
+			"inspect",
+			"--type",
+			"container",
+			expected.ContainerID,
+		},
 		nil,
 		nil,
 	)
-	if err := c.proveVerifierGone(ctx, name); err != nil {
+	if inspectErr != nil || inspectResult.ExitCode != 0 ||
+		inspectResult.Signaled || inspectResult.StdoutTruncated ||
+		inspectResult.StderrTruncated || len(inspectResult.Stderr) != 0 {
+		return errors.New("hostruntime: network verifier cleanup inspection failed")
+	}
+	var documents []verifierCleanupInspect
+	if err := json.Unmarshal(inspectResult.Stdout, &documents); err != nil ||
+		len(documents) != 1 ||
+		!verifierCleanupInspectMatches(documents[0], expected) {
+		return errors.New("hostruntime: network verifier cleanup identity unproven")
+	}
+	removeResult, removeErr := c.runner.Run(
+		ctx,
+		[]string{c.cfg.DockerPath, "rm", "-f", expected.ContainerID},
+		nil,
+		nil,
+	)
+	if removeErr != nil || removeResult.ExitCode != 0 ||
+		removeResult.Signaled || removeResult.StdoutTruncated ||
+		removeResult.StderrTruncated || len(removeResult.Stderr) != 0 {
+		return errors.New("hostruntime: network verifier cleanup removal failed")
+	}
+	if err := c.proveVerifierGone(ctx, expected.Name); err != nil {
 		return errors.New("hostruntime: network verifier cleanup failed")
 	}
 	return nil
+}
+
+func verifierCleanupInspectMatches(
+	document verifierCleanupInspect,
+	expected verifierCleanupIdentity,
+) bool {
+	return document.ID == expected.ContainerID &&
+		document.Name == "/"+expected.Name &&
+		document.Config.Image == expected.Image &&
+		len(document.Config.Entrypoint) == 1 &&
+		document.Config.Entrypoint[0] == verifierEntrypoint &&
+		len(document.Config.Cmd) == 1 &&
+		document.Config.Cmd[0] == expected.Operation &&
+		equalStringMap(document.Config.Labels, map[string]string{
+			"io.portable-ghar.managed":          "true",
+			"io.portable-ghar.kind":             "network-verifier",
+			"io.portable-ghar.build-id":         expected.BuildID,
+			"io.portable-ghar.fleet-generation": strconv.FormatUint(expected.FleetGeneration, 10),
+			"io.portable-ghar.slot":             expected.SlotIdentity,
+		})
 }
 
 func verifierContainerName(nonce [32]byte, operation string) string {
