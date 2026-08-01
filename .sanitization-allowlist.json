@@ -1057,6 +1057,20 @@
     "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
   },
   {
+    "path": "cmd/portable-ghar-network-adapter/relay.go@68131d0cb61230e46a32f6e573c112bad4b51954",
+    "line": 42,
+    "rule": "IP001",
+    "sha256": "b786c176d47a83e7b4441a302ac696f316abe9f81f7cb4813fe99851d568d853",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay.go@68131d0cb61230e46a32f6e573c112bad4b51954",
+    "line": 47,
+    "rule": "IP001",
+    "sha256": "9cf3f9374331f40c39fdea72bc7d5036202e00a5e0cc3400a50ebbec8eadf6d4",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
     "path": "cmd/portable-ghar-network-adapter/relay.go@766de547dbfe427eedc30be339f70e58bcf1ecb4",
     "line": 50,
     "rule": "IP001",
@@ -1121,6 +1135,62 @@
   },
   {
     "path": "cmd/portable-ghar-network-adapter/relay_test.go@06cba8d20295948a7c1dd6406bb7ce50aeaf65ea",
+    "line": 90,
+    "rule": "IP001",
+    "sha256": "fae7866dd601a14984e982e03d6ab5acfbd630e201390d559c5bbf03e563ce4c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 133,
+    "rule": "IP001",
+    "sha256": "eb4c7b14607625fa0760c34b9645f3d450ea7c0aa07adedbaa80694d3e5e3b45",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 139,
+    "rule": "IP001",
+    "sha256": "91855c1978a4b257c9712748a1e7b4b820c08ae30f3c6e940b1c499457d81eea",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 140,
+    "rule": "IP001",
+    "sha256": "8600094ed00b7526ebb4fc1922306d1e1c72769f3cc4dc0567b47b3c424afd27",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 141,
+    "rule": "IP001",
+    "sha256": "dc55ef4f5d0f4f7c6295fdaf94c8409f06def6096dd6ab37addb78a3a36c5799",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 143,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 144,
+    "rule": "IP001",
+    "sha256": "0a1132e3a620339d93d5345885d858042fd8b88d1918b2a6fe335d8e7979920c",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
+    "line": 155,
+    "rule": "IP001",
+    "sha256": "f5e033b0b0539f383adb418a1338921a906fca0fdb26c0dc868166259abf6d30",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-network-adapter/relay_test.go@1e64400d93ec28a066e9bfb9b0500d405d658896",
     "line": 90,
     "rule": "IP001",
     "sha256": "fae7866dd601a14984e982e03d6ab5acfbd630e201390d559c5bbf03e563ce4c",
