@@ -390,7 +390,7 @@ func validControllerPrivateOverlay() hostruntime.PrivateOverlay {
 		ManagementTransport: hostruntime.ManagementTransportOverlay{
 			Mode:              "openssh-subsystem-v1",
 			OpenSSHBinary:     "/usr/bin/ssh",
-			Host:              "rhonas.example",
+			Host:              "target.example.invalid",
 			Port:              22,
 			User:              "portable_ghar",
 			KnownHostsFile:    "/Users/control/.ssh/known_hosts",

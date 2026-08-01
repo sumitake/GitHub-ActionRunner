@@ -559,7 +559,7 @@ func transportTestOverlay(
 	}
 	if err := os.WriteFile(
 		knownHosts,
-		[]byte("rhonas.example ssh-ed25519 test"),
+		[]byte("target.example.invalid ssh-ed25519 test"),
 		0o600,
 	); err != nil {
 		t.Fatalf("WriteFile(known hosts) error = %v", err)

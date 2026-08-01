@@ -809,11 +809,11 @@ GOCACHE=/private/tmp/portable-ghar-go-cache GOTOOLCHAIN=go1.26.5 \
 
 GOCACHE=/private/tmp/portable-ghar-go-cache GOTOOLCHAIN=go1.26.5 go vet ./...
 
-HOME=/private/tmp/portable-ghar-static-home GOPATH=/Users/josumi/go \
+HOME=/private/tmp/portable-ghar-static-home GOPATH="$(go env GOPATH)" \
   GOCACHE=/private/tmp/portable-ghar-go-cache GOTOOLCHAIN=go1.26.5 \
   go tool staticcheck ./...
 
-HOME=/private/tmp/portable-ghar-static-home GOPATH=/Users/josumi/go \
+HOME=/private/tmp/portable-ghar-static-home GOPATH="$(go env GOPATH)" \
   GOCACHE=/private/tmp/portable-ghar-go-cache GOTOOLCHAIN=go1.26.5 \
   go tool govulncheck ./...
 

@@ -656,14 +656,14 @@ pass.
     GOTOOLCHAIN=go1.26.5 \
     go vet ./...
   HOME=/private/tmp/portable-ghar-home \
-    GOPATH=/Users/josumi/go \
-    GOMODCACHE=/Users/josumi/go/pkg/mod \
+    GOPATH="$(go env GOPATH)" \
+    GOMODCACHE="$(go env GOMODCACHE)" \
     GOCACHE=/private/tmp/portable-ghar-gocache \
     GOTOOLCHAIN=go1.26.5 \
     go tool staticcheck ./...
   HOME=/private/tmp/portable-ghar-home \
-    GOPATH=/Users/josumi/go \
-    GOMODCACHE=/Users/josumi/go/pkg/mod \
+    GOPATH="$(go env GOPATH)" \
+    GOMODCACHE="$(go env GOMODCACHE)" \
     GOCACHE=/private/tmp/portable-ghar-gocache \
     GOTOOLCHAIN=go1.26.5 \
     go tool govulncheck ./...

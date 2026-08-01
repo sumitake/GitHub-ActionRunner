@@ -1340,7 +1340,7 @@ Run:
 
 ```bash
 HOME=/private/tmp/portable-ghar-task11-home \
-GOPATH=/Users/josumi/go GOPROXY=off GOSUMDB=off \
+GOPATH="$(go env GOPATH)" GOPROXY=off GOSUMDB=off \
 GOCACHE=/private/tmp/portable-ghar-task11-go-cache \
 GOTOOLCHAIN=go1.26.5 \
 go test ./internal/conformance ./tests/integration/testenv \
@@ -1404,7 +1404,7 @@ Run:
 
 ```bash
 HOME=/private/tmp/portable-ghar-task11-home \
-GOPATH=/Users/josumi/go GOPROXY=off GOSUMDB=off \
+GOPATH="$(go env GOPATH)" GOPROXY=off GOSUMDB=off \
 GOCACHE=/private/tmp/portable-ghar-task11-go-cache \
 GOTOOLCHAIN=go1.26.5 \
 go test ./internal/conformance ./tests/conformance -count=1
@@ -1457,7 +1457,7 @@ Run:
 
 ```bash
 HOME=/private/tmp/portable-ghar-task11-home \
-GOPATH=/Users/josumi/go GOPROXY=off GOSUMDB=off \
+GOPATH="$(go env GOPATH)" GOPROXY=off GOSUMDB=off \
 GOCACHE=/private/tmp/portable-ghar-task11-go-cache \
 GOTOOLCHAIN=go1.26.5 \
 go test ./internal/conformance ./internal/controller ./internal/hostruntime \
@@ -1496,7 +1496,7 @@ Run:
 
 ```bash
 HOME=/private/tmp/portable-ghar-task11-home \
-GOPATH=/Users/josumi/go GOPROXY=off GOSUMDB=off \
+GOPATH="$(go env GOPATH)" GOPROXY=off GOSUMDB=off \
 GOCACHE=/private/tmp/portable-ghar-task11-go-cache \
 GOTOOLCHAIN=go1.26.5 \
 go test ./tests/integration/testenv -run 'Test.*ConformanceInput' -count=1
@@ -1574,7 +1574,7 @@ exercise only injected fakes and perform no Docker or host action.
 
 ```bash
 HOME=/private/tmp/portable-ghar-task11-home \
-GOPATH=/Users/josumi/go GOPROXY=off GOSUMDB=off \
+GOPATH="$(go env GOPATH)" GOPROXY=off GOSUMDB=off \
 GOCACHE=/private/tmp/portable-ghar-task11-go-cache \
 GOTOOLCHAIN=go1.26.5 \
 go test ./tests/integration/testenv -count=1
@@ -1618,7 +1618,7 @@ On the development Mac run:
 
 ```bash
 HOME=/private/tmp/portable-ghar-task11-home \
-GOPATH=/Users/josumi/go GOPROXY=off GOSUMDB=off \
+GOPATH="$(go env GOPATH)" GOPROXY=off GOSUMDB=off \
 GOCACHE=/private/tmp/portable-ghar-task11-go-cache \
 GOTOOLCHAIN=go1.26.5 \
 go test -tags=integration ./tests/integration \
@@ -1733,7 +1733,7 @@ Prove:
 
 ```bash
 HOME=/private/tmp/portable-ghar-task11-home \
-GOPATH=/Users/josumi/go GOPROXY=off GOSUMDB=off \
+GOPATH="$(go env GOPATH)" GOPROXY=off GOSUMDB=off \
 GOCACHE=/private/tmp/portable-ghar-task11-go-cache \
 GOTOOLCHAIN=go1.26.5 \
 gofmt -w \
@@ -1746,14 +1746,14 @@ find tests/conformance tests/integration -type f -name '*.go' -print0 |
   xargs -0 gofmt -w
 
 HOME=/private/tmp/portable-ghar-task11-home \
-GOPATH=/Users/josumi/go GOPROXY=off GOSUMDB=off \
+GOPATH="$(go env GOPATH)" GOPROXY=off GOSUMDB=off \
 GOCACHE=/private/tmp/portable-ghar-task11-go-cache \
 GOTOOLCHAIN=go1.26.5 \
 go test ./internal/conformance ./internal/controller ./internal/hostruntime \
   ./tests/conformance ./tests/integration/testenv -count=1
 
 HOME=/private/tmp/portable-ghar-task11-home \
-GOPATH=/Users/josumi/go GOPROXY=off GOSUMDB=off \
+GOPATH="$(go env GOPATH)" GOPROXY=off GOSUMDB=off \
 GOCACHE=/private/tmp/portable-ghar-task11-go-cache \
 GOTOOLCHAIN=go1.26.5 \
 go test -tags=integration ./tests/integration ./tests/conformance -v -count=1
@@ -1766,13 +1766,13 @@ skip and no target-pass report.
 
 ```bash
 HOME=/private/tmp/portable-ghar-task11-home \
-GOPATH=/Users/josumi/go GOPROXY=off GOSUMDB=off \
+GOPATH="$(go env GOPATH)" GOPROXY=off GOSUMDB=off \
 GOCACHE=/private/tmp/portable-ghar-task11-go-cache \
 GOTOOLCHAIN=go1.26.5 \
 go test ./... -count=1
 
 HOME=/private/tmp/portable-ghar-task11-home \
-GOPATH=/Users/josumi/go GOPROXY=off GOSUMDB=off \
+GOPATH="$(go env GOPATH)" GOPROXY=off GOSUMDB=off \
 GOCACHE=/private/tmp/portable-ghar-task11-go-cache \
 GOTOOLCHAIN=go1.26.5 \
 go vet ./...

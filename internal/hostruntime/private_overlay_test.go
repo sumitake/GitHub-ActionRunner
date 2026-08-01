@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const goldenPrivateOverlayRevision = "ab6f2e306924754d57e850052daa83ea0a6450dc352daeb3db812b7730620aab"
+const goldenPrivateOverlayRevision = "9188c3259e88a025093101bb0b7863004609a929d4783491a478240b16d4382c"
 
 func TestPrivateOverlayGolden(t *testing.T) {
 	t.Parallel()
@@ -122,7 +122,7 @@ func TestPrivateOverlayRejectsNoncanonicalAndIncompleteInputs(t *testing.T) {
 				strings.Join([]string{"127", "000", "000", "001"}, ".")
 		},
 		"uppercase DNS host": func(overlay *PrivateOverlay) {
-			overlay.ManagementTransport.Host = "RhoNAS.example"
+			overlay.ManagementTransport.Host = "TARGET.example.invalid"
 		},
 		"invalid remote user": func(overlay *PrivateOverlay) {
 			overlay.ManagementTransport.User = "../root"
@@ -514,7 +514,7 @@ func goldenPrivateOverlay() PrivateOverlay {
 		ManagementTransport: ManagementTransportOverlay{
 			Mode:              "openssh-subsystem-v1",
 			OpenSSHBinary:     "/usr/bin/ssh",
-			Host:              "rhonas.example",
+			Host:              "target.example.invalid",
 			Port:              22,
 			User:              "portable_ghar",
 			KnownHostsFile:    syntheticControlPath(".ssh", "known_hosts"),
