@@ -8,7 +8,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"io"
+	"math"
 	"math/big"
 	"net"
 	"net/http"
@@ -45,16 +47,191 @@ func validDoHRuntimeConfig() DoHRuntimeConfig {
 
 func TestPermitSequencerIsSharedAcrossDoHEndpoints(t *testing.T) {
 	sequencer := NewPermitSequencer()
-	first, err := sequencer.next()
+	client := &fakePermitClient{}
+	first, err := sequencer.request(
+		context.Background(),
+		client,
+		DialPermitRequest{SlotID: 3, JobGeneration: 7, Class: DialClassDoH},
+	)
 	if err != nil {
-		t.Fatalf("first next: %v", err)
+		t.Fatalf("first request: %v", err)
 	}
-	second, err := sequencer.next()
+	second, err := sequencer.request(
+		context.Background(),
+		client,
+		DialPermitRequest{SlotID: 3, JobGeneration: 7, Class: DialClassDoH},
+	)
 	if err != nil {
-		t.Fatalf("second next: %v", err)
+		t.Fatalf("second request: %v", err)
 	}
-	if first != 1 || second != 2 {
-		t.Fatalf("sequences=(%d,%d), want (1,2)", first, second)
+	if first.number != 1 || second.number != 2 ||
+		len(client.requests) != 2 ||
+		client.requests[0].Sequence != 1 ||
+		client.requests[1].Sequence != 2 {
+		t.Fatalf("permits=(%d,%d) requests=%#v", first.number, second.number, client.requests)
+	}
+}
+
+func TestPermitSequencerBurnsFailedSubmission(t *testing.T) {
+	sequencer := NewPermitSequencer()
+	client := &fakePermitClient{err: errors.New("synthetic permit failure")}
+	request := DialPermitRequest{
+		SlotID:        3,
+		JobGeneration: 7,
+		Class:         DialClassDoH,
+	}
+	if _, err := sequencer.request(context.Background(), client, request); err == nil {
+		t.Fatal("failed permit submission returned nil error")
+	}
+	client.err = nil
+	permit, err := sequencer.request(context.Background(), client, request)
+	if err != nil {
+		t.Fatalf("second permit submission: %v", err)
+	}
+	if permit.number != 2 || len(client.requests) != 2 ||
+		client.requests[0].Sequence != 1 ||
+		client.requests[1].Sequence != 2 {
+		t.Fatalf("permit=%d requests=%#v", permit.number, client.requests)
+	}
+}
+
+func TestPermitSequencerOverflowDoesNotMutateOrSubmit(t *testing.T) {
+	sequencer := NewPermitSequencer()
+	sequencer.sequence = PermitSequence(math.MaxUint64)
+	client := &fakePermitClient{}
+	request := DialPermitRequest{
+		SlotID:        3,
+		JobGeneration: 7,
+		Class:         DialClassDoH,
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := sequencer.request(
+			context.Background(),
+			client,
+			request,
+		); !errors.Is(err, ErrPermitSequence) {
+			t.Fatalf("overflow attempt %d error = %v", attempt, err)
+		}
+	}
+	if sequencer.sequence != PermitSequence(math.MaxUint64) ||
+		len(client.requests) != 0 {
+		t.Fatalf("sequence=%d requests=%#v", sequencer.sequence, client.requests)
+	}
+}
+
+func TestPermitSequencerRejectsUninitializedGate(t *testing.T) {
+	if _, err := (&PermitSequencer{}).request(
+		context.Background(),
+		&fakePermitClient{},
+		DialPermitRequest{},
+	); !errors.Is(err, ErrPermitSequence) {
+		t.Fatalf("uninitialized request error = %v", err)
+	}
+	graph, _, err := Compile(validPolicyManifest())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if _, err := NewDoHResolverWithSequencer(
+		graph,
+		0,
+		x509.NewCertPool(),
+		&fakeLiteralDialer{},
+		&fakePermitClient{},
+		3,
+		7,
+		validDoHRuntimeConfig(),
+		&PermitSequencer{},
+	); err == nil {
+		t.Fatal("NewDoHResolverWithSequencer accepted an uninitialized sequencer")
+	}
+}
+
+func TestDoHPermitSequencerSerializesSubmissionAndSkipsCanceledWaiters(
+	t *testing.T,
+) {
+	permits := &blockingPermitClient{
+		firstEntered:  make(chan struct{}),
+		secondEntered: make(chan struct{}),
+		releaseFirst:  make(chan struct{}),
+	}
+	connector := &dohConnector{
+		endpoint: DoHEndpoint{
+			ServerName: "resolver.example",
+			Bootstrap:  []netip.Addr{publicV4(8, 8, 8, 8)},
+			Path:       "/dns-query",
+		},
+		roots:      x509.NewCertPool(),
+		literals:   &fakeLiteralDialer{},
+		permits:    permits,
+		slot:       3,
+		generation: 7,
+		config:     validDoHRuntimeConfig(),
+		sequencer:  NewPermitSequencer(),
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, dialErr := connector.DialTLSContext(
+			context.Background(),
+			"tcp",
+			"resolver.example:443",
+		)
+		firstDone <- dialErr
+	}()
+	select {
+	case <-permits.firstEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first permit request did not enter")
+	}
+
+	secondContext, cancelSecond := context.WithCancel(context.Background())
+	cancelSecond()
+	secondDone := make(chan error, 1)
+	go func() {
+		_, dialErr := connector.DialTLSContext(
+			secondContext,
+			"tcp",
+			"resolver.example:443",
+		)
+		secondDone <- dialErr
+	}()
+	select {
+	case dialErr := <-secondDone:
+		if dialErr == nil {
+			t.Fatal("canceled second DialTLSContext returned nil error")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled second DialTLSContext did not return")
+	}
+	secondSubmitted := false
+	select {
+	case <-permits.secondEntered:
+		secondSubmitted = true
+	default:
+	}
+
+	close(permits.releaseFirst)
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("first DialTLSContext did not return after release")
+	}
+	_, _ = connector.DialTLSContext(
+		context.Background(),
+		"tcp",
+		"resolver.example:443",
+	)
+
+	permits.mu.Lock()
+	requests := append([]DialPermitRequest(nil), permits.requests...)
+	permits.mu.Unlock()
+	if secondSubmitted {
+		t.Fatal("canceled queued caller submitted sequence 2 before sequence 1 completed")
+	}
+	if len(requests) != 2 ||
+		requests[0].Sequence != 1 ||
+		requests[1].Sequence != 2 {
+		t.Fatalf("permit requests = %#v, want sequences 1 and 2", requests)
 	}
 }
 

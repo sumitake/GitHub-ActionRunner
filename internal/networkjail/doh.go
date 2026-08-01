@@ -17,7 +17,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -75,12 +74,14 @@ type DoHResolver struct {
 // DoH endpoint for one slot/job binding. Endpoint failover must never reset or
 // fork the durable permit sequence.
 type PermitSequencer struct {
-	mu       sync.Mutex
+	gate     chan struct{}
 	sequence PermitSequence
 }
 
 func NewPermitSequencer() *PermitSequencer {
-	return &PermitSequencer{}
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{}
+	return &PermitSequencer{gate: gate}
 }
 
 func NewDoHResolver(
@@ -120,7 +121,8 @@ func NewDoHResolverWithSequencer(
 	if graph.digest == (Digest{}) || endpointIndex < 0 ||
 		endpointIndex >= len(graph.manifest.DoHBootstrap) ||
 		roots == nil || literals == nil || permits == nil ||
-		slot == 0 || generation == 0 || sequencer == nil {
+		slot == 0 || generation == 0 || sequencer == nil ||
+		cap(sequencer.gate) != 1 {
 		return nil, errors.New("networkjail: doh resolver unavailable")
 	}
 	if err := config.validate(); err != nil {
@@ -301,16 +303,15 @@ func (connector *dohConnector) DialTLSContext(
 		return nil, errors.New("networkjail: doh transport target invalid")
 	}
 	for _, bootstrap := range connector.endpoint.Bootstrap {
-		sequence, err := connector.sequencer.next()
-		if err != nil {
-			return nil, err
-		}
-		permit, err := connector.permits.Request(ctx, DialPermitRequest{
-			SlotID:        connector.slot,
-			JobGeneration: connector.generation,
-			Class:         DialClassDoH,
-			Sequence:      sequence,
-		})
+		permit, err := connector.sequencer.request(
+			ctx,
+			connector.permits,
+			DialPermitRequest{
+				SlotID:        connector.slot,
+				JobGeneration: connector.generation,
+				Class:         DialClassDoH,
+			},
+		)
 		if err != nil || !permit.validFor(connector.slot, DialClassDoH) {
 			return nil, errors.New("networkjail: doh permit unavailable")
 		}
@@ -348,17 +349,34 @@ func (connector *dohConnector) DialTLSContext(
 	return nil, errors.New("networkjail: doh bootstrap unavailable")
 }
 
-func (sequencer *PermitSequencer) next() (PermitSequence, error) {
-	if sequencer == nil {
-		return 0, ErrPermitSequence
+func (sequencer *PermitSequencer) request(
+	ctx context.Context,
+	client DialPermitClient,
+	request DialPermitRequest,
+) (Permit, error) {
+	// The client is a bounded local-IPC boundary. It must honor ctx and must
+	// not re-enter this sequencer; allocation and submission stay atomic so a
+	// later sequence can never reach the durable authority first.
+	if sequencer == nil || cap(sequencer.gate) != 1 || client == nil {
+		return Permit{}, ErrPermitSequence
 	}
-	sequencer.mu.Lock()
-	defer sequencer.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return Permit{}, ctx.Err()
+	case <-sequencer.gate:
+	}
+	defer func() {
+		sequencer.gate <- struct{}{}
+	}()
+	if err := ctx.Err(); err != nil {
+		return Permit{}, err
+	}
 	if sequencer.sequence == PermitSequence(math.MaxUint64) {
-		return 0, ErrPermitSequence
+		return Permit{}, ErrPermitSequence
 	}
 	sequencer.sequence++
-	return sequencer.sequence, nil
+	request.Sequence = sequencer.sequence
+	return client.Request(ctx, request)
 }
 
 func rejectDoHPlainDial(

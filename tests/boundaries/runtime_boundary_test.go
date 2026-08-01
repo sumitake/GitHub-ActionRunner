@@ -166,6 +166,41 @@ func (d *BrokerDialer) DialFrame() {
 			t.Fatal("comment-only pre-permit ordering was accepted")
 		}
 	})
+	t.Run("doh_submission_after_dial", func(t *testing.T) {
+		source := []byte(`package p
+func (d *dohConnector) DialTLSContext() {
+	d.literals.DialLiteral()
+	d.sequencer.request()
+}
+func (s *PermitSequencer) request() {
+	request.Sequence = s.sequence
+	client.Request()
+}`)
+		parsed, err := parseGo("internal/networkjail/doh.go", source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(dohDialIssues(parsed)) == 0 {
+			t.Fatal("post-dial DoH permit submission was accepted")
+		}
+	})
+	t.Run("doh_helper_without_permit_submission", func(t *testing.T) {
+		source := []byte(`package p
+func (d *dohConnector) DialTLSContext() {
+	d.sequencer.request()
+	d.literals.DialLiteral()
+}
+func (s *PermitSequencer) request() {
+	request.Sequence = s.sequence
+}`)
+		parsed, err := parseGo("internal/networkjail/doh.go", source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(dohDialIssues(parsed)) == 0 {
+			t.Fatal("DoH helper without permit submission was accepted")
+		}
+	})
 	t.Run("runner_docker_surface", func(t *testing.T) {
 		tokens := []string{
 			"--network",
@@ -1248,14 +1283,8 @@ func checkNetworkAndPermit(t *testing.T, production []parsedGoFile) {
 	}
 
 	doh := findParsed(t, production, "internal/networkjail/doh.go")
-	dohPermit := selectorCallPositions(doh, "DialTLSContext", "Request")
-	dohDial := selectorCallPositions(doh, "DialTLSContext", "DialLiteral")
-	if len(dohPermit) != 1 || len(dohDial) != 1 ||
-		dohPermit[0] > dohDial[0] {
-		t.Error("DoH kernel dial is not ordered after permit consumption")
-	}
-	if functionContainsGoStatement(doh, "DialTLSContext") {
-		t.Error("DoH permit/dial path contains parallel fallback")
+	for _, issue := range dohDialIssues(doh) {
+		t.Error(issue)
 	}
 
 	for _, name := range []string{
@@ -1372,6 +1401,29 @@ func brokerDialIssues(file parsedGoFile) []string {
 		}
 		return true
 	})
+	return issues
+}
+
+func dohDialIssues(file parsedGoFile) []string {
+	var issues []string
+	submissions := selectorCallPositions(file, "DialTLSContext", "request")
+	dials := selectorCallPositions(file, "DialTLSContext", "DialLiteral")
+	if len(submissions) != 1 || len(dials) != 1 || submissions[0] > dials[0] {
+		issues = append(issues, "DoH kernel dial is not ordered after permit submission")
+	}
+	if functionContainsGoStatement(file, "DialTLSContext") {
+		issues = append(issues, "DoH permit/dial path contains parallel fallback")
+	}
+
+	permitRequests := selectorCallPositions(file, "request", "Request")
+	sequenceAssignments := selectorAssignmentPositions(file, "request", "Sequence")
+	if len(permitRequests) != 1 || len(sequenceAssignments) != 1 ||
+		sequenceAssignments[0] > permitRequests[0] {
+		issues = append(issues, "DoH sequencer does not assign then submit one permit")
+	}
+	if functionContainsGoStatement(file, "request") {
+		issues = append(issues, "DoH permit submission helper contains parallel work")
+	}
 	return issues
 }
 
@@ -1907,6 +1959,35 @@ func selectorCallPositions(
 		selector, ok := call.Fun.(*ast.SelectorExpr)
 		if ok && selector.Sel.Name == selectorName {
 			positions = append(positions, call.Pos())
+		}
+		return true
+	})
+	return positions
+}
+
+func selectorAssignmentPositions(
+	file parsedGoFile,
+	functionName string,
+	selectorName string,
+) []token.Pos {
+	function, ok := functionDeclaration(file, functionName)
+	if !ok {
+		return nil
+	}
+	var positions []token.Pos
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		if _, nested := node.(*ast.FuncLit); nested {
+			return false
+		}
+		assignment, ok := node.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for _, expression := range assignment.Lhs {
+			selector, ok := expression.(*ast.SelectorExpr)
+			if ok && selector.Sel.Name == selectorName {
+				positions = append(positions, expression.Pos())
+			}
 		}
 		return true
 	})
