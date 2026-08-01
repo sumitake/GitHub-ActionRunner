@@ -169,7 +169,7 @@ func TestProtocolRoundTripsProveStageAndInvoke(t *testing.T) {
 				t.Fatalf("NewInvokeRequest() error = %v", requestErr)
 			}
 			roundTripRequest(t, request)
-			proof := target.ProofDigest
+			proof := strings.Repeat("c", 64)
 			result := hostruntime.HostActionResult{
 				SchemaVersion:     1,
 				Status:            hostruntime.HostActionComplete,
@@ -184,6 +184,16 @@ func TestProtocolRoundTripsProveStageAndInvoke(t *testing.T) {
 				t.Fatalf("NewInvokeResponse() error = %v", responseErr)
 			}
 			roundTripResponse(t, response, request)
+			if response.TargetProofDigest != target.ProofDigest ||
+				response.Invoke == nil ||
+				response.Invoke.TargetProofDigest == nil ||
+				*response.Invoke.TargetProofDigest != proof {
+				t.Fatalf(
+					"invoke response digests = envelope %q result %#v",
+					response.TargetProofDigest,
+					response.Invoke,
+				)
+			}
 		})
 	}
 }

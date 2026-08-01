@@ -509,9 +509,7 @@ func validResponseAgainstRequest(
 		if response.Invoke == nil ||
 			response.TargetProofDigest != request.TargetProofDigest ||
 			response.Invoke.Status != hostruntime.HostActionComplete ||
-			response.Invoke.TargetProofDigest == nil ||
-			*response.Invoke.TargetProofDigest !=
-				request.TargetProofDigest {
+			response.Invoke.TargetProofDigest == nil {
 			return false
 		}
 		_, _, err := hostruntime.MarshalHostActionResult(*response.Invoke)

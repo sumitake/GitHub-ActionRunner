@@ -65,6 +65,36 @@ type fakePermitClient struct {
 	trace    *[]string
 }
 
+type blockingPermitClient struct {
+	mu            sync.Mutex
+	requests      []DialPermitRequest
+	firstEntered  chan struct{}
+	secondEntered chan struct{}
+	releaseFirst  chan struct{}
+}
+
+func (client *blockingPermitClient) Request(
+	_ context.Context,
+	request DialPermitRequest,
+) (Permit, error) {
+	client.mu.Lock()
+	client.requests = append(client.requests, request)
+	call := len(client.requests)
+	client.mu.Unlock()
+	switch call {
+	case 1:
+		close(client.firstEntered)
+		<-client.releaseFirst
+	case 2:
+		close(client.secondEntered)
+	}
+	return Permit{
+		slot:   request.SlotID,
+		class:  request.Class,
+		number: uint64(request.Sequence),
+	}, nil
+}
+
 func (client *fakePermitClient) Request(
 	_ context.Context,
 	request DialPermitRequest,
@@ -209,6 +239,86 @@ func TestBrokerDialerPermitFailurePreventsKernelDial(t *testing.T) {
 	}
 	if len(literals.calls) != 0 {
 		t.Fatalf("kernel dials after permit failure = %d, want 0", len(literals.calls))
+	}
+}
+
+func TestBrokerDialerSerializesPermitSequenceAllocationAndSubmission(
+	t *testing.T,
+) {
+	graph, _, err := Compile(validPolicyManifest())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	literal := publicV4(8, 8, 8, 8)
+	permits := &blockingPermitClient{
+		firstEntered:  make(chan struct{}),
+		secondEntered: make(chan struct{}),
+		releaseFirst:  make(chan struct{}),
+	}
+	dialer, err := NewBrokerDialer(
+		graph,
+		3,
+		7,
+		&fakeResolver{},
+		&fakeLiteralDialer{},
+		permits,
+	)
+	if err != nil {
+		t.Fatalf("NewBrokerDialer: %v", err)
+	}
+	frame, err := EncodeDialRequest(DialRequest{
+		Host: literal.String(),
+		Port: 443,
+	})
+	if err != nil {
+		t.Fatalf("EncodeDialRequest: %v", err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		connection, dialErr := dialer.DialFrame(context.Background(), frame)
+		if connection != nil {
+			_ = connection.Close()
+		}
+		firstDone <- dialErr
+	}()
+	<-permits.firstEntered
+
+	secondStarted := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		close(secondStarted)
+		connection, dialErr := dialer.DialFrame(context.Background(), frame)
+		if connection != nil {
+			_ = connection.Close()
+		}
+		secondDone <- dialErr
+	}()
+	<-secondStarted
+	select {
+	case <-permits.secondEntered:
+		close(permits.releaseFirst)
+		t.Fatal("second permit request entered before sequence 1 completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(permits.releaseFirst)
+
+	for index, done := range []<-chan error{firstDone, secondDone} {
+		select {
+		case dialErr := <-done:
+			if dialErr != nil {
+				t.Fatalf("DialFrame[%d] error = %v", index, dialErr)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("DialFrame[%d] did not complete", index)
+		}
+	}
+	permits.mu.Lock()
+	defer permits.mu.Unlock()
+	if len(permits.requests) != 2 ||
+		permits.requests[0].Sequence != 1 ||
+		permits.requests[1].Sequence != 2 {
+		t.Fatalf("permit requests = %#v", permits.requests)
 	}
 }
 
