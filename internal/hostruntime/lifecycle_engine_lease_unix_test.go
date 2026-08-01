@@ -40,6 +40,7 @@ func TestLifecycleEngineExecuteRejectsClosedLeaseBeforeEffects(t *testing.T) {
 			if err := unix.Close(lease.fd); err != nil {
 				return nil, err
 			}
+			lease.fd = -1
 			return lease, nil
 		},
 	}
