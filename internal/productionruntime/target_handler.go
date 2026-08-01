@@ -494,12 +494,11 @@ func inspectHostTargetState(
 		return hostTargetState{}, ErrProtocol
 	}
 	if snapshot.Header.ActiveFleet == fleetfence.FleetPortable {
-		manifest, _, err := hostruntime.ParseRuntimeManifest(
+		_, parsedDigest, err := hostruntime.ParseRuntimeManifest(
 			current.manifestDocument,
 			maximumReleaseManifestBytes,
 		)
-		if err != nil ||
-			manifest.FleetGeneration != snapshot.Header.Generation {
+		if err != nil || parsedDigest != current.manifestDigest {
 			return hostTargetState{}, ErrProtocol
 		}
 	}
@@ -548,10 +547,11 @@ func sealTargetProofForState(
 		proof.FenceGeneration = state.generation
 		proof.ActiveFleet = state.activeFleet
 	case state.activeFleet == fleetfence.FleetLegacy:
-		// Legacy normalization requires a separate, positively verified
-		// authority that is intentionally not inferred from the portable
-		// release state.
-		return cli.TargetProof{}, ErrProtocol
+		// The retained Portable selection is inventory, not legacy
+		// normalization authority. It is sufficient only to bind a closed
+		// retained-state uninstall request.
+		proof.FenceGeneration = state.generation
+		proof.ActiveFleet = state.activeFleet
 	default:
 		return cli.TargetProof{}, ErrProtocol
 	}
@@ -873,6 +873,24 @@ func portableContinuationMatchesLiveState(
 		case hostruntime.OperationPhaseVerified,
 			hostruntime.OperationPhaseComplete:
 			return *currentDigest == *binding.TargetManifestDigest
+		case hostruntime.OperationPhaseCUPreStarted,
+			hostruntime.OperationPhaseCUPreCandidateStopped,
+			hostruntime.OperationPhaseCUPreCandidateRemoved,
+			hostruntime.OperationPhaseCUPrePriorSelectionProven,
+			hostruntime.OperationPhaseCUPrePriorDisabledProven,
+			hostruntime.OperationPhaseCompUpgradePrior,
+			hostruntime.OperationPhaseCUSelectPriorObserverStarted,
+			hostruntime.OperationPhaseCUSelectPriorZeroProven,
+			hostruntime.OperationPhaseCUSelectCandidateRemoved,
+			hostruntime.OperationPhaseCompUpgradeRestored:
+			return *currentDigest == *binding.PriorManifestDigest
+		case hostruntime.OperationPhaseCUSelectStarted,
+			hostruntime.OperationPhaseCUSelectObserverStopped,
+			hostruntime.OperationPhaseCUSelectQuiescenceProven:
+			return *currentDigest == *binding.TargetManifestDigest
+		case hostruntime.OperationPhaseCUSelectPriorRestored:
+			return *currentDigest == *binding.PriorManifestDigest ||
+				*currentDigest == *binding.TargetManifestDigest
 		default:
 			return false
 		}
@@ -901,6 +919,29 @@ func greenfieldContinuationMatchesLiveState(
 	case hostruntime.OperationPhaseVerified,
 		hostruntime.OperationPhaseComplete:
 		return currentDigest != nil &&
+			*currentDigest == targetManifestDigest
+	case hostruntime.OperationPhaseCGPreStarted,
+		hostruntime.OperationPhaseCGPreCandidateStopped,
+		hostruntime.OperationPhaseCGPreCandidateRemoved,
+		hostruntime.OperationPhaseCGPreAbsenceProven,
+		hostruntime.OperationPhaseCompGreenfieldAbsent,
+		hostruntime.OperationPhaseCGFenceStarted,
+		hostruntime.OperationPhaseCGFenceObserverStopped,
+		hostruntime.OperationPhaseCGFenceQuiescenceProven,
+		hostruntime.OperationPhaseCGFenceNone,
+		hostruntime.OperationPhaseCGFenceCandidateRemoved,
+		hostruntime.OperationPhaseCompGreenfieldNone,
+		hostruntime.OperationPhaseCGSelectNone,
+		hostruntime.OperationPhaseCGSelectCandidateRemoved,
+		hostruntime.OperationPhaseCompGreenfieldSelected:
+		return currentDigest == nil
+	case hostruntime.OperationPhaseCGSelectStarted,
+		hostruntime.OperationPhaseCGSelectObserverStopped,
+		hostruntime.OperationPhaseCGSelectQuiescenceProven:
+		return currentDigest != nil &&
+			*currentDigest == targetManifestDigest
+	case hostruntime.OperationPhaseCGSelectCurrentRemoved:
+		return currentDigest == nil ||
 			*currentDigest == targetManifestDigest
 	default:
 		return false

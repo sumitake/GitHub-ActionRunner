@@ -2,8 +2,9 @@
 Description=Portable GHAR disabled-only watchdog cycle
 After=local-fs.target
 RequiresMountsFor=/ABSOLUTE/PORTABLE_GHAR/STATE
-ConditionPathIsRegular=/ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json
-ConditionPathIsRegular=/ABSOLUTE/PORTABLE_GHAR/RELEASE/runtime-manifest.json
+ConditionPathExists=/ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json
+ConditionPathExists=/ABSOLUTE/PORTABLE_GHAR/RELEASE/runtime-manifest.json
+ConditionFileIsExecutable=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-watchdog
 
 [Service]
 Type=oneshot

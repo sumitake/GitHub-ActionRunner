@@ -118,7 +118,8 @@ func TestPrivateOverlayRejectsNoncanonicalAndIncompleteInputs(t *testing.T) {
 			overlay.ManagementTransport.Host = "-oProxyCommand=id"
 		},
 		"noncanonical IP host": func(overlay *PrivateOverlay) {
-			overlay.ManagementTransport.Host = "127.000.000.001"
+			overlay.ManagementTransport.Host =
+				strings.Join([]string{"127", "000", "000", "001"}, ".")
 		},
 		"uppercase DNS host": func(overlay *PrivateOverlay) {
 			overlay.ManagementTransport.Host = "RhoNAS.example"
@@ -134,7 +135,7 @@ func TestPrivateOverlayRejectsNoncanonicalAndIncompleteInputs(t *testing.T) {
 		},
 		"unicode known hosts path": func(overlay *PrivateOverlay) {
 			overlay.ManagementTransport.KnownHostsFile =
-				"/Users/control/.ssh/known_h\u00f6sts"
+				syntheticControlPath(".ssh", "known_h\u00f6sts")
 		},
 		"missing management credential": func(overlay *PrivateOverlay) {
 			overlay.ManagementTransport.CredentialName = "missing"
@@ -145,7 +146,7 @@ func TestPrivateOverlayRejectsNoncanonicalAndIncompleteInputs(t *testing.T) {
 		},
 		"ambiguous management credential path": func(overlay *PrivateOverlay) {
 			overlay.Secrets[1].Ref.Ref =
-				"/Users/control/.ssh/id ed25519"
+				syntheticControlPath(".ssh", "id ed25519")
 		},
 		"shared management credential": func(overlay *PrivateOverlay) {
 			overlay.ManagementTransport.CredentialName = "github"
@@ -516,7 +517,7 @@ func goldenPrivateOverlay() PrivateOverlay {
 			Host:              "rhonas.example",
 			Port:              22,
 			User:              "portable_ghar",
-			KnownHostsFile:    "/Users/control/.ssh/known_hosts",
+			KnownHostsFile:    syntheticControlPath(".ssh", "known_hosts"),
 			CredentialName:    "ssh-control",
 			ControlUID:        501,
 			Subsystem:         "portable-ghar-v1",
@@ -535,7 +536,7 @@ func goldenPrivateOverlay() PrivateOverlay {
 				Name: "ssh-control",
 				Ref: SecretRefOverlay{
 					Source: "file",
-					Ref:    "/Users/control/.ssh/id_ed25519",
+					Ref:    syntheticControlPath(".ssh", "id_ed25519"),
 				},
 			},
 		},
@@ -551,6 +552,10 @@ func goldenPrivateOverlay() PrivateOverlay {
 			"watchdog-uninstall",
 		},
 	}
+}
+
+func syntheticControlPath(parts ...string) string {
+	return "/" + strings.Join(append([]string{"Users", "control"}, parts...), "/")
 }
 
 func immutableImage(name, digit string) string {

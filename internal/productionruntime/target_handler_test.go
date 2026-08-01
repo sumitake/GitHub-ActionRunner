@@ -504,6 +504,49 @@ func TestInspectHostTargetStateDistinguishesGreenfieldAndPortable(
 		*state.currentDigest != manifestDigest {
 		t.Fatalf("portable state = %#v, %v", state, err)
 	}
+
+	// The manifest generation is the immutable install epoch. A suspend and
+	// resume advance the live ownership fence while retaining this exact
+	// release, so target inspection must bind the live fence independently.
+	fence, err = fleetfence.OpenStore(fleetfence.StoreConfig{
+		Root:             fenceRoot,
+		Identity:         targetTestIdentity{},
+		Now:              time.Now,
+		LockPollInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("fleetfence.OpenStore(resume) error = %v", err)
+	}
+	for _, transition := range []fleetfence.HandoffRequest{
+		{
+			From:               fleetfence.FleetPortable,
+			To:                 fleetfence.FleetNone,
+			ExpectedGeneration: 1,
+		},
+		{
+			From:               fleetfence.FleetNone,
+			To:                 fleetfence.FleetPortable,
+			ExpectedGeneration: 2,
+		},
+	} {
+		transition.OperationID = fleetfence.HandoffOperationID(
+			transition.ExpectedGeneration,
+			transition.From,
+			transition.To,
+		)
+		if _, err := fence.Handoff(ctx, transition); err != nil {
+			t.Fatalf("Handoff(%s->%s) error = %v", transition.From, transition.To, err)
+		}
+	}
+	if err := fence.Close(); err != nil {
+		t.Fatalf("fence.Close(resume) error = %v", err)
+	}
+	state, err = inspectHostTargetState(ctx, overlay)
+	if err != nil || !state.fencePresent || state.generation != 3 ||
+		state.activeFleet != fleetfence.FleetPortable ||
+		state.currentDigest == nil || *state.currentDigest != manifestDigest {
+		t.Fatalf("resumed portable state = %#v, %v", state, err)
+	}
 }
 
 func TestInspectHostTargetStateReportsIncompletePostFenceState(
@@ -691,6 +734,137 @@ func TestReleaseBundleStoreFailsClosedOnAmbiguousSelection(t *testing.T) {
 	}
 }
 
+func TestReleaseBundleStoreClearsOnlyExactCurrentSelection(t *testing.T) {
+	store, manifestDigest, revision := selectedReleaseBundleFixture(t)
+	foreignDigest := strings.Repeat("f", 64)
+
+	if err := store.ClearCurrent(foreignDigest, revision); !errors.Is(
+		err,
+		ErrReleaseBundle,
+	) {
+		t.Fatalf("ClearCurrent(foreign) error = %v", err)
+	}
+	if current, present, err := store.Current(); err != nil || !present ||
+		current.manifestDigest != manifestDigest {
+		t.Fatalf("Current() after foreign clear = (%#v, %t, %v)", current, present, err)
+	}
+
+	if err := store.ClearCurrent(manifestDigest, revision); err != nil {
+		t.Fatalf("ClearCurrent(exact) error = %v", err)
+	}
+	if _, present, err := store.Current(); err != nil || present {
+		t.Fatalf("Current() after exact clear = (_, %t, %v)", present, err)
+	}
+	if err := store.ClearCurrent(manifestDigest, revision); err != nil {
+		t.Fatalf("ClearCurrent(idempotent) error = %v", err)
+	}
+}
+
+func TestReleaseBundleStoreRestoresOnlyExactImmutableRelease(t *testing.T) {
+	store, manifestDigest, revision := selectedReleaseBundleFixture(t)
+	if err := store.ClearCurrent(manifestDigest, revision); err != nil {
+		t.Fatalf("ClearCurrent() error = %v", err)
+	}
+	if err := store.stagingRoot.RemoveAll(manifestDigest); err != nil ||
+		syncReleaseRoot(store.stagingRoot) != nil {
+		t.Fatalf("remove staged bundle error = %v", err)
+	}
+	if err := store.SelectReleased(
+		manifestDigest,
+		strings.Repeat("f", 64),
+	); !errors.Is(err, ErrReleaseBundle) {
+		t.Fatalf("SelectReleased(foreign) error = %v", err)
+	}
+	if err := store.SelectReleased(manifestDigest, revision); err != nil {
+		t.Fatalf("SelectReleased(exact) error = %v", err)
+	}
+	current, present, err := store.Current()
+	if err != nil || !present || current.manifestDigest != manifestDigest ||
+		current.overlayRevision != revision {
+		t.Fatalf("Current() = (%#v, %t, %v)", current, present, err)
+	}
+}
+
+func TestReleaseBundleStoreRemovesOnlyUnselectedExactCandidate(t *testing.T) {
+	store, manifestDigest, revision := selectedReleaseBundleFixture(t)
+
+	if err := store.RemoveCandidate(manifestDigest, revision); !errors.Is(
+		err,
+		ErrReleaseBundle,
+	) {
+		t.Fatalf("RemoveCandidate(selected) error = %v", err)
+	}
+	if err := store.ClearCurrent(manifestDigest, revision); err != nil {
+		t.Fatalf("ClearCurrent() error = %v", err)
+	}
+	if err := store.RemoveCandidate(manifestDigest, revision); err != nil {
+		t.Fatalf("RemoveCandidate(exact) error = %v", err)
+	}
+	if _, present, err := store.InspectStaged(
+		manifestDigest,
+		revision,
+	); err != nil || present {
+		t.Fatalf("InspectStaged() after removal = (_, %t, %v)", present, err)
+	}
+	if _, present, err := store.InspectReleased(
+		manifestDigest,
+		revision,
+	); err != nil || present {
+		t.Fatalf("InspectReleased() after removal = (_, %t, %v)", present, err)
+	}
+	if err := store.RemoveCandidate(manifestDigest, revision); err != nil {
+		t.Fatalf("RemoveCandidate(idempotent) error = %v", err)
+	}
+}
+
+func selectedReleaseBundleFixture(
+	t *testing.T,
+) (*releaseBundleStore, string, string) {
+	t.Helper()
+	root := t.TempDir()
+	stagingRoot := filepath.Join(root, "staging")
+	releaseRoot := filepath.Join(root, "releases")
+	for _, path := range []string{stagingRoot, releaseRoot} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+	overlay, _ := protocolTestOverlay(t)
+	manifestDocument, manifestDigest, err :=
+		hostruntime.MarshalRuntimeManifest(protocolTestManifest())
+	if err != nil {
+		t.Fatalf("MarshalRuntimeManifest() error = %v", err)
+	}
+	overlay.Paths.StagingRoot = stagingRoot
+	overlay.Paths.ReleaseRoot = releaseRoot
+	overlay.Manifest.Digest = manifestDigest
+	overlayDocument, revision, err :=
+		hostruntime.MarshalPrivateOverlay(overlay)
+	if err != nil {
+		t.Fatalf("MarshalPrivateOverlay() error = %v", err)
+	}
+	store, err := openReleaseBundleStore(stagingRoot, releaseRoot)
+	if err != nil {
+		t.Fatalf("openReleaseBundleStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Stage(
+		manifestDigest,
+		revision,
+		overlayDocument,
+		manifestDocument,
+	); err != nil {
+		t.Fatalf("Stage() error = %v", err)
+	}
+	if err := store.Promote(manifestDigest, revision); err != nil {
+		t.Fatalf("Promote() error = %v", err)
+	}
+	if err := store.Select(manifestDigest, revision); err != nil {
+		t.Fatalf("Select() error = %v", err)
+	}
+	return store, manifestDigest, revision
+}
+
 func TestWatchdogMarkerStoreBindsExactBinaryAndRelease(t *testing.T) {
 	t.Parallel()
 
@@ -767,6 +941,12 @@ func TestSealTargetProofForStateClassifiesSupportedStates(t *testing.T) {
 		activeFleet:   fleetfence.FleetNone,
 		currentDigest: &current,
 	}
+	legacy := hostTargetState{
+		fencePresent:  true,
+		generation:    43,
+		activeFleet:   fleetfence.FleetLegacy,
+		currentDigest: &current,
+	}
 
 	tests := []struct {
 		name            string
@@ -799,6 +979,13 @@ func TestSealTargetProofForStateClassifiesSupportedStates(t *testing.T) {
 			state:          suspended,
 			wantGeneration: 42,
 			wantFleet:      fleetfence.FleetNone,
+			wantCurrent:    &current,
+		},
+		{
+			name:           "legacy ownership with retained portable selection",
+			state:          legacy,
+			wantGeneration: 43,
+			wantFleet:      fleetfence.FleetLegacy,
 			wantCurrent:    &current,
 		},
 	}
@@ -836,7 +1023,7 @@ func TestSealTargetProofForStateClassifiesSupportedStates(t *testing.T) {
 	}
 }
 
-func TestSealTargetProofForStateRejectsAmbiguousOrLegacyState(t *testing.T) {
+func TestSealTargetProofForStateRejectsAmbiguousState(t *testing.T) {
 	t.Parallel()
 
 	overlay, revision := protocolTestOverlay(t)
@@ -848,12 +1035,6 @@ func TestSealTargetProofForStateRejectsAmbiguousOrLegacyState(t *testing.T) {
 			activeFleet:  fleetfence.FleetPortable,
 		},
 		{
-			currentDigest: &current,
-		},
-		{
-			fencePresent:  true,
-			generation:    1,
-			activeFleet:   fleetfence.FleetLegacy,
 			currentDigest: &current,
 		},
 		{

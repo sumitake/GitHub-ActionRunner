@@ -27,9 +27,10 @@ type DisabledControllerProbe interface {
 }
 
 type lifecycleControllerAdmin interface {
+	Observe(context.Context) (DisabledControllerObservation, error)
 	Policy(context.Context) (controller.PolicyStatus, error)
 	Disable(context.Context) (controller.PolicyStatus, error)
-	Drain(context.Context) error
+	Drain(context.Context, string) error
 }
 
 type SystemDisabledControllerProbe struct {
@@ -122,8 +123,14 @@ func (probe *SystemDisabledControllerProbe) Disable(
 	return after, nil
 }
 
-func (probe *SystemDisabledControllerProbe) Drain(ctx context.Context) error {
-	document, err := probe.run(ctx, "drain", "--policy", "wait")
+func (probe *SystemDisabledControllerProbe) Drain(
+	ctx context.Context,
+	policy string,
+) error {
+	if policy != "wait" && policy != "cancel" {
+		return ErrControllerProbe
+	}
+	document, err := probe.run(ctx, "drain", "--policy", policy)
 	if err != nil || !bytes.Equal(document, []byte("{\"status\":\"ok\"}\n")) {
 		return ErrControllerProbe
 	}

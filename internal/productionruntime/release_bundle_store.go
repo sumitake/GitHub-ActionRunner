@@ -385,6 +385,58 @@ func (store *releaseBundleStore) Select(
 	return nil
 }
 
+// SelectReleased selects one exact immutable release without consulting or
+// recreating staging state. It is used only to restore a previously retained
+// release during compensation.
+func (store *releaseBundleStore) SelectReleased(
+	manifestDigest string,
+	overlayRevision string,
+) error {
+	if store == nil ||
+		!lowerHexDigest(manifestDigest) ||
+		!lowerHexDigest(overlayRevision) {
+		return ErrReleaseBundle
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.readyLocked() != nil {
+		return ErrReleaseBundle
+	}
+	released, present, err := inspectReleaseBundle(
+		store.releaseRoot,
+		manifestDigest,
+	)
+	if err != nil || !present ||
+		released.manifestDigest != manifestDigest ||
+		released.overlayRevision != overlayRevision {
+		return ErrReleaseBundle
+	}
+	current, currentPresent, err := currentReleaseLocked(store.releaseRoot)
+	if err != nil {
+		return ErrReleaseBundle
+	}
+	if currentPresent {
+		if current.manifestDigest == manifestDigest &&
+			current.overlayRevision == overlayRevision {
+			return nil
+		}
+		return ErrReleaseBundle
+	}
+	if err := replaceCurrentRelease(
+		store.releaseRoot,
+		manifestDigest,
+	); err != nil {
+		return ErrReleaseBundle
+	}
+	current, currentPresent, err = currentReleaseLocked(store.releaseRoot)
+	if err != nil || !currentPresent ||
+		current.manifestDigest != manifestDigest ||
+		current.overlayRevision != overlayRevision {
+		return ErrReleaseBundle
+	}
+	return nil
+}
+
 // Promote copies one exact staged bundle into its immutable release directory
 // without changing the current selection.
 func (store *releaseBundleStore) Promote(
@@ -540,6 +592,107 @@ func (store *releaseBundleStore) Current() (
 		return releaseBundleSnapshot{}, false, ErrReleaseBundle
 	}
 	return currentReleaseLocked(store.releaseRoot)
+}
+
+// ClearCurrent removes only the exact selected release. A foreign selection
+// is never treated as absence. Repeating an already-proven removal is safe.
+func (store *releaseBundleStore) ClearCurrent(
+	manifestDigest string,
+	overlayRevision string,
+) error {
+	if store == nil ||
+		!lowerHexDigest(manifestDigest) ||
+		!lowerHexDigest(overlayRevision) {
+		return ErrReleaseBundle
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.readyLocked() != nil {
+		return ErrReleaseBundle
+	}
+	current, present, err := currentReleaseLocked(store.releaseRoot)
+	if err != nil {
+		return ErrReleaseBundle
+	}
+	if !present {
+		return nil
+	}
+	if current.manifestDigest != manifestDigest ||
+		current.overlayRevision != overlayRevision {
+		return ErrReleaseBundle
+	}
+	if err := store.releaseRoot.Remove(currentReleaseName); err != nil ||
+		syncReleaseRoot(store.releaseRoot) != nil {
+		return ErrReleaseBundle
+	}
+	if _, present, err := currentReleaseLocked(store.releaseRoot); err != nil ||
+		present {
+		return ErrReleaseBundle
+	}
+	return nil
+}
+
+// RemoveCandidate removes the exact unselected staging and immutable release
+// directories created for one candidate. It never removes the current
+// selection or any differently bound bundle.
+func (store *releaseBundleStore) RemoveCandidate(
+	manifestDigest string,
+	overlayRevision string,
+) error {
+	if store == nil ||
+		!lowerHexDigest(manifestDigest) ||
+		!lowerHexDigest(overlayRevision) {
+		return ErrReleaseBundle
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.readyLocked() != nil {
+		return ErrReleaseBundle
+	}
+	current, currentPresent, err := currentReleaseLocked(store.releaseRoot)
+	if err != nil || currentPresent &&
+		current.manifestDigest == manifestDigest {
+		return ErrReleaseBundle
+	}
+	staged, stagedPresent, err := inspectReleaseBundle(
+		store.stagingRoot,
+		manifestDigest,
+	)
+	if err != nil || stagedPresent && staged.overlayRevision != overlayRevision {
+		return ErrReleaseBundle
+	}
+	released, releasedPresent, err := inspectReleaseBundle(
+		store.releaseRoot,
+		manifestDigest,
+	)
+	if err != nil || releasedPresent && released.overlayRevision != overlayRevision {
+		return ErrReleaseBundle
+	}
+	if stagedPresent {
+		if err := store.stagingRoot.RemoveAll(manifestDigest); err != nil ||
+			syncReleaseRoot(store.stagingRoot) != nil {
+			return ErrReleaseBundle
+		}
+	}
+	if releasedPresent {
+		if err := store.releaseRoot.RemoveAll(manifestDigest); err != nil ||
+			syncReleaseRoot(store.releaseRoot) != nil {
+			return ErrReleaseBundle
+		}
+	}
+	if _, present, err := inspectReleaseBundle(
+		store.stagingRoot,
+		manifestDigest,
+	); err != nil || present {
+		return ErrReleaseBundle
+	}
+	if _, present, err := inspectReleaseBundle(
+		store.releaseRoot,
+		manifestDigest,
+	); err != nil || present {
+		return ErrReleaseBundle
+	}
+	return nil
 }
 
 func (store *releaseBundleStore) readyLocked() error {

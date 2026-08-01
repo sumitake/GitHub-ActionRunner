@@ -497,7 +497,7 @@ func TestGreenfieldCandidateArtifactEffectsOwnWrites(t *testing.T) {
 			"v",
 		),
 	}
-	target := &greenfieldSystemTarget{
+	target := &systemLifecycleTarget{
 		overlay:        overlay,
 		revision:       revision,
 		manifest:       manifest,
@@ -509,7 +509,7 @@ func TestGreenfieldCandidateArtifactEffectsOwnWrites(t *testing.T) {
 		Kind: hostruntime.OperationKindInstall,
 	}
 
-	if err := target.apply(
+	if err := target.applyInstall(
 		context.Background(),
 		binding,
 		effectCandidateStaged,
@@ -539,7 +539,7 @@ func TestGreenfieldCandidateArtifactEffectsOwnWrites(t *testing.T) {
 	}
 	cancelledContext, cancel := context.WithCancel(context.Background())
 	artifacts.afterSmoke = cancel
-	if err := target.apply(
+	if err := target.applyInstall(
 		cancelledContext,
 		binding,
 		effectCandidateSmoked,
@@ -554,7 +554,7 @@ func TestGreenfieldCandidateArtifactEffectsOwnWrites(t *testing.T) {
 	}
 	artifacts.afterSmoke = nil
 
-	if err := target.apply(
+	if err := target.applyInstall(
 		context.Background(),
 		binding,
 		effectCandidateSmoked,
@@ -619,7 +619,7 @@ func TestCandidateStageCancellationBeforeWriteLeavesNoBundle(t *testing.T) {
 		},
 		afterVerify: cancel,
 	}
-	target := &greenfieldSystemTarget{
+	target := &systemLifecycleTarget{
 		overlay:        overlay,
 		revision:       revision,
 		manifest:       manifest,
@@ -627,7 +627,7 @@ func TestCandidateStageCancellationBeforeWriteLeavesNoBundle(t *testing.T) {
 		releases:       store,
 		artifacts:      artifacts,
 	}
-	err = target.apply(
+	err = target.applyInstall(
 		ctx,
 		hostruntime.OperationBinding{Kind: hostruntime.OperationKindInstall},
 		effectCandidateStaged,

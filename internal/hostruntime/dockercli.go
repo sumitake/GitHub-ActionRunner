@@ -118,14 +118,24 @@ func (c *DockerCLI) CreateNetworkAdapter(ctx context.Context, spec AdapterSpec) 
 			err,
 		)
 	}
-	invoked := false
+	candidateID := ""
 	reject := func(primary error) (AdapterHandle, error) {
-		if !invoked {
+		if candidateID == "" {
 			return AdapterHandle{}, primary
 		}
-		return AdapterHandle{}, c.cleanupRejectedCreate(ctx, spec.Name, primary)
+		return AdapterHandle{}, c.cleanupRejectedCreate(
+			ctx,
+			rejectedCreateIdentity{
+				ContainerID:     candidateID,
+				Name:            spec.Name,
+				Kind:            "network-adapter",
+				BuildID:         spec.BuildID,
+				FleetGeneration: spec.FleetGeneration,
+				SlotIdentity:    spec.SlotIdentity,
+			},
+			primary,
+		)
 	}
-	invoked = true
 	result, err := c.runner.Run(ctx, c.adapterCreateArgv(spec), nil, nil)
 	if err != nil {
 		return reject(errors.Join(
@@ -141,6 +151,7 @@ func (c *DockerCLI) CreateNetworkAdapter(ctx context.Context, spec AdapterSpec) 
 	if err != nil {
 		return reject(err)
 	}
+	candidateID = id
 	handle := newAdapterHandle(
 		id,
 		spec.Image,
@@ -202,14 +213,24 @@ func (c *DockerCLI) CreateRunner(ctx context.Context, spec RunnerSpec) (RunnerHa
 			err,
 		)
 	}
-	invoked := false
+	candidateID := ""
 	reject := func(primary error) (RunnerHandle, error) {
-		if !invoked {
+		if candidateID == "" {
 			return RunnerHandle{}, primary
 		}
-		return RunnerHandle{}, c.cleanupRejectedCreate(ctx, spec.Name, primary)
+		return RunnerHandle{}, c.cleanupRejectedCreate(
+			ctx,
+			rejectedCreateIdentity{
+				ContainerID:     candidateID,
+				Name:            spec.Name,
+				Kind:            "runner",
+				BuildID:         spec.BuildID,
+				FleetGeneration: spec.FleetGeneration,
+				SlotIdentity:    spec.SlotIdentity,
+			},
+			primary,
+		)
 	}
-	invoked = true
 	result, err := c.runner.Run(ctx, c.runnerCreateArgv(spec), nil, nil)
 	if err != nil {
 		return reject(errors.Join(
@@ -225,6 +246,7 @@ func (c *DockerCLI) CreateRunner(ctx context.Context, spec RunnerSpec) (RunnerHa
 	if err != nil {
 		return reject(err)
 	}
+	candidateID = id
 	handle := newRunnerHandle(
 		id,
 		spec.BuildID,
@@ -310,7 +332,7 @@ func (c *DockerCLI) releaseCreateName(name string) {
 
 func (c *DockerCLI) cleanupRejectedCreate(
 	parent context.Context,
-	name string,
+	expected rejectedCreateIdentity,
 	primary error,
 ) error {
 	if primary == nil {
@@ -319,10 +341,10 @@ func (c *DockerCLI) cleanupRejectedCreate(
 	if c == nil {
 		return primary
 	}
-	if err := validateContainerName(name); err != nil {
+	if !validRejectedCreateIdentity(expected) {
 		return errors.Join(
 			primary,
-			errors.New("hostruntime: rejected create cleanup name invalid"),
+			errors.New("hostruntime: rejected create cleanup identity invalid"),
 		)
 	}
 	base := context.Background()
@@ -331,30 +353,100 @@ func (c *DockerCLI) cleanupRejectedCreate(
 	}
 	ctx, cancel := context.WithTimeout(base, cleanupTimeout)
 	defer cancel()
-	result, err := c.runner.Run(
+	inspectResult, inspectErr := c.runner.Run(
 		ctx,
-		[]string{c.cfg.DockerPath, "rm", "-f", name},
+		[]string{
+			c.cfg.DockerPath,
+			"inspect",
+			"--type",
+			"container",
+			expected.ContainerID,
+		},
 		nil,
 		nil,
 	)
-	var cleanupErr error
-	if err != nil {
-		cleanupErr = errors.Join(
-			errors.New("hostruntime: rejected create cleanup failed"),
-			err,
+	if inspectErr != nil || inspectResult.ExitCode != 0 ||
+		inspectResult.Signaled || inspectResult.StdoutTruncated ||
+		inspectResult.StderrTruncated || len(inspectResult.Stderr) != 0 {
+		return errors.Join(
+			primary,
+			errors.New("hostruntime: rejected create cleanup inspection failed"),
+			inspectErr,
 		)
 	}
-	if result.ExitCode != 0 || result.Signaled ||
-		result.StdoutTruncated || result.StderrTruncated {
-		cleanupErr = errors.Join(
-			cleanupErr,
-			errors.New("hostruntime: rejected create cleanup did not return bounded success"),
+	var documents []rejectedCreateInspect
+	if err := json.Unmarshal(inspectResult.Stdout, &documents); err != nil ||
+		len(documents) != 1 ||
+		!rejectedCreateInspectMatches(documents[0], expected) {
+		return errors.Join(
+			primary,
+			errors.New("hostruntime: rejected create cleanup identity proof failed"),
 		)
 	}
-	if cleanupErr != nil {
-		return errors.Join(primary, cleanupErr)
+	removeResult, removeErr := c.runner.Run(
+		ctx,
+		[]string{
+			c.cfg.DockerPath,
+			"rm",
+			"-f",
+			expected.ContainerID,
+		},
+		nil,
+		nil,
+	)
+	if removeErr != nil || removeResult.ExitCode != 0 ||
+		removeResult.Signaled || removeResult.StdoutTruncated ||
+		removeResult.StderrTruncated || len(removeResult.Stderr) != 0 {
+		return errors.Join(
+			primary,
+			errors.New("hostruntime: rejected create cleanup removal failed"),
+			removeErr,
+		)
 	}
 	return primary
+}
+
+type rejectedCreateIdentity struct {
+	ContainerID     string
+	Name            string
+	Kind            string
+	BuildID         string
+	FleetGeneration uint64
+	SlotIdentity    string
+}
+
+type rejectedCreateInspect struct {
+	ID     string `json:"Id"`
+	Name   string `json:"Name"`
+	Config struct {
+		Labels map[string]string `json:"Labels"`
+	} `json:"Config"`
+}
+
+func validRejectedCreateIdentity(identity rejectedCreateIdentity) bool {
+	if !isLowerHex64(identity.ContainerID) ||
+		validateContainerName(identity.Name) != nil ||
+		!isLowerHex64(identity.BuildID) ||
+		identity.FleetGeneration == 0 ||
+		validateContainerName(identity.SlotIdentity) != nil {
+		return false
+	}
+	return identity.Kind == "network-adapter" || identity.Kind == "runner"
+}
+
+func rejectedCreateInspectMatches(
+	document rejectedCreateInspect,
+	expected rejectedCreateIdentity,
+) bool {
+	return document.ID == expected.ContainerID &&
+		document.Name == "/"+expected.Name &&
+		equalStringMap(document.Config.Labels, map[string]string{
+			"io.portable-ghar.managed":          "true",
+			"io.portable-ghar.kind":             expected.Kind,
+			"io.portable-ghar.build-id":         expected.BuildID,
+			"io.portable-ghar.fleet-generation": strconv.FormatUint(expected.FleetGeneration, 10),
+			"io.portable-ghar.slot":             expected.SlotIdentity,
+		})
 }
 
 func (c *DockerCLI) validateAdapterSpec(spec AdapterSpec) error {
@@ -499,6 +591,10 @@ func (c *DockerCLI) adapterCreateArgv(spec AdapterSpec) []string {
 
 func (c *DockerCLI) runnerCreateArgv(spec RunnerSpec) []string {
 	uid, gid, _ := parseUser(spec.User)
+	loopback := strings.Join([]string{"127", "0", "0", "1"}, ".")
+	ipv6Loopback := strings.Join([]string{"", "", "1"}, ":")
+	proxyURL := "http://" + loopback + ":18080"
+	noProxy := loopback + "," + ipv6Loopback
 	return []string{
 		c.cfg.DockerPath, "run", "--detach",
 		"--name", spec.Name,
@@ -509,6 +605,10 @@ func (c *DockerCLI) runnerCreateArgv(spec RunnerSpec) []string {
 		"--security-opt", "seccomp=" + spec.Seccomp.Path,
 		"--restart", "no",
 		"--user", spec.User,
+		"--env", "HTTPS_PROXY=" + proxyURL,
+		"--env", "https_proxy=" + proxyURL,
+		"--env", "NO_PROXY=" + noProxy,
+		"--env", "no_proxy=" + noProxy,
 		"--cpus", formatMilliCPU(spec.Limits.MilliCPU),
 		"--memory", strconv.FormatUint(spec.Limits.MemoryBytes, 10),
 		"--memory-swap", strconv.FormatUint(spec.Limits.MemorySwapBytes, 10),

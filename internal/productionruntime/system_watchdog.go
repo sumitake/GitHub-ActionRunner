@@ -910,8 +910,8 @@ func (supervisor *systemWatchdogSupervisor) StartDisabled(
 	if startErr != nil ||
 		inspection.State != ProcessRunning ||
 		!lowerHexDigest(inspection.ProcessIdentity) {
-		return watchdog.Observation{}, errors.Join(
-			ErrSystemWatchdog,
+		return watchdog.Observation{}, supervisor.cleanupFailedStart(
+			ctx,
 			startErr,
 		)
 	}
@@ -936,6 +936,35 @@ func (supervisor *systemWatchdogSupervisor) StartDisabled(
 		Process:         watchdog.ProcessRunning,
 		ProcessIdentity: inspection.ProcessIdentity,
 	}, nil
+}
+
+func (supervisor *systemWatchdogSupervisor) cleanupFailedStart(
+	ctx context.Context,
+	startErr error,
+) error {
+	failure := errors.Join(ErrSystemWatchdog, startErr)
+	observation, inspectErr := supervisor.Inspect(ctx)
+	if inspectErr != nil {
+		return errors.Join(failure, inspectErr)
+	}
+	if observation.Process == watchdog.ProcessAbsent {
+		return failure
+	}
+	if observation.Process != watchdog.ProcessRunning &&
+		observation.Process != watchdog.ProcessUnhealthy {
+		return failure
+	}
+
+	stopErr := supervisor.SafeStop(ctx, observation)
+	after, afterErr := supervisor.Inspect(ctx)
+	if afterErr != nil ||
+		after.FenceGeneration != observation.FenceGeneration ||
+		after.ActiveFleet != observation.ActiveFleet ||
+		after.Process != watchdog.ProcessAbsent ||
+		after.ProcessIdentity != "" {
+		return errors.Join(failure, stopErr, afterErr, ErrSystemWatchdog)
+	}
+	return errors.Join(failure, stopErr)
 }
 
 func (supervisor *systemWatchdogSupervisor) ProveDisabled(

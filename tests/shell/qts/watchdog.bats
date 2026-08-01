@@ -47,3 +47,28 @@ setup() {
   run grep -Ei 'docker|network-online|AF_INET' "$unit"
   [ "$status" -ne 0 ]
 }
+
+@test "systemd templates use supported path checks and unit start limits" {
+  controller="${BATS_TEST_DIRNAME}/../../../deploy/systemd/portable-ghar-controller.service"
+  watchdog="${BATS_TEST_DIRNAME}/../../../deploy/systemd/portable-ghar-watchdog.service"
+
+  for unit in "$controller" "$watchdog"; do
+    run grep -F "ConditionPathIsRegular=" "$unit"
+    [ "$status" -ne 0 ]
+    run grep -F "ConditionPathExists=/ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json" "$unit"
+    [ "$status" -eq 0 ]
+    run grep -F "ConditionPathExists=/ABSOLUTE/PORTABLE_GHAR/RELEASE/runtime-manifest.json" "$unit"
+    [ "$status" -eq 0 ]
+  done
+
+  run grep -F "ConditionFileIsExecutable=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-controller" "$controller"
+  [ "$status" -eq 0 ]
+  run grep -F "ConditionFileIsExecutable=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-watchdog" "$watchdog"
+  [ "$status" -eq 0 ]
+
+  unit_end="$(grep -n '^\[Service\]$' "$controller" | cut -d: -f1)"
+  interval_line="$(grep -n '^StartLimitIntervalSec=' "$controller" | cut -d: -f1)"
+  burst_line="$(grep -n '^StartLimitBurst=' "$controller" | cut -d: -f1)"
+  [ "$interval_line" -lt "$unit_end" ]
+  [ "$burst_line" -lt "$unit_end" ]
+}

@@ -552,6 +552,174 @@ func TestSystemWatchdogSupervisorStartAndProofUseLiveFenceAndPositiveZeros(
 	}
 }
 
+func TestSystemWatchdogSupervisorFailedStartStopsExactAppearedProcess(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		started    ProcessInspection
+		startErr   error
+		inspectErr error
+	}{
+		{
+			name:     "start error",
+			startErr: errors.New("start failed after publication"),
+		},
+		{
+			name: "malformed result",
+			started: ProcessInspection{
+				State: ProcessAbsent,
+			},
+		},
+		{
+			name:       "uncertain live inspection",
+			startErr:   errors.New("start failed after publication"),
+			inspectErr: errors.New("inspection unavailable"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			revision := strings.Repeat("a", 64)
+			manifestDigest := strings.Repeat("b", 64)
+			record := validProcessRecordFixture()
+			record.PrivateOverlayRevision = revision
+			record.ManifestDigest = manifestDigest
+			record.ActiveFleet = fleetfence.FleetPortable
+			record.FenceGeneration = 11
+			_, identity, err := MarshalProcessRecord(record)
+			if err != nil {
+				t.Fatalf("MarshalProcessRecord() error = %v", err)
+			}
+			store := &fakeProcessRecordStore{}
+			process := &fakeSystemWatchdogProcess{
+				inspection: ProcessInspection{
+					State:           ProcessRunning,
+					ProcessIdentity: identity,
+				},
+				inspectErr: test.inspectErr,
+			}
+			process.start = func(context.Context) (ProcessInspection, error) {
+				store.record = &record
+				return test.started, test.startErr
+			}
+			process.stop = func(_ context.Context, got string) error {
+				if got != identity {
+					return errors.New("wrong process identity")
+				}
+				store.record = nil
+				return nil
+			}
+			supervisor := newSystemWatchdogSupervisorFixture(
+				t,
+				fleetfence.Snapshot{Header: fleetfence.Header{
+					Generation:  11,
+					ActiveFleet: fleetfence.FleetPortable,
+				}},
+				store,
+				process,
+				&fakeSystemWatchdogProbe{},
+				&fakeSystemWatchdogQuiescence{},
+				revision,
+				manifestDigest,
+				time.Second,
+			)
+
+			_, err = supervisor.StartDisabled(
+				boundedSystemWatchdogContext(t),
+				watchdog.Observation{
+					FenceGeneration: 11,
+					ActiveFleet:     watchdog.FleetPortable,
+					Process:         watchdog.ProcessAbsent,
+				},
+			)
+			if err == nil {
+				t.Fatal("StartDisabled() accepted a failed start")
+			}
+			if process.stoppedIdentity != identity || process.stopCalls != 1 {
+				t.Fatalf(
+					"cleanup stopped identity=%q calls=%d",
+					process.stoppedIdentity,
+					process.stopCalls,
+				)
+			}
+			if store.record != nil {
+				t.Fatal("failed start left the exact process record present")
+			}
+			if process.inspectCalls != 1 {
+				t.Fatalf("cleanup live inspections = %d", process.inspectCalls)
+			}
+		})
+	}
+}
+
+func TestSystemWatchdogSupervisorFailedStartRequiresPositiveAbsence(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	revision := strings.Repeat("a", 64)
+	manifestDigest := strings.Repeat("b", 64)
+	record := validProcessRecordFixture()
+	record.PrivateOverlayRevision = revision
+	record.ManifestDigest = manifestDigest
+	record.ActiveFleet = fleetfence.FleetPortable
+	record.FenceGeneration = 11
+	_, identity, err := MarshalProcessRecord(record)
+	if err != nil {
+		t.Fatalf("MarshalProcessRecord() error = %v", err)
+	}
+	store := &fakeProcessRecordStore{}
+	process := &fakeSystemWatchdogProcess{inspection: ProcessInspection{
+		State:           ProcessRunning,
+		ProcessIdentity: identity,
+	}}
+	process.start = func(context.Context) (ProcessInspection, error) {
+		store.record = &record
+		return ProcessInspection{}, errors.New("start failed after publication")
+	}
+	process.stop = func(context.Context, string) error {
+		return nil
+	}
+	supervisor := newSystemWatchdogSupervisorFixture(
+		t,
+		fleetfence.Snapshot{Header: fleetfence.Header{
+			Generation:  11,
+			ActiveFleet: fleetfence.FleetPortable,
+		}},
+		store,
+		process,
+		&fakeSystemWatchdogProbe{},
+		&fakeSystemWatchdogQuiescence{},
+		revision,
+		manifestDigest,
+		time.Second,
+	)
+
+	if _, err := supervisor.StartDisabled(
+		boundedSystemWatchdogContext(t),
+		watchdog.Observation{
+			FenceGeneration: 11,
+			ActiveFleet:     watchdog.FleetPortable,
+			Process:         watchdog.ProcessAbsent,
+		},
+	); err == nil {
+		t.Fatal("StartDisabled() accepted an unproved cleanup")
+	}
+	if process.stopCalls != 1 || process.inspectCalls != 2 {
+		t.Fatalf(
+			"cleanup calls stop=%d inspect=%d",
+			process.stopCalls,
+			process.inspectCalls,
+		)
+	}
+	if store.record == nil {
+		t.Fatal("test did not retain the process record for absence proof")
+	}
+}
+
 func TestSystemWatchdogSupervisorCompositeCallsUseCycleContext(t *testing.T) {
 	t.Parallel()
 
@@ -952,6 +1120,8 @@ type fakeSystemWatchdogProcess struct {
 	startErr        error
 	stopErr         error
 	stoppedIdentity string
+	inspectCalls    int
+	stopCalls       int
 	inspect         func(context.Context) (ProcessInspection, error)
 	start           func(context.Context) (ProcessInspection, error)
 	stop            func(context.Context, string) error
@@ -960,6 +1130,7 @@ type fakeSystemWatchdogProcess struct {
 func (process *fakeSystemWatchdogProcess) Inspect(
 	ctx context.Context,
 ) (ProcessInspection, error) {
+	process.inspectCalls++
 	if process.inspect != nil {
 		return process.inspect(ctx)
 	}
@@ -979,6 +1150,7 @@ func (process *fakeSystemWatchdogProcess) Stop(
 	ctx context.Context,
 	identity string,
 ) error {
+	process.stopCalls++
 	process.stoppedIdentity = identity
 	if process.stop != nil {
 		return process.stop(ctx, identity)

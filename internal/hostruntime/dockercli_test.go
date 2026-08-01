@@ -311,7 +311,7 @@ func TestCreateNetworkAdapterUsesClosedIsolationArgv(t *testing.T) {
 	}
 }
 
-func TestCreateNetworkAdapterReclaimsEveryRejectedPostRunOutcomeByName(t *testing.T) {
+func TestCreateNetworkAdapterNeverDeletesWithoutAcceptedContainerID(t *testing.T) {
 	runFailure := errors.New("adapter run failed")
 	validID := strings.Repeat("c", 64)
 	tests := []struct {
@@ -334,8 +334,8 @@ func TestCreateNetworkAdapterReclaimsEveryRejectedPostRunOutcomeByName(t *testin
 		t.Run(tt.name, func(t *testing.T) {
 			spec, cfg := validAdapterSpec(t)
 			commands := &scriptedCommandRunner{
-				results: []Result{tt.result, {}},
-				errors:  []error{tt.runErr, nil},
+				results: []Result{tt.result},
+				errors:  []error{tt.runErr},
 			}
 			cli, err := NewDockerCLI(cfg, commands)
 			if err != nil {
@@ -349,19 +349,14 @@ func TestCreateNetworkAdapterReclaimsEveryRejectedPostRunOutcomeByName(t *testin
 			if tt.runErr != nil && !errors.Is(err, tt.runErr) {
 				t.Fatalf("CreateNetworkAdapter error %v does not preserve %v", err, tt.runErr)
 			}
-			if len(commands.commands) != 2 {
-				t.Fatalf("command count = %d, want create+cleanup", len(commands.commands))
-			}
-			if got := commands.commands[1].argv; !slices.Equal(got, []string{
-				cfg.DockerPath, "rm", "-f", spec.Name,
-			}) {
-				t.Fatalf("cleanup argv = %q", got)
+			if len(commands.commands) != 1 {
+				t.Fatalf("commands = %q, want create only", commands.commands)
 			}
 		})
 	}
 }
 
-func TestCreateRunnerReclaimsEveryRejectedPostRunOutcomeByName(t *testing.T) {
+func TestCreateRunnerNeverDeletesWithoutAcceptedContainerID(t *testing.T) {
 	runFailure := errors.New("runner run failed")
 	validID := strings.Repeat("d", 64)
 	tests := []struct {
@@ -389,9 +384,8 @@ func TestCreateRunnerReclaimsEveryRejectedPostRunOutcomeByName(t *testing.T) {
 					{Stdout: []byte(adapterID + "\n")},
 					{Stdout: []byte(managedAdapterInspectJSON(adapterID, adapterSpec))},
 					tt.result,
-					{},
 				},
-				errors: []error{nil, nil, tt.runErr, nil},
+				errors: []error{nil, nil, tt.runErr},
 			}
 			cli, err := NewDockerCLI(cfg, commands)
 			if err != nil {
@@ -410,124 +404,284 @@ func TestCreateRunnerReclaimsEveryRejectedPostRunOutcomeByName(t *testing.T) {
 			if tt.runErr != nil && !errors.Is(err, tt.runErr) {
 				t.Fatalf("CreateRunner error %v does not preserve %v", err, tt.runErr)
 			}
-			if len(commands.commands) != 4 {
-				t.Fatalf("command count = %d, want adapter+inspect+create+cleanup", len(commands.commands))
-			}
-			if got := commands.commands[3].argv; !slices.Equal(got, []string{
-				cfg.DockerPath, "rm", "-f", spec.Name,
-			}) {
-				t.Fatalf("cleanup argv = %q", got)
+			if len(commands.commands) != 3 {
+				t.Fatalf("commands = %q, want adapter+inspect+create", commands.commands)
 			}
 		})
 	}
 }
 
 func TestRejectedCreateCleanupUsesIndependentBoundedContext(t *testing.T) {
-	t.Run("adapter", func(t *testing.T) {
-		spec, cfg := validAdapterSpec(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		commands := &scriptedCommandRunner{
-			results: []Result{{}, {}},
-			errors:  []error{context.Canceled, nil},
+	spec, cfg := validAdapterSpec(t)
+	expected := rejectedCreateIdentity{
+		ContainerID:     strings.Repeat("c", 64),
+		Name:            spec.Name,
+		Kind:            "network-adapter",
+		BuildID:         spec.BuildID,
+		FleetGeneration: spec.FleetGeneration,
+		SlotIdentity:    spec.SlotIdentity,
+	}
+	commands := &scriptedCommandRunner{results: []Result{
+		{Stdout: []byte(rejectedCreateInspectJSON(
+			expected.ContainerID,
+			expected.Name,
+			expected.Kind,
+			expected.BuildID,
+			expected.FleetGeneration,
+			expected.SlotIdentity,
+		))},
+		{},
+	}}
+	cli, err := NewDockerCLI(cfg, commands)
+	if err != nil {
+		t.Fatalf("NewDockerCLI: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	primary := errors.New("create sentinel")
+	err = cli.cleanupRejectedCreate(ctx, expected, primary)
+	if !errors.Is(err, primary) {
+		t.Fatalf("cleanup error = %v, want primary preserved", err)
+	}
+	if len(commands.contexts) != 2 {
+		t.Fatalf("command contexts = %+v", commands.contexts)
+	}
+	for _, call := range commands.contexts {
+		if call.canceled || !call.hasDeadline {
+			t.Fatalf("cleanup command contexts = %+v", commands.contexts)
 		}
-		cli, err := NewDockerCLI(cfg, commands)
-		if err != nil {
-			t.Fatalf("NewDockerCLI: %v", err)
-		}
-		_, err = cli.CreateNetworkAdapter(ctx, spec)
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("CreateNetworkAdapter error = %v, want context cancellation preserved", err)
-		}
-		if len(commands.contexts) != 2 ||
-			!commands.contexts[0].canceled ||
-			commands.contexts[1].canceled ||
-			!commands.contexts[1].hasDeadline {
-			t.Fatalf("command contexts = %+v", commands.contexts)
-		}
-	})
-
-	t.Run("runner", func(t *testing.T) {
-		adapterSpec, cfg := validAdapterSpec(t)
-		adapterID := strings.Repeat("c", 64)
-		commands := &scriptedCommandRunner{
-			results: []Result{
-				{Stdout: []byte(adapterID + "\n")},
-				{Stdout: []byte(managedAdapterInspectJSON(adapterID, adapterSpec))},
-				{},
-				{},
-			},
-			errors: []error{nil, nil, context.Canceled, nil},
-		}
-		cli, err := NewDockerCLI(cfg, commands)
-		if err != nil {
-			t.Fatalf("NewDockerCLI: %v", err)
-		}
-		adapter, err := cli.CreateNetworkAdapter(context.Background(), adapterSpec)
-		if err != nil {
-			t.Fatalf("CreateNetworkAdapter: %v", err)
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		_, err = cli.CreateRunner(ctx, validRunnerSpec(adapter, adapterSpec.Seccomp))
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("CreateRunner error = %v, want context cancellation preserved", err)
-		}
-		if len(commands.contexts) != 4 ||
-			!commands.contexts[2].canceled ||
-			commands.contexts[3].canceled ||
-			!commands.contexts[3].hasDeadline {
-			t.Fatalf("command contexts = %+v", commands.contexts)
-		}
-	})
+	}
 }
 
 func TestRejectedCreateJoinsCleanupFailureAfterPrimaryFailure(t *testing.T) {
-	t.Run("adapter", func(t *testing.T) {
-		spec, cfg := validAdapterSpec(t)
-		createErr := errors.New("create sentinel")
-		cleanupErr := errors.New("cleanup sentinel")
-		commands := &scriptedCommandRunner{
-			results: []Result{{}, {}},
-			errors:  []error{createErr, cleanupErr},
-		}
-		cli, err := NewDockerCLI(cfg, commands)
-		if err != nil {
-			t.Fatalf("NewDockerCLI: %v", err)
-		}
-		_, err = cli.CreateNetworkAdapter(context.Background(), spec)
-		if !errors.Is(err, createErr) || !errors.Is(err, cleanupErr) {
-			t.Fatalf("CreateNetworkAdapter error = %v, want both failures", err)
-		}
-	})
+	spec, cfg := validAdapterSpec(t)
+	expected := rejectedCreateIdentity{
+		ContainerID:     strings.Repeat("c", 64),
+		Name:            spec.Name,
+		Kind:            "network-adapter",
+		BuildID:         spec.BuildID,
+		FleetGeneration: spec.FleetGeneration,
+		SlotIdentity:    spec.SlotIdentity,
+	}
+	primary := errors.New("create sentinel")
+	cleanupErr := errors.New("cleanup sentinel")
+	validInspect := Result{Stdout: []byte(rejectedCreateInspectJSON(
+		expected.ContainerID,
+		expected.Name,
+		expected.Kind,
+		expected.BuildID,
+		expected.FleetGeneration,
+		expected.SlotIdentity,
+	))}
 
-	t.Run("runner", func(t *testing.T) {
-		adapterSpec, cfg := validAdapterSpec(t)
-		adapterID := strings.Repeat("c", 64)
-		createErr := errors.New("create sentinel")
-		cleanupErr := errors.New("cleanup sentinel")
-		commands := &scriptedCommandRunner{
-			results: []Result{
-				{Stdout: []byte(adapterID + "\n")},
-				{Stdout: []byte(managedAdapterInspectJSON(adapterID, adapterSpec))},
-				{},
-				{},
+	for _, test := range []struct {
+		name     string
+		results  []Result
+		errors   []error
+		commands int
+	}{
+		{
+			name:     "inspection",
+			results:  []Result{{}},
+			errors:   []error{cleanupErr},
+			commands: 1,
+		},
+		{
+			name:     "removal",
+			results:  []Result{validInspect, {}},
+			errors:   []error{nil, cleanupErr},
+			commands: 2,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			commands := &scriptedCommandRunner{
+				results: test.results,
+				errors:  test.errors,
+			}
+			cli, err := NewDockerCLI(cfg, commands)
+			if err != nil {
+				t.Fatalf("NewDockerCLI: %v", err)
+			}
+			err = cli.cleanupRejectedCreate(
+				context.Background(),
+				expected,
+				primary,
+			)
+			if !errors.Is(err, primary) || !errors.Is(err, cleanupErr) {
+				t.Fatalf("cleanup error = %v, want both failures", err)
+			}
+			if len(commands.commands) != test.commands {
+				t.Fatalf("commands = %q", commands.commands)
+			}
+		})
+	}
+}
+
+func TestRejectedCreateCleanupNeverRemovesUnprovedContainer(t *testing.T) {
+	t.Parallel()
+
+	spec, cfg := validAdapterSpec(t)
+	expected := rejectedCreateIdentity{
+		ContainerID:     strings.Repeat("c", 64),
+		Name:            spec.Name,
+		Kind:            "network-adapter",
+		BuildID:         spec.BuildID,
+		FleetGeneration: spec.FleetGeneration,
+		SlotIdentity:    spec.SlotIdentity,
+	}
+	primary := errors.New("create sentinel")
+	validDocument := func() []map[string]any {
+		return []map[string]any{{
+			"Id":   expected.ContainerID,
+			"Name": "/" + expected.Name,
+			"Config": map[string]any{"Labels": map[string]any{
+				"io.portable-ghar.managed":          "true",
+				"io.portable-ghar.kind":             expected.Kind,
+				"io.portable-ghar.build-id":         expected.BuildID,
+				"io.portable-ghar.fleet-generation": fmt.Sprint(expected.FleetGeneration),
+				"io.portable-ghar.slot":             expected.SlotIdentity,
+			}},
+		}}
+	}
+	labels := func(document []map[string]any) map[string]any {
+		return document[0]["Config"].(map[string]any)["Labels"].(map[string]any)
+	}
+
+	jsonCases := []struct {
+		name   string
+		mutate func([]map[string]any) []map[string]any
+		raw    []byte
+	}{
+		{
+			name: "wrong id",
+			mutate: func(document []map[string]any) []map[string]any {
+				document[0]["Id"] = strings.Repeat("d", 64)
+				return document
 			},
-			errors: []error{nil, nil, createErr, cleanupErr},
-		}
-		cli, err := NewDockerCLI(cfg, commands)
-		if err != nil {
-			t.Fatalf("NewDockerCLI: %v", err)
-		}
-		adapter, err := cli.CreateNetworkAdapter(context.Background(), adapterSpec)
-		if err != nil {
-			t.Fatalf("CreateNetworkAdapter: %v", err)
-		}
-		_, err = cli.CreateRunner(context.Background(), validRunnerSpec(adapter, adapterSpec.Seccomp))
-		if !errors.Is(err, createErr) || !errors.Is(err, cleanupErr) {
-			t.Fatalf("CreateRunner error = %v, want both failures", err)
-		}
-	})
+		},
+		{
+			name: "wrong name",
+			mutate: func(document []map[string]any) []map[string]any {
+				document[0]["Name"] = "/foreign"
+				return document
+			},
+		},
+		{
+			name: "missing label",
+			mutate: func(document []map[string]any) []map[string]any {
+				delete(labels(document), "io.portable-ghar.slot")
+				return document
+			},
+		},
+		{
+			name: "extra label",
+			mutate: func(document []map[string]any) []map[string]any {
+				labels(document)["foreign"] = "true"
+				return document
+			},
+		},
+		{
+			name: "wrong label",
+			mutate: func(document []map[string]any) []map[string]any {
+				labels(document)["io.portable-ghar.kind"] = "runner"
+				return document
+			},
+		},
+		{
+			name: "non-string label",
+			mutate: func(document []map[string]any) []map[string]any {
+				labels(document)["io.portable-ghar.managed"] = true
+				return document
+			},
+		},
+		{
+			name: "nil labels",
+			mutate: func(document []map[string]any) []map[string]any {
+				document[0]["Config"].(map[string]any)["Labels"] = nil
+				return document
+			},
+		},
+		{
+			name: "extra document",
+			mutate: func(document []map[string]any) []map[string]any {
+				return append(document, map[string]any{})
+			},
+		},
+		{name: "malformed json", raw: []byte("[")},
+		{name: "trailing json", raw: []byte("[]{}")},
+	}
+
+	for _, test := range jsonCases {
+		t.Run(test.name, func(t *testing.T) {
+			stdout := test.raw
+			if test.mutate != nil {
+				document := test.mutate(validDocument())
+				var err error
+				stdout, err = json.Marshal(document)
+				if err != nil {
+					t.Fatalf("marshal inspect fixture: %v", err)
+				}
+			}
+			commands := &scriptedCommandRunner{results: []Result{{Stdout: stdout}}}
+			cli, err := NewDockerCLI(cfg, commands)
+			if err != nil {
+				t.Fatalf("NewDockerCLI: %v", err)
+			}
+			if err := cli.cleanupRejectedCreate(
+				context.Background(), expected, primary,
+			); !errors.Is(err, primary) {
+				t.Fatalf("cleanup error = %v, want primary preserved", err)
+			}
+			if len(commands.commands) != 1 {
+				t.Fatalf("cleanup removed unproved container: %q", commands.commands)
+			}
+			if got := commands.commands[0].argv; !slices.Equal(got, []string{
+				cfg.DockerPath, "inspect", "--type", "container", expected.ContainerID,
+			}) {
+				t.Fatalf("cleanup inspect argv = %q", got)
+			}
+		})
+	}
+
+	validJSON := []byte(rejectedCreateInspectJSON(
+		expected.ContainerID,
+		expected.Name,
+		expected.Kind,
+		expected.BuildID,
+		expected.FleetGeneration,
+		expected.SlotIdentity,
+	))
+	for _, test := range []struct {
+		name   string
+		result Result
+		err    error
+	}{
+		{name: "runner error", err: errors.New("inspect failed")},
+		{name: "nonzero exit", result: Result{ExitCode: 1}},
+		{name: "signal", result: Result{Signaled: true}},
+		{name: "stdout truncated", result: Result{Stdout: validJSON, StdoutTruncated: true}},
+		{name: "stderr truncated", result: Result{Stdout: validJSON, StderrTruncated: true}},
+		{name: "nonempty stderr", result: Result{Stdout: validJSON, Stderr: []byte("warning")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			commands := &scriptedCommandRunner{
+				results: []Result{test.result},
+				errors:  []error{test.err},
+			}
+			cli, err := NewDockerCLI(cfg, commands)
+			if err != nil {
+				t.Fatalf("NewDockerCLI: %v", err)
+			}
+			if err := cli.cleanupRejectedCreate(
+				context.Background(), expected, primary,
+			); !errors.Is(err, primary) {
+				t.Fatalf("cleanup error = %v, want primary preserved", err)
+			}
+			if len(commands.commands) != 1 {
+				t.Fatalf("cleanup removed after failed inspection: %q", commands.commands)
+			}
+		})
+	}
 }
 
 func TestCreateNonceFailuresDoNotRemoveAndReleaseTokenFailureDoes(t *testing.T) {
@@ -581,6 +735,14 @@ func TestCreateNonceFailuresDoNotRemoveAndReleaseTokenFailureDoes(t *testing.T) 
 			{Stdout: []byte(adapterID + "\n")},
 			{Stdout: []byte(managedAdapterInspectJSON(adapterID, adapterSpec))},
 			{Stdout: []byte(runnerID + "\n")},
+			{Stdout: []byte(rejectedCreateInspectJSON(
+				runnerID,
+				"pghar-runner-000007",
+				"runner",
+				adapterSpec.BuildID,
+				adapterSpec.FleetGeneration,
+				adapterSpec.SlotIdentity,
+			))},
 			{},
 		}}
 		cli, err := NewDockerCLI(cfg, commands)
@@ -596,11 +758,136 @@ func TestCreateNonceFailuresDoNotRemoveAndReleaseTokenFailureDoes(t *testing.T) 
 		if _, err := cli.CreateRunner(context.Background(), spec); err == nil {
 			t.Fatal("CreateRunner accepted release-token failure")
 		}
-		if len(commands.commands) != 4 {
-			t.Fatalf("command count = %d, want adapter+inspect+create+cleanup", len(commands.commands))
+		if len(commands.commands) != 5 {
+			t.Fatalf("command count = %d, want adapter+inspect+create+cleanup-proof+cleanup", len(commands.commands))
 		}
 		if got := commands.commands[3].argv; !slices.Equal(got, []string{
-			cfg.DockerPath, "rm", "-f", spec.Name,
+			cfg.DockerPath, "inspect", "--type", "container", runnerID,
+		}) {
+			t.Fatalf("cleanup inspect argv = %q", got)
+		}
+		if got := commands.commands[4].argv; !slices.Equal(got, []string{
+			cfg.DockerPath, "rm", "-f", runnerID,
+		}) {
+			t.Fatalf("cleanup argv = %q", got)
+		}
+	})
+}
+
+func TestPostIDNonceCollisionsRemoveOnlyExactInspectedContainer(t *testing.T) {
+	t.Run("adapter", func(t *testing.T) {
+		first, cfg := validAdapterSpec(t)
+		second := first
+		second.Name = "pghar-adapter-000008"
+		second.SlotIdentity = "slot-000008"
+		second.BrokerParent = filepath.Join(
+			cfg.BrokerRoot,
+			second.SlotIdentity,
+			"broker",
+		)
+		firstID := strings.Repeat("c", 64)
+		secondID := strings.Repeat("d", 64)
+		commands := &scriptedCommandRunner{results: []Result{
+			{Stdout: []byte(firstID + "\n")},
+			{Stdout: []byte(secondID + "\n")},
+			{Stdout: []byte(rejectedCreateInspectJSON(
+				secondID,
+				second.Name,
+				"network-adapter",
+				second.BuildID,
+				second.FleetGeneration,
+				second.SlotIdentity,
+			))},
+			{},
+		}}
+		cli, err := NewDockerCLI(cfg, commands)
+		if err != nil {
+			t.Fatalf("NewDockerCLI: %v", err)
+		}
+		nonce := bytes.Repeat([]byte{0x11}, 32)
+		random := append([]byte{}, nonce...)
+		random = append(random, nonce...)
+		cli.createRandom = bytes.NewReader(random)
+		if _, err := cli.CreateNetworkAdapter(context.Background(), first); err != nil {
+			t.Fatalf("first CreateNetworkAdapter: %v", err)
+		}
+		if _, err := cli.CreateNetworkAdapter(context.Background(), second); err == nil {
+			t.Fatal("second CreateNetworkAdapter accepted nonce collision")
+		}
+		if len(commands.commands) != 4 {
+			t.Fatalf("commands = %q", commands.commands)
+		}
+		if got := commands.commands[2].argv; !slices.Equal(got, []string{
+			cfg.DockerPath, "inspect", "--type", "container", secondID,
+		}) {
+			t.Fatalf("cleanup inspect argv = %q", got)
+		}
+		if got := commands.commands[3].argv; !slices.Equal(got, []string{
+			cfg.DockerPath, "rm", "-f", secondID,
+		}) {
+			t.Fatalf("cleanup argv = %q", got)
+		}
+	})
+
+	t.Run("runner", func(t *testing.T) {
+		adapterSpec, cfg := validAdapterSpec(t)
+		adapterID := strings.Repeat("c", 64)
+		firstRunnerID := strings.Repeat("d", 64)
+		secondRunnerID := strings.Repeat("e", 64)
+		commands := &scriptedCommandRunner{results: []Result{
+			{Stdout: []byte(adapterID + "\n")},
+			{Stdout: []byte(managedAdapterInspectJSON(adapterID, adapterSpec))},
+			{Stdout: []byte(firstRunnerID + "\n")},
+			{Stdout: []byte(managedAdapterInspectJSON(adapterID, adapterSpec))},
+			{Stdout: []byte(secondRunnerID + "\n")},
+			{Stdout: []byte(rejectedCreateInspectJSON(
+				secondRunnerID,
+				"pghar-runner-000008",
+				"runner",
+				adapterSpec.BuildID,
+				adapterSpec.FleetGeneration,
+				adapterSpec.SlotIdentity,
+			))},
+			{},
+		}}
+		cli, err := NewDockerCLI(cfg, commands)
+		if err != nil {
+			t.Fatalf("NewDockerCLI: %v", err)
+		}
+		adapter, err := cli.CreateNetworkAdapter(
+			context.Background(),
+			adapterSpec,
+		)
+		if err != nil {
+			t.Fatalf("CreateNetworkAdapter: %v", err)
+		}
+		nonce := bytes.Repeat([]byte{0x11}, 32)
+		firstToken := bytes.Repeat([]byte{0x22}, releaseTokenBytes)
+		secondToken := bytes.Repeat([]byte{0x33}, releaseTokenBytes)
+		random := append([]byte{}, nonce...)
+		random = append(random, firstToken...)
+		random = append(random, nonce...)
+		random = append(random, secondToken...)
+		cli.createRandom = bytes.NewReader(random)
+		first := validRunnerSpec(adapter, adapterSpec.Seccomp)
+		if _, err := cli.CreateRunner(context.Background(), first); err != nil {
+			t.Fatalf("first CreateRunner: %v", err)
+		}
+		second := first
+		second.Name = "pghar-runner-000008"
+		if _, err := cli.CreateRunner(context.Background(), second); err == nil {
+			t.Fatal("second CreateRunner accepted nonce collision")
+		}
+		if len(commands.commands) != 7 {
+			t.Fatalf("commands = %q", commands.commands)
+		}
+		if got := commands.commands[5].argv; !slices.Equal(got, []string{
+			cfg.DockerPath, "inspect", "--type", "container", secondRunnerID,
+		}) {
+			t.Fatalf("cleanup inspect argv = %q", got)
+		}
+		if got := commands.commands[6].argv; !slices.Equal(got, []string{
+			cfg.DockerPath, "rm", "-f", secondRunnerID,
 		}) {
 			t.Fatalf("cleanup argv = %q", got)
 		}
@@ -663,12 +950,11 @@ func TestCreateNameReservationRejectsPendingAndLiveDuplicatesBeforeRun(t *testin
 	}
 }
 
-func TestCreateNameReservationReleasesAfterCleanupForRetry(t *testing.T) {
+func TestCreateNameReservationReleasesAfterRejectedCreateForRetry(t *testing.T) {
 	spec, cfg := validAdapterSpec(t)
 	containerID := strings.Repeat("c", 64)
 	commands := &scriptedCommandRunner{results: []Result{
 		{ExitCode: 17},
-		{},
 		{Stdout: []byte(containerID + "\n")},
 	}}
 	cli, err := NewDockerCLI(cfg, commands)
@@ -685,8 +971,8 @@ func TestCreateNameReservationReleasesAfterCleanupForRetry(t *testing.T) {
 	if handle.ID() != containerID {
 		t.Fatalf("retry ID = %q, want %q", handle.ID(), containerID)
 	}
-	if len(commands.commands) != 3 {
-		t.Fatalf("command count = %d, want create+cleanup+retry", len(commands.commands))
+	if len(commands.commands) != 2 {
+		t.Fatalf("command count = %d, want create+retry", len(commands.commands))
 	}
 }
 
@@ -967,7 +1253,7 @@ func TestCreateNetworkAdapterRejectsResourceArithmeticOverflow(t *testing.T) {
 	}
 }
 
-func TestCreateRunnerReinspectsOpaqueAdapterAndUsesNoMountOrSecretMetadata(t *testing.T) {
+func TestCreateRunnerReinspectsOpaqueAdapterAndUsesFixedProxyEnvironment(t *testing.T) {
 	adapterSpec, cfg := validAdapterSpec(t)
 	adapterID := strings.Repeat("c", 64)
 	runnerID := strings.Repeat("d", 64)
@@ -1014,8 +1300,23 @@ func TestCreateRunnerReinspectsOpaqueAdapterAndUsesNoMountOrSecretMetadata(t *te
 	requireArgPair(t, argv, "--memory-swap", fmt.Sprint(runnerSpec.Limits.MemorySwapBytes))
 	requireArgPair(t, argv, "--tmpfs", fmt.Sprintf("/runner:rw,exec,nosuid,nodev,size=%d,uid=65532,gid=65532,mode=0700", runnerSpec.Limits.RunnerTmpfsBytes))
 	requireArgPair(t, argv, "--tmpfs", fmt.Sprintf("/tmp:rw,exec,nosuid,nodev,size=%d,uid=65532,gid=65532,mode=0700", runnerSpec.Limits.TmpTmpfsBytes))
+	loopback := strings.Join([]string{"127", "0", "0", "1"}, ".")
+	ipv6Loopback := strings.Join([]string{"", "", "1"}, ":")
+	requireArgPair(t, argv, "--env", "HTTPS_PROXY=http://"+loopback+":18080")
+	requireArgPair(t, argv, "--env", "https_proxy=http://"+loopback+":18080")
+	requireArgPair(t, argv, "--env", "NO_PROXY="+loopback+","+ipv6Loopback)
+	requireArgPair(t, argv, "--env", "no_proxy="+loopback+","+ipv6Loopback)
+	if got := countArg(argv, "--env"); got != 4 {
+		t.Fatalf("runner env count = %d, want 4", got)
+	}
+	for index, arg := range argv {
+		if index > 0 && argv[index-1] == "--env" &&
+			strings.HasPrefix(arg, "HTTP_PROXY=") {
+			t.Fatalf("runner argv enables plaintext HTTP proxy: %q", argv)
+		}
+	}
 
-	for _, forbidden := range []string{"--mount", "--volume", "--device", "--env", "--env-file", "--publish", "--privileged"} {
+	for _, forbidden := range []string{"--mount", "--volume", "--device", "--env-file", "--publish", "--privileged"} {
 		if slices.Contains(argv, forbidden) {
 			t.Errorf("runner argv contains forbidden flag %q: %q", forbidden, argv)
 		}
@@ -1381,6 +1682,32 @@ func managedAdapterInspectJSON(id string, spec AdapterSpec) string {
 			"Mode":        "",
 			"RW":          false,
 			"Propagation": "rprivate",
+		}},
+	}}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+
+func rejectedCreateInspectJSON(
+	id string,
+	name string,
+	kind string,
+	buildID string,
+	generation uint64,
+	slot string,
+) string {
+	document := []map[string]any{{
+		"Id":   id,
+		"Name": "/" + name,
+		"Config": map[string]any{"Labels": map[string]string{
+			"io.portable-ghar.managed":          "true",
+			"io.portable-ghar.kind":             kind,
+			"io.portable-ghar.build-id":         buildID,
+			"io.portable-ghar.fleet-generation": fmt.Sprint(generation),
+			"io.portable-ghar.slot":             slot,
 		}},
 	}}
 	encoded, err := json.Marshal(document)
