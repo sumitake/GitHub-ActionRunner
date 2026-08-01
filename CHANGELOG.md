@@ -48,5 +48,8 @@ Nothing in this section has shipped as a tagged release.
   development-time collaboration or review tools are optional integrations,
   never Portable GHAR build, test, release, deployment, or runtime
   dependencies.
+- Bound held-runner final audit to the same exact closed proxy environment
+  injected at container creation, so valid held runners can reach release while
+  extra, duplicate, missing, or altered environment entries still fail closed.
 
 [Unreleased]: https://github.com/sumitake/portable-ghar/compare/main...HEAD

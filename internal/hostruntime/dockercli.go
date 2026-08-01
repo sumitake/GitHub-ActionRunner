@@ -757,10 +757,7 @@ func (c *DockerCLI) adapterCreateArgv(spec AdapterSpec) []string {
 
 func (c *DockerCLI) runnerCreateArgv(spec RunnerSpec) []string {
 	uid, gid, _ := parseUser(spec.User)
-	loopback := strings.Join([]string{"127", "0", "0", "1"}, ".")
-	ipv6Loopback := strings.Join([]string{"", "", "1"}, ":")
-	proxyURL := "http://" + loopback + ":18080"
-	noProxy := loopback + "," + ipv6Loopback
+	proxy := runnerProxyEnvironment()
 	return []string{
 		c.cfg.DockerPath, "run", "--detach",
 		"--name", spec.Name,
@@ -771,10 +768,10 @@ func (c *DockerCLI) runnerCreateArgv(spec RunnerSpec) []string {
 		"--security-opt", "seccomp=" + spec.Seccomp.Path,
 		"--restart", "no",
 		"--user", spec.User,
-		"--env", "HTTPS_PROXY=" + proxyURL,
-		"--env", "https_proxy=" + proxyURL,
-		"--env", "NO_PROXY=" + noProxy,
-		"--env", "no_proxy=" + noProxy,
+		"--env", proxy[0],
+		"--env", proxy[1],
+		"--env", proxy[2],
+		"--env", proxy[3],
 		"--cpus", formatMilliCPU(spec.Limits.MilliCPU),
 		"--memory", strconv.FormatUint(spec.Limits.MemoryBytes, 10),
 		"--memory-swap", strconv.FormatUint(spec.Limits.MemorySwapBytes, 10),
@@ -794,6 +791,19 @@ func (c *DockerCLI) runnerCreateArgv(spec RunnerSpec) []string {
 		"--entrypoint", runnerEntrypoint,
 		spec.Image,
 		"hold",
+	}
+}
+
+func runnerProxyEnvironment() []string {
+	loopback := strings.Join([]string{"127", "0", "0", "1"}, ".")
+	ipv6Loopback := strings.Join([]string{"", "", "1"}, ":")
+	proxyURL := "http://" + loopback + ":18080"
+	noProxy := loopback + "," + ipv6Loopback
+	return []string{
+		"HTTPS_PROXY=" + proxyURL,
+		"https_proxy=" + proxyURL,
+		"NO_PROXY=" + noProxy,
+		"no_proxy=" + noProxy,
 	}
 }
 

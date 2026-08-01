@@ -1781,10 +1781,14 @@ func validRunnerSpec(adapter AdapterHandle, seccomp SeccompBinding) RunnerSpec {
 }
 
 func TestHeldRunnerEnvironmentIsClosedAndOrderIndependent(t *testing.T) {
+	expected := managedRunnerEnvironment()
+	extraHTTPProxy := "HTTP_PROXY=" +
+		strings.TrimPrefix(expected[3], "HTTPS_PROXY=")
+	wrongLoopback := strings.Join([]string{"127", "0", "0", "2"}, ".")
 	valid := [][]string{
-		{runnerHome, runnerLanguage, baseRunnerPath},
-		{baseRunnerPath, runnerHome, runnerLanguage},
-		{runnerLanguage, baseRunnerPath, runnerHome},
+		expected,
+		{expected[6], expected[5], expected[4], expected[3], expected[2], expected[1], expected[0]},
+		{expected[2], expected[4], expected[0], expected[6], expected[1], expected[5], expected[3]},
 	}
 	for _, environment := range valid {
 		if !validHeldRunnerEnvironment(environment) {
@@ -1796,16 +1800,36 @@ func TestHeldRunnerEnvironmentIsClosedAndOrderIndependent(t *testing.T) {
 		nil,
 		{},
 		{baseRunnerPath},
-		{runnerHome, runnerLanguage, baseRunnerPath, baseRunnerPath},
-		{runnerHome, runnerLanguage, "PATH=/usr/bin"},
-		{runnerHome, runnerLanguage, baseRunnerPath, "TOKEN=secret"},
-		{"HOME=/tmp", runnerLanguage, baseRunnerPath},
-		{runnerHome, "LANG=en_US.UTF-8", baseRunnerPath},
+		expected[:len(expected)-1],
+		append(slices.Clone(expected), baseRunnerPath),
+		append(slices.Clone(expected), extraHTTPProxy),
+		append(slices.Clone(expected), "TOKEN=secret"),
+		append([]string{"HOME=/tmp"}, expected[1:]...),
+		append([]string{expected[0], "LANG=en_US.UTF-8"}, expected[2:]...),
+		append(slices.Clone(expected[:3]),
+			"HTTPS_PROXY=http://"+wrongLoopback+":18080",
+			expected[4], expected[5], expected[6]),
 	}
 	for _, environment := range invalid {
 		if validHeldRunnerEnvironment(environment) {
 			t.Fatalf("validHeldRunnerEnvironment accepted %q", environment)
 		}
+	}
+}
+
+func managedRunnerEnvironment() []string {
+	loopback := strings.Join([]string{"127", "0", "0", "1"}, ".")
+	ipv6Loopback := strings.Join([]string{"", "", "1"}, ":")
+	proxyURL := "http://" + loopback + ":18080"
+	noProxy := loopback + "," + ipv6Loopback
+	return []string{
+		baseRunnerPath,
+		runnerHome,
+		runnerLanguage,
+		"HTTPS_PROXY=" + proxyURL,
+		"https_proxy=" + proxyURL,
+		"NO_PROXY=" + noProxy,
+		"no_proxy=" + noProxy,
 	}
 }
 
@@ -1941,7 +1965,7 @@ func managedRunnerInspectJSON(id string, spec RunnerSpec, pid int64) string {
 				"io.portable-ghar.fleet-generation": fmt.Sprint(spec.FleetGeneration),
 				"io.portable-ghar.slot":             spec.SlotIdentity,
 			},
-			"Env":        []string{baseRunnerPath, runnerHome, runnerLanguage},
+			"Env":        managedRunnerEnvironment(),
 			"Entrypoint": []string{runnerEntrypoint},
 			"Cmd":        []string{"hold"},
 			"User":       spec.User,
