@@ -6,8 +6,22 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/sumitake/portable-ghar/internal/productionruntime"
 	"github.com/sumitake/portable-ghar/internal/watchdog"
 )
+
+func TestProductionDependenciesUseConcreteSystemRunner(t *testing.T) {
+	t.Parallel()
+
+	_, err := productionDependencies().RunCycle(
+		context.Background(),
+		"/missing/private.json",
+		"/missing/manifest.json",
+	)
+	if !errors.Is(err, productionruntime.ErrSystemWatchdog) {
+		t.Fatalf("production RunCycle() error = %v", err)
+	}
+}
 
 func TestWatchdogCommandExactGrammarAndClosedOutput(t *testing.T) {
 	t.Parallel()

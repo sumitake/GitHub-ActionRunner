@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +14,138 @@ import (
 	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
 )
+
+type healthBoundTestAdmin struct {
+	status controller.PolicyStatus
+	err    error
+	order  *[]string
+}
+
+func (admin *healthBoundTestAdmin) Probe(
+	context.Context,
+) (controller.PolicyStatus, error) {
+	*admin.order = append(*admin.order, "admin-probe")
+	return admin.status, admin.err
+}
+
+func (*healthBoundTestAdmin) ReconcileOnce(
+	context.Context,
+) (controller.CycleReceipt, error) {
+	return controller.CycleReceipt{}, nil
+}
+
+func (*healthBoundTestAdmin) Drain(
+	context.Context,
+	controller.DrainPolicy,
+) error {
+	return nil
+}
+
+func (*healthBoundTestAdmin) SetAcquisition(
+	context.Context,
+	controller.AcquisitionChange,
+) (controller.PolicyStatus, error) {
+	return controller.PolicyStatus{}, nil
+}
+
+func (admin *healthBoundTestAdmin) Close() error {
+	*admin.order = append(*admin.order, "admin-close")
+	return nil
+}
+
+type healthBoundTestClient struct {
+	err   error
+	order *[]string
+}
+
+func (client *healthBoundTestClient) Health(context.Context) error {
+	*client.order = append(*client.order, "health-probe")
+	return client.err
+}
+
+func (client *healthBoundTestClient) Close() error {
+	*client.order = append(*client.order, "health-close")
+	return nil
+}
+
+func TestHealthBoundAdminRequiresAdminThenHealthAndClosesInReverse(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	wantStatus := controller.PolicyStatus{
+		Mode:     controller.AcquisitionDisabled,
+		Epoch:    9,
+		Digest:   strings.Repeat("a", 64),
+		Capacity: 0,
+	}
+	for _, test := range []struct {
+		name      string
+		adminErr  error
+		healthErr error
+		wantError bool
+		wantOrder []string
+	}{
+		{
+			name:      "both positive",
+			wantOrder: []string{"admin-probe", "health-probe"},
+		},
+		{
+			name:      "admin failure stops before health",
+			adminErr:  errors.New("admin unavailable"),
+			wantError: true,
+			wantOrder: []string{"admin-probe"},
+		},
+		{
+			name:      "health failure rejects admin success",
+			healthErr: errors.New("health unavailable"),
+			wantError: true,
+			wantOrder: []string{"admin-probe", "health-probe"},
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var order []string
+			admin := &healthBoundTestAdmin{
+				status: wantStatus,
+				err:    test.adminErr,
+				order:  &order,
+			}
+			health := &healthBoundTestClient{
+				err:   test.healthErr,
+				order: &order,
+			}
+			combined, err := newHealthBoundAdmin(admin, health)
+			if err != nil {
+				t.Fatalf("newHealthBoundAdmin() error = %v", err)
+			}
+			status, err := combined.Probe(context.Background())
+			if (err != nil) != test.wantError {
+				t.Fatalf("Probe() error = %v", err)
+			}
+			if err == nil && status != wantStatus {
+				t.Fatalf("Probe() = %#v, want %#v", status, wantStatus)
+			}
+			if !slices.Equal(order, test.wantOrder) {
+				t.Fatalf("Probe() order = %v, want %v", order, test.wantOrder)
+			}
+			if err := combined.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			wantClose := append(
+				append([]string(nil), test.wantOrder...),
+				"health-close",
+				"admin-close",
+			)
+			if !slices.Equal(order, wantClose) {
+				t.Fatalf("Close() order = %v, want %v", order, wantClose)
+			}
+		})
+	}
+	var _ controller.LiveAdmin = (*healthBoundAdmin)(nil)
+	var _ io.Closer = (*healthBoundAdmin)(nil)
+}
 
 func TestProductionHistoryLimitsComeFromPrivateOverlay(t *testing.T) {
 	t.Parallel()

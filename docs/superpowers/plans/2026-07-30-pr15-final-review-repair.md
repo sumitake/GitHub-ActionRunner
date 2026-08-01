@@ -570,6 +570,27 @@ not into new authorities:
   but it follows the stable install/verify entry contract so it does not hide
   or duplicate crash-reentry authority.
 
+The resumed high-effort xAI/Grok adversarial pass converged Task 8B on four
+additional bindings without adding another service or state machine. A
+fence-`none` orphan is stopped only through the exact persisted portable or
+legacy process binding; no `none` process binding is invented. Storage
+revalidation selects exactly one terminal, committed install reservation whose
+journal, target manifest, storage budget, binding digest, and current overlay
+revision all agree; a missing, duplicate, active, released, compensated, or
+one-sided pair fails closed. The existing fixed controller `probe` is extended
+compositionally so success proves both the disabled admin policy and the
+health socket backed by the controller's durable/Docker zero observer; proof
+fields are never synthesized after an observation error. Lifecycle lock polls,
+fence reads, process stop/start, controller proof, Docker quiescence, and the
+overall cycle use only durations already declared in the overlay. Narrow
+observations remain capped by `Controller.OperationTimeout`; composite process
+lifecycle calls and the dual-socket controller proof inherit the parent cycle's
+`Watchdog.RestartDeadline`, while their existing `ProcessGrace` and per-socket
+operation bounds remain linked sub-deadlines. Cancellation or partial progress
+always fails closed. Do not add guessed timeout arithmetic: numeric adequacy is
+activation evidence for the operator-selected overlay, not a new source
+constant.
+
 The exact Task 8A re-entry matrix is:
 
 | Live state | Exact lifecycle journal | Result |

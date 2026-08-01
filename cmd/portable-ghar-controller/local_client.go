@@ -67,6 +67,14 @@ func (client *localAdminClient) Probe(
 	}, nil
 }
 
+func (client *localAdminClient) Health(ctx context.Context) error {
+	_, err := client.call(ctx, localRequest{
+		SchemaVersion: localProtocolSchemaVersion,
+		Method:        localMethodHealth,
+	})
+	return err
+}
+
 func (client *localAdminClient) ReconcileOnce(
 	ctx context.Context,
 ) (controller.CycleReceipt, error) {

@@ -26,6 +26,56 @@ const (
 	maxProductionManifestBytes = 1 << 16
 )
 
+type localHealthClient interface {
+	Health(context.Context) error
+	io.Closer
+}
+
+type liveAdminCloser interface {
+	controller.LiveAdmin
+	io.Closer
+}
+
+type healthBoundAdmin struct {
+	liveAdminCloser
+	health localHealthClient
+}
+
+func newHealthBoundAdmin(
+	admin liveAdminCloser,
+	health localHealthClient,
+) (*healthBoundAdmin, error) {
+	if admin == nil || health == nil {
+		return nil, errCommandUnavailable
+	}
+	return &healthBoundAdmin{liveAdminCloser: admin, health: health}, nil
+}
+
+func (admin *healthBoundAdmin) Probe(
+	ctx context.Context,
+) (controller.PolicyStatus, error) {
+	if admin == nil || admin.liveAdminCloser == nil || admin.health == nil {
+		return controller.PolicyStatus{}, errCommandUnavailable
+	}
+	status, err := admin.liveAdminCloser.Probe(ctx)
+	if err != nil {
+		return controller.PolicyStatus{}, err
+	}
+	if err := admin.health.Health(ctx); err != nil {
+		return controller.PolicyStatus{}, err
+	}
+	return status, nil
+}
+func (admin *healthBoundAdmin) Close() error {
+	if admin == nil || admin.liveAdminCloser == nil || admin.health == nil {
+		return errCommandUnavailable
+	}
+	return errors.Join(
+		admin.health.Close(),
+		admin.liveAdminCloser.Close(),
+	)
+}
+
 func dialProductionAdmin(
 	ctx context.Context,
 ) (controller.LiveAdmin, io.Closer, error) {
@@ -62,7 +112,7 @@ func dialProductionAdmin(
 	if err != nil {
 		return nil, nil, errCommandUnavailable
 	}
-	client, err := newLocalAdminClient(
+	admin, err := newLocalAdminClient(
 		overlay.Paths.AdminSocketPath,
 		uint32(overlay.Target.ExpectedEUID),
 		timeout,
@@ -70,7 +120,26 @@ func dialProductionAdmin(
 	if err != nil {
 		return nil, nil, errCommandUnavailable
 	}
-	return client, client, nil
+	health, err := newLocalAdminClient(
+		overlay.Paths.HealthSocketPath,
+		uint32(overlay.Target.ExpectedEUID),
+		timeout,
+	)
+	if err != nil {
+		return nil, nil, errors.Join(
+			errCommandUnavailable,
+			admin.Close(),
+		)
+	}
+	combined, err := newHealthBoundAdmin(admin, health)
+	if err != nil {
+		return nil, nil, errors.Join(
+			errCommandUnavailable,
+			health.Close(),
+			admin.Close(),
+		)
+	}
+	return combined, combined, nil
 }
 
 func openProductionDisabledObserver(

@@ -1,12 +1,10 @@
-// Command portable-ghar-watchdog exposes one closed, source-only watchdog
-// cycle. Production composition remains fail-closed until the operator-approved
-// private overlay and target conformance gates are supplied.
+// Command portable-ghar-watchdog exposes one closed watchdog cycle composed
+// only from the operator-approved private overlay and immutable release.
 package main
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"os/signal"
@@ -14,11 +12,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/sumitake/portable-ghar/internal/productionruntime"
 	"github.com/sumitake/portable-ghar/internal/watchdog"
-)
-
-var errWatchdogUnavailable = errors.New(
-	"portable-ghar-watchdog: production composition unavailable",
 )
 
 type commandDependencies struct {
@@ -26,17 +21,9 @@ type commandDependencies struct {
 }
 
 func productionDependencies() commandDependencies {
+	runner := productionruntime.NewSystemWatchdogRunner()
 	return commandDependencies{
-		RunCycle: func(
-			context.Context,
-			string,
-			string,
-		) (watchdog.Result, error) {
-			return watchdog.Result{
-				Status: watchdog.StatusFailed,
-				Reason: watchdog.ReasonInspectFailed,
-			}, errWatchdogUnavailable
-		},
+		RunCycle: runner.RunCycle,
 	}
 }
 

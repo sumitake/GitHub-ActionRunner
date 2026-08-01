@@ -71,6 +71,38 @@ func TestLocalAdminClientProbeBindsDeadlineAndExactResponse(t *testing.T) {
 	}
 }
 
+func TestLocalAdminClientHealthUsesClosedHealthMethod(t *testing.T) {
+	requests := make(chan localRequest, 1)
+	path := startLocalTestServer(
+		t,
+		func(request localRequest) ([]byte, error) {
+			requests <- request
+			return marshalLocalResponse(
+				request.Method,
+				localResponse{
+					SchemaVersion: localProtocolSchemaVersion,
+					Status:        localStatusOK,
+					Reason:        localReasonNone,
+				},
+			)
+		},
+	)
+	client, err := newLocalAdminClient(
+		path,
+		uint32(os.Geteuid()),
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("newLocalAdminClient() error = %v", err)
+	}
+	if err := client.Health(context.Background()); err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+	if request := <-requests; request.Method != localMethodHealth {
+		t.Fatalf("Health() method = %q", request.Method)
+	}
+}
+
 func TestLocalAdminClientMapsClosedFailureStatuses(t *testing.T) {
 	tests := []struct {
 		name   string
