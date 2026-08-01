@@ -531,7 +531,24 @@ func transportTestOverlay(
 		t.Skip("/usr/bin/ssh unavailable")
 	}
 	overlay, _ := protocolTestOverlay(t)
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	workingDirectory, err = filepath.EvalSymlinks(workingDirectory)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(working directory) error = %v", err)
+	}
+	root, err := os.MkdirTemp(workingDirectory, ".transport-test-")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("RemoveAll(%q) error = %v", root, err)
+		}
+	})
+	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatalf("EvalSymlinks() error = %v", err)
 	}
