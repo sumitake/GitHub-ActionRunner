@@ -219,6 +219,136 @@ func (store *releaseBundleStore) InspectStaged(
 	return snapshot, present, nil
 }
 
+func (store *releaseBundleStore) WriteStagedReceipt(
+	manifestDigest string,
+	name string,
+	document []byte,
+) (resultErr error) {
+	if store == nil ||
+		!lowerHexDigest(manifestDigest) ||
+		!validReleaseReceiptName(name) ||
+		len(document) == 0 ||
+		len(document) > maximumReleaseArtifactReceiptBytes {
+		return ErrReleaseBundle
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.readyLocked() != nil {
+		return ErrReleaseBundle
+	}
+	_, present, err := inspectReleaseBundle(
+		store.stagingRoot,
+		manifestDigest,
+	)
+	if err != nil || !present {
+		return ErrReleaseBundle
+	}
+	bundleRoot, err := store.stagingRoot.OpenRoot(manifestDigest)
+	if err != nil {
+		return ErrReleaseBundle
+	}
+	defer func() {
+		if bundleRoot.Close() != nil {
+			resultErr = ErrReleaseBundle
+		}
+	}()
+	if _, err := bundleRoot.Stat(name); err == nil {
+		existing, _, readErr := readReleaseFile(
+			bundleRoot,
+			name,
+			maximumReleaseArtifactReceiptBytes,
+		)
+		if readErr != nil || !bytes.Equal(existing, document) {
+			return ErrReleaseBundle
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return ErrReleaseBundle
+	}
+	tempName := "." + name + ".tmp"
+	if err := bundleRoot.Remove(tempName); err != nil &&
+		!errors.Is(err, os.ErrNotExist) {
+		return ErrReleaseBundle
+	}
+	if err := writeReleaseFile(bundleRoot, tempName, document); err != nil {
+		return ErrReleaseBundle
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = bundleRoot.Remove(tempName)
+		}
+	}()
+	if syncReleaseRoot(bundleRoot) != nil ||
+		bundleRoot.Rename(tempName, name) != nil ||
+		syncReleaseRoot(bundleRoot) != nil {
+		return ErrReleaseBundle
+	}
+	cleanup = false
+	readback, _, err := readReleaseFile(
+		bundleRoot,
+		name,
+		maximumReleaseArtifactReceiptBytes,
+	)
+	if err != nil || !bytes.Equal(readback, document) {
+		return ErrReleaseBundle
+	}
+	return nil
+}
+
+func (store *releaseBundleStore) InspectStagedReceipt(
+	manifestDigest string,
+	name string,
+) (document []byte, present bool, resultErr error) {
+	if store == nil ||
+		!lowerHexDigest(manifestDigest) ||
+		!validReleaseReceiptName(name) {
+		return nil, false, ErrReleaseBundle
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.readyLocked() != nil {
+		return nil, false, ErrReleaseBundle
+	}
+	_, bundlePresent, err := inspectReleaseBundle(
+		store.stagingRoot,
+		manifestDigest,
+	)
+	if err != nil || !bundlePresent {
+		return nil, false, ErrReleaseBundle
+	}
+	bundleRoot, err := store.stagingRoot.OpenRoot(manifestDigest)
+	if err != nil {
+		return nil, false, ErrReleaseBundle
+	}
+	defer func() {
+		if bundleRoot.Close() != nil {
+			document = nil
+			present = false
+			resultErr = ErrReleaseBundle
+		}
+	}()
+	if _, err := bundleRoot.Stat(name); errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	} else if err != nil {
+		return nil, false, ErrReleaseBundle
+	}
+	document, _, err = readReleaseFile(
+		bundleRoot,
+		name,
+		maximumReleaseArtifactReceiptBytes,
+	)
+	if err != nil {
+		return nil, false, ErrReleaseBundle
+	}
+	return document, true, nil
+}
+
+func validReleaseReceiptName(name string) bool {
+	return name == releaseImageVerificationReceiptName ||
+		name == releaseRunnerSmokeReceiptName
+}
+
 func (store *releaseBundleStore) Select(
 	manifestDigest string,
 	overlayRevision string,

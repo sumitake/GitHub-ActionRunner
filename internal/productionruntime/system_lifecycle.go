@@ -125,6 +125,7 @@ type greenfieldSystemTarget struct {
 	priorOverlay        *hostruntime.PrivateOverlay
 	priorRevision       string
 	priorManifestDigest string
+	artifacts           releaseArtifactAuthority
 }
 
 type greenfieldSnapshot struct {
@@ -133,6 +134,8 @@ type greenfieldSnapshot struct {
 	fleet        fleetfence.Fleet
 
 	stagedPresent   bool
+	imagesVerified  bool
+	runnerSmoked    bool
 	releasedPresent bool
 	currentPresent  bool
 	current         releaseBundleSnapshot
@@ -460,12 +463,6 @@ func openInstallOperation(
 		return nil, hostruntime.LifecycleRequest{},
 			errors.Join(primary, resources.Close())
 	}
-	if _, present, err := releases.InspectStaged(
-		manifestDigest,
-		revision,
-	); err != nil || !present {
-		return fail(ErrProtocol)
-	}
 	priorManifest, priorOverlay, priorRevision, err :=
 		loadPriorReleaseForInstall(
 			releases,
@@ -485,6 +482,13 @@ func openInstallOperation(
 	commandRunner := hostruntime.NewExecCommandRunner()
 	commandRunner.StdoutLimit = maximumDockerRootOutputBytes
 	commandRunner.StderrLimit = maximumDockerRootOutputBytes
+	artifacts, err := NewReleaseArtifactVerifier(
+		overlay.Commands.DockerBinary,
+		commandRunner,
+	)
+	if err != nil {
+		return fail(ErrProtocol)
+	}
 	storage, err := NewSystemStorageProbe(ctx, overlay, commandRunner)
 	if err != nil {
 		return fail(ErrProtocol)
@@ -758,6 +762,7 @@ func openInstallOperation(
 			watchdog:       watchdog,
 			probe:          probe,
 			priorAdmin:     priorAdmin,
+			artifacts:      artifacts,
 			priorOverlay:   priorOverlay,
 			priorRevision:  priorRevision,
 			priorManifestDigest: func() string {
@@ -892,6 +897,80 @@ func (target *greenfieldSystemTarget) apply(
 		return ErrLifecycleEffects
 	}
 	switch effect {
+	case effectCandidateStaged:
+		if target.artifacts == nil || target.releases == nil {
+			return ErrLifecycleEffects
+		}
+		images, err := target.artifacts.VerifyImages(ctx, target.overlay)
+		if err != nil {
+			return ErrLifecycleEffects
+		}
+		receipt, err := marshalImageVerificationReceipt(
+			target.manifestDigest,
+			target.revision,
+			images,
+		)
+		if err != nil || validateImageVerificationReceipt(
+			receipt,
+			target.manifestDigest,
+			target.revision,
+			target.overlay.Docker,
+		) != nil {
+			return ErrLifecycleEffects
+		}
+		overlayDocument, revision, err :=
+			hostruntime.MarshalPrivateOverlay(target.overlay)
+		if err != nil || revision != target.revision {
+			return ErrLifecycleEffects
+		}
+		manifestDocument, manifestDigest, err :=
+			hostruntime.MarshalRuntimeManifest(target.manifest)
+		if err != nil || manifestDigest != target.manifestDigest ||
+			ctx.Err() != nil {
+			return ErrLifecycleEffects
+		}
+		if err := target.releases.Stage(
+			target.manifestDigest,
+			target.revision,
+			overlayDocument,
+			manifestDocument,
+		); err != nil || ctx.Err() != nil {
+			return ErrLifecycleEffects
+		}
+		if err := target.releases.WriteStagedReceipt(
+			target.manifestDigest,
+			releaseImageVerificationReceiptName,
+			receipt,
+		); err != nil {
+			return ErrLifecycleEffects
+		}
+		return nil
+	case effectCandidateSmoked:
+		if target.artifacts == nil || target.releases == nil ||
+			target.verifyCandidateStage() != nil {
+			return ErrLifecycleEffects
+		}
+		version, err := target.artifacts.SmokeRunner(ctx, target.overlay)
+		if err != nil {
+			return ErrLifecycleEffects
+		}
+		receipt, err := marshalRunnerSmokeReceipt(
+			target.manifestDigest,
+			target.revision,
+			target.overlay.Docker.RunnerImage,
+			version,
+		)
+		if err != nil || ctx.Err() != nil {
+			return ErrLifecycleEffects
+		}
+		if err := target.releases.WriteStagedReceipt(
+			target.manifestDigest,
+			releaseRunnerSmokeReceiptName,
+			receipt,
+		); err != nil {
+			return ErrLifecycleEffects
+		}
+		return nil
 	case effectCandidatePromoted:
 		return target.releases.Promote(
 			target.manifestDigest,
@@ -1000,6 +1079,32 @@ func (target *greenfieldSystemTarget) apply(
 	}
 }
 
+func (target *greenfieldSystemTarget) verifyCandidateStage() error {
+	if target == nil || target.releases == nil {
+		return ErrLifecycleEffects
+	}
+	_, present, err := target.releases.InspectStaged(
+		target.manifestDigest,
+		target.revision,
+	)
+	if err != nil || !present {
+		return ErrLifecycleEffects
+	}
+	document, present, err := target.releases.InspectStagedReceipt(
+		target.manifestDigest,
+		releaseImageVerificationReceiptName,
+	)
+	if err != nil || !present || validateImageVerificationReceipt(
+		document,
+		target.manifestDigest,
+		target.revision,
+		target.overlay.Docker,
+	) != nil {
+		return ErrLifecycleEffects
+	}
+	return nil
+}
+
 func (target *greenfieldSystemTarget) snapshot(
 	ctx context.Context,
 	effect productionEffect,
@@ -1024,6 +1129,46 @@ func (target *greenfieldSystemTarget) snapshot(
 	)
 	if err != nil {
 		return greenfieldSnapshot{}, ErrLifecycleEffects
+	}
+	if snapshot.stagedPresent {
+		verification, present, inspectErr :=
+			target.releases.InspectStagedReceipt(
+				target.manifestDigest,
+				releaseImageVerificationReceiptName,
+			)
+		if inspectErr != nil {
+			return greenfieldSnapshot{}, ErrLifecycleEffects
+		}
+		if present {
+			if validateImageVerificationReceipt(
+				verification,
+				target.manifestDigest,
+				target.revision,
+				target.overlay.Docker,
+			) != nil {
+				return greenfieldSnapshot{}, ErrLifecycleEffects
+			}
+			snapshot.imagesVerified = true
+		}
+		smoke, present, inspectErr :=
+			target.releases.InspectStagedReceipt(
+				target.manifestDigest,
+				releaseRunnerSmokeReceiptName,
+			)
+		if inspectErr != nil {
+			return greenfieldSnapshot{}, ErrLifecycleEffects
+		}
+		if present {
+			if validateRunnerSmokeReceipt(
+				smoke,
+				target.manifestDigest,
+				target.revision,
+				target.overlay.Docker.RunnerImage,
+			) != nil {
+				return greenfieldSnapshot{}, ErrLifecycleEffects
+			}
+			snapshot.runnerSmoked = true
+		}
 	}
 	_, snapshot.releasedPresent, err =
 		target.releases.InspectReleased(
@@ -1600,25 +1745,27 @@ func (target *greenfieldSystemTarget) effectPresent(
 	switch effect {
 	case effectPreflight:
 		return baseline &&
-			snapshot.stagedPresent &&
-			!snapshot.releasedPresent
-	case effectCandidateStaged, effectCandidateSmoked:
+			target.candidateClean(snapshot)
+	case effectCandidateStaged:
 		return baseline &&
-			snapshot.stagedPresent &&
+			target.candidateVerified(snapshot)
+	case effectCandidateSmoked:
+		return baseline &&
+			target.candidateSmoked(snapshot) &&
 			!snapshot.releasedPresent
 	case effectCandidatePromoted:
 		return baseline &&
-			snapshot.stagedPresent &&
+			target.artifactsReady(snapshot) &&
 			snapshot.releasedPresent
 	case effectGreenfieldProven:
 		return baseline &&
-			snapshot.stagedPresent &&
+			target.artifactsReady(snapshot) &&
 			snapshot.releasedPresent
 	case effectFencePortable:
 		return snapshot.fencePresent &&
 			snapshot.generation == target.terminalFence &&
 			snapshot.fleet == fleetfence.FleetPortable &&
-			snapshot.stagedPresent &&
+			target.artifactsReady(snapshot) &&
 			!snapshot.currentPresent &&
 			!snapshot.watchdogPresent &&
 			!snapshot.processPresent &&
@@ -1627,7 +1774,7 @@ func (target *greenfieldSystemTarget) effectPresent(
 		return snapshot.fencePresent &&
 			snapshot.generation == target.terminalFence &&
 			snapshot.fleet == fleetfence.FleetPortable &&
-			snapshot.stagedPresent &&
+			target.artifactsReady(snapshot) &&
 			!snapshot.currentPresent &&
 			snapshot.watchdogPresent &&
 			!snapshot.processPresent &&
@@ -1637,7 +1784,7 @@ func (target *greenfieldSystemTarget) effectPresent(
 		return snapshot.fencePresent &&
 			snapshot.generation == target.terminalFence &&
 			snapshot.fleet == fleetfence.FleetPortable &&
-			snapshot.stagedPresent &&
+			target.artifactsReady(snapshot) &&
 			!snapshot.currentPresent &&
 			snapshot.watchdogPresent &&
 			snapshot.processPresent &&
@@ -1646,7 +1793,7 @@ func (target *greenfieldSystemTarget) effectPresent(
 		return snapshot.fencePresent &&
 			snapshot.generation == target.terminalFence &&
 			snapshot.fleet == fleetfence.FleetPortable &&
-			snapshot.stagedPresent &&
+			target.artifactsReady(snapshot) &&
 			!snapshot.currentPresent &&
 			snapshot.watchdogPresent &&
 			snapshot.processPresent &&
@@ -1656,7 +1803,7 @@ func (target *greenfieldSystemTarget) effectPresent(
 		return snapshot.fencePresent &&
 			snapshot.generation == target.terminalFence &&
 			snapshot.fleet == fleetfence.FleetPortable &&
-			snapshot.stagedPresent &&
+			target.artifactsReady(snapshot) &&
 			snapshot.currentPresent &&
 			snapshot.current.manifestDigest ==
 				target.manifestDigest &&
@@ -1688,17 +1835,21 @@ func (target *greenfieldSystemTarget) effectAbsent(
 	portable := snapshot.fencePresent &&
 		snapshot.generation == target.terminalFence &&
 		snapshot.fleet == fleetfence.FleetPortable &&
-		snapshot.stagedPresent &&
+		target.artifactsReady(snapshot) &&
 		snapshot.releasedPresent &&
 		!snapshot.currentPresent
 	switch effect {
+	case effectCandidateStaged:
+		return baseline && target.candidateStageAbsent(snapshot)
+	case effectCandidateSmoked:
+		return baseline && target.candidateVerified(snapshot)
 	case effectCandidatePromoted:
 		return baseline &&
-			snapshot.stagedPresent &&
+			target.artifactsReady(snapshot) &&
 			!snapshot.releasedPresent
 	case effectFencePortable:
 		return baseline &&
-			snapshot.stagedPresent &&
+			target.artifactsReady(snapshot) &&
 			snapshot.releasedPresent
 	case effectWatchdogInstalled:
 		return portable &&
@@ -1734,17 +1885,27 @@ func (target *greenfieldSystemTarget) upgradeEffectPresent(
 		true,
 	)
 	switch effect {
-	case effectPreflight, effectCandidateStaged, effectCandidateSmoked:
-		return priorServing && !snapshot.releasedPresent
+	case effectPreflight:
+		return priorServing && target.candidateClean(snapshot)
+	case effectCandidateStaged:
+		return priorServing && target.candidateVerified(snapshot)
+	case effectCandidateSmoked:
+		return priorServing &&
+			target.candidateSmoked(snapshot) &&
+			!snapshot.releasedPresent
 	case effectCandidatePromoted, effectUpgradeProven:
-		return priorServing && snapshot.releasedPresent
+		return priorServing &&
+			target.artifactsReady(snapshot) &&
+			snapshot.releasedPresent
 	case effectPriorAcquisitionDisabled:
 		return priorServing &&
+			target.artifactsReady(snapshot) &&
 			snapshot.releasedPresent &&
 			snapshot.priorPolicy.Mode == controller.AcquisitionDisabled &&
 			snapshot.priorPolicy.Capacity == 0
 	case effectPriorDrained:
 		return priorServing &&
+			target.artifactsReady(snapshot) &&
 			snapshot.releasedPresent &&
 			snapshot.priorPolicy.Mode == controller.AcquisitionDisabled &&
 			snapshot.priorPolicy.Capacity == 0 &&
@@ -1779,21 +1940,30 @@ func (target *greenfieldSystemTarget) upgradeEffectAbsent(
 		false,
 	)
 	switch effect {
+	case effectCandidateStaged:
+		return priorServing && target.candidateStageAbsent(snapshot)
+	case effectCandidateSmoked:
+		return priorServing && target.candidateVerified(snapshot)
 	case effectCandidatePromoted:
-		return priorServing && !snapshot.releasedPresent
+		return priorServing &&
+			target.artifactsReady(snapshot) &&
+			!snapshot.releasedPresent
 	case effectPriorAcquisitionDisabled:
 		return priorServing &&
+			target.artifactsReady(snapshot) &&
 			snapshot.releasedPresent &&
 			(snapshot.priorPolicy.Mode == controller.AcquisitionEnabled ||
 				snapshot.priorPolicy.Mode == controller.AcquisitionCanaryOnly)
 	case effectPriorDrained:
 		return priorServing &&
+			target.artifactsReady(snapshot) &&
 			snapshot.releasedPresent &&
 			snapshot.priorPolicy.Mode == controller.AcquisitionDisabled &&
 			snapshot.priorPolicy.Capacity == 0 &&
 			!snapshot.priorDrained
 	case effectPriorControllerStopped:
 		return priorServing &&
+			target.artifactsReady(snapshot) &&
 			snapshot.releasedPresent &&
 			snapshot.priorPolicy.Mode == controller.AcquisitionDisabled &&
 			snapshot.priorPolicy.Capacity == 0 &&
@@ -1830,6 +2000,7 @@ func (target *greenfieldSystemTarget) upgradePriorStopped(
 	snapshot greenfieldSnapshot,
 ) bool {
 	return target.upgradeCommon(snapshot) &&
+		target.artifactsReady(snapshot) &&
 		snapshot.releasedPresent &&
 		target.currentMatches(
 			snapshot,
@@ -1851,6 +2022,7 @@ func (target *greenfieldSystemTarget) upgradeTargetStopped(
 	snapshot greenfieldSnapshot,
 ) bool {
 	return target.upgradeCommon(snapshot) &&
+		target.artifactsReady(snapshot) &&
 		snapshot.releasedPresent &&
 		target.currentMatches(
 			snapshot,
@@ -1879,6 +2051,7 @@ func (target *greenfieldSystemTarget) upgradeTargetRunning(
 		revision = target.revision
 	}
 	return target.upgradeCommon(snapshot) &&
+		target.artifactsReady(snapshot) &&
 		snapshot.releasedPresent &&
 		target.currentMatches(snapshot, digest, revision) &&
 		snapshot.watchdogPresent &&
@@ -1897,8 +2070,47 @@ func (target *greenfieldSystemTarget) upgradeCommon(
 ) bool {
 	return snapshot.fencePresent &&
 		snapshot.generation == target.terminalFence &&
-		snapshot.fleet == fleetfence.FleetPortable &&
-		snapshot.stagedPresent
+		snapshot.fleet == fleetfence.FleetPortable
+}
+
+func (target *greenfieldSystemTarget) candidateClean(
+	snapshot greenfieldSnapshot,
+) bool {
+	return !snapshot.stagedPresent &&
+		!snapshot.imagesVerified &&
+		!snapshot.runnerSmoked &&
+		!snapshot.releasedPresent
+}
+
+func (target *greenfieldSystemTarget) candidateVerified(
+	snapshot greenfieldSnapshot,
+) bool {
+	return snapshot.stagedPresent &&
+		snapshot.imagesVerified &&
+		!snapshot.runnerSmoked &&
+		!snapshot.releasedPresent
+}
+
+func (target *greenfieldSystemTarget) candidateStageAbsent(
+	snapshot greenfieldSnapshot,
+) bool {
+	return !snapshot.imagesVerified &&
+		!snapshot.runnerSmoked &&
+		!snapshot.releasedPresent
+}
+
+func (target *greenfieldSystemTarget) candidateSmoked(
+	snapshot greenfieldSnapshot,
+) bool {
+	return target.artifactsReady(snapshot)
+}
+
+func (target *greenfieldSystemTarget) artifactsReady(
+	snapshot greenfieldSnapshot,
+) bool {
+	return snapshot.stagedPresent &&
+		snapshot.imagesVerified &&
+		snapshot.runnerSmoked
 }
 
 func (target *greenfieldSystemTarget) currentMatches(

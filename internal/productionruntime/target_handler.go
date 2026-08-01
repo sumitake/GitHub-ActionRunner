@@ -179,25 +179,9 @@ func (handler *SystemTargetHandler) StageRelease(
 	if err != nil || controllerDigest != manifest.ControllerSHA256 {
 		return cli.StageProof{}, ErrProtocol
 	}
-	overlayDocument, canonicalRevision, err :=
+	_, canonicalRevision, err :=
 		hostruntime.MarshalPrivateOverlay(overlay)
 	if err != nil || canonicalRevision != revision {
-		return cli.StageProof{}, ErrProtocol
-	}
-	store, err := openReleaseBundleStore(
-		overlay.Paths.StagingRoot,
-		overlay.Paths.ReleaseRoot,
-	)
-	if err != nil {
-		return cli.StageProof{}, ErrProtocol
-	}
-	defer store.Close()
-	if err := store.Stage(
-		manifestDigest,
-		revision,
-		overlayDocument,
-		manifestDocument,
-	); err != nil {
 		return cli.StageProof{}, ErrProtocol
 	}
 	proof, err := cli.SealStageProof(cli.StageProof{

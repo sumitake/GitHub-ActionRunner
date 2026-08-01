@@ -883,10 +883,18 @@ func TestGreenfieldEffectStateAdmitsOnlyExactWritablePredecessor(t *testing.T) {
 			},
 		},
 	}
-	base := greenfieldSnapshot{
-		stagedPresent: true,
-		fleet:         fleetfence.FleetNone,
+	clean := greenfieldSnapshot{
+		fleet: fleetfence.FleetNone,
 	}
+	stagedWithoutReceipt := clean
+	stagedWithoutReceipt.stagedPresent = true
+	verified := stagedWithoutReceipt
+	verified.imagesVerified = true
+	smoked := verified
+	smoked.runnerSmoked = true
+	base := smoked
+	base.stagedPresent = true
+	base.fleet = fleetfence.FleetNone
 	released := base
 	released.releasedPresent = true
 	portable := released
@@ -906,6 +914,42 @@ func TestGreenfieldEffectStateAdmitsOnlyExactWritablePredecessor(t *testing.T) {
 		snapshot greenfieldSnapshot
 		want     hostruntime.LifecycleEffectState
 	}{
+		{
+			name:     "preflight clean baseline",
+			effect:   effectPreflight,
+			snapshot: clean,
+			want:     hostruntime.LifecycleEffectPresent,
+		},
+		{
+			name:     "candidate stage clean predecessor",
+			effect:   effectCandidateStaged,
+			snapshot: clean,
+			want:     hostruntime.LifecycleEffectAbsent,
+		},
+		{
+			name:     "candidate stage crash before receipt reruns",
+			effect:   effectCandidateStaged,
+			snapshot: stagedWithoutReceipt,
+			want:     hostruntime.LifecycleEffectAbsent,
+		},
+		{
+			name:     "candidate stage exact readback",
+			effect:   effectCandidateStaged,
+			snapshot: verified,
+			want:     hostruntime.LifecycleEffectPresent,
+		},
+		{
+			name:     "candidate smoke exact predecessor",
+			effect:   effectCandidateSmoked,
+			snapshot: verified,
+			want:     hostruntime.LifecycleEffectAbsent,
+		},
+		{
+			name:     "candidate smoke exact readback",
+			effect:   effectCandidateSmoked,
+			snapshot: smoked,
+			want:     hostruntime.LifecycleEffectPresent,
+		},
 		{
 			name:     "promotion exact predecessor",
 			effect:   effectCandidatePromoted,
@@ -984,11 +1028,10 @@ func TestUpgradeEffectStateTracksExactCrashBoundaries(t *testing.T) {
 			},
 		},
 	}
-	base := greenfieldSnapshot{
+	clean := greenfieldSnapshot{
 		fencePresent:   true,
 		generation:     7,
 		fleet:          fleetfence.FleetPortable,
-		stagedPresent:  true,
 		currentPresent: true,
 		current: releaseBundleSnapshot{
 			manifestDigest:  priorDigest,
@@ -1005,6 +1048,13 @@ func TestUpgradeEffectStateTracksExactCrashBoundaries(t *testing.T) {
 			Capacity: 4,
 		},
 	}
+	stagedWithoutReceipt := clean
+	stagedWithoutReceipt.stagedPresent = true
+	verified := stagedWithoutReceipt
+	verified.imagesVerified = true
+	smoked := verified
+	smoked.runnerSmoked = true
+	base := smoked
 	promoted := base
 	promoted.releasedPresent = true
 	disabled := promoted
@@ -1036,7 +1086,12 @@ func TestUpgradeEffectStateTracksExactCrashBoundaries(t *testing.T) {
 		snapshot greenfieldSnapshot
 		want     hostruntime.LifecycleEffectState
 	}{
-		{"preflight present", effectPreflight, base, hostruntime.LifecycleEffectPresent},
+		{"preflight present", effectPreflight, clean, hostruntime.LifecycleEffectPresent},
+		{"candidate stage predecessor", effectCandidateStaged, clean, hostruntime.LifecycleEffectAbsent},
+		{"candidate stage crash before receipt reruns", effectCandidateStaged, stagedWithoutReceipt, hostruntime.LifecycleEffectAbsent},
+		{"candidate stage present", effectCandidateStaged, verified, hostruntime.LifecycleEffectPresent},
+		{"candidate smoke predecessor", effectCandidateSmoked, verified, hostruntime.LifecycleEffectAbsent},
+		{"candidate smoke present", effectCandidateSmoked, smoked, hostruntime.LifecycleEffectPresent},
 		{"promote predecessor", effectCandidatePromoted, base, hostruntime.LifecycleEffectAbsent},
 		{"promote crash readback", effectCandidatePromoted, promoted, hostruntime.LifecycleEffectPresent},
 		{"upgrade proof", effectUpgradeProven, promoted, hostruntime.LifecycleEffectPresent},
@@ -1084,6 +1139,8 @@ func TestUpgradeEffectStateRejectsForeignCurrentSelection(t *testing.T) {
 		generation:      7,
 		fleet:           fleetfence.FleetPortable,
 		stagedPresent:   true,
+		imagesVerified:  true,
+		runnerSmoked:    true,
 		releasedPresent: true,
 		currentPresent:  true,
 		current: releaseBundleSnapshot{
@@ -1120,6 +1177,8 @@ func TestGreenfieldEffectStateRejectsForeignCurrentSelection(t *testing.T) {
 		generation:      1,
 		fleet:           fleetfence.FleetPortable,
 		stagedPresent:   true,
+		imagesVerified:  true,
+		runnerSmoked:    true,
 		releasedPresent: true,
 		currentPresent:  true,
 		current: releaseBundleSnapshot{
@@ -1154,6 +1213,8 @@ func TestGreenfieldEffectStateRecognizesCrashAfterEffect(t *testing.T) {
 	promoted := greenfieldSnapshot{
 		fleet:           fleetfence.FleetNone,
 		stagedPresent:   true,
+		imagesVerified:  true,
+		runnerSmoked:    true,
 		releasedPresent: true,
 	}
 	portable := promoted
