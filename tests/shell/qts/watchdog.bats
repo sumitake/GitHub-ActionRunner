@@ -48,6 +48,21 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+@test "systemd watchdog reaps only its oneshot main process" {
+  unit="${BATS_TEST_DIRNAME}/../../../deploy/systemd/portable-ghar-watchdog.service"
+
+  run grep -c '^KillMode=process$' "$unit"
+  [ "$status" -eq 0 ]
+  [ "$output" -eq 1 ]
+
+  run grep -c '^KillMode=' "$unit"
+  [ "$status" -eq 0 ]
+  [ "$output" -eq 1 ]
+
+  run grep -E '^KillMode=(control-group|mixed|none)$' "$unit"
+  [ "$status" -ne 0 ]
+}
+
 @test "systemd templates use supported path checks and unit start limits" {
   controller="${BATS_TEST_DIRNAME}/../../../deploy/systemd/portable-ghar-controller.service"
   watchdog="${BATS_TEST_DIRNAME}/../../../deploy/systemd/portable-ghar-watchdog.service"

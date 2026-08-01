@@ -500,6 +500,146 @@ func TestRunCycleLeaseCloseFailurePreservesPrimaryResult(t *testing.T) {
 	}
 }
 
+func TestRunCycleRevalidatesLeaseImmediatelyBeforeEveryMutation(t *testing.T) {
+	t.Parallel()
+
+	validationErr := errors.New("lease identity replaced")
+	tests := []struct {
+		name          string
+		observation   Observation
+		storage       StorageEnvelope
+		mutate        func(*fakeSupervisor)
+		validateErrAt int
+		wantStarts    int
+		wantStops     int
+		wantProofs    int
+	}{
+		{
+			name: "storage-stop path",
+			observation: Observation{
+				FenceGeneration: 41,
+				ActiveFleet:     FleetPortable,
+				Process:         ProcessRunning,
+				ProcessIdentity: strings.Repeat("a", 64),
+			},
+			storage:       denyStorage{},
+			validateErrAt: 2,
+		},
+		{
+			name: "none-fleet stop path",
+			observation: Observation{
+				FenceGeneration: 42,
+				ActiveFleet:     FleetNone,
+				Process:         ProcessRunning,
+				ProcessIdentity: strings.Repeat("b", 64),
+			},
+			storage:       allowStorage{},
+			validateErrAt: 2,
+		},
+		{
+			name: "running proof cleanup path",
+			observation: Observation{
+				FenceGeneration: 43,
+				ActiveFleet:     FleetPortable,
+				Process:         ProcessRunning,
+				ProcessIdentity: strings.Repeat("c", 64),
+			},
+			storage: allowStorage{},
+			mutate: func(supervisor *fakeSupervisor) {
+				supervisor.activeListeners = 1
+			},
+			validateErrAt: 2,
+			wantProofs:    1,
+		},
+		{
+			name: "unhealthy stop path",
+			observation: Observation{
+				FenceGeneration: 44,
+				ActiveFleet:     FleetPortable,
+				Process:         ProcessUnhealthy,
+				ProcessIdentity: strings.Repeat("d", 64),
+			},
+			storage:       allowStorage{},
+			validateErrAt: 2,
+		},
+		{
+			name: "restart after unhealthy stop",
+			observation: Observation{
+				FenceGeneration: 45,
+				ActiveFleet:     FleetPortable,
+				Process:         ProcessUnhealthy,
+				ProcessIdentity: strings.Repeat("e", 64),
+			},
+			storage:       allowStorage{},
+			validateErrAt: 3,
+			wantStops:     1,
+		},
+		{
+			name: "start path",
+			observation: Observation{
+				FenceGeneration: 46,
+				ActiveFleet:     FleetPortable,
+				Process:         ProcessAbsent,
+			},
+			storage:       allowStorage{},
+			validateErrAt: 2,
+		},
+		{
+			name: "post-start proof cleanup path",
+			observation: Observation{
+				FenceGeneration: 47,
+				ActiveFleet:     FleetPortable,
+				Process:         ProcessAbsent,
+			},
+			storage: allowStorage{},
+			mutate: func(supervisor *fakeSupervisor) {
+				supervisor.activeListeners = 1
+			},
+			validateErrAt: 3,
+			wantStarts:    1,
+			wantProofs:    1,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			lifecycle := &fakeLifecycle{
+				validateErrAt: test.validateErrAt,
+				validateErr:   validationErr,
+			}
+			supervisor := &fakeSupervisor{observation: test.observation}
+			if test.mutate != nil {
+				test.mutate(supervisor)
+			}
+			result, err := (Watchdog{
+				Lifecycle:    lifecycle,
+				Supervisor:   supervisor,
+				Storage:      test.storage,
+				PollInterval: time.Millisecond,
+			}).RunCycle(context.Background())
+			if !errors.Is(err, ErrSupervisionFailed) ||
+				result.Status != StatusFailed ||
+				result.Reason != ReasonInspectFailed ||
+				supervisor.starts != test.wantStarts ||
+				supervisor.stops != test.wantStops ||
+				supervisor.proofs != test.wantProofs ||
+				lifecycle.lastLease == nil ||
+				lifecycle.lastLease.validateCount != test.validateErrAt ||
+				lifecycle.lastLease.closeCount != 1 {
+				t.Fatalf(
+					"RunCycle()=%#v error=%v supervisor=%#v lease=%#v",
+					result,
+					err,
+					supervisor,
+					lifecycle.lastLease,
+				)
+			}
+		})
+	}
+}
+
 func indexOfEvent(events []string, wanted string) int {
 	for index, event := range events {
 		if event == wanted {
@@ -629,12 +769,14 @@ func (denyStorage) Revalidate(context.Context) error {
 }
 
 type fakeLifecycle struct {
-	owned      bool
-	acquireErr error
-	ownedErr   error
-	closeErr   error
-	events     *[]string
-	lastLease  *fakeLifecycleLease
+	owned         bool
+	acquireErr    error
+	ownedErr      error
+	closeErr      error
+	validateErrAt int
+	validateErr   error
+	events        *[]string
+	lastLease     *fakeLifecycleLease
 }
 
 func (lifecycle *fakeLifecycle) Acquire(
@@ -648,24 +790,33 @@ func (lifecycle *fakeLifecycle) Acquire(
 		return nil, lifecycle.acquireErr
 	}
 	lifecycle.lastLease = &fakeLifecycleLease{
-		owned:    lifecycle.owned,
-		err:      lifecycle.ownedErr,
-		closeErr: lifecycle.closeErr,
-		events:   lifecycle.events,
+		owned:         lifecycle.owned,
+		err:           lifecycle.ownedErr,
+		closeErr:      lifecycle.closeErr,
+		validateErrAt: lifecycle.validateErrAt,
+		validateErr:   lifecycle.validateErr,
+		events:        lifecycle.events,
 	}
 	return lifecycle.lastLease, nil
 }
 
 type fakeLifecycleLease struct {
-	owned      bool
-	err        error
-	closeErr   error
-	closeCount int
-	events     *[]string
+	owned         bool
+	err           error
+	closeErr      error
+	closeCount    int
+	validateErrAt int
+	validateErr   error
+	validateCount int
+	events        *[]string
 }
 
 func (lease *fakeLifecycleLease) Validate() error {
 	lease.recordEvent("validate")
+	lease.validateCount++
+	if lease.validateCount == lease.validateErrAt {
+		return lease.validateErr
+	}
 	return nil
 }
 

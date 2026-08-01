@@ -119,7 +119,7 @@ func TestRunNormalConsumesExactEnvironmentAndEmitsBoundStream(t *testing.T) {
 		t.Fatalf("run status = %d, output = %q", status, output.Bytes())
 	}
 	if environment.hasJIT() ||
-		!runtimeenv.MatchesImage(environment.environ()) {
+		!runtimeenv.MatchesRuntime(environment.environ()) {
 		t.Fatalf("JIT environment survived: %v", environment.environ())
 	}
 	if exchangeCalls != 1 || marker.removeCalls != 1 {

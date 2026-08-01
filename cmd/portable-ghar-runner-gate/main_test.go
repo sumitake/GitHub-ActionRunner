@@ -493,7 +493,11 @@ func TestListenerExecBoundaryAcceptsOnlyTheClosedListenerEnvironment(t *testing.
 	for name, mutation := range map[string][]string{
 		"image only": runtimeenv.Image(),
 		"extra":      append(runtimeenv.Listener("opaque-jit"), "EXTRA=value"),
-		"reordered":  {runtimeenv.Language, runtimeenv.Home, runtimeenv.Path, runtimeenv.JITName + "opaque-jit"},
+		"reordered": func() []string {
+			environment := runtimeenv.Listener("opaque-jit")
+			environment[0], environment[1] = environment[1], environment[0]
+			return environment
+		}(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := validateListenerExecBoundary(file, descriptorPath, argv, mutation); err == nil {
@@ -800,12 +804,7 @@ func TestExecuteVerifiedListenerUsesDescriptorPathAndMinimalJITEnvironment(t *te
 		if !slices.Equal(argv, []string{listenerPath, "run"}) {
 			t.Fatalf("argv=%q", argv)
 		}
-		if !slices.Equal(env, []string{
-			"HOME=/runner",
-			"LANG=C.UTF-8",
-			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-			"ACTIONS_RUNNER_INPUT_JITCONFIG=opaque-jit",
-		}) {
+		if !slices.Equal(env, runtimeenv.Listener("opaque-jit")) {
 			t.Fatalf("env=%q", env)
 		}
 		if strings.Contains(strings.Join(env, "\x00"), "PORTABLE_GHAR_AMBIENT_POISON") ||

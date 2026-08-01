@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sumitake/portable-ghar/internal/runtimeenv"
 )
 
 type recordedCommand struct {
@@ -1485,14 +1487,11 @@ func TestCreateRunnerReinspectsOpaqueAdapterAndUsesFixedProxyEnvironment(t *test
 	requireArgPair(t, argv, "--memory-swap", fmt.Sprint(runnerSpec.Limits.MemorySwapBytes))
 	requireArgPair(t, argv, "--tmpfs", fmt.Sprintf("/runner:rw,exec,nosuid,nodev,size=%d,uid=65532,gid=65532,mode=0700", runnerSpec.Limits.RunnerTmpfsBytes))
 	requireArgPair(t, argv, "--tmpfs", fmt.Sprintf("/tmp:rw,exec,nosuid,nodev,size=%d,uid=65532,gid=65532,mode=0700", runnerSpec.Limits.TmpTmpfsBytes))
-	loopback := strings.Join([]string{"127", "0", "0", "1"}, ".")
-	ipv6Loopback := strings.Join([]string{"", "", "1"}, ":")
-	requireArgPair(t, argv, "--env", "HTTPS_PROXY=http://"+loopback+":18080")
-	requireArgPair(t, argv, "--env", "https_proxy=http://"+loopback+":18080")
-	requireArgPair(t, argv, "--env", "NO_PROXY="+loopback+","+ipv6Loopback)
-	requireArgPair(t, argv, "--env", "no_proxy="+loopback+","+ipv6Loopback)
-	if got := countArg(argv, "--env"); got != 4 {
-		t.Fatalf("runner env count = %d, want 4", got)
+	for _, entry := range runtimeenv.Proxy() {
+		requireArgPair(t, argv, "--env", entry)
+	}
+	if got := countArg(argv, "--env"); got != len(runtimeenv.Proxy()) {
+		t.Fatalf("runner env count = %d, want %d", got, len(runtimeenv.Proxy()))
 	}
 	for index, arg := range argv {
 		if index > 0 && argv[index-1] == "--env" &&
@@ -1781,7 +1780,7 @@ func validRunnerSpec(adapter AdapterHandle, seccomp SeccompBinding) RunnerSpec {
 }
 
 func TestHeldRunnerEnvironmentIsClosedAndOrderIndependent(t *testing.T) {
-	expected := managedRunnerEnvironment()
+	expected := runtimeenv.Runtime()
 	extraHTTPProxy := "HTTP_PROXY=" +
 		strings.TrimPrefix(expected[3], "HTTPS_PROXY=")
 	wrongLoopback := strings.Join([]string{"127", "0", "0", "2"}, ".")
@@ -1791,8 +1790,8 @@ func TestHeldRunnerEnvironmentIsClosedAndOrderIndependent(t *testing.T) {
 		{expected[2], expected[4], expected[0], expected[6], expected[1], expected[5], expected[3]},
 	}
 	for _, environment := range valid {
-		if !validHeldRunnerEnvironment(environment) {
-			t.Fatalf("validHeldRunnerEnvironment rejected %q", environment)
+		if !runtimeenv.MatchesRuntime(environment) {
+			t.Fatalf("MatchesRuntime rejected %q", environment)
 		}
 	}
 
@@ -1811,25 +1810,9 @@ func TestHeldRunnerEnvironmentIsClosedAndOrderIndependent(t *testing.T) {
 			expected[4], expected[5], expected[6]),
 	}
 	for _, environment := range invalid {
-		if validHeldRunnerEnvironment(environment) {
-			t.Fatalf("validHeldRunnerEnvironment accepted %q", environment)
+		if runtimeenv.MatchesRuntime(environment) {
+			t.Fatalf("MatchesRuntime accepted %q", environment)
 		}
-	}
-}
-
-func managedRunnerEnvironment() []string {
-	loopback := strings.Join([]string{"127", "0", "0", "1"}, ".")
-	ipv6Loopback := strings.Join([]string{"", "", "1"}, ":")
-	proxyURL := "http://" + loopback + ":18080"
-	noProxy := loopback + "," + ipv6Loopback
-	return []string{
-		baseRunnerPath,
-		runnerHome,
-		runnerLanguage,
-		"HTTPS_PROXY=" + proxyURL,
-		"https_proxy=" + proxyURL,
-		"NO_PROXY=" + noProxy,
-		"no_proxy=" + noProxy,
 	}
 }
 
@@ -1965,7 +1948,7 @@ func managedRunnerInspectJSON(id string, spec RunnerSpec, pid int64) string {
 				"io.portable-ghar.fleet-generation": fmt.Sprint(spec.FleetGeneration),
 				"io.portable-ghar.slot":             spec.SlotIdentity,
 			},
-			"Env":        managedRunnerEnvironment(),
+			"Env":        runtimeenv.Runtime(),
 			"Entrypoint": []string{runnerEntrypoint},
 			"Cmd":        []string{"hold"},
 			"User":       spec.User,

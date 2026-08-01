@@ -122,7 +122,7 @@ func runListener(
 		return 1
 	}
 	if _, stillPresent := runtime.lookupEnv(listenerJITEnvironmentName); stillPresent ||
-		!runtimeenv.MatchesImage(runtime.environ()) ||
+		!runtimeenv.MatchesRuntime(runtime.environ()) ||
 		observer.Sample(observationInputValidated) != nil {
 		return 1
 	}

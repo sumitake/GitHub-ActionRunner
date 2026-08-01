@@ -8,6 +8,10 @@ ConditionFileIsExecutable=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-watchdog
 
 [Service]
 Type=oneshot
+# The watchdog starts the disabled controller under ProcessAuthority; setsid
+# does not leave this unit cgroup, so only the watchdog main process is reaped.
+# Controller stop remains identity-bound to ProcessAuthority.
+KillMode=process
 ExecStart=/ABSOLUTE/PORTABLE_GHAR/RELEASE/portable-ghar-watchdog run --private /ABSOLUTE/PORTABLE_GHAR/PRIVATE/controller-runtime.json --manifest /ABSOLUTE/PORTABLE_GHAR/RELEASE/runtime-manifest.json
 TimeoutStartSec=2min
 UMask=0077

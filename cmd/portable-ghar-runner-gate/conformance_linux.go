@@ -174,7 +174,7 @@ func inspectRunnerProcFacts() (runnerProcFacts, error) {
 
 func inspectRunnerProjectionFacts() (runnerProjectionFacts, error) {
 	environment := os.Environ()
-	if !runtimeenv.MatchesImage(environment) {
+	if !runtimeenv.MatchesRuntime(environment) {
 		for index := range environment {
 			environment[index] = ""
 		}

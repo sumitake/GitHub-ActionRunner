@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/sumitake/portable-ghar/internal/runtimeenv"
 )
 
 const (
@@ -757,7 +759,7 @@ func (c *DockerCLI) adapterCreateArgv(spec AdapterSpec) []string {
 
 func (c *DockerCLI) runnerCreateArgv(spec RunnerSpec) []string {
 	uid, gid, _ := parseUser(spec.User)
-	proxy := runnerProxyEnvironment()
+	proxy := runtimeenv.Proxy()
 	return []string{
 		c.cfg.DockerPath, "run", "--detach",
 		"--name", spec.Name,
@@ -791,19 +793,6 @@ func (c *DockerCLI) runnerCreateArgv(spec RunnerSpec) []string {
 		"--entrypoint", runnerEntrypoint,
 		spec.Image,
 		"hold",
-	}
-}
-
-func runnerProxyEnvironment() []string {
-	loopback := strings.Join([]string{"127", "0", "0", "1"}, ".")
-	ipv6Loopback := strings.Join([]string{"", "", "1"}, ":")
-	proxyURL := "http://" + loopback + ":18080"
-	noProxy := loopback + "," + ipv6Loopback
-	return []string{
-		"HTTPS_PROXY=" + proxyURL,
-		"https_proxy=" + proxyURL,
-		"NO_PROXY=" + noProxy,
-		"no_proxy=" + noProxy,
 	}
 }
 

@@ -319,7 +319,10 @@ closed repair:
 3. Add the fixed proxy environment to runner creation:
    `HTTPS_PROXY`/`https_proxy=http://127.0.0.1:18080` and
    `NO_PROXY`/`no_proxy=127.0.0.1,::1`. Do not set HTTP proxy variables because
-   plaintext absolute-form HTTP is intentionally unsupported.
+   plaintext absolute-form HTTP is intentionally unsupported. Use one shared
+   closed runtime-environment contract for creation, held-runner audit,
+   conformance, listener exec, and the post-JIT residual check so the proxy
+   cannot disappear at the release boundary.
 4. Change rejected-container cleanup to remove only a container whose inspected
    immutable labels/name prove it belongs to the current create attempt. A
    pre-existing foreign same-name object is failure without removal.

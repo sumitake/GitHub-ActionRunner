@@ -48,8 +48,12 @@ Nothing in this section has shipped as a tagged release.
   development-time collaboration or review tools are optional integrations,
   never Portable GHAR build, test, release, deployment, or runtime
   dependencies.
-- Bound held-runner final audit to the same exact closed proxy environment
-  injected at container creation, so valid held runners can reach release while
-  extra, duplicate, missing, or altered environment entries still fail closed.
+- Bound runner creation, held-runner audit, conformance, listener exec, and the
+  post-JIT process to one exact TLS-only loopback proxy environment, while
+  rejecting plaintext proxy, duplicate, missing, altered, or ambient entries.
+- Revalidate the held lifecycle lease immediately before every watchdog stop or
+  disabled start so replaced lock identity cannot authorize a later mutation.
+- Limit the systemd watchdog oneshot to reaping its own process; controller
+  termination remains bound to the watchdog's process-identity authority.
 
 [Unreleased]: https://github.com/sumitake/portable-ghar/compare/main...HEAD

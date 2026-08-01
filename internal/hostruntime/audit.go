@@ -176,7 +176,7 @@ func validateHeldRunnerInspect(document runnerInspect, record *runnerRecord) err
 		!equalStrings(document.Config.Entrypoint, []string{runnerEntrypoint}) ||
 		!equalStrings(document.Config.Cmd, []string{"hold"}) ||
 		document.Config.User != spec.User ||
-		!validHeldRunnerEnvironment(document.Config.Env) ||
+		!runtimeenv.MatchesRuntime(document.Config.Env) ||
 		!document.State.Running || document.State.Restarting || document.State.Dead ||
 		document.State.Pid <= 0 || document.State.ExitCode != 0 {
 		return errors.New("hostruntime: runner identity or state drifted")
@@ -209,28 +209,6 @@ func validateHeldRunnerInspect(document runnerInspect, record *runnerRecord) err
 		return errors.New("hostruntime: runner isolation or resource configuration drifted")
 	}
 	return nil
-}
-
-func validHeldRunnerEnvironment(environment []string) bool {
-	expected := append(runtimeenv.Image(), runnerProxyEnvironment()...)
-	if len(environment) != len(expected) {
-		return false
-	}
-	allowed := make(map[string]struct{}, len(expected))
-	for _, entry := range expected {
-		allowed[entry] = struct{}{}
-	}
-	seen := make(map[string]struct{}, len(environment))
-	for _, entry := range environment {
-		if _, ok := allowed[entry]; !ok {
-			return false
-		}
-		if _, duplicate := seen[entry]; duplicate {
-			return false
-		}
-		seen[entry] = struct{}{}
-	}
-	return len(seen) == len(expected)
 }
 
 func validHeldProcessInventory(data []byte, wantPID int64) bool {

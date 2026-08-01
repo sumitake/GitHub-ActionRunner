@@ -187,6 +187,7 @@ func (watchdog Watchdog) RunCycle(
 		if observation.Process != ProcessAbsent {
 			_, reason, stopErr := watchdog.safeStopAndProveAbsent(
 				ctx,
+				lease,
 				observation,
 			)
 			if stopErr != nil {
@@ -218,6 +219,7 @@ func (watchdog Watchdog) RunCycle(
 		if observation.Process != ProcessAbsent {
 			_, reason, err := watchdog.safeStopAndProveAbsent(
 				ctx,
+				lease,
 				observation,
 			)
 			if err != nil {
@@ -232,12 +234,16 @@ func (watchdog Watchdog) RunCycle(
 	}
 	if observation.Process == ProcessRunning {
 		if err := watchdog.proveDisabled(ctx, observation); err != nil {
-			_, _, stopErr := watchdog.safeStopAndProveAbsent(
+			_, stopReason, stopErr := watchdog.safeStopAndProveAbsent(
 				ctx,
+				lease,
 				observation,
 			)
 			base.Status = StatusFailed
 			base.Reason = ReasonProofFailed
+			if stopErr != nil {
+				base.Reason = stopReason
+			}
 			return base, errors.Join(
 				ErrSupervisionFailed,
 				err,
@@ -251,6 +257,7 @@ func (watchdog Watchdog) RunCycle(
 	if observation.Process == ProcessUnhealthy {
 		stopped, reason, err := watchdog.safeStopAndProveAbsent(
 			ctx,
+			lease,
 			observation,
 		)
 		if err != nil {
@@ -259,6 +266,11 @@ func (watchdog Watchdog) RunCycle(
 			return base, err
 		}
 		observation = stopped
+	}
+	if err := lease.Validate(); err != nil {
+		base.Status = StatusFailed
+		base.Reason = ReasonInspectFailed
+		return base, errors.Join(ErrSupervisionFailed, err)
 	}
 	started, err := watchdog.Supervisor.StartDisabled(ctx, observation)
 	if err != nil ||
@@ -272,9 +284,16 @@ func (watchdog Watchdog) RunCycle(
 		return base, errors.Join(ErrSupervisionFailed, err)
 	}
 	if err := watchdog.proveDisabled(ctx, started); err != nil {
-		_, _, stopErr := watchdog.safeStopAndProveAbsent(ctx, started)
+		_, stopReason, stopErr := watchdog.safeStopAndProveAbsent(
+			ctx,
+			lease,
+			started,
+		)
 		base.Status = StatusFailed
 		base.Reason = ReasonProofFailed
+		if stopErr != nil {
+			base.Reason = stopReason
+		}
 		return base, errors.Join(
 			ErrSupervisionFailed,
 			err,
@@ -288,8 +307,15 @@ func (watchdog Watchdog) RunCycle(
 
 func (watchdog Watchdog) safeStopAndProveAbsent(
 	ctx context.Context,
+	lease LifecycleLease,
 	observation Observation,
 ) (Observation, Reason, error) {
+	if err := lease.Validate(); err != nil {
+		return Observation{}, ReasonInspectFailed, errors.Join(
+			ErrSupervisionFailed,
+			err,
+		)
+	}
 	if err := watchdog.Supervisor.SafeStop(ctx, observation); err != nil {
 		return Observation{}, ReasonStopFailed, errors.Join(
 			ErrSupervisionFailed,
