@@ -2,7 +2,7 @@
 
 ARG SOURCE_DATE_EPOCH
 
-FROM debian:bookworm-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4 AS context-audit
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS context-audit
 COPY . /context
 RUN set -eu; \
     find /context -mindepth 1 -print | while IFS= read -r candidate; do \
@@ -36,7 +36,7 @@ RUN set -eu; \
     test -f /context/build/seed-cache.READY; \
     printf '%s\n' verified > /context-audit.OK
 
-FROM debian:bookworm-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 ARG SOURCE_DATE_EPOCH
 COPY --from=context-audit --chown=0:0 --chmod=0444 /context/build/ca-bundle.pem /portable-ghar-bootstrap-ca.pem
 COPY --from=context-audit --chown=0:0 --chmod=0444 /context/debian-snapshot.lock.json /usr/share/portable-ghar/debian-snapshot.lock.json
