@@ -2441,5 +2441,152 @@
     "rule": "PATH001",
     "sha256": "bdd16143c9db9a8f96b0ce7002e1306283428c1090f106358da12cfe86bddebd",
     "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@961b080fc5163477962e3198581dac94d32c3609",
+    "line": 22,
+    "rule": "PATH001",
+    "sha256": "147f6e09bcb8e87738389282b75bc075790bfbf50da5983023e9c07bf4fc7d3a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@961b080fc5163477962e3198581dac94d32c3609",
+    "line": 28,
+    "rule": "PATH001",
+    "sha256": "1a2d97b69ad244c249dd3ee042eca73cb85272dad09652cebb105ce45429126e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@961b080fc5163477962e3198581dac94d32c3609",
+    "line": 34,
+    "rule": "PATH001",
+    "sha256": "691cf119e808abd6b7fa0f9d6031cb7bc13e06d017071e441fcacbf69406239a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-broker-dialer/Dockerfile@961b080fc5163477962e3198581dac94d32c3609",
+    "line": 35,
+    "rule": "PATH001",
+    "sha256": "e4bb86f8cbea9f07c6f306ff66cb00ea02be40a226c47236f4b87a74703df6ea",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@c3028e93aed00a360547b97cbb518651ceb9537a",
+    "line": 33,
+    "rule": "PATH001",
+    "sha256": "7a0072a519592966b56eeacc2db97d8fcc93542d142a4734a9cfdabb342cb9f7",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@c3028e93aed00a360547b97cbb518651ceb9537a",
+    "line": 34,
+    "rule": "PATH001",
+    "sha256": "9b17ff8c7b915d926e8b445fb001b3986343d488d95a9f6cfe0921a4125a8aef",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-helper/Dockerfile@c3028e93aed00a360547b97cbb518651ceb9537a",
+    "line": 35,
+    "rule": "PATH001",
+    "sha256": "1da40cd4daf6d36ccef84c01a2543db2102f6c381474ea2c4bfa1cb24fab5215",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@e76ff41448abc78b3fa267a201f6494c53111235",
+    "line": 21,
+    "rule": "PATH001",
+    "sha256": "064d2d683e90459dd23219ed26af81cc66a7938ca894ad67664be3807d718f94",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@e76ff41448abc78b3fa267a201f6494c53111235",
+    "line": 26,
+    "rule": "PATH001",
+    "sha256": "1a2d97b69ad244c249dd3ee042eca73cb85272dad09652cebb105ce45429126e",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@e76ff41448abc78b3fa267a201f6494c53111235",
+    "line": 29,
+    "rule": "PATH001",
+    "sha256": "691cf119e808abd6b7fa0f9d6031cb7bc13e06d017071e441fcacbf69406239a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/network-verifier/Dockerfile@e76ff41448abc78b3fa267a201f6494c53111235",
+    "line": 30,
+    "rule": "PATH001",
+    "sha256": "e4bb86f8cbea9f07c6f306ff66cb00ea02be40a226c47236f4b87a74703df6ea",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4b7460bb14d1e3b33de6370af7acee95f51bf066",
+    "line": 42,
+    "rule": "PATH001",
+    "sha256": "19ddcd3c40b5a0dff3b8e409b2959f5d94186b9614d35c4d5fd968f8e6df12be",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4b7460bb14d1e3b33de6370af7acee95f51bf066",
+    "line": 91,
+    "rule": "PATH001",
+    "sha256": "7d66787c67f77e0a3d8a5b192cf339a82301cd5dd635b12fe2e1d5f21de989d1",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4b7460bb14d1e3b33de6370af7acee95f51bf066",
+    "line": 92,
+    "rule": "PATH001",
+    "sha256": "e1bb92c460358d1e9087b6fb82d6c96647e78dcb2d59f24d3e138cfdc0f1da79",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4b7460bb14d1e3b33de6370af7acee95f51bf066",
+    "line": 94,
+    "rule": "PATH001",
+    "sha256": "1faddca08a7a2959110a04bcd483e0bc26156d465c3308de40a154088f960b86",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4b7460bb14d1e3b33de6370af7acee95f51bf066",
+    "line": 96,
+    "rule": "PATH001",
+    "sha256": "5b390b21f45135b223f9df284bf80f6725b54f55942dd4d757f9f1e875899149",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4b7460bb14d1e3b33de6370af7acee95f51bf066",
+    "line": 97,
+    "rule": "PATH001",
+    "sha256": "d1471c44a855e831a71659029fcfb211f3a03ac4da95224d154036c86898d12d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4b7460bb14d1e3b33de6370af7acee95f51bf066",
+    "line": 98,
+    "rule": "PATH001",
+    "sha256": "f377165bd95d06492865403df7782d32a596cb40a2f9731a6142cdaa4a8acce3",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4b7460bb14d1e3b33de6370af7acee95f51bf066",
+    "line": 131,
+    "rule": "PATH001",
+    "sha256": "022d4093d1e3ec105971109045908bdf427fe41dc4223734a00c7a8a77b5dfd8",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4b7460bb14d1e3b33de6370af7acee95f51bf066",
+    "line": 132,
+    "rule": "PATH001",
+    "sha256": "269106b34e4751752f394a11831a3151e84c461c3ecae0f900f334c2b0311336",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@4b7460bb14d1e3b33de6370af7acee95f51bf066",
+    "line": 133,
+    "rule": "PATH001",
+    "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
   }
 ]
