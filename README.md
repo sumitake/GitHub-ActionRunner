@@ -1,5 +1,10 @@
 # Portable GHAR
 
+[![ci](https://github.com/sumitake/Portable-GHAR/actions/workflows/ci.yml/badge.svg)](https://github.com/sumitake/Portable-GHAR/actions/workflows/ci.yml)
+[![codeql](https://github.com/sumitake/Portable-GHAR/actions/workflows/codeql.yml/badge.svg)](https://github.com/sumitake/Portable-GHAR/actions/workflows/codeql.yml)
+[![sanitization](https://github.com/sumitake/Portable-GHAR/actions/workflows/sanitization.yml/badge.svg)](https://github.com/sumitake/Portable-GHAR/actions/workflows/sanitization.yml)
+[![License: MPL-2.0](https://img.shields.io/badge/License-MPL--2.0-blue.svg)](LICENSE)
+
 ## Status
 
 **Pre-deployment. Experimental. Public-preview upstream dependency.**
