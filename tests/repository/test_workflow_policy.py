@@ -80,7 +80,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Local action
@@ -122,7 +122,7 @@ class ValidWorkflowPassesTest(unittest.TestCase):
     def test_local_action_only_passes(self) -> None:
         text = VALID_WORKFLOW.replace(
             "      - name: Checkout\n"
-            "        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n"
+            "        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
             "        with:\n"
             "          persist-credentials: false\n",
             "",
@@ -136,8 +136,8 @@ class ValidWorkflowPassesTest(unittest.TestCase):
 class RejectActionRefTest(unittest.TestCase):
     def test_rejects_tag_ref(self) -> None:
         text = VALID_WORKFLOW.replace(
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
-            "actions/checkout@v7.0.0",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+            "actions/checkout@v7.0.1",
         )
         with tempfile.TemporaryDirectory() as tmp:
             workflows_dir = write_workflow(Path(tmp), text)
@@ -147,7 +147,7 @@ class RejectActionRefTest(unittest.TestCase):
 
     def test_rejects_branch_ref(self) -> None:
         text = VALID_WORKFLOW.replace(
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
             "actions/checkout@main",
         )
         with tempfile.TemporaryDirectory() as tmp:
@@ -157,11 +157,11 @@ class RejectActionRefTest(unittest.TestCase):
             self.assertIn("40-character", result.stdout + result.stderr)
 
     def test_rejects_39_char_sha(self) -> None:
-        short_sha = "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e"  # 39 hex chars
+        short_sha = "3d3c42e5aac5ba805825da76410c181273ba90b"  # 39 hex chars
         self.assertEqual(len(short_sha), 39)
         text = VALID_WORKFLOW.replace(
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
-            f"actions/checkout@{short_sha} # v7.0.0",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+            f"actions/checkout@{short_sha} # v7.0.1",
         )
         with tempfile.TemporaryDirectory() as tmp:
             workflows_dir = write_workflow(Path(tmp), text)
@@ -170,11 +170,11 @@ class RejectActionRefTest(unittest.TestCase):
             self.assertIn("40-character", result.stdout + result.stderr)
 
     def test_rejects_41_char_ref(self) -> None:
-        long_sha = "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e00"  # 41 hex chars
+        long_sha = "3d3c42e5aac5ba805825da76410c181273ba90b10"  # 41 hex chars
         self.assertEqual(len(long_sha), 41)
         text = VALID_WORKFLOW.replace(
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
-            f"actions/checkout@{long_sha} # v7.0.0",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+            f"actions/checkout@{long_sha} # v7.0.1",
         )
         with tempfile.TemporaryDirectory() as tmp:
             workflows_dir = write_workflow(Path(tmp), text)
@@ -196,8 +196,8 @@ class RejectActionRefTest(unittest.TestCase):
 
     def test_rejects_sha_not_matching_reviewed_pin(self) -> None:
         text = VALID_WORKFLOW.replace(
-            "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v7.0.0",
+            "3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v7.0.1",
         )
         with tempfile.TemporaryDirectory() as tmp:
             workflows_dir = write_workflow(Path(tmp), text)
@@ -207,8 +207,8 @@ class RejectActionRefTest(unittest.TestCase):
 
     def test_rejects_missing_release_comment(self) -> None:
         text = VALID_WORKFLOW.replace(
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         )
         with tempfile.TemporaryDirectory() as tmp:
             workflows_dir = write_workflow(Path(tmp), text)
@@ -218,8 +218,8 @@ class RejectActionRefTest(unittest.TestCase):
 
     def test_rejects_mismatched_release_comment(self) -> None:
         text = VALID_WORKFLOW.replace(
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6.0.0",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.0",
         )
         with tempfile.TemporaryDirectory() as tmp:
             workflows_dir = write_workflow(Path(tmp), text)
