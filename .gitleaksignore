@@ -1,1 +1,6 @@
 cf2fef5c4c8a156f6303311b040428620a2bbc95:internal/hostruntime/operation_receipt_test.go:generic-api-key:13
+8075e44d05b02bcdd117e60f057d624b37a0dcab:internal/hostruntime/operation_receipt_test.go:generic-api-key:13
+cafa5cbaf5123c8e46028b535997f32e45db972e:tests/config/schema-validation.test.mjs:github-pat:89
+cafa5cbaf5123c8e46028b535997f32e45db972e:tests/sanitization/test_sanitize_public.py:generic-api-key:361
+cafa5cbaf5123c8e46028b535997f32e45db972e:tests/sanitization/test_sanitize_public.py:generic-api-key:580
+cafa5cbaf5123c8e46028b535997f32e45db972e:tests/sanitization/test_sanitize_public.py:generic-api-key:788
