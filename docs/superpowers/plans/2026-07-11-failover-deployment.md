@@ -423,9 +423,11 @@ and add focused Go tests; keep the current lifecycle engine and phase table.
   through the existing barrier; running jobs drain normally.
 - [ ] Bind every released listener to the lease enrollment session/generation
   and send-anchored local deadline as well as local epoch/fence. At job accept,
-  destroy it when any binding is superseded or the local deadline is reached;
-  prove a predecessor listener cannot accept after replacement enrollment even
-  when its controller process remains alive.
+  destroy it when any locally observable binding is superseded or the local
+  deadline is reached. Prove a still-live predecessor cannot accept at or after
+  that deadline, and separately prove the replacement receives no acquisition
+  lease before the later `leaseNotBefore` boundary. Do not claim asynchronous
+  revocation merely from replacement enrollment.
 - [ ] Integrate maintenance directives as intent only. Status, CLI success, and
   upgrade observation never grant acquisition.
 - [ ] Add cancellation-resistant upstream, stale listener, re-enrollment,
