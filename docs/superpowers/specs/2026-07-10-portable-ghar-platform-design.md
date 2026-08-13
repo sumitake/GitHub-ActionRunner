@@ -1338,7 +1338,7 @@ The Worker does not poll every repository on each evaluation during steady state
 - failover/failback mutations;
 - canary dispatch and bounded status checks;
 - read-back after ambiguous or partial errors; and
-- the bounded five-minute selector-and-archive integrity sweep, which reads
+- the operator-approved bounded selector-and-archive integrity sweep, which reads
   each repository's routing companions and live `archived` state and is the
   live-observation channel for the per-repository archive-disable contract.
 
