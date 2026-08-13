@@ -1747,9 +1747,11 @@ Before changing a deployment, capture its live controller/supervisor scripts, im
    failure recovery, hosted fallback, email, and the optional secondary webhook.
 7. For each later repository, reacquire the hold, disable acquisition, reconcile
    it hosted under a new configuration/canary revision, clear the new queue-risk
-   generation, repeat the epoch canary, restore full acquisition, and observe
-   the enabled heartbeat before routing locally, without renaming required
-   checks.
+   generation, repeat the epoch canary, set enabled intent, and observe the
+   route-readiness heartbeat without an enabled lease. Create and read back the
+   self-hosted route, enter `PORTABLE`, and require a subsequent matching
+   heartbeat and enabled lease before local acquisition, without renaming
+   required checks.
 8. Keep secret-bearing, release, deployment-write, and unsupported browser/container jobs hosted unless separately reviewed.
 
 ### 18.3 External watcher cutover
@@ -1995,7 +1997,8 @@ primary artifacts.
 
 The final repair pass then addressed the implementation seams exposed by
 whole-artifact review: scalar Worker-owned companion selectors with drift read-back;
-an acquisition-enabled heartbeat gate before any self-hosted outbox; complete
+an acquisition-enabled route-readiness heartbeat before any self-hosted outbox,
+with the enabled lease granted only after exact route read-back; complete
 legacy-canary identity; nonce-schema parity; durable queue-risk recovery; a
 zero-local-acquisition gate until that recovery completes; a
 closed SQL-only `DueMutation` boundary; real external-effect lifecycle states;
