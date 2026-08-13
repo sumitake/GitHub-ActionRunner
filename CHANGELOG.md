@@ -48,6 +48,10 @@ Nothing in this section has shipped as a tagged release.
   blocking design criteria; simplified the planned external control plane to
   one signed heartbeat lease, one Cron scheduler, six routing states, and
   authoritative receipt-based cutover verification.
+- Made archive restriction honestly lease-bounded and fail-closed on stale
+  evidence, and gave the single Cron scheduler an explicit bounded fleet
+  inventory so every per-fleet Durable Object is discoverable without a second
+  registry.
 - Clarified the standalone product boundary: consumer repositories and
   development-time collaboration or review tools are optional integrations,
   never Portable GHAR build, test, release, deployment, or runtime

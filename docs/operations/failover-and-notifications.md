@@ -41,8 +41,12 @@ legacy rollback use the same lease type. The controller derives its shorter
 monotonic deadline from heartbeat send time, rejects a late response, and
 validates the operator-approved heartbeat/lease inequality. Missing, stale,
 mismatched, or expired leases stop new local acquisition while running jobs
-drain; a signed repository disable stops only that alias. Administrative status
-and maintenance commands never grant authority.
+drain; a signed repository disable stops only that alias. Archive evidence has
+an approved maximum age and missing or stale evidence is restrictive. A cached
+pre-restriction lease converges by its next replacement or existing local
+deadline, so the documented worst case is evidence age plus remaining lease,
+not an instantaneous remote revocation claim. Administrative status and
+maintenance commands never grant authority.
 
 ## Transition, outbox, and read-back
 
@@ -56,11 +60,16 @@ silently dropped mutation. No external routing write is ever attempted
 from state that was not first durably persisted.
 
 One Cloudflare Cron Trigger is the sole durable scheduler for this due work.
-Each tick claims a bounded batch; expired claims return to the queue and all
-retries and retained history are capped. Request handlers may opportunistically
-execute newly persisted work, but recovery never depends on another request.
-Durable Object alarms and private runtime-storage behavior are deliberately not
-a second recovery path.
+Because Durable Object namespaces are not enumerable, each tick validates one
+canonical bounded private fleet-ID inventory, directly addresses every listed
+object with an enforced deadline and bounded concurrency, and asks each object
+to claim a bounded batch. An invalid or absent inventory prevents enrollment
+and lease renewal; addition requires Cron-addressability read-back, and removal
+requires hosted, zero-lease, empty-due-work proof. Expired claims return to the
+queue and all retries and retained history are capped. Request handlers may
+opportunistically execute newly persisted work, but recovery never depends on
+another request. Durable Object alarms and private runtime-storage behavior are
+deliberately not a second recovery path or fleet registry.
 
 With Cron functioning, the operator-approved hosted-transition completion
 budget covers the last lease window, safety margin, one Cron period, bounded

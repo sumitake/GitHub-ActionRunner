@@ -6,7 +6,7 @@
 
 **Goal:** Build, publish, deploy, validate, and operate Portable GHAR as the generic source-of-truth for ephemeral GitHub Actions runners on a QTS Docker host, then retire the pre-existing runner fleet and external watcher only after a successful reliability soak and rollback rehearsal.
 
-**Architecture:** A Go controller acquires jobs through an exact-pinned `actions/scaleset` adapter and launches one constrained runner per job. On the QTS reference host, the runner shares only an empty `--network none` namespace with a capless loopback relay; a separately jailed, dial-bounded broker owns all real network sockets through a per-job Unix channel, and the listener is released only after namespace, policy, destination, resource-budget, and conntrack proofs pass. A QTS host watchdog may restart or reconcile the controller but cannot change workflow routing; while the legacy fleet owns the stable per-holder generation fence it can run only a zero-capacity observer. A scheduled official-release observer builds and attests immutable one-version runner candidates outside job containers, scale sets disable in-place updates, and whole-container destruction reclaims every job cgroup/tmpfs/workspace. A Cloudflare Worker backed by one SQLite Durable Object per fleet is the only automatic routing authority; one Cron Trigger reconciles versioned configuration and persisted due work, accepted heartbeat responses renew one short-lived signed acquisition lease, idempotent GitHub variable mutations are read back, failback requires an epoch-bound secretless canary, and email/optional-webhook notifications retry independently.
+**Architecture:** A Go controller acquires jobs through an exact-pinned `actions/scaleset` adapter and launches one constrained runner per job. On the QTS reference host, the runner shares only an empty `--network none` namespace with a capless loopback relay; a separately jailed, dial-bounded broker owns all real network sockets through a per-job Unix channel, and the listener is released only after namespace, policy, destination, resource-budget, and conntrack proofs pass. A QTS host watchdog may restart or reconcile the controller but cannot change workflow routing; while the legacy fleet owns the stable per-holder generation fence it can run only a zero-capacity observer. A scheduled official-release observer builds and attests immutable one-version runner candidates outside job containers, scale sets disable in-place updates, and whole-container destruction reclaims every job cgroup/tmpfs/workspace. A Cloudflare Worker backed by one SQLite Durable Object per fleet is the only automatic routing authority; one Cron Trigger addresses each deterministic object from one bounded validated private fleet inventory and reconciles persisted due work, accepted heartbeat responses renew one short-lived signed acquisition lease, idempotent GitHub variable mutations are read back, failback requires an epoch-bound secretless canary, and email/optional-webhook notifications retry independently.
 
 **Tech Stack:** Go, SQLite, Docker/OCI, POSIX shell and Bats, TypeScript, Cloudflare Workers, Durable Objects SQLite, Vitest, JSON Schema, GitHub Apps and REST API, GitHub Actions, CodeQL, Gitleaks, Trivy, Syft/CycloneDX or SPDX SBOM tooling.
 
@@ -31,7 +31,9 @@
 - Every local acquisition-policy change—mode, eligible scale sets, or effective capacity—uses one bounded epoch CAS that invalidates and joins old pollers/leases and drains acquisition critical sections. Watchdog/probe stops, host-pressure reductions, canary narrowing, suspend, and observer startup use no weaker path; an unjoinable upstream call persists fatal/zero capacity and terminates the controller process.
 - No persisted GitHub mutation, canary check, or notification retry may depend
   on a future request. One Cloudflare Cron Trigger claims and resumes bounded
-  due work after eviction/crash; no alarm or second scheduler duplicates it.
+  due work after eviction/crash by directly addressing every ID in one bounded
+  validated private fleet inventory; no alarm, enumerable-namespace assumption,
+  second registry, or second scheduler duplicates it.
 - Every live legacy adoption/suspend/retirement mutation goes through a positively matched QTS target adapter with fixed typed actions and post-action read-back.
 - Preserve existing consumer-workflow job and required-check names. Keep secret-bearing, release, deployment-write, and unsupported browser/container jobs GitHub-hosted unless separately reviewed.
 - A source merge is not a deployment. Every production transition requires positive read-back from the target host, GitHub, Cloudflare, and the affected workflow.
@@ -183,7 +185,9 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
   authority: one short-lived signed lease for `portable` or governed `legacy`.
   The lease carries a bounded signed set of Worker-latched archived-disabled
   repository aliases, so one repository can fail closed without stalling the
-  rest of the fleet.
+  rest of the fleet. Missing or stale archive evidence is restrictive, and the
+  explicit event-to-denial bound is evidence age plus remaining local lease;
+  the design does not claim asynchronous revocation of a cached lease.
 - Portable and legacy use the same lease type. A hosted transition advances its
   generation, stops renewal, and waits through the last expiry plus the approved
   safety margin before it can confirm hosted. The client anchors its shorter
@@ -197,8 +201,9 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
   lease and returns directly to hosted because routing never left hosted.
 - Desired routing mutations are persisted before bounded GitHub calls,
   transactionally claimed, and read back after success or ambiguity. One Cron
-  Trigger recovers bounded due work after eviction/crash; no Durable Object alarm
-  or private storage contract is a second scheduler. With Cron functioning,
+  Trigger addresses every configured deterministic fleet object and recovers
+  bounded due work after eviction/crash; no Durable Object alarm, private
+  storage contract, or separate registry is a second scheduler. With Cron functioning,
   hosted-transition completion is bounded by the operator-approved lease,
   margin, Cron, delivery-jitter, and due-work inequality; an outage remains
   incomplete and visible rather than becoming false success.
@@ -374,7 +379,8 @@ with no workflow that can route self-hosted is excluded from the private fleet
 configuration, receives no scale set or idle capacity, and is not retained as a
 canary merely because a legacy runner profile still exists for it. A repository
 whose live GitHub `archived` state is `true` is likewise excluded with effective
-capacity zero regardless of what any local or private-overlay inventory says;
+capacity zero after the explicitly bounded evidence-age plus remaining-lease
+propagation window, regardless of what any local or private-overlay inventory says;
 unarchiving alone never restores eligibility, and reactivation follows the
 archive-state contract in the platform design (operator-approved configuration
 revision, fresh eligibility audit, hosted bootstrap and read-back, queue-risk
@@ -449,6 +455,13 @@ Execute every drill from the failover-deployment plan against secretless canary 
 - simultaneous Worker and Cron unavailability while GitHub still routes local:
   the short lease expires, no new local acquisition occurs, queued work remains
   visible, and no hosted-confirmation claim is fabricated;
+- archive change just after fresh evidence, stale/failed metadata observation,
+  and a still-current cached lease: denial occurs within the approved evidence-
+  age plus remaining-lease bound, work acquired before the bound is audited,
+  and unrelated repositories continue;
+- one fleet Cron call times out while other configured fleets contain due work:
+  every configured object is still addressed once and the failed fleet remains
+  visible for bounded retry;
 - local state loss followed by server-owned re-enrollment;
 - governed legacy rollback publisher re-enrollment with matching active-fleet/
   fence generation, plus stale/fatal mismatch back to hosted;

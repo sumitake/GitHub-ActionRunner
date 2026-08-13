@@ -19,9 +19,10 @@ the only remote acquisition authority: one short-lived signed lease for the
 exclusive `portable` or governed `legacy` holder. The Durable Object is the sole
 automatic GitHub routing writer. It persists transition intent and idempotent
 due work before external effects; one Cloudflare Cron Trigger is the sole
-durable scheduler. A six-state routing machine keeps implementation checkpoints
-out of authority state. Email and an optional signed webhook are independent
-notifications, never routing evidence.
+durable scheduler and addresses every deterministic fleet object from one
+validated, bounded private `fleetIds` inventory. A six-state routing machine
+keeps implementation checkpoints out of authority state. Email and an optional
+signed webhook are independent notifications, never routing evidence.
 
 **Tech stack:** Go controller client; TypeScript Cloudflare Worker; SQLite
 Durable Objects; Workers Vitest integration; one Cloudflare Cron Trigger;
@@ -106,6 +107,18 @@ from wall time, status, or an administrative command. The existing local
 the cached lease while the local epoch barrier and host fence remain held; it
 performs no network call and creates no remote per-operation state.
 
+Archive restriction is deliberately bounded rather than falsely described as
+instantaneous. The Worker persists the last successful archive observation for
+each configured repository. Missing, `archived=true`, or older-than-approved
+evidence places the alias in the restrictive lease set. A pre-restriction lease
+can remain usable only until the earlier of a replacement heartbeat response or
+its existing local deadline. The maximum interval from a just-after-observation
+GitHub archive change is the approved evidence-age bound plus the maximum
+remaining local lease lifetime. Work acquired before that convergence point may
+drain and is audited; work beginning at or after it is denied. This closes the
+failure case without push delivery, a second protocol, or a remote call per
+acquisition.
+
 The operator-approved heartbeat configuration must satisfy
 `L > (N + 1) * H + D + S`, where `H` is the maximum interval between attempt
 starts, `D` is the enforced end-to-end heartbeat deadline, `S` is the local
@@ -152,10 +165,19 @@ correctness to runtime-internal alarm storage.
 
 ### Durable scheduling
 
-One Cloudflare Cron Trigger scans and claims bounded due-work batches. Request
-handlers may opportunistically execute work they just persisted, but recovery
-never depends on another request. Durable Object alarms are not a second
-scheduler. Expired claims return to the queue; permanent failures stay visible.
+One Cloudflare Cron Trigger validates a canonical, duplicate-free, size-bounded
+private `fleetIds` inventory and addresses every listed deterministic Durable
+Object directly; Durable Object namespaces are never assumed enumerable.
+Per-fleet calls have enforced deadlines and bounded concurrency. Each addressed
+object claims a bounded due-work batch. The fleet count/deadline/concurrency/
+Cron-period inequality must fit the platform execution budget before
+deployment. Request handlers may opportunistically execute work they just
+persisted, but recovery never depends on another request. Durable Object alarms
+are not a second scheduler. Expired claims return to the queue; permanent
+failures stay visible. Enrollment and lease renewal fail closed for a fleet
+missing from that same inventory; fleet addition requires positive Cron
+addressability, and fleet removal requires hosted/zero-lease/empty-due-work
+proof first.
 
 If the Worker and Cron path are both unavailable while GitHub still routes
 locally, the short lease expires and new local acquisition stops. Jobs may queue
@@ -167,7 +189,7 @@ explicit, observable, and never reported as hosted failover.
 | Dependency | Bound | Safe degradation and proof |
 | --- | --- | --- |
 | Cloudflare Worker/DO | Request deadline; short lease lifetime | Lease expires; new local acquisition stops; no status or cached response extends it. |
-| Cron Trigger | Bounded batch/claim/retry age | Due work waits durably; expired claims are reclaimed; no second scheduler masks an outage. |
+| Cron Trigger/fleet inventory | Bounded fleet count, per-fleet deadline/concurrency, batch/claim/retry age | Every configured object is addressed directly; invalid/absent inventory blocks authority, due work waits durably, and no second scheduler masks an outage. |
 | GitHub API | Per-call deadline, rate-limit budget | Desired state remains persisted; ambiguity is read back; unconfirmed failover is never success. |
 | Email/webhook | Per-attempt deadline and retry ceiling | Routing continues; terminal delivery failure stays visible. |
 | Controller heartbeat | Bounded request/response and sequence | No accepted response means no renewed lease. |
@@ -208,9 +230,12 @@ explicit, observable, and never reported as hosted failover.
   is read back. Never cancel or rerun user work automatically.
 - Repository archive state is a durable per-repository eligibility latch. It
   is carried in the lease as a signed restrictive alias set, so one archived
-  repository stops without stalling unrelated repositories. It cannot be
-  cleared by a later unarchive observation without an operator-approved
-  configuration revision, hosted reconciliation, and canary.
+  repository stops without stalling unrelated repositories. Archive evidence
+  has an approved maximum age; missing or stale evidence is restrictive. The
+  accepted propagation bound is evidence age plus the remaining local lease,
+  and no claim may imply instantaneous revocation. The latch cannot be cleared
+  by a later unarchive observation without an operator-approved configuration
+  revision, hosted reconciliation, and canary.
 - A hosted hold is the only maintenance freeze. An operator hold dominates
   runner-upgrade automation and never auto-releases.
 - One current lease type authorizes either fenced local holder. Portable and
@@ -263,6 +288,9 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
   wrong-holder, wrong-policy, wrong-generation, altered, late-response,
   unknown/duplicate/unsorted alias, and expired leases cannot authorize
   acquisition.
+- [ ] Prove missing/stale archive evidence is restrictive, a failed metadata
+  read cannot refresh evidence age, and the archive event-to-denial interval
+  never exceeds the approved evidence-age plus remaining-local-lease bound.
 - [ ] Write RED tests for the heartbeat/lease inequality, including one wholly
   lost renewal followed by recovery inside the approved budget and rejection
   when any symbolic term makes the inequality false.
@@ -285,8 +313,16 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
   migrations, schema drift, and corrupt identity fail hosted/closed.
 - [ ] Write RED tests for bounded batch ordering, expiring claims, crash after
   claim, ambiguous effect, permanent failure, retry ceilings, and Cron outage.
-- [ ] Implement one Cron scanner/claimer. Request handlers may claim only work
-  they just persisted and cannot become the recovery guarantee.
+- [ ] Write RED tests proving a Cron handler cannot enumerate a Durable Object
+  namespace, rejects invalid/duplicate/oversized fleet inventories, addresses
+  every configured deterministic object once, and does not starve healthy
+  fleets when one call times out.
+- [ ] Implement one Cron scanner/claimer over the validated private `fleetIds`
+  inventory with bounded per-fleet deadlines/concurrency. Session and lease
+  paths reject an absent fleet; addition requires Cron-addressability read-back,
+  and removal requires hosted, zero-lease, empty-due-work proof. Request handlers
+  may claim only work they just persisted and cannot become the recovery
+  guarantee.
 - [ ] Add a repository test forbidding Durable Object alarms, private metadata
   tables, a second scheduler, and unbounded retry/history fields.
 
@@ -324,9 +360,10 @@ consumer-neutral templates under `config/examples/` or `tests/fixtures/`.
   admin-command union plus selective GitHub read-back; never auto-cancel or
   rerun work.
 - [ ] Implement the archive-disabled latch, the signed restrictive alias set in
-  each lease, and the operator reactivation path. A queued-forever archived
-  dispatch is inert, never progress, and unrelated repositories retain their
-  current lease authority.
+  each lease, archive-evidence freshness, and the operator reactivation path. A
+  dispatch still queued at the bounded archive convergence point is inert,
+  while work acquired under a still-current pre-restriction lease may drain and
+  is audited; unrelated repositories retain their current lease authority.
 - [ ] Implement legacy canary and explicit legacy routing with the same lease
   type and one host fence. Prove watchdog races cannot yield dual holders.
 - [ ] Add stale/late/wrong-head/wrong-label/wrong-environment canary tests and
@@ -381,6 +418,9 @@ Grafana provisioning assets, and docs/tests.
 
 - [ ] Validate target/account/host identity, secret references, file modes, and
   exact repository/workflow/selector inventory without printing private values.
+- [ ] Validate the canonical bounded `fleetIds` inventory, its revision/digest,
+  Cron execution-budget inequality, and per-fleet addressability without
+  creating a second fleet registry.
 - [ ] Capture and verify encrypted legacy rollback material from live state;
   stale public/local references are not rollback evidence.
 - [ ] Journal every host effect with an idempotent operation ID, applying/proven
@@ -402,7 +442,8 @@ packet approved.
 - [ ] Deploy the controller force-disabled under the legacy fence. Prove zero
   acquisition and host conformance without changing consumer routing.
 - [ ] Deploy Worker/DO/Cron privately; establish session and heartbeat with an
-  explicit no-lease result while hosted hold is active.
+  explicit no-lease result while hosted hold is active. Prove the deployed Cron
+  addresses every configured fleet object from the exact private inventory.
 - [ ] Reconcile every repository hosted and prove exact workflow/attestation
   bindings. Clear queue risk before canary.
 - [ ] Pass projection readiness, dark receipts, queued canary, running canary,
@@ -437,9 +478,13 @@ packet approved.
   expiry tests pass across Go and Worker implementations.
 - [ ] Exactly one routing writer, one scheduler, one lease protocol, six routing
   states, and one local lifecycle engine are present.
+- [ ] The exact bounded fleet inventory addresses every per-fleet Durable Object
+  on each Cron tick; invalid addition/removal and execution-budget overflow fail
+  closed without a second registry or scheduler.
 - [ ] Send-anchored lease expiry, the heartbeat/lease inequality, and the
   signed archive-disable set pass exact cross-language tests without adding a
-  second authority protocol.
+  second authority protocol; stale archive evidence and the bounded
+  event-to-denial window are covered explicitly.
 - [ ] Every external effect is durably intended, bounded, idempotent, and read
   back before success.
 - [ ] Worker/Cron outage expires local authority and is reported as queued/

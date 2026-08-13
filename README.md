@@ -151,7 +151,8 @@ GitHub or Docker state rather than an assumption. Full detail is in
 Cloudflare Worker enrollment epochs are server-owned, not host-chosen;
 replayed and reordered heartbeats are rejected; every GitHub-facing
 routing mutation is staged through a durable outbox before it is
-attempted; one Cron Trigger recovers due work; and failback to self-hosted
+attempted; one Cron Trigger addresses every object in a bounded validated
+private fleet inventory and recovers due work; and failback to self-hosted
 routing is gated on a current-epoch canary followed by a fresh
 full-capacity heartbeat and signed acquisition lease. Email and webhook
 notifications retry independently of each other, and notification failure

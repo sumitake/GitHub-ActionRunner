@@ -401,21 +401,39 @@ Repository archival is a per-repository eligibility change, not a fleet
 failover. Each repository carries a latched eligibility state — `active`,
 `archived-disabled`, or `pending-reactivation`. The Worker is the sole live
 reader of GitHub `archived` state (it alone holds Metadata read); it observes
-archival through its bounded five-minute integrity sweep. On observing
-`archived=true` the Worker latches that repository to `archived-disabled` in
-the per-fleet Durable Object. Every later lease includes the exact sorted set
-of latched disabled aliases, authenticated as part of the lease, even if the
-controller's configuration revision still lists the alias as active. The set
-is bounded by the configured repository inventory, contains no duplicates or
-unknown aliases, can only remove authority, and is validated before every local
-acquisition. A current pre-observation lease remains usable only until its
-shorter local deadline; a renewed lease disables that alias without disabling
-unrelated repositories or introducing a second authority protocol. The next
-operator-approved repository-policy revision must also record the alias as
-`archived-disabled`, which forces zero effective capacity. This per-repository
-disable inserts no fleet-wide queue-risk record
-and never blocks acquisition for other repositories; a job already running when
-archival is observed drains normally, and no new work is admitted. The
+archival through an operator-approved bounded integrity sweep. Each repository
+record persists the last successful archive observation and its Worker receipt
+time. Let `A` be the separately approved maximum age of that evidence,
+including sweep cadence, bounded GitHub-call time, and delivery jitter. A lease
+response treats `archived=true`, missing evidence, or evidence older than `A`
+as restrictive for that alias; a failed or late metadata read never refreshes
+the evidence age.
+
+On observing `archived=true` the Worker latches that repository to
+`archived-disabled` in the per-fleet Durable Object. Every later lease includes
+the exact sorted set of latched or evidence-stale disabled aliases,
+authenticated as part of the lease, even if the controller's configuration
+revision still lists an alias as active. The set is bounded by the configured
+repository inventory, contains no duplicates or unknown aliases, can only
+remove authority, and is validated before every local acquisition. The Worker
+cannot asynchronously erase a lease already cached on an outbound-only
+controller. Authority therefore converges no later than the earlier of the next
+accepted heartbeat carrying the restriction or that lease's shorter local
+deadline. From a GitHub archive change immediately after fresh evidence, the
+worst-case bound is `A` plus the maximum remaining local lease lifetime. If
+Worker, Cron, or GitHub metadata service is unavailable, evidence becomes stale
+and no later response can renew that alias; the current lease still expires.
+This bounded propagation window is an explicit residual, not an instantaneous
+revocation claim or a reason to add push delivery or per-acquisition remote
+calls.
+
+The next operator-approved repository-policy revision must also record the
+alias as `archived-disabled`, which forces zero effective capacity. This
+per-repository disable inserts no fleet-wide queue-risk record and never blocks
+acquisition for other repositories. A job already running, or acquired under a
+still-current pre-restriction lease before the convergence point, drains
+normally and is recorded; no acquisition beginning at or after that point is
+admitted. The
 eligibility state is durable and latched: a later live `archived=false` does
 not return the repository to `active` on its own. Reactivation is a distinct
 operator-driven path (`archived-disabled` → `pending-reactivation` → `active`)
@@ -1068,14 +1086,31 @@ same live claim and can confirm only that row. A crash or ambiguous API result
 triggers claim recovery, authoritative GitHub read-back, and idempotent
 reconciliation. No external routing write occurs from unpersisted intent.
 
-One Cloudflare Cron Trigger is the sole durable due-work scheduler. Each tick
-reconciles private configuration, evaluates health, and claims bounded batches
-ordered by safety priority and due time. A request handler may opportunistically
-execute work it just persisted, but recovery never depends on another request.
-Expired claims return to the queue on a later cron tick. Retry count, elapsed
-age, claim duration, batch size, per-destination concurrency, and retained
-history are bounded; a permanent failure stays visible and never becomes false
-success.
+One Cloudflare Cron Trigger is the sole durable due-work scheduler. Because a
+Durable Object namespace is not enumerable, the private deployment
+configuration carries one exact, canonical, duplicate-free, size-bounded
+`fleetIds` inventory and its revision/digest. Each tick validates that inventory
+and addresses every listed deterministic fleet object directly through the
+Durable Object namespace. Per-fleet calls have enforced deadlines and run under
+bounded concurrency; a failure in one fleet is retained and alerted without
+preventing attempts for the others. Each addressed object reconciles its
+private configuration, evaluates health, and claims a bounded batch ordered by
+safety priority and due time. The configured fleet count, per-fleet deadline,
+concurrency, Cron period, and platform execution budget must satisfy a checked
+operator-approved inequality that permits every listed fleet to be addressed
+on each tick; source supplies no numeric defaults.
+
+Session enrollment and lease renewal fail closed for a fleet absent from the
+same validated inventory. Adding a fleet requires a revisioned configuration
+deployment and positive Cron-addressability read-back before enrollment can
+issue authority. Removing one requires hosted confirmation, zero live lease,
+empty `due_work`, and terminal retention evidence before the inventory revision
+can omit it. The inventory is discovery configuration, not a second state store
+or routing authority. A request handler may opportunistically execute work it
+just persisted, but recovery never depends on another request. Expired claims
+return to the queue on a later cron tick. Retry count, elapsed age, claim
+duration, batch size, per-destination concurrency, and retained history are
+bounded; a permanent failure stays visible and never becomes false success.
 
 Durable Object alarms, private storage tables, and runtime-specific transaction
 coupling are deliberately excluded. They duplicate the scheduler and make
@@ -1234,14 +1269,14 @@ to the dedicated canary workflow.
 Companion selectors are not merely called immutable. While hosted, the Worker
 persists and read-backs their exact expected values before any canary or local
 route. Before every local transition and route proof it repeats that read-back.
-Cron also performs a bounded selector-integrity sweep at least every five
-minutes. Missing, changed, invalid, duplicate legacy assignment, or inaccessible
-selector state creates a hosted transition; repair occurs only after hosted is
-confirmed. Route confirmation binds the expected selector values/digests. A
-direct external variable mutation between sweeps can cause a scheduling failure,
-so the deployment permission boundary and bounded detection interval remain an
-explicit GitHub-API residual risk; it is never represented as successful local
-routing.
+Cron also performs the operator-approved bounded selector-integrity sweep.
+Missing, changed, invalid, duplicate legacy assignment, stale evidence, or
+inaccessible selector state creates a hosted transition; repair occurs only
+after hosted is confirmed. Route confirmation binds the expected selector
+values/digests. A direct external variable mutation between sweeps can cause a
+scheduling failure, so the deployment permission boundary and bounded detection
+interval remain an explicit GitHub-API residual risk; it is never represented
+as successful local routing.
 
 Before a repository can count as hosted-confirmed, the Worker reads the current
 default-branch head and each candidate workflow through the same installation

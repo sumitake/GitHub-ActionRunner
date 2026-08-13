@@ -197,10 +197,14 @@ policy digest, mode, capacity, and a bounded restrictive set of Worker-latched
 archived-disabled repository aliases. Portable and governed legacy rollback use
 the same lease type. The controller anchors its shorter local deadline at
 heartbeat send time, rejects a response that arrives too late, and validates
-the operator-approved heartbeat/lease inequality before acquiring. One Cron
-Trigger claims bounded batches from the durable
-outbox; Durable Object alarms and private runtime storage contracts are not a
-second scheduler.
+the operator-approved heartbeat/lease inequality before acquiring. Archive
+evidence has a bounded maximum age; missing or stale evidence is restrictive,
+and revocation converges within that evidence-age bound plus the remaining
+local lease rather than pretending a cached lease can be erased asynchronously.
+One Cron Trigger validates one bounded private fleet-ID inventory, directly
+addresses every listed deterministic Durable Object, and claims bounded batches
+from each durable outbox; Durable Object alarms, namespace enumeration, and
+private runtime storage contracts are not a second scheduler or registry.
 
 Routing changes only follow a documented sequence of positive read-backs:
 a hosted-hold transition is confirmed only once every configured
