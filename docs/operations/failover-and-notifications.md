@@ -91,12 +91,14 @@ requires, in order: every open queue-risk record from the latest hosted
 transition cleared by authenticated GitHub read-back; a canary run tied
 to the current transition epoch that observes
 `runner.environment=self-hosted` at the exact expected workflow revision;
-local acquisition then enabled; and, without the Worker's transition epoch
-changing in between, a newer-sequence heartbeat from the same enrollment
-session proving the expected acquisition-policy digest and full
-configured capacity and returning a matching enabled lease. Only that
-combination can create self-hosted routing
-intent. If the canary cannot pass, hosted routing is the safe state that
+local enabled intent; and, without the Worker's transition epoch changing in
+between, a newer-sequence heartbeat from the same enrollment session proving
+the expected acquisition-policy digest and full configured capacity. That
+heartbeat is route-readiness evidence only and grants no enabled lease while
+routing remains hosted. The Worker may then create self-hosted routing intent;
+only exact read-back enters `PORTABLE`, after which a subsequent matching
+heartbeat may return the enabled lease that starts local acquisition. If the
+canary cannot pass, hosted routing is the safe state that
 remains in effect -- there is no automatic bypass of a failed canary.
 
 ## Independent notification retries

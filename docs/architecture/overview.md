@@ -209,9 +209,11 @@ private runtime storage contracts are not a second scheduler or registry.
 Routing changes only follow a documented sequence of positive read-backs:
 a hosted-hold transition is confirmed only once every configured
 repository reads back on GitHub-hosted runners, and a self-hosted
-transition is confirmed only after a current-epoch canary succeeds and a
-fresh heartbeat proves the expected acquisition policy, full capacity, and
-matching enabled lease. The persisted routing model has six authority states:
+transition is confirmed only after a current-epoch canary succeeds, a fresh
+heartbeat proves the expected acquisition policy and full capacity as
+route-readiness evidence without granting an enabled lease, and self-hosted
+routing is read back. Only then may a subsequent matching heartbeat return the
+enabled lease that starts local acquisition. The persisted routing model has six authority states:
 hosted, draining-to-hosted, Portable canary, Portable, legacy canary, and
 legacy. Implementation checkpoints remain transition outcomes rather than
 expanding the state graph. Fail-closed bootstrap persists hosted only after

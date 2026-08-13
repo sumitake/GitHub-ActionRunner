@@ -212,7 +212,9 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
   canary or local route.
 - Recovery remains hosted until queue risk is cleared, a current-epoch
   secretless canary succeeds, and a newer same-session heartbeat proves the
-  expected policy/full capacity and returns a matching enabled lease.
+  expected policy/full capacity as route-readiness evidence without granting an
+  enabled lease. After self-hosted read-back, a subsequent matching heartbeat
+  must return the enabled lease before local acquisition begins.
 - Email and optional webhook share a sanitized event ID but have independent
   bounded delivery attempts. Notification failure never blocks routing, and no
   particular downstream messaging bridge is mandatory.
@@ -586,7 +588,7 @@ node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVAT
 node scripts/ops/verify-retirement-gates.mjs --phase final --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
-Expected: the released hold creates a new recovery epoch; the authenticated status evidence proves a matching current-epoch canary while consumer routes remain hosted, then a fresh enabled/full-capacity heartbeat before self-hosted outbox/read-back; managed read-only workloads return to Portable GHAR; the final gate confirms the legacy fleet remains absent and fenced out. On any failure, reacquire the hosted hold and stop acquisition.
+Expected: the released hold creates a new recovery epoch; the authenticated status evidence proves a matching current-epoch canary while consumer routes remain hosted, then a fresh enabled/full-capacity heartbeat supplies route-readiness evidence without an enabled lease before self-hosted outbox/read-back. Only after exact self-hosted read-back does a subsequent matching heartbeat return the enabled lease; managed read-only workloads then return to Portable GHAR. The final gate confirms the legacy fleet remains absent and fenced out. On any failure, reacquire the hosted hold and stop acquisition.
 
 **Step 5: Preserve rollback material for 30 days**
 

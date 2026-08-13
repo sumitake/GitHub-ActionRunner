@@ -58,10 +58,12 @@ still be accepting work. The intended sequence is:
 6. set canary-only intent, release the hosted hold into a new recovery
    epoch, receive one short-lived canary-only lease while consumer routing
    stays hosted, and run one canary operation; and
-7. only after that canary passes, and a fresh heartbeat proves full
-   acquisition capacity and returns a matching enabled lease, does the
-   failover state machine permit
-   self-hosted routing to resume.
+7. only after that canary passes and a fresh heartbeat proves enabled intent
+   and full acquisition capacity as route-readiness evidence does the failover
+   state machine permit self-hosted routing intent; that heartbeat grants no
+   enabled lease while routing remains hosted. Exact self-hosted read-back must
+   enter `PORTABLE` before a subsequent matching heartbeat may return the
+   enabled lease and local acquisition may resume.
 
 An illustrative operator gate read for step 1 of this sequence:
 
@@ -225,13 +227,15 @@ change acquisition or GitHub routing.
    Verify active runner/job identity from GitHub and the expected one-assignment
    lifecycle from controller and heartbeat receipts. After completion, verify
    every job/capacity/listener count returns to zero and last-terminal advances.
-4. **Enabled/full-capacity confirmation:** enable only after the prior verifier
-   receipts pass. Require a fresh signed Worker heartbeat that proves the exact
-   enabled policy/full capacity and returns the matching enabled lease, then
-   verify the complete authoritative tuple once more. Failure before local
-   route confirmation keeps the hosted hold. Failure after local confirmation
-   invokes the governed hosted rollback path; it is never repaired by a
-   dashboard value.
+4. **Enabled/full-capacity confirmation:** set enabled intent only after the
+   prior verifier receipts pass. Require a fresh signed Worker heartbeat that
+   proves the exact enabled policy/full capacity as route-readiness evidence but
+   returns no enabled lease while routing remains hosted. After exact
+   self-hosted read-back enters `PORTABLE`, require a subsequent matching
+   heartbeat and enabled lease before acquisition, then verify the complete
+   authoritative tuple once more. Failure before local route confirmation keeps
+   the hosted hold. Failure after local confirmation invokes the governed hosted
+   rollback path; it is never repaired by a dashboard value.
 5. **Scope and natural-sample reconciliation:** verify the collector scope
    exactly matches the deployment's managed repository set. Addition,
    archive-state change, or removal updates the scope and configuration

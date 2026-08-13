@@ -353,8 +353,11 @@ consumer-neutral templates under `config/examples/` or `tests/fixtures/`.
 - [ ] Implement Portable canary while routing stays hosted, with exactly one
   canary scale set and one capacity unit in the signed lease; a failed or
   cancelled canary revokes that lease and returns directly to `HOSTED`.
-- [ ] Require the canary result plus a newer same-session enabled heartbeat and
-  matching full-capacity lease before self-hosted intent.
+- [ ] Require the canary result plus a newer same-session enabled heartbeat as
+  full-capacity route-readiness evidence before self-hosted intent, but issue no
+  enabled lease while routing remains hosted. After exact self-hosted read-back
+  enters `PORTABLE`, require a subsequent matching heartbeat and enabled lease
+  before local acquisition.
 - [ ] Persist queue-risk evidence for actual local-to-hosted transitions. Clear
   it only through the nonce-protected `queue-recovery` member of the closed
   admin-command union plus selective GitHub read-back; never auto-cancel or
@@ -447,7 +450,8 @@ packet approved.
 - [ ] Reconcile every repository hosted and prove exact workflow/attestation
   bindings. Clear queue risk before canary.
 - [ ] Pass projection readiness, dark receipts, queued canary, running canary,
-  enabled/full-capacity receipts, and scope reconciliation.
+  pre-route enabled/full-capacity readiness, post-read-back enabled-lease
+  receipts, and scope reconciliation.
 - [ ] Exercise controller death, Docker loss/restart, host/uplink loss, Worker
   and Cron outage, GitHub timeout/rate-limit/partial success, stale/fatal health,
   notification failures, obsolete canary, and mutual-exclusion rollback.
@@ -489,8 +493,9 @@ packet approved.
   back before success.
 - [ ] Worker/Cron outage expires local authority and is reported as queued/
   availability-degraded, not confirmed hosted failover.
-- [ ] Hosted hold, queue-risk clearance, canary, enabled lease, archive latch,
-  and legacy rollback all pass current-epoch exact-identity tests.
+- [ ] Hosted hold, queue-risk clearance, canary, pre-route readiness evidence,
+  post-read-back enabled lease, archive latch, and legacy rollback all pass
+  current-epoch exact-identity tests.
 - [ ] Email/webhook fail independently and cannot affect routing.
 - [ ] Health export, Influx adapter/query, Grafana projection, and authoritative
   cutover verifier pass without giving observability routing authority.

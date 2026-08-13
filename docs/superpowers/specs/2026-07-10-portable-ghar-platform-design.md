@@ -344,7 +344,15 @@ no remote per-operation state.
 The Durable Object renews a lease only in the signed response to an accepted
 heartbeat whose health, active holder, fence generation, policy digest, and
 capacity match its current routing state. `canary-only` binds exactly one
-persisted canary scale set and one capacity unit. A local CLI transition,
+persisted canary scale set and one capacity unit. After a Portable canary
+succeeds, a newer same-session heartbeat may prove enabled intent, the expected
+policy digest, and full capacity as route-readiness evidence while routing is
+still hosted, but its response grants no enabled lease. The local change from
+`canary-only` to enabled intent crosses the existing acquisition epoch barrier,
+so the cached canary lease no longer matches and authorizes no further
+acquisition. Only after the Worker creates and reads back self-hosted routing and
+enters `PORTABLE` may a subsequent matching heartbeat return an enabled lease. A
+local CLI transition,
 administrative status result, stale heartbeat response, or maintenance
 directive is intent/evidence only and grants no acquisition authority.
 Worker unavailability therefore expires the local lease and stops new
@@ -495,12 +503,14 @@ An upgrade proceeds through:
 9. set canary-only intent, release the hosted hold into a new recovery epoch,
    receive one canary-only lease inside the local epoch barrier, and run the
    secretless canary while routing remains hosted;
-10. enable full acquisition intent locally, receive a fresh enabled lease, and,
-    while the Worker transition epoch is unchanged, observe a
+10. enable full acquisition intent locally and, while the Worker transition
+    epoch is unchanged, observe a
     same-enrollment-session heartbeat whose sequence is newer than the canary,
-    reporting `enabled`, the expected policy digest, and complete capacity; and
-11. restore self-hosted routing only after the external failover state machine
-    confirms both the current-epoch canary and that acquisition-enabled proof.
+    reporting `enabled`, the expected policy digest, and complete capacity as
+    route-readiness evidence, without issuing an enabled lease; and
+11. restore and read back self-hosted routing, enter `PORTABLE`, then require a
+    subsequent matching heartbeat and fresh enabled lease before local
+    acquisition begins.
 
 Host lifecycle changes use a durable operation journal with an idempotent operation ID and phase. A rerun resumes or compensates forward. Fence generations never decrement and raw fence snapshots are never restored. An upstream compatibility failure leaves acquisition disabled and hosted routing unchanged. The prior immutable image remains retained as a rollback artifact, but the controller never selects an old runner image after its compatibility probe fails; in that case rollback restores the control plane while work remains hosted.
 
@@ -1182,9 +1192,11 @@ Default policy:
 - immediate failover eligibility for authenticated fatal controller states;
 - sustained healthy observations before recovery canary;
 - failback only after a canary tied to the active transition epoch and expected
-  revision succeeds, local acquisition is then enabled, and a newer-sequence
-  heartbeat in the unchanged Worker transition epoch proves the expected policy
-  digest and complete capacity;
+  revision succeeds, local enabled intent and a newer-sequence heartbeat in the
+  unchanged Worker transition epoch prove the expected policy digest and
+  complete capacity as route-readiness evidence, self-hosted routing is read
+  back, and a subsequent matching heartbeat returns the enabled lease before
+  local acquisition begins;
 - zero local acquisition, including canary-only mode or legacy runner restore,
   until every queue-risk record from the latest hosted transition is cleared by
   authenticated GitHub read-back and selective recovery;
@@ -1215,12 +1227,14 @@ epoch and leaves routing hosted in `PORTABLE_CANARY` while a current-epoch
 canary runs; because
 routing was already hosted throughout the hold, the release inserts no
 queue-risk record and does not re-block acquisition. Canary success
-does not create a local-route outbox: the controller must first enable full
-acquisition and, while the Worker remains in that transition epoch, a heartbeat
-from the same enrollment session with sequence newer than the canary observation
+does not create a local-route outbox: the controller must first set enabled
+intent and, while the Worker remains in that transition epoch, a heartbeat from
+the same enrollment session with sequence newer than the canary observation
 must prove `enabled`, the expected acquisition-policy digest, and full configured
-capacity. Only that confirmed outcome can create self-hosted intent and enter
-`PORTABLE`. Direct
+capacity. That accepted heartbeat is route-readiness evidence only and grants
+no enabled lease while routing remains hosted. It may create self-hosted intent;
+only exact route read-back enters `PORTABLE`, and only a subsequent matching
+heartbeat may return the enabled lease that permits local acquisition. Direct
 repository-variable writes are limited to initial bootstrap and the one-time
 all-candidate hosted transition before normal Worker authority. Governed
 recovery and legacy rollback remain Worker-owned; direct writes are never a
@@ -1725,10 +1739,12 @@ Before changing a deployment, capture its live controller/supervisor scripts, im
    read-only, secretless repository under a new Worker configuration revision
    and target its unique scale-set name as one GitHub.com runner label.
 6. Release the hold into a new epoch; run the one-capacity canary while all
-   repositories remain hosted, enable full acquisition after it passes, observe
-   a fresh enabled/full-capacity heartbeat and lease, and only then permit the Worker to
-   create self-hosted intent. Prove job lifecycle, isolation, failure recovery,
-   hosted fallback, email, and the optional secondary webhook.
+   repositories remain hosted, set enabled intent after it passes, and observe a
+   fresh enabled/full-capacity heartbeat as route-readiness evidence without an
+   enabled lease. Then permit the Worker to create and read back self-hosted
+   intent, enter `PORTABLE`, and require a subsequent matching heartbeat and
+   enabled lease before local acquisition. Prove job lifecycle, isolation,
+   failure recovery, hosted fallback, email, and the optional secondary webhook.
 7. For each later repository, reacquire the hold, disable acquisition, reconcile
    it hosted under a new configuration/canary revision, clear the new queue-risk
    generation, repeat the epoch canary, restore full acquisition, and observe
@@ -1861,8 +1877,10 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 - Repository expansion is reconciled hosted under a monotonic configuration revision before its canary or self-hosted mutation.
 - Recovery requires a current-epoch canary followed, without changing that
   Worker epoch, by a newer-sequence same-session enabled heartbeat with the
-  expected policy digest/full capacity; obsolete results and canary-only
-  acquisition cannot fail back.
+  expected policy digest/full capacity as route-readiness evidence. It grants no
+  enabled lease before self-hosted read-back; obsolete results and canary-only
+  acquisition cannot fail back, and a later matching heartbeat must grant the
+  enabled lease before local acquisition begins.
 - Governed legacy rollback uses the explicit `legacy` route after fence and
   legacy-canary proof; variable deletion cannot select local work.
 - Hosted routing remains safe when the canary cannot pass.
