@@ -180,6 +180,18 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
 - One timestamped, nonce-bearing, HMAC-authenticated session request creates a
   server-owned epoch/session and lease generation. Exact signed response
   binding, nonce replay, sequence, expiry, and old-session tests fail closed.
+- Re-enrollment rejects old-session traffic immediately but carries one
+  server-owned `leaseNotBefore` restriction through the fleet-global monotonic
+  maximum expiry of every issued lease plus the hosted-transition safety
+  margin. Issuance and maximum advancement are one transaction. The new session
+  may reconcile during that bounded drain but receives no acquisition lease;
+  first enrollment is not delayed, and an intervening no-lease session or
+  repeated enrollment cannot shorten the restriction. Drain status is visible
+  as liveness only, never acquisition readiness, hosted success, or
+  zero-listener quiescence evidence. Quiescence proof binds to the exact
+  enrollment session and lease generation being drained; supersession before
+  exact proof leaves a governed local transition incomplete under hosted-safe
+  routing and alerts.
 - Worker receipt time determines heartbeat freshness; client time is diagnostic
   only. An accepted heartbeat response returns the only remote acquisition
   authority: one short-lived signed lease for `portable` or governed `legacy`.
@@ -189,11 +201,16 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
   explicit event-to-denial bound is evidence age plus remaining local lease;
   the design does not claim asynchronous revocation of a cached lease.
 - Portable and legacy use the same lease type. A hosted transition advances its
-  generation, stops renewal, and waits through the last expiry plus the approved
-  safety margin before it can confirm hosted. The client anchors its shorter
-  monotonic deadline at heartbeat send time, rejects late responses, and the
-  operator-approved heartbeat/lease values must satisfy the normative
-  missed-renewal inequality in the failover plan.
+  generation, stops renewal, and waits through
+  `lastIssuedLeaseExpiryMax` plus the approved safety margin before it can
+  confirm hosted. The client anchors its shorter monotonic deadline at
+  heartbeat send time, rejects late responses, and the operator-approved
+  heartbeat/lease values must satisfy the normative missed-renewal inequality
+  in the failover plan.
+- Every released listener carries the lease session/generation and shorter
+  local deadline used at release. Job acceptance revalidates those bindings
+  alongside local epoch/fence and destroys the listener on expiry or
+  supersession, so predecessor listeners cannot create post-drain work.
 - The routing machine has only hosted, draining-to-hosted, Portable canary,
   Portable, legacy canary, and legacy. Canary/API/read-back/retry checkpoints are
   transition outcomes rather than extra authority states. Bootstrap enters
@@ -464,7 +481,15 @@ Execute every drill from the failover-deployment plan against secretless canary 
 - one fleet Cron call times out while other configured fleets contain due work:
   every configured object is still addressed once and the failed fleet remains
   visible for bounded retry;
-- local state loss followed by server-owned re-enrollment;
+- local state loss followed by server-owned re-enrollment, including a live
+  predecessor process with cached authority, an intervening no-lease session,
+  repeated enrollment during the drain, lost post-commit lease responses, a
+  shorter later lease, and exact-boundary issuance without concurrent
+  acquisition;
+- zero-listener quiescence bound to the exact drained enrollment session and
+  lease generation, including rejection of a replacement drain heartbeat that
+  reports zero only for its new generation and hosted-safe handling when the
+  drained session is superseded before proof;
 - governed legacy rollback publisher re-enrollment with matching active-fleet/
   fence generation, plus stale/fatal mismatch back to hosted;
 - partial/rate-limited/ambiguous GitHub mutations;
@@ -655,6 +680,10 @@ Tag the first stable release only after all required checks, release rehearsal, 
 - Every nonzero local acquisition holds one current Worker-issued signed lease,
   and a hosted transition advances the shared generation and waits for prior
   authority to expire/drain before claiming hosted confirmation.
+- A replacement enrollment rejects the predecessor session but withholds new
+  lease authority through the carried-forward fleet-global issued-lease expiry
+  maximum and safety margin, so same-fleet controllers cannot overlap
+  acquisition authority.
 - Email and optional signed-webhook notifications work independently and retry
   without affecting safety; no downstream messaging product is a routing or
   completion dependency.

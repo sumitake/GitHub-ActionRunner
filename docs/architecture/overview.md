@@ -191,6 +191,23 @@ only after a successful controller reconciliation cycle, is authenticated,
 and is rejected by the Worker if it is duplicate, reordered, from an old
 epoch, or replayed.
 
+Re-enrollment rejects the predecessor session immediately but cannot revoke a
+lease that process already cached. The same `fleet_state` row therefore carries
+one server-owned `leaseNotBefore` restriction through the fleet-global maximum
+expiry of every issued lease plus the hosted-transition safety margin. Lease
+issuance and monotonic advancement of that maximum are one transaction. The
+replacement may reconcile and report liveness during that bounded drain, but
+every accepted heartbeat returns the observable no-authority reason
+`predecessor-lease-draining`; it is not acquisition-ready health, failback
+evidence, hosted success, or zero-listener quiescence evidence, and work on an
+existing local route may queue. Zero-listener proof is bound to the exact
+enrollment session and lease generation whose listeners are being drained; a
+replacement cannot attest for its predecessor. If that session is superseded
+before it proves zero, the governed local transition remains incomplete under
+hosted-safe routing and alerts. Repeated enrollments cannot shorten the
+deadline. This avoids both dual acquisition and a crash-sensitive
+controller-to-controller handoff protocol.
+
 The same accepted heartbeat returns the only remote acquisition authority: a
 short-lived signed lease binding fleet holder, session, lease generation,
 policy digest, mode, capacity, and a bounded restrictive set of Worker-latched

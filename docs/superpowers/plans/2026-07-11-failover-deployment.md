@@ -71,7 +71,7 @@ elegant boundaries are co-equal blocking criteria.
 - `POST /v1/session`: one timestamped, nonce-bearing, HMAC-authenticated
   enrollment request. The response is signed and binds the request nonce,
   server-owned epoch, random session, initial sequence, lease generation, and
-  Worker receipt time.
+  the server-owned `leaseNotBefore` restriction plus Worker receipt time.
 - `POST /v1/heartbeat`: one signed health/status request. The response binds the
   accepted sequence, routing transition, maintenance directive, and either one
   `AcquisitionLeaseV1` or an explicit no-lease result.
@@ -94,7 +94,8 @@ lifecycle-owned responsibility the closed interfaces cannot express safely.
 - maximum capacity and the one eligible canary scale set when canary-only;
 - a canonical bounded `archivedDisabledAliases` set of Worker-latched
   repository aliases; and
-- server-owned validity duration, server expiry for audit, and response MAC.
+- server-owned validity duration `L`, checked server expiry equal to this
+  heartbeat's Worker receipt time plus `L`, and response MAC.
 
 The controller records monotonic time before sending the heartbeat and derives
 the lease deadline from that attempt-start timestamp, the returned duration,
@@ -163,6 +164,13 @@ lifecycle/retention contract that cannot be represented safely in these
 responsibilities. Do not depend on private Durable Object tables or couple SQL
 correctness to runtime-internal alarm storage.
 
+`fleet_state` includes fleet-global monotonic `lastIssuedLeaseExpiryMax` and the
+current session's `leaseNotBefore`. Issuing a lease and max-advancing the former
+are one transaction; enrollment atomically computes the latter as the maximum
+of Worker receipt time, any existing restriction, and the issued-lease maximum
+plus the existing positive hosted-transition safety margin. It does not add a
+handoff endpoint, controller registry, or second lease protocol.
+
 ### Durable scheduling
 
 One Cloudflare Cron Trigger validates a canonical, duplicate-free, size-bounded
@@ -219,11 +227,22 @@ explicit, observable, and never reported as hosted failover.
   blobs, job/check identities, and a successful GitHub-hosted route-attestation
   run.
 - Every hosted transition advances the lease generation and stops renewal
-  before routing work begins. It waits through the last server-recorded expiry
-  plus the approved safety margin before hosted confirmation. With Cron
+  before routing work begins. It waits through `lastIssuedLeaseExpiryMax` plus
+  the approved safety margin before hosted confirmation. With Cron
   functioning, its completion budget covers the lease window, safety margin,
   one Cron period, bounded delivery jitter, and one bounded due-work
   execution/read-back attempt; an outage never becomes false success.
+- Every replacement enrollment rejects old-session traffic immediately but
+  issues no new lease before the carried-forward fleet-global issued-lease
+  maximum plus that same safety margin. A first enrollment has no predecessor
+  delay; an intervening no-lease session and repeated enrollment never shorten
+  the restriction, and no predecessor callback is required. Drain heartbeats
+  expose `predecessor-lease-draining` as liveness-only status, never acquisition
+  readiness, failback evidence, hosted success, or zero-listener quiescence
+  evidence. The latter is accepted only from the exact enrollment session and
+  lease generation whose listeners are being drained; supersession before that
+  proof leaves the governed local transition incomplete under hosted-safe
+  routing and alerts.
 - Open queue-risk evidence from the latest local-to-hosted transition is one
   bounded current record per repository and blocks
   Portable and legacy canary/acquisition until authenticated selective recovery
@@ -280,8 +299,9 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
 
 - [ ] Write RED tests for canonical request/response bytes, timestamp bounds,
   nonce replay, constant-time MAC verification, response/request binding,
-  server epoch rollover, old-session rejection, sequence ordering, unknown
-  fields, size limits, and generic rejection responses.
+  server epoch rollover, old-session rejection, predecessor-lease drain,
+  sequence ordering, unknown fields, size limits, and generic rejection
+  responses.
 - [ ] Implement the one-step session exchange and signed heartbeat response.
 - [ ] Implement exact `AcquisitionLeaseV1` validation, send-anchored monotonic
   local expiry, and the signed archive-disable set; prove stale, future,
@@ -295,7 +315,23 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
   lost renewal followed by recovery inside the approved budget and rejection
   when any symbolic term makes the inequality false.
 - [ ] Prove a lost/ambiguous heartbeat response grants no lease and re-enrollment
-  invalidates the old session without permanent lockout.
+  invalidates the old session without permanent lockout. Cover first enrollment
+  with no prior lease, a still-live predecessor lease, exact
+  `leaseNotBefore` equality, an already-expired predecessor, repeated
+  enrollments and an intervening no-lease session that preserve the maximum
+  drain, old-session traffic during the drain, and no new recorded lease before
+  the boundary. Prove lease issuance atomically max-advances the fleet-global
+  expiry, that it never recedes after a shorter later lease, that a pre-commit
+  failure grants nothing, and that a lost post-commit response remains covered
+  by later enrollment. Race an old-session heartbeat with enrollment and prove
+  either the lease commits first and enters the drain maximum, or enrollment
+  commits first and the old heartbeat grants no lease. Reject regressing Worker
+  receipt time without shortening the drain.
+- [ ] Prove zero-listener quiescence accepts only the exact enrollment session
+  and lease generation being drained. A replacement drain heartbeat reporting
+  zero for its new generation must not complete a governed legacy rollback,
+  administrative hold, or upgrade drain; supersession before exact proof stays
+  hosted-safe and alerts.
 - [ ] Run Go race tests, Worker lint/typecheck/Vitest, schema validation, and
   protocol differential fixtures.
 
@@ -341,7 +377,8 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
 - [ ] Bind hosted confirmation to routing companions, default-branch head,
   workflow blob/content digest, job/check identity, and route-attestation.
 - [ ] Advance lease generation and stop renewal before any hosted transition;
-  require last-lease expiry/safety margin before hosted confirmation.
+  require the `lastIssuedLeaseExpiryMax` boundary and safety margin before
+  hosted confirmation.
 - [ ] Prove every effect is idempotent across crash/re-entry and an ambiguous
   mutation cannot become success without read-back.
 
@@ -384,6 +421,11 @@ and add focused Go tests; keep the current lifecycle engine and phase table.
   and fleet-fence guards through the acquisition decision.
 - [ ] On missing/expired/mismatched lease, transition effective capacity to zero
   through the existing barrier; running jobs drain normally.
+- [ ] Bind every released listener to the lease enrollment session/generation
+  and send-anchored local deadline as well as local epoch/fence. At job accept,
+  destroy it when any binding is superseded or the local deadline is reached;
+  prove a predecessor listener cannot accept after replacement enrollment even
+  when its controller process remains alive.
 - [ ] Integrate maintenance directives as intent only. Status, CLI success, and
   upgrade observation never grant acquisition.
 - [ ] Add cancellation-resistant upstream, stale listener, re-enrollment,

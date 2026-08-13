@@ -360,6 +360,19 @@ acquisition. Work may remain queued on a self-hosted route until the Worker and
 its scheduler recover; the system never converts that availability loss into
 unbounded local authority.
 
+A replacement enrollment invalidates the predecessor session immediately but
+does not erase a lease that predecessor already cached. In the same atomic
+transaction, the Durable Object therefore carries forward a server-owned
+`leaseNotBefore` restriction through the fleet-global maximum server expiry of
+every issued lease plus the same fixed, positive clock/termination safety
+margin used for hosted transitions. Until that instant, accepted heartbeats
+from the new session return an explicit no-lease result. The predecessor's
+send-anchored local authority is strictly shorter than its server expiry; the
+margin additionally covers the bounded local epoch-barrier teardown and
+termination residual. This uses the existing fleet row and lease protocol
+rather than brittle controller-to-controller quiescence; the closed arithmetic
+and transaction rules are in §9.2-§9.3.
+
 Let `H` be the maximum configured interval between heartbeat-attempt starts,
 `D` the enforced end-to-end heartbeat deadline, `S` the local shortening
 margin, `L` the server-owned lease duration, and `N` the operator-approved
@@ -370,9 +383,9 @@ during Worker loss while ensuring one dropped renewal does not unnecessarily
 zero a healthy fleet.
 
 Before a hosted transition, the Durable Object increments the lease generation
-and stops renewal. It waits through the last server-recorded expiry plus a fixed
-clock/termination safety margin before persisting hosted mutation work. The
-send-anchored local deadline above already accounts for heartbeat request and
+and stops renewal. It waits through `lastIssuedLeaseExpiryMax` plus the same
+fixed, positive clock/termination safety margin before persisting hosted
+mutation work. The send-anchored local deadline above already accounts for heartbeat request and
 response latency and is always earlier than that server expiry. It does
 not need a close message from every poll or JIT operation. The local epoch
 barrier still cancels and joins prior operations; an unjoinable call persists
@@ -384,10 +397,11 @@ An expired lease is necessary but not sufficient for mutual exclusion, because
 a runner past `RUNNER_HELD` — in `RELEASE_ARMED` or `LISTENER_RELEASED` but not
 yet `JOB_RUNNING` — holds a released listener that can still accept an
 assignment while carrying no live acquisition lease. Listener authority is
-therefore bound to the acquisition epoch and fleet-fence generation under which
-the runner was released. When the epoch barrier revokes acquisition (operator
-mode change, host pressure, watchdog stop, hosted hold, an operator-recorded
-archival policy revision, or failover),
+therefore bound to the acquisition epoch, fleet-fence generation, lease
+enrollment session/generation, and send-anchored local lease deadline under
+which the runner was released. When the epoch barrier revokes acquisition
+(operator mode change, host pressure, watchdog stop, hosted hold, an
+operator-recorded archival policy revision, or failover),
 the controller terminates, as part of that drain, every runner past
 `RUNNER_HELD` that has not reached `JOB_RUNNING`; runners already in
 `JOB_RUNNING` drain normally. Quiescence attestation is required only for transitions that must exclude live
@@ -395,15 +409,23 @@ Portable listeners — a governed legacy rollback and an administrative hold or
 upgrade drain, where the controller is alive by construction: the controller
 publishes the count of un-assigned released listeners, and the Worker does not
 complete such a transition until the last lease has expired and it has observed
-a fresh heartbeat reporting zero un-assigned released listeners under the current
-generation. A failover to hosted triggered by staleness or an authenticated
-fatal state does not wait for that heartbeat — the host may be down and unable
-to send one, its per-job containers die with it, hosted routing does not
-conflict with any straggler in-flight Portable job beyond the existing
-queue-risk envelope, and the fence prevents a returning zombie controller from
-acquiring anew. In every case, a released listener that observes a superseded
-epoch or fence generation at job-accept time destroys itself rather than
-accepting work.
+a fresh heartbeat from the exact enrollment session and lease generation whose
+listener set is being drained, reporting zero un-assigned released listeners
+for that same generation. A `predecessor-lease-draining` heartbeat from a
+replacement session cannot satisfy this proof. If the drained session is
+superseded before it reports zero, a governed legacy rollback, administrative
+hold, or upgrade drain does not complete from replacement evidence; it remains
+incomplete under hosted-safe routing and alerts. A failover to hosted triggered
+by staleness or an authenticated fatal state does not wait for that heartbeat —
+the host may be down and unable to send one, its per-job containers die with it,
+hosted routing does not conflict with any straggler in-flight Portable job
+beyond the existing queue-risk envelope, and the fence prevents a returning
+zombie controller from acquiring anew. In every case, a released listener
+revalidates all four bindings at job-accept time and destroys itself rather than
+accepting work when the local lease deadline is reached or any epoch, fence,
+session, or generation is superseded. Thus a listener released by a predecessor
+session cannot accept a new assignment at or after that predecessor's local
+authority expires, even if the old controller process remains alive.
 
 Repository archival is a per-repository eligibility change, not a fleet
 failover. Each repository carries a latched eligibility state — `active`,
@@ -977,6 +999,20 @@ A process on the Docker host cannot detect total host, storage, Docker-daemon, p
 ### 9.2 Fleet enrollment
 
 The Durable Object owns the fleet epoch. The host does not persist or choose it.
+All persisted enrollment timestamps, lease server expiries, and enrollment
+boundary comparisons use Worker/Durable Object time; client time is not an
+input. Let `R` be the Worker's receipt time for the enrollment, `E` be nullable
+`lastIssuedLeaseExpiryMax`, `B` be nullable current `leaseNotBefore`, and `M` be
+the fixed positive hosted-transition clock/termination safety margin. `E` is
+the fleet-global monotonic maximum server expiry of every lease issued to any
+session or holder; it never decreases or clears on lease expiry, session change,
+or holder change.
+
+Enrollment and lease-issuing heartbeat mutations serialize on the same
+`fleet_state` transaction boundary. If an old-session heartbeat commits first,
+enrollment observes its advanced `E`; if enrollment commits first, that
+heartbeat is old-session traffic and grants no lease. No interleaving may
+commit a lease while omitting it from the new session's drain restriction.
 
 1. A controller instance creates a cryptographically random request nonce and
    sends one canonical `POST /v1/session` request containing the configured
@@ -985,14 +1021,28 @@ The Durable Object owns the fleet epoch. The host does not persist or choose it.
 2. The Worker enforces a bounded timestamp window and exact request schema. The
    Durable Object atomically rejects a reused nonce digest, records the nonce
    with a bounded expiry, increments the server-owned epoch and lease
-   generation, creates a random session identifier, and invalidates the prior
-   session.
+   generation, creates a random session identifier, invalidates the prior
+   session, computes `candidate = R` when `E` is absent and otherwise checked
+   `E + M`, and sets the new session's
+   `leaseNotBefore = max(R, B when present, candidate)`. Overflow, an invalid
+   timestamp, or an unavailable required value fails closed before changing the
+   session. This one assignment means an intervening no-lease session or rapid
+   repeated enrollment cannot discard an earlier issued lease's drain.
 3. The response is authenticated and binds the request nonce, fleet, new epoch,
-   random session identifier, initial heartbeat sequence, lease generation, and
-   Worker receipt time. The controller verifies the complete response before
-   storing the session.
+   random session identifier, initial heartbeat sequence, lease generation,
+   `leaseNotBefore`, and Worker receipt time. The controller verifies the
+   complete response before storing the session.
 
-Local controller-state loss causes a new authenticated enrollment rather than a permanent lockout. Old session traffic is rejected after a newer epoch is active.
+Local controller-state loss causes a new authenticated enrollment rather than
+a permanent lockout. Old session traffic is rejected as soon as the newer epoch
+is active, but the replacement session receives no acquisition lease before
+the current heartbeat's Worker receipt time is at or after `leaseNotBefore`.
+Because a correct predecessor's send-anchored local deadline is strictly before
+its server expiry, equality at the later `leaseNotBefore` boundary cannot
+overlap its local authority. Repeated enrollments carry the maximum restriction
+forward and can never shorten the drain. A first enrollment, or a replacement
+after the fleet deadline has already passed, is not delayed beyond the normal
+heartbeat checks.
 
 The single exchange provides the same replay and stale-session guarantees as a
 challenge/complete protocol with one fewer endpoint and half as many failure
@@ -1034,7 +1084,34 @@ no-lease result. The lease is the only remote acquisition authority. It binds:
 - maximum capacity and, for canary-only mode, the one eligible scale set;
 - the canonical bounded `archivedDisabledAliases` set of Worker-latched
   repository aliases; and
-- a short server-owned validity duration and server expiry for audit.
+- a short server-owned validity duration `L` and checked server expiry
+  `X = Q + L`, where `Q` is this heartbeat's Worker receipt time.
+
+Before the current session's `leaseNotBefore`, an otherwise accepted heartbeat
+returns the closed no-lease reason `predecessor-lease-draining` and records no
+new lease expiry. That reason is included in bounded status and audit evidence.
+The accepted heartbeat proves controller liveness only; it is not
+acquisition-ready health, canary/failback evidence, hosted success, or
+zero-listener quiescence evidence, does not change routing, and may leave work
+queued on an existing local route for the bounded remainder of the drain. At or
+after that same Worker-time boundary, normal routing, holder, health, fence,
+policy, and capacity checks determine whether a lease may be issued. A first
+enrollment or already-passed boundary adds no delay. A detected Worker-time
+anomaly fails closed with no lease and an alert rather than fabricating a
+shorter drain.
+
+When the Durable Object decides to return an `AcquisitionLeaseV1`, it computes
+checked `X = Q + L` in Worker/Durable Object time. Overflow, an invalid or
+regressing `Q`, or a nonpositive `L` fails closed with no lease. The same
+transaction that commits the accepted heartbeat and lease decision sets
+`lastIssuedLeaseExpiryMax = max(E when present, X)`. The field is fleet-global
+across Portable and legacy, never decreases, and is not cleared on expiry or
+enrollment. The authenticated response is emitted only after that transaction
+commits. Failure before commit grants no lease and advances nothing; failure or
+response loss after commit leaves the maximum advanced, so later enrollment
+still drains authority the client might have received. A no-lease decision
+never advances the field. The restriction is therefore safe after host-state
+loss without a positive message from the predecessor process.
 
 The controller records monotonic time before sending the heartbeat and derives
 the strictly shorter local deadline from that attempt-start timestamp, the
@@ -1072,8 +1149,9 @@ One Durable Object is the coordination atom for one fleet. Multiple independent 
 SQLite uses six responsibility-based tables:
 
 - `fleet_state`: active session, heartbeat sequence/time, lease generation,
-  holder, routing state, hosted hold, configuration revision, policy digest,
-  and bounded health counters;
+  fleet-global monotonic `lastIssuedLeaseExpiryMax`, `leaseNotBefore`, holder,
+  routing state, hosted hold, configuration revision, policy digest, and
+  bounded health counters;
 - `request_nonces`: digests and expiries for session and administrative replay
   protection;
 - `repositories`: aliases, expected selectors/workflow identities, confirmed
@@ -1132,9 +1210,9 @@ residual is explicit and observable; it is safer and simpler than a second
 scheduler with different recovery semantics.
 
 When Cron is functioning, the operator-approved hosted-transition completion
-budget must cover the last lease validity window, hosted safety margin, one
-Cron period, the platform's bounded delivery jitter, and one bounded due-work
-execution/read-back attempt. Exceeding that budget leaves the transition
+budget must cover the remaining interval through `lastIssuedLeaseExpiryMax`,
+the hosted safety margin, one Cron period, the platform's bounded delivery
+jitter, and one bounded due-work execution/read-back attempt. Exceeding that budget leaves the transition
 incomplete and alerts; a Cron outage has no finite completion guarantee and
 can never be reported as hosted success. The source defines this inequality
 but supplies none of its numeric terms.
@@ -1168,8 +1246,8 @@ transition or queue-risk record.
 - `HOSTED`: every configured repository is read back hosted and no local lease
   renews.
 - `DRAINING_TO_HOSTED`: lease generation has advanced, renewal has stopped, and
-  hosted mutation/read-back plus last-lease expiry and local listener drain are
-  in progress.
+  hosted mutation/read-back plus the `lastIssuedLeaseExpiryMax` boundary and
+  local listener drain are in progress.
 - `PORTABLE_CANARY`: routing remains hosted; one canary-only Portable lease
   authorizes exactly one capacity unit and one persisted canary scale set.
 - `PORTABLE`: routing is read back self-hosted and a matching enabled Portable
@@ -1653,6 +1731,21 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
 - Redaction and sanitization adversarial corpus.
 - Worker session HMAC, nonce expiry, epoch rollover, replay, response binding,
   lease expiry, and sequence ordering.
+- Replacement-enrollment drain: first enrollment, already-expired authority, a
+  still-live predecessor, an intervening no-lease session, rapid repeated
+  enrollment, old-session rejection, exact `leaseNotBefore` equality, and
+  visible liveness-only drain status. Lease-issue tests prove atomic monotonic
+  `lastIssuedLeaseExpiryMax`, failure before and response loss after commit, a
+  lost longer renewal followed by a shorter lease, and no maximum advance on a
+  no-lease response.
+- Released-listener job acceptance rejects an expired or superseded lease
+  session/generation/local deadline in addition to acquisition epoch and fence,
+  including a still-live predecessor controller at the exact expiry boundary.
+- Zero-listener quiescence accepts only a heartbeat from the exact enrollment
+  session and lease generation being drained. A replacement's
+  `predecessor-lease-draining` heartbeat cannot attest for predecessor
+  listeners; supersession before exact proof leaves governed rollback/hold/
+  upgrade transitions incomplete under hosted-safe routing and alerts.
 - Durable Object transition, outbox, retry, and notification state.
 
 ### 17.2 Integration tests
@@ -1684,7 +1777,9 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
 - Loopback/AF_UNIX/host-FD exhaustion, unique-destination dial floods, and
   repeated broker crashes under the checked conntrack/token budget.
 - Heartbeats delayed, duplicated, reordered, replayed, or dropped.
-- Host local state deleted or rolled back before re-enrollment.
+- Host local state deleted or rolled back before re-enrollment, including a
+  still-running predecessor with cached lease authority, repeated replacement
+  enrollment during its drain, and the exact `leaseNotBefore` boundary.
 - Durable Object request failure before and after outbox commit.
 - Cron delayed or unavailable while the Worker is also unavailable; the local
   lease expires, no new local acquisition occurs, and queued work is reported
@@ -1861,7 +1956,8 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 
 - Durable Object state survives Worker rescheduling.
 - Controller state loss safely establishes a new server-owned epoch through one
-  authenticated session exchange.
+  authenticated session exchange while withholding new lease authority through
+  any predecessor's carried-forward drain deadline.
 - Replayed session and administrative requests fail timestamp and single-use
   nonce checks.
 - Hosted hold enters safely from every state, survives Worker rescheduling, blocks recovery until hosted read-back, and releases only into a new recovery epoch.

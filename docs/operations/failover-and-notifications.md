@@ -17,11 +17,30 @@ The Durable Object, not the host, owns a fleet's enrollment epoch. A
 controller instance enrolls with a random nonce and a timestamped,
 HMAC-authenticated `POST /v1/session`; the Durable Object atomically rejects a
 reused nonce digest, increments its own server-owned epoch and lease generation,
-invalidates the prior session, and returns a signed response bound to the
-request nonce. Local controller-state loss -- a wiped disk, a fresh
-install -- causes a new authenticated enrollment, never a permanent
-lockout, because the host never has to remember or reconstruct the epoch
-itself.
+invalidates the prior session, carries forward the fleet's lease-drain
+restriction, and returns a signed response bound to the request nonce and
+`leaseNotBefore`. Local controller-state loss -- a wiped disk, a fresh install
+-- causes a new authenticated enrollment, never a permanent lockout, because
+the host never has to remember or reconstruct the epoch itself.
+
+Invalidating the old session rejects its later traffic but cannot erase its
+cached lease. The enrollment transaction therefore carries one
+`leaseNotBefore` restriction in the existing fleet state through the
+fleet-global monotonic maximum expiry of every issued lease plus the
+hosted-transition safety margin. Issuing a lease and advancing that maximum are
+one transaction. The replacement can reconcile and send heartbeats immediately,
+but those responses explicitly grant no lease until Worker receipt time reaches
+that boundary. They prove controller liveness only: the closed
+`predecessor-lease-draining` reason stays visible in status and audit, is not
+acquisition-ready health, failback evidence, hosted success, or zero-listener
+quiescence evidence, and local-routed work may queue for the bounded remainder.
+Quiescence proof is accepted only from the exact enrollment session and lease
+generation whose listener set is being drained. A replacement cannot report
+zero for its predecessor; if supersession occurs before that exact proof, the
+governed local transition stays incomplete under hosted-safe routing and
+alerts. A first enrollment has no predecessor delay, and repeated enrollments
+cannot shorten an existing drain. No positive response from the old controller
+is required merely to expire its cached lease.
 
 ## Heartbeat replay and ordering
 

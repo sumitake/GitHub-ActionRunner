@@ -149,15 +149,18 @@ GitHub or Docker state rather than an assumption. Full detail is in
 ## Failover and notifications design
 
 Cloudflare Worker enrollment epochs are server-owned, not host-chosen;
-replayed and reordered heartbeats are rejected; every GitHub-facing
-routing mutation is staged through a durable outbox before it is
-attempted; one Cron Trigger addresses every object in a bounded validated
-private fleet inventory and recovers due work; and failback to self-hosted
-routing is gated on a current-epoch canary followed by a fresh full-capacity
-route-readiness heartbeat, exact self-hosted read-back, and only then a
-subsequent matching heartbeat with a signed enabled lease before local
-acquisition. Email and webhook notifications retry independently of each other,
-and notification failure never blocks routing safety. Full detail is in
+replayed and reordered heartbeats are rejected; a replacement session receives
+no lease until the fleet's last recorded authority has drained; zero-listener
+proof is accepted only from the exact session and lease generation being
+drained, never from a replacement's liveness-only heartbeat; every GitHub-facing
+routing mutation is staged through a durable outbox before it is attempted; one
+Cron Trigger addresses every object in a bounded validated private fleet
+inventory and recovers due work; and failback to self-hosted routing is gated on
+a current-epoch canary followed by a fresh full-capacity route-readiness
+heartbeat, exact self-hosted read-back, and only then a subsequent matching
+heartbeat with a signed enabled lease before local acquisition. Email and
+webhook notifications retry independently of each other, and notification
+failure never blocks routing safety. Full detail is in
 [docs/operations/failover-and-notifications.md](docs/operations/failover-and-notifications.md).
 
 ## Workflow migration plan
