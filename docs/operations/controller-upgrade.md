@@ -46,16 +46,17 @@ permission. The expected directive sequence is:
    intentionally held;
 2. `stage-permitted` for the exact observed candidate and request identity;
 3. `replace-permitted` only after candidate qualification and fresh hosted,
-   drain, zero-job, and permit evidence;
+   drain, zero-job, and acquisition-authority quiescence/expiry evidence;
 4. `canary-permitted` only after the exact candidate is selected, starts
    disabled, and passes post-selection validation;
 5. `enable-permitted` only after a Worker-observed canary succeeds; and
 6. `complete` only after an enabled-policy read-back matches the exact
-   transition and permit generation.
+   transition and acquisition-authority generation.
 
 Every directive binds the enrollment epoch, session, request control sequence,
-selected and candidate manifest digests, transition epoch, permit generation,
-configuration revision, policy digests, and server expiry. Missing,
+selected and candidate manifest digests, transition epoch,
+acquisition-authority generation, configuration revision, policy digests, and
+server expiry. Missing,
 unavailable, expired, repeated, future, wrong-tuple, or wrong-phase authority
 causes zero mutation and returns to `wait-hosted`.
 

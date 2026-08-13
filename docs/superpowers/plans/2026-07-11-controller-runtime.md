@@ -4,6 +4,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Phase 3 authority amendment:** This completed Phase 2 plan remains the
+history and contract for the local epoch barrier, host fence, lifecycle, and
+`AcquisitionPermitProvider` interface. For future external authority,
+platform-design §9 and `2026-07-11-failover-deployment.md` supersede any remote
+per-operation permit or separate legacy-process-lease wording: the local
+interface derives its proof from one cached signed heartbeat lease.
+
 **Goal:** Build the fail-closed Go controller runtime that fairly acquires GitHub Actions scale-set work, launches exactly one isolated runner per acquired slot, proves its per-job egress jail before listener release, reconciles crashes idempotently, and runs safely under QTS or standard Linux supervision.
 
 **Architecture:** A pinned `actions/scaleset` adapter translates preview API types into internal offers, statistics, and runner references; upstream types never cross the adapter. SQLite journals assignment transitions and external-effect intent, a weighted/aging broker leases capacity before it is advertised, and a reconciler drives each assignment through the approved state machine. On the QTS reference profile, a capless adapter sidecar owns an otherwise empty `--network none` namespace shared only with the held runner and relays loopback proxy bytes through a per-job Unix socket to a separately jailed, dial-bounded broker. Only the broker dialer creates real network sockets, and it is a separate process from the socket-less broker parser that reads untrusted CONNECT bytes. A modern Linux direct backend remains optional only after exact pre-conntrack enforcement is positively proven. The listener is released through the digest-armed gate over a runner-private tmpfs socket, and every per-job component is destroyed after one job.

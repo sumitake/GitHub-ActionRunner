@@ -56,10 +56,11 @@ still be accepting work. The intended sequence is:
 5. start the replacement disabled, and clear every open queue-risk row
    through authenticated GitHub read-back before any new acquisition;
 6. set canary-only intent, release the hosted hold into a new recovery
-   epoch, and run one canary operation that must obtain a fresh Worker
-   permit while consumer routing stays hosted; and
+   epoch, receive one short-lived canary-only lease while consumer routing
+   stays hosted, and run one canary operation; and
 7. only after that canary passes, and a fresh heartbeat proves full
-   acquisition capacity, does the failover state machine permit
+   acquisition capacity and returns a matching enabled lease, does the
+   failover state machine permit
    self-hosted routing to resume.
 
 An illustrative operator gate read for step 1 of this sequence:
@@ -177,65 +178,66 @@ than treating panel-now counts as atomic.
 
 ### Cutover acceptance
 
-Every numbered cutover phase below records its own complete jointly fresh
-evidence tuple:
+Observability first passes one **projection-readiness gate** before any canary:
+
+- the exact health-export schema is read successfully through the least-
+  privilege adapter;
+- one complete point is written to and queried back from InfluxDB with matching
+  identity, field types, and receipt time;
+- the reviewed Grafana dashboard revision is live, treats zero idle
+  registrations as neutral, and turns stale/malformed controller data into
+  no-data; and
+- exact adapter configuration, collector scope, dashboard revision, and
+  independent rollback anchors are recorded.
+
+Grafana is not re-promoted into a per-phase routing state machine. After that
+one gate, a small read-only cutover verifier evaluates authoritative receipts:
 `github_sample_received_at`, `controller_adapter_receipt_at`,
-`signed_heartbeat_received_at`, `dashboard_revision`, and
-`scope_fingerprint`. The three receipt times must each be within their
-independently configured stale windows, and their maximum pairwise skew must
-not exceed the separately operator-approved private
-`cutover_max_sample_skew`. Dashboard revision and scope fingerprint must equal
-the reviewed deployment. Source supplies no default for the skew bound. Until
-all five members, all stale windows, and the skew bound pass, that phase is
-not accepted and cannot authorize the next phase. The tuple is evidence only:
-the signed Worker heartbeat and governed controller policy remain the
-automated routing authorities.
+`signed_heartbeat_received_at`, `scope_fingerprint`, and
+`configuration_fingerprint`. The three receipt times must each be within their
+separately approved private stale windows, and their maximum pairwise skew must
+not exceed the separately approved private `cutover_max_sample_skew`. Source
+supplies no numeric defaults. The verifier rejects missing, incomplete, stale,
+future, mismatched, or last-known-good-substituted evidence and emits a bounded
+signed/hashed acceptance receipt; it has no credential or code path that can
+change acquisition or GitHub routing.
 
-1. **Dark observer:** record at least three consecutive complete health points
-   from successful reconciliation cycles with acquisition `disabled`,
-   effective/occupied/available capacity zero, assigned/running jobs zero,
-   unassigned released listeners zero, and the expected policy epoch/digest,
-   repository-policy revision, host profile, degraded state, and build ID.
-2. **Queued canary while disabled:** dispatch the secretless canary while
-   consumer routing and the hosted hold remain hosted and Portable GHAR
-   acquisition remains disabled. Keep the canary queued through one scheduled
-   GitHub collection point, then reconcile the dashboard's queued count,
-   current wait, repository scope, completeness flag, and queued-set
-   fingerprint directly against GitHub.
-3. **Running canary while hosted:** enter `canary-only` and keep the canary's
-   workload step alive through one scheduled GitHub collection point. Verify
-   GitHub active/online/busy sets and authoritative identity while the
-   controller point reports effective capacity one and the expected assignment
-   lifecycle. After completion, wait for the next complete GitHub sample and
-   verify assigned/running/occupied/unassigned-listener counts return to zero,
-   last-terminal advances, and every fixed-cardinality job slot clears.
-4. **Enabled/full-capacity confirmation:** only after the dashboard and InfluxDB
-   gates above pass may the operator enable full acquisition. The signed Worker
-   heartbeat remains the sole automated health/routing input. After its
-   authoritative enabled/full-capacity confirmation, require the enabled
-   phase's complete jointly fresh tuple. A missing member, stale member,
-   fingerprint/revision mismatch, or excessive skew fails the tuple; no
-   last-known-good member may be substituted. If that post-enable observation
-   fails, treat cutover acceptance as failed, reacquire the hosted hold, and
-   disable acquisition through the governed rollback path. InfluxDB or
-   Grafana failure can block or revoke cutover acceptance, but neither can
-   grant routing authority or directly change routing.
-5. **Scope and natural-sample reconciliation:** verify the private collector
-   repository list exactly matches the repositories managed by this
-   deployment. Any addition, archive-state change, or removal must update that
-   scope explicitly. Record the complete jointly fresh tuple above with the
-   GitHub and controller completeness flags and source-specific fingerprints
-   used as cutover evidence.
+1. **Dark observer:** require at least three consecutive complete controller
+   receipts from successful reconciliation cycles with acquisition `disabled`,
+   zero effective/occupied/available capacity, zero assigned/running jobs, zero
+   unassigned released listeners, and the expected policy, repository-policy,
+   host-profile, degraded-state, and build identities.
+2. **Queued canary while disabled:** keep consumer routing and the hosted hold
+   hosted and acquisition disabled. Hold the secretless canary queued through a
+   scheduled GitHub sample; verify the authoritative queued set, current wait,
+   repository scope, completeness flag, and canary identity directly from the
+   GitHub receipt.
+3. **Running canary while hosted:** enter `canary-only`, receive the matching
+   one-capacity lease, and keep the workload step alive through a GitHub sample.
+   Verify active runner/job identity from GitHub and the expected one-assignment
+   lifecycle from controller and heartbeat receipts. After completion, verify
+   every job/capacity/listener count returns to zero and last-terminal advances.
+4. **Enabled/full-capacity confirmation:** enable only after the prior verifier
+   receipts pass. Require a fresh signed Worker heartbeat that proves the exact
+   enabled policy/full capacity and returns the matching enabled lease, then
+   verify the complete authoritative tuple once more. Failure before local
+   route confirmation keeps the hosted hold. Failure after local confirmation
+   invokes the governed hosted rollback path; it is never repaired by a
+   dashboard value.
+5. **Scope and natural-sample reconciliation:** verify the collector scope
+   exactly matches the deployment's managed repository set. Addition,
+   archive-state change, or removal updates the scope and configuration
+   fingerprint explicitly before another acceptance receipt can pass.
 
-If the health export, adapter, InfluxDB write, dashboard query, or source
-reconciliation fails before cutover, retain the hosted hold and keep Portable
-GHAR disabled or canary-only. After an accepted cutover, telemetry failure
-makes affected panels fail closed and alerts the operator while the signed
-Worker heartbeat and failover policy remain authoritative. Portable GHAR and
+If the health export, adapter, InfluxDB write/query, dashboard query, or source
+reconciliation fails before the projection-readiness gate, retain the hosted
+hold and keep Portable GHAR disabled. After that gate, telemetry failure makes
+affected panels no-data and alerts the operator; stale authoritative receipts
+block the next cutover acceptance step, but Grafana/InfluxDB cannot grant,
+retain, revoke, or synthesize routing authority. Portable GHAR and
 Grafana/collector rollback remain independent: a fleet rollback must not
-overwrite the existing GitHub collector, schedule, repository scope, retention
-policy, or dashboard rollback anchor, and the Portable GHAR health series may
-age to no-data when its adapter stops.
+overwrite the collector schedule/scope/retention or dashboard rollback anchor,
+and the health series may age to no-data when its adapter stops.
 
 ## Host-profile probes
 

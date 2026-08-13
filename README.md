@@ -58,6 +58,16 @@ replaceable development aids, and consumer repositories are optional workload
 integrations selected from a deployment's live inventory; neither is part of
 the Portable GHAR product or a prerequisite for Phase 2 source completeness.
 
+### Engineering baseline
+
+Correctness, security, operational reliability, practical simplicity, and
+clear boundaries are co-equal acceptance criteria. External work is bounded,
+external effects are read back, failure degrades to a named safe state, and
+retries and resource growth are capped. The design uses one lifecycle engine,
+one external routing writer, one durable due-work scheduler, and one signed
+acquisition-lease protocol. New machinery is accepted only when a current
+requirement cannot be met safely by an existing proven primitive.
+
 ## Architecture
 
 ```mermaid
@@ -74,6 +84,7 @@ flowchart LR
     Watchdog["Host watchdog"]
     Worker["Cloudflare Worker"]
     State["Durable Object per fleet"]
+    Scheduler["Cloudflare Cron Trigger"]
     Email["Transactional email"]
     Webhook["Optional signed webhook"]
 
@@ -90,7 +101,9 @@ flowchart LR
     Controller --> DialAuthority
     DialAuthority --> Ledger
     Watchdog --> Controller
-    Controller -- "signed outbound heartbeat" --> Worker
+    Controller -- "signed heartbeat" --> Worker
+    Worker -- "signed bounded lease" --> Controller
+    Scheduler --> Worker
     Worker <--> State
     Worker <--> GitHub
     Worker --> Email
@@ -138,8 +151,9 @@ GitHub or Docker state rather than an assumption. Full detail is in
 Cloudflare Worker enrollment epochs are server-owned, not host-chosen;
 replayed and reordered heartbeats are rejected; every GitHub-facing
 routing mutation is staged through a durable outbox before it is
-attempted; and failback to self-hosted routing is gated on a current-epoch
-canary followed by a fresh full-capacity heartbeat. Email and webhook
+attempted; one Cron Trigger recovers due work; and failback to self-hosted
+routing is gated on a current-epoch canary followed by a fresh
+full-capacity heartbeat and signed acquisition lease. Email and webhook
 notifications retry independently of each other, and notification failure
 never blocks routing safety. Full detail is in
 [docs/operations/failover-and-notifications.md](docs/operations/failover-and-notifications.md).

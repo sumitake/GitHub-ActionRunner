@@ -15,10 +15,10 @@ behavior below is live against a deployed Worker today.
 
 The Durable Object, not the host, owns a fleet's enrollment epoch. A
 controller instance enrolls with a random nonce and a timestamped,
-HMAC-authenticated challenge/response exchange; the Durable Object
-atomically consumes the challenge once, increments its own server-owned
-epoch, invalidates the prior session, and returns the new epoch and
-session identifiers. Local controller-state loss -- a wiped disk, a fresh
+HMAC-authenticated `POST /v1/session`; the Durable Object atomically rejects a
+reused nonce digest, increments its own server-owned epoch and lease generation,
+invalidates the prior session, and returns a signed response bound to the
+request nonce. Local controller-state loss -- a wiped disk, a fresh
 install -- causes a new authenticated enrollment, never a permanent
 lockout, because the host never has to remember or reconstruct the epoch
 itself.
@@ -33,6 +33,13 @@ not the client's claimed time, as the freshness signal, and it
 superseded epoch, or a **replay** of an earlier message. A late canary
 result from an obsolete epoch is likewise ignored rather than accepted.
 
+The accepted heartbeat response carries the only remote acquisition authority:
+one short-lived signed lease binding the fleet holder, session, generation,
+policy digest, mode, and maximum capacity. Portable and governed legacy
+rollback use the same lease type. Missing, stale, mismatched, or expired leases
+stop new local acquisition while running jobs drain; administrative status and
+maintenance commands never grant authority.
+
 ## Transition, outbox, and read-back
 
 Every GitHub-facing routing mutation is staged through a durable outbox
@@ -44,6 +51,18 @@ read-back, and idempotent reconciliation rather than a blind retry or a
 silently dropped mutation. No external routing write is ever attempted
 from state that was not first durably persisted.
 
+One Cloudflare Cron Trigger is the sole durable scheduler for this due work.
+Each tick claims a bounded batch; expired claims return to the queue and all
+retries and retained history are capped. Request handlers may opportunistically
+execute newly persisted work, but recovery never depends on another request.
+Durable Object alarms and private runtime-storage behavior are deliberately not
+a second recovery path.
+
+The routing state machine stays small: hosted, draining-to-hosted, Portable
+canary, Portable, legacy canary, and legacy. API calls, canary outcomes,
+read-backs, queue-risk clearance, and notifications are transition evidence,
+not additional authority states.
+
 ## Canary-gated failback
 
 Routing never fails back to self-hosted runners on health alone. Recovery
@@ -54,7 +73,8 @@ to the current transition epoch that observes
 local acquisition then enabled; and, without the Worker's transition epoch
 changing in between, a newer-sequence heartbeat from the same enrollment
 session proving the expected acquisition-policy digest and full
-configured capacity. Only that combination can create self-hosted routing
+configured capacity and returning a matching enabled lease. Only that
+combination can create self-hosted routing
 intent. If the canary cannot pass, hosted routing is the safe state that
 remains in effect -- there is no automatic bypass of a failed canary.
 
@@ -72,3 +92,9 @@ failed or delayed email, webhook, or downstream relay never delays,
 reverses, or otherwise gates a hosted-hold, failover, or failback
 transition. Routing correctness and operator notification are
 deliberately decoupled failure domains.
+
+If both the Worker and Cron path are unavailable while GitHub still routes a
+repository locally, the short lease expires and new local acquisition stops.
+Already evaluated jobs may queue until the control plane recovers. This is an
+explicit availability degradation, never evidence that hosted failover was
+confirmed.

@@ -44,6 +44,10 @@ Nothing in this section has shipped as a tagged release.
 
 ### Changed
 
+- Made operational reliability, practical simplicity, and clear boundaries
+  blocking design criteria; simplified the planned external control plane to
+  one signed heartbeat lease, one Cron scheduler, six routing states, and
+  authoritative receipt-based cutover verification.
 - Clarified the standalone product boundary: consumer repositories and
   development-time collaboration or review tools are optional integrations,
   never Portable GHAR build, test, release, deployment, or runtime

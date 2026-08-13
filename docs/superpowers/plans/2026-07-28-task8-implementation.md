@@ -5,6 +5,13 @@
 > configuration mutation. Numeric runner sizing remains a separate operator-
 > signoff gate.
 
+**Phase 3 authority amendment:** This completed Phase 2 plan remains the history
+and contract for the local epoch barrier and acquisition interface. Future
+external authority uses one cached, short-lived signed lease renewed by
+heartbeat; the local permit interface derives an operation proof without a
+remote per-operation call. Platform-design §9 and the failover plan are
+normative where this historical plan says “fresh Worker permit.”
+
 **Goal:** Complete the controller's source-level poll, acquire, admit, one-job
 JIT, reconciliation, revocation, health, and command surfaces without allowing
 local intent, a stale broker lease, or an unavailable authority provider to

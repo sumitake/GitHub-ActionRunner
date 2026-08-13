@@ -20,6 +20,10 @@ The first implementation will:
 - install and verify a unique egress jail before each runner listener starts;
 - use a host-level watchdog for local recovery;
 - use an external Cloudflare Worker and one Durable Object per fleet as the sole automatic failover authority;
+- use one Cloudflare Cron Trigger as the sole durable due-work scheduler;
+- issue one short-lived, signed acquisition lease to the active fleet holder
+  rather than creating remote authority records for each poll, acquire, or JIT
+  operation;
 - send transactional email as the primary notification and an optional signed webhook as the secondary notification;
 - keep all deployment-specific configuration and secrets outside the public repository; and
 - keep public-repository CI on GitHub-hosted runners so the project never tests its own runner controller with untrusted pull-request code.
@@ -36,6 +40,52 @@ development infrastructure, and deployment-time consumer workflows remain
 external integrations chosen from authenticated live inventory. Failure or
 absence of either cannot create a new Portable GHAR build, test, release, or
 runtime prerequisite.
+
+### 1.2 Engineering baseline
+
+Correctness, security, operational reliability, practical simplicity, and
+elegant design are co-equal acceptance criteria. A change that meets one by
+making another brittle is not acceptable. These rules are normative for every
+remaining phase and review:
+
+1. **Bound every dependency.** Every network call, datastore operation, lock,
+   subprocess, scheduler action, and long-lived worker has an enforceable
+   timeout, backpressure limit, or explicit lifecycle owner. A deadline check
+   before an unbounded call is not a bound.
+2. **Define safe degradation.** Timeout, error, unavailability, partial
+   success, crash, cold state, stale state, concurrency, and misconfiguration
+   each have a named safe outcome. Security and authority failures fail closed;
+   availability may degrade to queued GitHub work while hosted remains the safe
+   route.
+3. **Never report false success.** Persistent or external effects are
+   idempotent or safely re-entrant, ambiguities reconcile through authoritative
+   read-back, and cleanup is positively proved. A successful API response is
+   not proof that the intended state exists.
+4. **Bound growth and retry.** Memory, disk, tmpfs, processes, file descriptors,
+   queues, history, retries, and evidence retention have explicit ceilings.
+   There is no unbounded retry cascade or maintenance requirement that depends
+   on periodic manual cleanup.
+5. **Prefer one authority and proven primitives.** Each decision has one
+   authoritative writer. Use documented platform contracts before custom
+   coordination, and stop rather than depend on private runtime internals.
+6. **Make complexity earn its place.** Every component, state, endpoint, table,
+   credential, and transition must enforce a current requirement that a simpler
+   design cannot meet. Counts are review outcomes, not quotas; speculative
+   extensibility is prohibited.
+7. **Preserve edit locality.** Each unit has one clear responsibility and a
+   closed interface. Keep one lifecycle engine and one phase table; partition
+   implementation by operation family when a file can no longer be safely
+   reasoned about as one unit. Do not add a parallel engine or authority layer.
+8. **Test the failure contract.** Tests cover the happy path, timeout,
+   cancellation, crash/re-entry, partial effect, stale identity, combined
+   failure, resource exhaustion, and rollback. Production claims require live
+   evidence on the platform whose behavior they describe.
+
+The security-motivated runner/relay/parser/dialer/helper/verifier split and the
+SQLite single-writer/full-synchronous store satisfy this baseline: their visible
+boundaries remove privilege and race classes. They must not be collapsed merely
+to reduce component count. Conversely, presentation, notification, and review
+transport are never promoted into routing or acquisition authority.
 
 ## 2. Goals
 
@@ -161,6 +211,7 @@ flowchart LR
     Watchdog["Host watchdog"]
     Worker["Cloudflare Worker"]
     State["Durable Object per fleet"]
+    Scheduler["Cloudflare Cron Trigger"]
     Email["Transactional email"]
     Webhook["Optional signed webhook"]
 
@@ -177,7 +228,9 @@ flowchart LR
     Controller --> DialAuthority
     DialAuthority --> Ledger
     Watchdog --> Controller
-    Controller -- "signed outbound heartbeat" --> Worker
+    Controller -- "signed heartbeat" --> Worker
+    Worker -- "signed bounded lease" --> Controller
+    Scheduler --> Worker
     Worker <--> State
     Worker <--> GitHub
     Worker --> Email
@@ -268,38 +321,45 @@ exclude tab and newline. An empty scale-set or repository set contributes no
 lines for that section; every fixed line still ends in LF. Only the digest,
 policy epoch, repository-policy revision, and capacity enter health.
 
-Every nonzero poll, acquire, or JIT operation enters an epoch-bound acquisition critical section, acquires a current `portable` host-fleet guard, then makes an outbound authenticated request for one fresh Worker acquisition permit bound to the operation ID/type, repository, exact scale set, local policy epoch/digest, Worker transition epoch/permit generation, and server-owned expiry. It immediately revalidates the current mode, exact eligible scale set, effective capacity, live lease, epoch, and every permit binding before the one external effect, retaining both guards until that effect ends. The operation deadline is shorter than the permit lifetime; an unjoinable call triggers fatal persistence and process termination before the permit drain margin. `canary-only` permits exactly one persisted canary scale set and one capacity unit. A local CLI transition or prior admin-status response is intent/evidence only and grants no acquisition authority. Watchdog stops, failed probes, host-pressure reductions, operator mode changes, and lifecycle suspend all use this same barrier; none may flip a weaker side flag.
+Every nonzero poll, acquire, or JIT operation enters the existing epoch-bound
+acquisition critical section, acquires a current `portable` host-fleet guard,
+and validates one cached signed acquisition lease before the external effect.
+The lease binds the fleet, exclusive holder (`portable` or governed `legacy`),
+server enrollment epoch/session, lease generation, allowed acquisition mode,
+exact policy digest/repository-policy revision, maximum capacity, and a short
+server-owned lifetime. The client converts the lifetime to a strictly shorter
+monotonic local deadline when the response is received; it never extends a
+lease from client wall time. The operation immediately revalidates mode, exact
+eligible scale set, capacity, local policy epoch/digest, lease generation and
+holder, and host-fence generation while retaining the local guards. The
+existing `AcquisitionPermitProvider` interface may produce an operation-scoped
+local proof from that cached lease, but it performs no remote call and creates
+no remote per-operation state.
 
-The Durable Object issues a permit only when its current state authorizes the
-exact requested mode and has no open latest-transition queue risk. It recomputes
-the expected acquisition-policy digest for the mode it is issuing — canary-only
-(mode `canary-only`, the single persisted canary scale set, capacity one) or
-enabled (full configured policy) — from its own authoritative configuration and
-current repository-policy revision, and rejects any permit request whose bound
-`policyEpoch`, `policyDigest`, or repository-policy revision does not equal those
-expected values; the digest is a Worker-owned predicate, never a client echo.
-It also refuses to issue a permit for a repository whose live eligibility state
-is not `active`. That live archive refusal is a permit-gate overlay independent
-of the acquisition-policy digest, which reflects config-declared eligibility; an
-operator configuration revision later brings the declared eligibility (and the
-digest) into agreement with the latch. Each permit is persisted and
-single-operation, never a reusable bearer token. Before any
-hosted transition, the object atomically increments the permit generation,
-enters `acquisition-revoking`, and stops issuance. It commits hosted transition
-intent, queue-risk rows, and GitHub outboxes only after every prior permit is
-closed or its server expiry plus the forced-termination margin has elapsed.
-Thus a new hosted transition cannot invalidate clearance between an operator
-status check and a local poll: the poll needs a live permit inside its epoch
-barrier, and the hosted transition cannot claim its hard zero-acquisition gate
-until all earlier authority is drained. A legacy compatibility wrapper uses
-the same generation as a short renewable process lease and terminates the
-legacy listener before lease expiry if renewal fails; the Worker applies the
-same revoke-and-drain rule before hosted intent.
+The Durable Object renews a lease only in the signed response to an accepted
+heartbeat whose health, active holder, fence generation, policy digest, and
+capacity match its current routing state. `canary-only` binds exactly one
+persisted canary scale set and one capacity unit. A local CLI transition,
+administrative status result, stale heartbeat response, or maintenance
+directive is intent/evidence only and grants no acquisition authority.
+Worker unavailability therefore expires the local lease and stops new
+acquisition. Work may remain queued on a self-hosted route until the Worker and
+its scheduler recover; the system never converts that availability loss into
+unbounded local authority.
 
-A drained permit is necessary but not sufficient for mutual exclusion, because
+Before a hosted transition, the Durable Object increments the lease generation
+and stops renewal. It waits through the last server-recorded expiry plus a fixed
+clock/termination safety margin before persisting hosted mutation work. It does
+not need a close message from every poll or JIT operation. The local epoch
+barrier still cancels and joins prior operations; an unjoinable call persists
+fatal/zero capacity and terminates the controller before the server margin can
+elapse. The same lease type authorizes the fenced legacy holder during governed
+rollback, so Portable and legacy do not have parallel authority protocols.
+
+An expired lease is necessary but not sufficient for mutual exclusion, because
 a runner past `RUNNER_HELD` — in `RELEASE_ARMED` or `LISTENER_RELEASED` but not
 yet `JOB_RUNNING` — holds a released listener that can still accept an
-assignment while carrying no live acquisition permit. Listener authority is
+assignment while carrying no live acquisition lease. Listener authority is
 therefore bound to the acquisition epoch and fleet-fence generation under which
 the runner was released. When the epoch barrier revokes acquisition (operator
 mode change, host pressure, watchdog stop, hosted hold, archival, or failover),
@@ -309,7 +369,7 @@ the controller terminates, as part of that drain, every runner past
 Portable listeners — a governed legacy rollback and an administrative hold or
 upgrade drain, where the controller is alive by construction: the controller
 publishes the count of un-assigned released listeners, and the Worker does not
-complete such a transition until it has drained every permit/lease and observed
+complete such a transition until the last lease has expired and it has observed
 a fresh heartbeat reporting zero un-assigned released listeners under the current
 generation. A failover to hosted triggered by staleness or an authenticated
 fatal state does not wait for that heartbeat — the host may be down and unable
@@ -326,10 +386,10 @@ failover. Each repository carries a latched eligibility state — `active`,
 reader of GitHub `archived` state (it alone holds Metadata read); it observes
 archival through its bounded five-minute integrity sweep. On observing
 `archived=true` the Worker latches that repository to `archived-disabled`: it
-stops issuing and revokes every acquisition permit and legacy lease for that
-repository and refuses new ones, which forces the controller's effective
-capacity for that alias to zero because the controller cannot acquire without a
-Worker permit. This per-repository disable inserts no fleet-wide queue-risk row
+stops renewing any lease whose policy still authorizes that repository and
+forces the next signed policy digest to give that alias zero capacity. The
+controller cannot acquire for it after the shorter local lease deadline. This
+per-repository disable inserts no fleet-wide queue-risk row
 and never blocks acquisition for other repositories; a job already running when
 archival is observed drains normally, and no new work is admitted. The
 eligibility state is durable and latched: a later live `archived=false` does
@@ -391,14 +451,12 @@ An upgrade proceeds through:
 8. clear every open queue-risk row through authenticated same-transition GitHub
    read-back and selective recovery while local acquisition remains zero;
 9. set canary-only intent, release the hosted hold into a new recovery epoch,
-   and require each exact canary operation to obtain a fresh Worker permit
-   inside the local epoch barrier before running the secretless canary while
-   routing remains hosted;
-10. enable full acquisition intent locally, require fresh enabled-policy Worker
-    permits for every operation, and, while the Worker transition epoch is
-    unchanged, observe a same-enrollment-session heartbeat whose sequence is
-    newer than the canary, reporting `enabled`, the expected policy digest, and
-    complete capacity; and
+   receive one canary-only lease inside the local epoch barrier, and run the
+   secretless canary while routing remains hosted;
+10. enable full acquisition intent locally, receive a fresh enabled lease, and,
+    while the Worker transition epoch is unchanged, observe a
+    same-enrollment-session heartbeat whose sequence is newer than the canary,
+    reporting `enabled`, the expected policy digest, and complete capacity; and
 11. restore self-hosted routing only after the external failover state machine
     confirms both the current-epoch canary and that acquisition-enabled proof.
 
@@ -433,13 +491,13 @@ Portable GHAR prevents recurrence with four layers:
    prior immutable digests and publishes candidate state. The Worker enters its
    hosted hold and exposes a read-only, short-lived, signed outbound
    maintenance directive. Only `stage-permitted` after hosted read-back,
-   permit drain, queue clearance, and zero assigned jobs authorizes local
+   lease expiry, queue clearance, and zero assigned jobs authorizes local
    acquisition disable plus bounded candidate staging/qualification. Only a
    later `replace-permitted`, after the exact candidate-qualified tuple is
    persisted, authorizes quiescence and digest selection; later
    `canary-permitted` and `enable-permitted` directives authorize the matching
    local acquisition-policy transitions.
-   Each directive is bound to active enrollment/transition/permit/config
+   Each directive is bound to active enrollment/transition/lease/config
    generations, the exact status-request control sequence and selected/
    candidate manifest digests, the qualified tuple, policy digests, and server
    expiry, and is re-fetched immediately before use. Pending, rejected,
@@ -447,7 +505,7 @@ Portable GHAR prevents recurrence with four layers:
    work hosted and the previous artifacts available. The journal resumes this
    sequence after a crash or re-enrollment without operator intervention.
    An existing operator-created hold strictly dominates runner-upgrade state:
-   release observations and permit drain persist, but the reason cannot change,
+   release observations and lease expiry persist, but the reason cannot change,
    every directive remains `wait-hosted`, and no stage/select/auto-release
    occurs. After authenticated operator release, only a fresh non-current
    heartbeat may enter a new runner-upgrade hold.
@@ -868,15 +926,29 @@ A process on the Docker host cannot detect total host, storage, Docker-daemon, p
 
 The Durable Object owns the fleet epoch. The host does not persist or choose it.
 
-1. A controller instance creates a random enrollment-request nonce and sends a timestamped, HMAC-authenticated challenge request for a configured fleet identifier.
-2. The Worker enforces a bounded timestamp window, stores a digest of the request nonce, and rejects nonce reuse before issuing a random, expiring, single-use challenge.
-3. The controller creates a random boot/session identifier and returns a timestamped HMAC over the exact completion body, including the fleet identifier, session identifier, initiating request nonce, and challenge.
-4. The Durable Object atomically verifies that the unconsumed challenge digest is bound to that initiating request-nonce digest, consumes it once, increments the server-owned epoch, invalidates the prior session, and returns the new epoch/session contract.
-5. Heartbeat sequence begins at one within that session.
+1. A controller instance creates a cryptographically random request nonce and
+   sends one canonical `POST /v1/session` request containing the configured
+   fleet identifier, nonce, timestamp, and controller build identity. An HMAC
+   covers the exact method, path, and body.
+2. The Worker enforces a bounded timestamp window and exact request schema. The
+   Durable Object atomically rejects a reused nonce digest, records the nonce
+   with a bounded expiry, increments the server-owned epoch and lease
+   generation, creates a random session identifier, and invalidates the prior
+   session.
+3. The response is authenticated and binds the request nonce, fleet, new epoch,
+   random session identifier, initial heartbeat sequence, lease generation, and
+   Worker receipt time. The controller verifies the complete response before
+   storing the session.
 
 Local controller-state loss causes a new authenticated enrollment rather than a permanent lockout. Old session traffic is rejected after a newer epoch is active.
 
-### 9.3 Heartbeats
+The single exchange provides the same replay and stale-session guarantees as a
+challenge/complete protocol with one fewer endpoint and half as many failure
+boundaries. A future additional round trip requires a demonstrated threat that
+the timestamp, nonce, request HMAC, atomic nonce store, and bound response do not
+address.
+
+### 9.3 Heartbeats and acquisition leases
 
 A heartbeat is generated only after a successful controller reconciliation and contains allowlisted operational data:
 
@@ -896,6 +968,26 @@ A heartbeat is generated only after a successful controller reconciliation and c
 
 The HMAC authenticates the complete payload. Worker receipt time determines freshness. Client time is diagnostic only. Duplicate, reordered, old-epoch, and replayed messages are rejected.
 
+An accepted `POST /v1/heartbeat` returns one authenticated response containing
+the accepted sequence, Worker receipt time, current routing transition, a
+maintenance directive, and either one `AcquisitionLeaseV1` or an explicit
+no-lease result. The lease is the only remote acquisition authority. It binds:
+
+- fleet, holder (`portable` or governed `legacy`), enrollment epoch, and
+  session;
+- lease generation and allowed mode (`disabled`, `canary-only`, or `enabled`);
+- exact acquisition-policy digest and repository-policy revision;
+- maximum capacity and, for canary-only mode, the one eligible scale set; and
+- a short server-owned validity duration and server expiry for audit.
+
+The controller converts the duration to a strictly shorter monotonic local
+deadline at receipt. It never extends authority from local wall time, a cached
+status response, or a maintenance command. Every later heartbeat replaces the
+prior lease; leases are not renewed by administrative traffic. A missing,
+invalid, stale, mismatched, or expired lease stops new acquisition while
+already-running jobs drain. This is the defined safe degradation when the
+Worker or scheduler is unavailable.
+
 During a governed rollback, the fenced legacy wrapper uses the same managed
 heartbeat client to establish a new server-owned session only after portable
 acquisition is quiescent and the fence reads `legacy`. It publishes sanitized
@@ -903,90 +995,93 @@ legacy process/registration/egress/job observations but has no routing
 credential or writer. The Worker accepts legacy health only when the active
 fleet and monotonically increasing fence generation match the authenticated
 rollback transition; stale/fatal/mismatched legacy health returns routing to
-hosted. This compatibility publisher replaces no acquisition logic and does not
-recreate the retired external watcher.
+hosted. The response carries the same bounded lease type used by Portable, so
+legacy does not introduce a second authority protocol. This compatibility
+publisher replaces no acquisition logic and does not recreate the retired
+external watcher.
 
 ### 9.4 Durable Object model
 
 One Durable Object is the coordination atom for one fleet. Multiple independent fleets use multiple deterministic objects.
 
-SQLite stores:
+SQLite uses six responsibility-based tables:
 
-- active enrollment epoch and session;
-- independent last accepted heartbeat/control sequences and receipt time;
-- per-repository route state;
-- consecutive health observations;
-- current transition epoch, lock, hosted-hold state, permit generation/mode,
-  and bounded outstanding acquisition permits/legacy lease;
-- monotonic deployment-configuration revision and persisted canary identity;
-- a variable-specific GitHub mutation outbox;
-- canary dispatch and result identity;
-- notification delivery state; and
-- bounded audit events.
+- `fleet_state`: active session, heartbeat sequence/time, lease generation,
+  holder, routing state, hosted hold, configuration revision, policy digest,
+  and bounded health counters;
+- `request_nonces`: digests and expiries for session and administrative replay
+  protection;
+- `repositories`: aliases, expected selectors/workflow identities, confirmed
+  routes, archive eligibility, and open queue-risk evidence;
+- `transitions`: one row per routing transition with its epoch, desired state,
+  canary identity/result, and terminal read-back evidence;
+- `due_work`: a closed-kind idempotent outbox for GitHub mutation/read-back,
+  canary, email, and webhook work, including bounded claim and retry state; and
+- `audit_events`: bounded, sanitized decision and effect evidence.
 
-Local transition intent and variable-specific outbox records are committed before external GitHub mutations. Each due row is transactionally claimed with an expiring claim ID before external I/O; outcome commits require the same live claim and can confirm only that row. A crash or ambiguous API result triggers claim recovery, GitHub read-back, and idempotent reconciliation. No external routing write occurs from unpersisted intent.
+Adding a table requires a new independently owned lifecycle or retention
+contract that cannot be represented safely in these six. Table count is an
+outcome of responsibilities, not a quota.
 
-Cron reconciles the private configuration revision, evaluates health, and
-starts bounded due work. Each fleet object also owns one alarm. Every SQL state
-change that creates or moves due work must use one atomic
-`commitDueWithAlarm(mutation: DueMutation)` synchronous storage transaction.
-Every closed SQL-only insert, reschedule, or claim-release variant contains its
-exact persisted `dueAtMs`; the helper derives the alarm candidate from that same
-field, so callers cannot supply a later split deadline, callback, `Promise`,
-thenable, SQL string, or external-I/O closure. The helper runs inside one
-`ctx.storage.transactionSync(() => { ... })` closure: it executes the selected
-command through `ctx.storage.sql.exec()` and sets the absent-or-earlier deadline
-through `ctx.storage.setAlarm()` in that same synchronous closure. Because the
-SQLite backend stores alarm state as a row in the internal `_cf_METADATA` table
-within the same physical SQLite database as the fleet tables, the closure's SQL
-write and alarm write commit or roll back together under one native SQLite
-transaction; `setAlarm()`'s returned `Promise` is a vestigial type-parity
-artifact of the KV-backed storage class and is never awaited (the closure is
-synchronous, and awaiting it is proven to add nothing to durability). A throw
-inside the closure preserves both the prior alarm and prior SQL state. The
-async `ctx.storage.transaction(txn => ...)` form is prohibited for this helper:
-its `DurableObjectTransaction` handle exposes no `.sql` member, so pairing
-`txn.setAlarm()` with an outer `ctx.storage.sql.exec()` is not a contracted
-atomicity guarantee. Static type tests reject async/thenable mutation inputs.
-Consequently a due row cannot become visible without an equal-or-earlier alarm,
-including when the candidate is already due. The alarm catches downstream
-outages and commits its retry row plus next alarm through the same helper, so no
-pending safety action depends on a future request or cron tick after
-eviction/crash. A pinned executable Workers-runtime contract test uses
-`@cloudflare/workers-types@5.20260708.1`, workerd `1.20260708.1`, and Miniflare
-`4.20260708.1` to prove the combined rollback and minimum-deadline behavior and
-that alarm durability does not depend on awaiting `setAlarm()`; any
-type/runtime disagreement fails deployment closed.
+Local transition intent and variable-specific outbox records are committed
+before external GitHub mutations. Each due row is transactionally claimed with
+an expiring claim ID before bounded external I/O; outcome commits require the
+same live claim and can confirm only that row. A crash or ambiguous API result
+triggers claim recovery, authoritative GitHub read-back, and idempotent
+reconciliation. No external routing write occurs from unpersisted intent.
+
+One Cloudflare Cron Trigger is the sole durable due-work scheduler. Each tick
+reconciles private configuration, evaluates health, and claims bounded batches
+ordered by safety priority and due time. A request handler may opportunistically
+execute work it just persisted, but recovery never depends on another request.
+Expired claims return to the queue on a later cron tick. Retry count, elapsed
+age, claim duration, batch size, per-destination concurrency, and retained
+history are bounded; a permanent failure stays visible and never becomes false
+success.
+
+Durable Object alarms, private storage tables, and runtime-specific transaction
+coupling are deliberately excluded. They duplicate the scheduler and make
+safety depend on undocumented implementation details. A Cron outage delays due
+work; paired Worker unavailability also lets the short acquisition lease expire
+and stops local acquisition. The last confirmed GitHub route may remain local
+and new jobs may queue until the control plane recovers. This availability
+residual is explicit and observable; it is safer and simpler than a second
+scheduler with different recovery semantics.
 
 Repository additions are accepted only while the hosted hold is active and the private configuration revision increments exactly once with a matching canonical digest. The Durable Object inserts each new repository unconfirmed-hosted, queues one row for each of its route/scale-set/legacy-label variables, reads each back independently, and persists its canary workflow/expected revision before the hold can release. Routine expansion never relies on direct variable writes; identity mutation, revision skip/rollback/digest mismatch, and removal require separate retirement handling.
 
 ### 9.5 Failover state machine
 
 ```text
-BOOTSTRAP
-  -> HOSTED_CONFIRMED
-  -> QUEUE_RISK_CLEARED
-  -> RECOVERY_OBSERVED
-  -> CANARY_PENDING
-  -> CANARY_PASSED
-  -> ACQUISITION_ENABLED_CONFIRMED
-  -> SELF_HOSTED_CONFIRMED
-  -> HEALTHY_SELF_HOSTED
-  -> SUSPECT
-  -> FAILOVER_PENDING
-  -> HOSTED_CONFIRMED
-HOSTED_CONFIRMED
-  -> QUEUE_RISK_CLEARED
-QUEUE_RISK_CLEARED
-  -> LEGACY_RECOVERY_PENDING
-LEGACY_RECOVERY_PENDING
-  -> LEGACY_CANARY_PREPARED
-LEGACY_CANARY_PREPARED
-  -> LEGACY_CONFIRMED
-LEGACY_CONFIRMED
-  -> FAILOVER_PENDING
-  -> HOSTED_CONFIRMED
+HOSTED -> PORTABLE_CANARY -> PORTABLE
+HOSTED -> LEGACY_CANARY   -> LEGACY
+PORTABLE -> DRAINING_TO_HOSTED -> HOSTED
+LEGACY   -> DRAINING_TO_HOSTED -> HOSTED
 ```
+
+The six persisted states are deliberately coarse. Canaries, GitHub mutations,
+read-backs, lease expiry, queue-risk clearance, and notifications are outcomes
+inside a transition, not extra top-level states. A transition row records their
+progress idempotently; adding a routing state requires a distinct externally
+observable authority configuration, not another implementation checkpoint.
+
+- `HOSTED`: every configured repository is read back hosted and no local lease
+  renews.
+- `DRAINING_TO_HOSTED`: lease generation has advanced, renewal has stopped, and
+  hosted mutation/read-back plus last-lease expiry and local listener drain are
+  in progress.
+- `PORTABLE_CANARY`: routing remains hosted; one canary-only Portable lease
+  authorizes exactly one capacity unit and one persisted canary scale set.
+- `PORTABLE`: routing is read back self-hosted and a matching enabled Portable
+  lease may authorize bounded acquisition.
+- `LEGACY_CANARY`: routing remains hosted; the fenced legacy holder receives
+  the same canary-only lease type for its exact canary label.
+- `LEGACY`: routing is read back explicit legacy and a matching enabled legacy
+  lease may authorize bounded acquisition.
+
+All transitions between Portable and legacy pass through hosted. Unknown,
+partially restored, ambiguous, or corrupt state starts in or moves toward
+hosted; it never infers a local route.
 
 Default policy:
 
@@ -1003,9 +1098,8 @@ Default policy:
 - zero local acquisition, including canary-only mode or legacy runner restore,
   until every queue-risk row from the latest hosted transition is cleared by
   authenticated GitHub read-back and selective recovery;
-- one fresh Worker permit inside each Portable acquisition critical section,
-  or one short renewable Worker lease around a legacy compatibility process;
-  a hosted transition first revokes issuance and drains all prior authority;
+- one current signed lease for either local holder; a hosted transition first
+  advances its generation, stops renewal, and drains all prior authority;
   and
 - late or superseded canary results ignored.
 
@@ -1013,32 +1107,28 @@ The optional legacy branch is an authenticated manual rollback path, not an
 automatic failback target. Because the evidence a legacy route requires — a
 secretless legacy canary observed at the exact head with
 `runner.environment=self-hosted` plus a newer legacy heartbeat — can be produced
-only once a fenced legacy process is actually running, entry is staged so the
-evidence can exist before the state that consumes it. `LEGACY_RECOVERY_PENDING`
-authorizes only a short renewable legacy process lease under the shared fence
-while routing stays hosted. `LEGACY_CANARY_PREPARED` runs and observes the
-secretless legacy canary while routing still stays hosted. Only `LEGACY_CONFIRMED`
-— reached after exact fence, workflow-binding, evidence-digest, and
-legacy-canary verification all agree — creates the explicit `legacy` route
-outbox, after which every repository must read back the explicit `legacy` value.
-The governed rollback's fenced legacy lease is permitted in these staged states
-specifically, even though ordinary Portable acquisition is not; an administrative
-hosted hold blocks only the final `LEGACY_CONFIRMED` commit, not the staged lease
-or canary. Any unhealthy legacy observation transitions back to hosted. Variable
-deletion never selects this state.
+only once a fenced legacy process is actually running, `LEGACY_CANARY` grants
+one canary-only lease while routing remains hosted. Only exact fence,
+workflow-binding, evidence-digest, and legacy-canary agreement creates the
+explicit `legacy` route outbox and permits `LEGACY`. Every repository then reads
+back the explicit `legacy` value. An administrative hosted hold blocks that
+commit but may allow the bounded canary evidence needed for rollback. Any
+unhealthy legacy observation enters `DRAINING_TO_HOSTED`. Variable deletion
+never selects a local state.
 
 An authenticated, disabled-by-default administrative hosted hold can enter from
 any state. Enabling it persists hosted transition intent and blocks recovery
 until every repository reads back hosted. Releasing it creates a new recovery
-epoch and leaves routing hosted while a current-epoch canary runs; because
+epoch and leaves routing hosted in `PORTABLE_CANARY` while a current-epoch
+canary runs; because
 routing was already hosted throughout the hold, the release inserts no
 queue-risk row and does not re-block acquisition. Canary success
 does not create a local-route outbox: the controller must first enable full
 acquisition and, while the Worker remains in that transition epoch, a heartbeat
 from the same enrollment session with sequence newer than the canary observation
 must prove `enabled`, the expected acquisition-policy digest, and full configured
-capacity. Only that
-`ACQUISITION_ENABLED_CONFIRMED` state can create self-hosted intent. Direct
+capacity. Only that confirmed outcome can create self-hosted intent and enter
+`PORTABLE`. Direct
 repository-variable writes are limited to initial bootstrap and the one-time
 all-candidate hosted transition before normal Worker authority. Governed
 recovery and legacy rollback remain Worker-owned; direct writes are never a
@@ -1137,13 +1227,13 @@ evidence. The Worker re-reads the exact GitHub run/job state before an idempoten
 clear transaction records `cleared_at`; stale epochs, ambiguous reads, and a
 second clear cannot erase newer risk. Automatic cancellation or rerun remains
 prohibited. While any row from the latest hosted transition is open, the Worker
-issues no acquisition permit or legacy process lease, the controller must
+issues no acquisition lease, the controller must
 remain `disabled`, Portable canary-only acquisition is blocked, and legacy
-launchers/runners cannot be restored. Clearing the last row enters
-`QUEUE_RISK_CLEARED`; any new hosted transition first revokes the permit
-generation and drains every earlier permit/lease, then creates a new open risk
-generation and revokes that gate. An admin-status response is never itself a
-clearance artifact.
+launchers/runners cannot be restored. Clearing the last row establishes the
+queue-risk-cleared condition within `HOSTED`; any new hosted transition first
+advances the lease generation and drains every earlier lease, then creates a
+new open risk generation. An admin-status response is never itself a clearance
+artifact.
 
 ### 9.6 GitHub API behavior
 
@@ -1191,7 +1281,11 @@ It never includes secrets, heartbeat signatures, request bodies, JIT data, priva
 
 The optional secondary adapter sends the same sanitized event model to a configured HTTPS endpoint with an HMAC signature, bounded timestamp, event ID, and bounded retry policy. The receiver must enforce timestamp freshness and event-ID deduplication.
 
-The approved private deployment bridges this adapter to Signal on a failure domain separate from the runner host. Completion requires an observed Signal delivery, not merely an HTTP success from the webhook endpoint. After destination acknowledgment, the bridge emits a separate-key HMAC-signed receipt containing the event ID, delivered-at time, destination-ack digest, failure-domain class, and `runnerHost=false`; private tooling verifies and correlates that receipt without publishing destination identity. The receipt key is absent from the Worker and QTS host and is distinct from the webhook-delivery key; loss, compromise, or ambiguous rotation invalidates Signal evidence and restarts the soak but cannot affect routing. The bridge does not create an inbound route to the runner host. The public repository does not name the private bridge or include a real destination.
+The public contract ends at the authenticated webhook acknowledgment. A private
+deployment may connect that endpoint to any destination, but no particular
+messaging product, receipt bridge, or third-party delivery semantics are a
+Portable GHAR requirement. Downstream delivery is independently observable and
+never routing evidence.
 
 ### 10.3 Delivery semantics
 
@@ -1229,9 +1323,12 @@ GitHub App private keys and heartbeat HMAC keys are Cloudflare Worker secrets. I
 
 ### 11.3 Worker endpoints
 
-- Enrollment and heartbeat endpoints require valid HMAC protocols.
-- Challenges are random, single-use, short-lived, and stored transactionally.
-- Administrative status, hosted-hold, and recovery endpoints are disabled by default or protected by a separate service credential plus bounded timestamp and single-use nonce verification.
+- `POST /v1/session` and `POST /v1/heartbeat` require their exact HMAC
+  protocols; the latter returns the signed lease and maintenance response.
+- `POST /v1/admin/command` accepts a closed command union, and
+  `POST /v1/admin/status` returns bounded status. Both are disabled by default
+  or protected by a separate service credential plus bounded timestamp and
+  single-use nonce verification.
 - Administrative status returns only bounded typed health, route, epoch, hold, canary, repository-confirmation, and outbox booleans/counters. It never returns credentials, request bodies, repository coordinates, notification destinations, or raw logs.
 - Unauthenticated and non-administrative error responses are generic and do not reveal fleet existence, repository inventory, or health state.
 - Request bodies and authentication headers are excluded from logs.
@@ -1444,7 +1541,8 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
 - Capacity ceilings, fairness, and starvation aging.
 - Configuration schema, unknown-field rejection, and secret-reference validation.
 - Redaction and sanitization adversarial corpus.
-- Worker enrollment, HMAC, challenge expiry, epoch rollover, replay, and sequence ordering.
+- Worker session HMAC, nonce expiry, epoch rollover, replay, response binding,
+  lease expiry, and sequence ordering.
 - Durable Object transition, outbox, retry, and notification state.
 
 ### 17.2 Integration tests
@@ -1478,6 +1576,9 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
 - Heartbeats delayed, duplicated, reordered, replayed, or dropped.
 - Host local state deleted or rolled back before re-enrollment.
 - Durable Object request failure before and after outbox commit.
+- Cron delayed or unavailable while the Worker is also unavailable; the local
+  lease expires, no new local acquisition occurs, and queued work is reported
+  without a false hosted-confirmation claim.
 - GitHub mutation timeout, partial repository success, rate limiting, and ambiguous response.
 - Canary late success from an obsolete epoch.
 - Primary email failure, webhook failure, and both failing together.
@@ -1524,15 +1625,14 @@ Before changing a deployment, capture its live controller/supervisor scripts, im
 4. Under the Worker hosted hold, suspend the legacy fleet to `none`, hand `none`
    to Portable only in disabled mode, and keep all local acquisition at zero.
 5. Clear every latest-transition queue-risk row through authenticated GitHub
-   read-back/selective recovery, then permit canary-only acquisition. Add one
+   read-back/selective recovery, then receive a canary-only lease. Add one
    read-only, secretless repository under a new Worker configuration revision
    and target its unique scale-set name as one GitHub.com runner label.
 6. Release the hold into a new epoch; run the one-capacity canary while all
    repositories remain hosted, enable full acquisition after it passes, observe
-   a fresh enabled/full-capacity heartbeat, and only then permit the Worker to
+   a fresh enabled/full-capacity heartbeat and lease, and only then permit the Worker to
    create self-hosted intent. Prove job lifecycle, isolation, failure recovery,
-   hosted fallback, email, secondary webhook, and signed end-to-end Signal
-   receipt.
+   hosted fallback, email, and the optional secondary webhook.
 7. For each later repository, reacquire the hold, disable acquisition, reconcile
    it hosted under a new configuration/canary revision, clear the new queue-risk
    generation, repeat the epoch canary, restore full acquisition, and observe
@@ -1549,7 +1649,7 @@ The legacy external watcher is retired only after positive observation of:
 - fatal-controller-state failover;
 - partial GitHub mutation recovery;
 - primary email delivery;
-- secondary webhook delivery and end-to-end Signal receipt;
+- optional secondary webhook delivery;
 - simulated controller, Docker, host, and uplink failures;
 - canary-gated failback; and
 - the complete rollback rehearsal.
@@ -1592,6 +1692,24 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 
 ## 19. Acceptance criteria
 
+### Engineering quality
+
+- Every external dependency and long-lived operation has a tested timeout,
+  backpressure bound, or explicit lifecycle owner and a named safe degradation
+  path.
+- No retry, queue, history, tmpfs, disk, process, descriptor, or evidence store
+  can grow without an enforced bound.
+- Each external mutation is idempotent or safely re-entrant and reaches success
+  only after authoritative read-back; combined failures cannot produce false
+  success.
+- The implementation retains one lifecycle engine, one routing authority, one
+  durable due-work scheduler, one acquisition-lease protocol, and one
+  authoritative phase/state definition.
+- Every component, table, endpoint, state, and abstraction maps to a current
+  requirement that a materially simpler design cannot safely satisfy.
+- Load-bearing safety boundaries are named, independently testable, and local
+  enough that a small edit cannot silently bypass them.
+
 ### Public safety
 
 - Repository history and generated release payload pass native, generic, and private pre-publication scans.
@@ -1628,8 +1746,10 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 ### Failover
 
 - Durable Object state survives Worker rescheduling.
-- Controller state loss safely re-enrolls into a new server-owned epoch.
-- Replayed challenge and administrative requests fail timestamp and single-use nonce checks.
+- Controller state loss safely establishes a new server-owned epoch through one
+  authenticated session exchange.
+- Replayed session and administrative requests fail timestamp and single-use
+  nonce checks.
 - Hosted hold enters safely from every state, survives Worker rescheduling, blocks recovery until hosted read-back, and releases only into a new recovery epoch.
 - Hosted confirmation binds variable read-back to exact default-branch workflow
   blobs/job IDs/checks and a successful GitHub-hosted route-attestation run;
@@ -1639,7 +1759,9 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
   exact GitHub read-back and selective recovery.
 - Stale/fatal health routes affected repositories hosted and reads back confirmation.
 - Ambiguous GitHub responses reconcile idempotently.
-- Cron plus Durable Object alarms recover every persisted due mutation/canary/notification row after eviction or crash.
+- One Cloudflare Cron Trigger recovers every persisted due
+  mutation/read-back/canary/notification row after eviction or crash; no second
+  scheduler or private runtime storage contract is required.
 - Repository expansion is reconciled hosted under a monotonic configuration revision before its canary or self-hosted mutation.
 - Recovery requires a current-epoch canary followed, without changing that
   Worker epoch, by a newer-sequence same-session enabled heartbeat with the
@@ -1654,7 +1776,6 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 
 - Email and webhook deliver independently with the same sanitized event ID.
 - Failure of either or both channels is recorded and retried without blocking failover.
-- Signal completion requires a separately keyed, event-correlated delivery receipt from a non-runner-host failure domain.
 - Notification content passes the public-safety/redaction test corpus.
 
 ### Migration
@@ -1681,7 +1802,7 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 | GitHub API outage during local failure | Persist desired route and retry; never claim unconfirmed failover. Immediate fallback cannot be guaranteed. |
 | Deployment identifier disclosure | Generic and private scans plus human review; no claim of perfect detection. |
 | Both notification channels unavailable | Persist delivery failures and retry; routing safety does not depend on notification success. |
-| Signal receipt-key compromise | Separate key and failure domain, key-ID/rotation evidence, no Worker/QTS access; compromise invalidates notification evidence and restarts the soak but cannot change routing. |
+| Cron and Worker unavailable while GitHub still routes locally | The short acquisition lease expires and stops new local acquisition; jobs may queue on the last confirmed route until control-plane recovery. This availability residual is observable and never represented as successful failover. |
 | Vendor-specific QTS behavior | Reference adapter plus mandatory live host conformance; unsupported versions fail closed. |
 | JIT credentials visible within their one-job trust domain | One-job scope, no reusable App key, ephemeral destruction, no cross-job reuse. |
 | Hosted-runner cost during failover | Accepted safety cost; tracked as an operational metric. |
@@ -1691,7 +1812,9 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
 1. **Public repository foundation:** governance files, schemas, sanitization controls, hosted CI, CodeQL, secret scanning, dependency automation, and protected-branch settings.
 2. **Controller core:** scale-set adapter, state machine, capacity broker, redaction, and fake-runtime tests.
 3. **Isolation runtime:** runner/adapter/broker/helper/verifier images, Docker host runtime, QTS/systemd adapters, and conformance/chaos suite.
-4. **External failover:** Worker, Durable Object, enrollment protocol, GitHub outbox, email, signed webhook, and tests.
+4. **External failover:** Worker, Durable Object, one-step session protocol,
+   signed acquisition lease, Cron-driven GitHub outbox, email, optional signed
+   webhook, and tests.
 5. **Canary and migration:** private overlay, dark deployment, consumer-workflow PRs, watcher cutover, soak, rollback rehearsal, and legacy retirement.
 6. **Release hardening:** reproducible artifacts, SBOM, provenance, third-party notices, upgrade compatibility automation, and supported-host matrix.
 
@@ -1801,3 +1924,20 @@ bridge rather than the Portable GHAR baseline. This paragraph records the
 draft's scope only; convergence is not claimed until the exact revised
 plan/spec receive a synchronous distinct-family architecture review and its
 material findings are integrated.
+
+The 2026-08 reliability and simplicity amendment is normative over the
+historical implementation-plan mechanics recorded above. It keeps their
+load-bearing outcomes — server-owned epochs, replay resistance, one external
+routing writer, bounded local authority, durable idempotent work, exact
+read-back, queue-risk visibility, canary-gated recovery, and exclusive
+Portable/legacy fencing — while removing machinery that is not required to
+achieve them. Specifically, it replaces challenge/complete enrollment with one
+nonce-bound authenticated session exchange, per-operation remote acquisition
+permits and a separate legacy process lease with one heartbeat-renewed signed
+lease type, the large checkpoint-shaped routing graph with six authority
+states, Cron-plus-alarm recovery with one Cron scheduler, and mandatory Signal
+receipt bridging with a provider-neutral optional webhook boundary. References
+above to the removed mechanisms describe review history only and do not
+authorize their implementation. The amendment also makes correctness,
+security, reliability, practical simplicity, and elegant boundaries co-equal
+blocking criteria for all remaining work.

@@ -47,7 +47,9 @@ for the source-ready lifecycle contracts.
   controller and report local health; it has no routing authority.
 - **Cloudflare Worker and Durable Object** -- the external failover control
   plane: one Durable Object per fleet owns the fleet's enrollment epoch,
-  heartbeat state, and GitHub routing-variable outbox.
+  heartbeat state, short-lived signed acquisition lease, and GitHub
+  routing-variable outbox. One Cloudflare Cron Trigger is the sole durable
+  scheduler for persisted due work.
 - **Transactional email and optional signed webhook** -- the two
   notification channels the Worker drives on a routing transition.
 
@@ -67,6 +69,7 @@ flowchart LR
     Watchdog["Host watchdog"]
     Worker["Cloudflare Worker"]
     State["Durable Object per fleet"]
+    Scheduler["Cloudflare Cron Trigger"]
     Email["Transactional email"]
     Webhook["Optional signed webhook"]
 
@@ -83,7 +86,9 @@ flowchart LR
     Controller --> DialAuthority
     DialAuthority --> Ledger
     Watchdog --> Controller
-    Controller -- "signed outbound heartbeat" --> Worker
+    Controller -- "signed heartbeat" --> Worker
+    Worker -- "signed bounded lease" --> Controller
+    Scheduler --> Worker
     Worker <--> State
     Worker <--> GitHub
     Worker --> Email
@@ -114,7 +119,9 @@ The **Cloudflare Worker, together with exactly one Durable Object per
 fleet, is the sole automatic writer of GitHub workflow routing state**. No
 process on the Docker host -- controller, watchdog, or otherwise -- can
 change which runners a repository's workflows target. The host only
-publishes a signed heartbeat; the Worker decides, and writes, routing.
+publishes a signed heartbeat; the Worker decides and writes routing and returns
+one short-lived signed acquisition lease. If that lease cannot be renewed, new
+local acquisition stops while already-running jobs drain.
 
 ## Capacity and fairness
 
@@ -184,11 +191,22 @@ only after a successful controller reconciliation cycle, is authenticated,
 and is rejected by the Worker if it is duplicate, reordered, from an old
 epoch, or replayed.
 
+The same accepted heartbeat returns the only remote acquisition authority: a
+short-lived signed lease binding fleet holder, session, lease generation,
+policy digest, mode, and capacity. Portable and governed legacy rollback use
+the same lease type. One Cron Trigger claims bounded batches from the durable
+outbox; Durable Object alarms and private runtime storage contracts are not a
+second scheduler.
+
 Routing changes only follow a documented sequence of positive read-backs:
 a hosted-hold transition is confirmed only once every configured
 repository reads back on GitHub-hosted runners, and a self-hosted
 transition is confirmed only after a current-epoch canary succeeds and a
-fresh heartbeat proves the expected acquisition policy and full capacity.
+fresh heartbeat proves the expected acquisition policy, full capacity, and
+matching enabled lease. The persisted routing model has six authority states:
+hosted, draining-to-hosted, Portable canary, Portable, legacy canary, and
+legacy. Implementation checkpoints remain transition outcomes rather than
+expanding the state graph.
 See [Failover and notifications](../operations/failover-and-notifications.md)
 for the full failover state machine.
 

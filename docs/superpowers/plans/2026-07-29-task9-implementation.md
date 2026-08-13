@@ -6,6 +6,11 @@
 > separate operator sign-off. Tests use synthetic values, including the
 > incident anchors, solely to prove rejection and checked arithmetic.
 
+**Phase 3 authority amendment:** The host-local fence and same-fleet guards
+defined here remain load-bearing. Future Portable and legacy holders use the
+same signed heartbeat lease type; no separate legacy remote authority protocol
+is added. Platform-design §9 and the failover plan are normative.
+
 **Goal:** Add fail-closed host-profile qualification and one host-local
 portable/legacy generation authority without allowing unsupported hosts,
 unapproved resource envelopes, malformed private state, stale processes, or

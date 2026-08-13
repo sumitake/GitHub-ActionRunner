@@ -134,7 +134,7 @@
       },
       {
         "path": "docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md",
-        "identity_inventory_sha256": "4d17e271f3e35b16a72bcc16bc580d1e660ef8a436402b8dc2e69fa33fc08e81"
+        "identity_inventory_sha256": "a1b540585fc2c1802c23b1b4f3f6d481bb9e853c711eecc530ae3e114db42a52"
       },
       {
         "path": "internal/archive/runner_archive_test.go",
