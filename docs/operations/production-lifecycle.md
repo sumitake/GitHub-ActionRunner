@@ -193,10 +193,10 @@ Observability first passes one **projection-readiness gate** before any canary:
 Grafana and InfluxDB are the operator-selected projection stack for the current
 deployment profile, so that profile must pass the concrete checks above. The
 portable product contract is capability-based: another deployment may supply
-an equivalently reviewed read-only projection and time-series sink without a
-source change, provided it passes the same schema, freshness, no-data, identity,
-and rollback evidence. Neither product becomes routing or acquisition
-authority.
+an equivalently reviewed read-only projection and time-series sink without
+changing the controller or its closed health-export contract, provided it
+passes the same schema, freshness, no-data, identity, and rollback evidence.
+Neither product becomes routing or acquisition authority.
 
 Grafana is not re-promoted into a per-phase routing state machine. After that
 one gate, a small read-only cutover verifier evaluates authoritative receipts:

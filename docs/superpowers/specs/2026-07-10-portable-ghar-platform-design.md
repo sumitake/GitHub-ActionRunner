@@ -307,7 +307,7 @@ legacy accommodation is retained only as a migration bridge; Portable GHAR
 selects final values from representative p99 distributions and headroom rather
 than carrying the emergency high-water limits forward.
 
-Acquisition policy is persisted as `{mode, eligibleScaleSets, maxCapacity, repositoryPolicyRevision, repositoryPolicies, epoch}`, where `repositoryPolicies` is the per-repository `{alias, maxConcurrency, eligibilityState}` set and `repositoryPolicyRevision` is a monotonic counter bumped on any change to that set (including an eligibility latch). Every effective mode, eligibility, capacity, or repository-policy change uses one compare-and-set barrier: increment the epoch, cancel and join every older poller, invalidate its broker leases, and wait for zero acquisition critical sections before returning. Poll, acquire, and JIT calls have explicit deadlines. If any old operation ignores cancellation past the bounded shutdown deadline, the controller persists `fatal` with zero capacity and terminates its process; lifecycle tooling treats that transition as failed and proves process/runner quiescence before any fence handoff or restart.
+Acquisition policy is persisted as `{mode, eligibleScaleSets, maxCapacity, repositoryPolicyRevision, repositoryPolicies, epoch}`, where `repositoryPolicies` is the per-repository `{alias, maxConcurrency, eligibilityState}` set and `repositoryPolicyRevision` is a monotonic counter bumped on any operator-recorded change to that set, including a recorded eligibility-state change. The Worker's live archival latch is separate restrictive lease data and does not change this local revision on its own. Every effective mode, locally recorded eligibility, capacity, or repository-policy change uses one compare-and-set barrier: increment the epoch, cancel and join every older poller, invalidate its broker leases, and wait for zero acquisition critical sections before returning. Poll, acquire, and JIT calls have explicit deadlines. If any old operation ignores cancellation past the bounded shutdown deadline, the controller persists `fatal` with zero capacity and terminates its process; lifecycle tooling treats that transition as failed and proves process/runner quiescence before any fence handoff or restart.
 
 The public acquisition-policy digest is SHA-256 over exact UTF-8 bytes:
 `portable-ghar-acquisition-policy-v1\n`, lowercase mode plus `\n`, base-10
@@ -378,7 +378,8 @@ yet `JOB_RUNNING` — holds a released listener that can still accept an
 assignment while carrying no live acquisition lease. Listener authority is
 therefore bound to the acquisition epoch and fleet-fence generation under which
 the runner was released. When the epoch barrier revokes acquisition (operator
-mode change, host pressure, watchdog stop, hosted hold, archival, or failover),
+mode change, host pressure, watchdog stop, hosted hold, an operator-recorded
+archival policy revision, or failover),
 the controller terminates, as part of that drain, every runner past
 `RUNNER_HELD` that has not reached `JOB_RUNNING`; runners already in
 `JOB_RUNNING` drain normally. Quiescence attestation is required only for transitions that must exclude live
@@ -980,8 +981,10 @@ A heartbeat is generated only after a successful controller reconciliation and c
 - monotonic session sequence;
 - active fleet (`portable`, governed `legacy`, or `none` during a fence
   handoff) and current host-fence generation;
-- acquisition state, local acquisition-policy epoch, and a canonical SHA-256
-  digest over mode, exact eligible scale-set set, and maximum capacity;
+- acquisition state, local acquisition-policy epoch, and the canonical SHA-256
+  acquisition-policy digest defined in §6.2, including mode, exact eligible
+  scale-set set, maximum capacity, repository-policy revision, and the exact
+  repository-policy set;
 - available capacity summary;
 - assigned-job count, oldest-assignment age, and un-assigned released-listener
   count;
@@ -1909,7 +1912,7 @@ implementation requirements:
   superseded by the nonce-bound one-step session response in §9.2;
 - GitHub.com scale-set workflows target the scale-set name as one runner label;
 - the historical mandatory Signal receipt is superseded by the provider-neutral
-  optional signed webhook boundary in §9.7; notification failure never gates
+  optional signed webhook boundary in §10.2; notification failure never gates
   routing safety;
 - a stable-inode, per-holder fleet-generation fence makes new/legacy mutual exclusion continuously enforceable against watchdog races;
 - a Worker-owned hosted hold prevents automatic failback from racing maintenance, upgrade, or retirement;
