@@ -146,9 +146,11 @@ peaks.
 Every acquisition-relevant change -- mode, eligibility, capacity, or
 repository policy -- goes through one bounded epoch barrier: stale
 in-flight operations are joined or cancelled before the new state takes
-effect, and an operation that cannot be joined in time makes the
-controller fail closed (persist a fatal state and stop) rather than risk a
-stale operation acquiring capacity under an old policy.
+effect. The barrier rejects new acquisition sections and lease installation
+while closed, atomically advances the epoch and discards cached authority, and
+reopens only after the old sections join. An operation that cannot be joined in
+time makes the controller fail closed (persist a fatal state and stop) rather
+than risk overlapping epochs.
 
 ## Persisted lifecycle
 
@@ -210,11 +212,16 @@ controller-to-controller handoff protocol.
 
 The same accepted heartbeat returns the only remote acquisition authority: a
 short-lived signed lease binding fleet holder, session, lease generation,
-policy digest, mode, capacity, and a bounded restrictive set of Worker-latched
-archived-disabled repository aliases. Portable and governed legacy rollback use
-the same lease type. The controller anchors its shorter local deadline at
-heartbeat send time, rejects a response that arrives too late, and validates
-the operator-approved heartbeat/lease inequality before acquiring. Archive
+local acquisition-policy epoch/digest, mode, capacity, and a bounded restrictive
+set of Worker-latched archived-disabled repository aliases. Portable and
+governed legacy rollback use the same lease type. Lease installation and use
+require exact current local epoch/digest equality, preventing policy ABA. The
+controller anchors its shorter local deadline at heartbeat send time, rejects
+a response that arrives too late, and bounds every poll/acquire/JIT admission by
+an earlier cancellation deadline that reserves the existing termination tail.
+A per-operation mutex makes deadline cancellation mutually exclusive with its
+two-way admitted/dropped decision; late and ambiguous results cannot Ack or
+release a runner. Archive
 evidence has a bounded maximum age; missing or stale evidence is restrictive,
 and revocation converges within that evidence-age bound plus the remaining
 local lease rather than pretending a cached lease can be erased asynchronously.

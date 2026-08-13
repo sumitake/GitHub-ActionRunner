@@ -158,7 +158,11 @@ Cron Trigger addresses every object in a bounded validated private fleet
 inventory and recovers due work; and failback to self-hosted routing is gated on
 a current-epoch canary followed by a fresh full-capacity route-readiness
 heartbeat, exact self-hosted read-back, and only then a subsequent matching
-heartbeat with a signed enabled lease before local acquisition. Email and
+heartbeat with a signed enabled lease before local acquisition. The lease also
+authenticates the local policy epoch, and every poll/acquire/JIT admission must
+finish before its lease-derived cancellation deadline; policy ABA, late
+success, and ambiguous completion fail closed without a second authority
+mechanism. Email and
 webhook notifications retry independently of each other, and notification
 failure never blocks routing safety. Full detail is in
 [docs/operations/failover-and-notifications.md](docs/operations/failover-and-notifications.md).

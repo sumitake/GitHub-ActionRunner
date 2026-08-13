@@ -307,7 +307,7 @@ legacy accommodation is retained only as a migration bridge; Portable GHAR
 selects final values from representative p99 distributions and headroom rather
 than carrying the emergency high-water limits forward.
 
-Acquisition policy is persisted as `{mode, eligibleScaleSets, maxCapacity, repositoryPolicyRevision, repositoryPolicies, epoch}`, where `repositoryPolicies` is the per-repository `{alias, maxConcurrency, eligibilityState}` set and `repositoryPolicyRevision` is a monotonic counter bumped on any operator-recorded change to that set, including a recorded eligibility-state change. The Worker's live archival latch is separate restrictive lease data and does not change this local revision on its own. Every effective mode, locally recorded eligibility, capacity, or repository-policy change uses one compare-and-set barrier: increment the epoch, cancel and join every older poller, invalidate its broker leases, and wait for zero acquisition critical sections before returning. Poll, acquire, and JIT calls have explicit deadlines. If any old operation ignores cancellation past the bounded shutdown deadline, the controller persists `fatal` with zero capacity and terminates its process; lifecycle tooling treats that transition as failed and proves process/runner quiescence before any fence handoff or restart.
+Acquisition policy is persisted as `{mode, eligibleScaleSets, maxCapacity, repositoryPolicyRevision, repositoryPolicies, epoch}`, where `repositoryPolicies` is the per-repository `{alias, maxConcurrency, eligibilityState}` set and `repositoryPolicyRevision` is a monotonic counter bumped on any operator-recorded change to that set, including a recorded eligibility-state change. The Worker's live archival latch is separate restrictive lease data and does not change this local revision on its own. Every effective mode, locally recorded eligibility, capacity, or repository-policy change uses one compare-and-set barrier. The barrier closes acquisition first; while closed it admits no new acquisition critical section, heartbeat lease installation, or cached-lease use. It then atomically increments the epoch and discards cached lease authority, cancels and joins every older critical section, and reopens only after all have joined. Persisting the new epoch alone never makes it effective acquisition authority. If an old operation ignores cancellation past the bounded shutdown deadline, the transition owner persists `fatal` with zero capacity and terminates its process; lifecycle tooling treats that transition as failed and proves process/runner quiescence before any fence handoff or restart. A crash during the barrier restarts at the new epoch with no cached authority and must obtain a fresh matching lease.
 
 The public acquisition-policy digest is SHA-256 over exact UTF-8 bytes:
 `portable-ghar-acquisition-policy-v1\n`, lowercase mode plus `\n`, base-10
@@ -326,20 +326,50 @@ acquisition critical section, acquires a current `portable` host-fleet guard,
 and validates one cached signed acquisition lease before the external effect.
 The lease binds the fleet, exclusive holder (`portable` or governed `legacy`),
 server enrollment epoch/session, lease generation, allowed acquisition mode,
-exact policy digest/repository-policy revision, maximum capacity, a canonical
-bounded `archivedDisabledAliases` set of Worker-latched repository aliases, and a
-short server-owned lifetime. The client records a monotonic timestamp before
-sending the heartbeat and derives its local deadline from that timestamp, the
-server-owned duration, and the approved shortening margin. A response received
-at or after that deadline grants no lease, so request processing and return
-latency can only shorten local authority; client wall time never extends it.
-The operation immediately revalidates mode, exact eligible scale set,
-capacity, local policy epoch/digest, lease generation and holder,
-host-fence generation, and that its repository alias is absent from the signed
-disable set while retaining the local guards. The
-existing `AcquisitionPermitProvider` interface may produce an operation-scoped
-local proof from that cached lease, but it performs no remote call and creates
-no remote per-operation state.
+exact policy digest/repository-policy revision, the authenticated local
+acquisition-policy epoch reported by that heartbeat, maximum capacity, a
+canonical bounded `archivedDisabledAliases` set of Worker-latched repository
+aliases, and a short server-owned lifetime. The client records a monotonic
+timestamp before sending the heartbeat and derives its local deadline from that
+timestamp, the server-owned duration, and the approved shortening margin. A
+response received at or after that deadline grants no lease, so request
+processing and return latency can only shorten local authority; client wall
+time never extends it. Lease installation re-enters the open epoch barrier and
+atomically replaces the cache only when the heartbeat snapshot, signed lease,
+and current persisted epoch/digest all match and the local deadline remains
+live. Every cache use repeats that authenticated epoch comparison, closing an
+enabled-to-disabled-to-enabled ABA even when every other policy field returns
+to the same value.
+
+The operation snapshots that cached lease identity and its monotonic local
+deadline `D_lease`. On the same monotonic clock, checked arithmetic sets
+`D_cancel = min(now + T_call, D_lease - M)`, where `T_call` is the configured
+operation duration and the existing positive forced-termination tail `M` is
+partitioned into bounded cancel/join, durable-fatal-write, and termination
+slices ending strictly before `D_lease`. Equality, overflow, a missing slice,
+or insufficient slack rejects before the external effect. The exact
+`D_cancel` bounds the local proof, context, transport, result validation, and
+non-authorizing durable preparation; target conformance must prove those calls
+honor cancellation and the complete tail.
+
+One per-operation mutex serializes that deadline handler with a two-way
+in-memory completion token (`active -> admitted` or `active -> dropped`). While
+holding the mutex, the deadline handler cancels only when the token is still
+active; after admission or drop it is a no-op. The normal path may persist only
+the existing non-authorizing assignment/journal preparation, then re-enters a
+short barrier-protected commit and, under the same mutex, changes to `admitted`
+only when the context is not cancelled, monotonic time is still strictly before
+`D_cancel`, the epoch and cached-lease identity still match, and validation and
+preparation completed. Admission disarms the deadline handler before releasing
+the mutex; only admission may Ack or release a runner. If cancellation joins
+inside `M`, the handler marks an active token dropped and zeroizes the result.
+If it does not join, the handler persists fatal/zero capacity and terminates
+only while the barrier still names its epoch; otherwise the policy-transition
+owner waiting on that registered critical section owns the fatal path. An
+ambiguous upstream effect remains in the existing idempotent assignment journal
+for read-back/reconciliation but cannot release a runner from a dropped result.
+The existing `AcquisitionPermitProvider` interface derives the operation proof
+locally from the cached lease and creates no remote per-operation state.
 
 The Durable Object renews a lease only in the signed response to an accepted
 heartbeat whose health, active holder, fence generation, policy digest, and
@@ -1080,7 +1110,8 @@ no-lease result. The lease is the only remote acquisition authority. It binds:
 - fleet, holder (`portable` or governed `legacy`), enrollment epoch, and
   session;
 - lease generation and allowed mode (`disabled`, `canary-only`, or `enabled`);
-- exact acquisition-policy digest and repository-policy revision;
+- exact acquisition-policy digest, repository-policy revision, and the local
+  acquisition-policy epoch accepted from this heartbeat;
 - maximum capacity and, for canary-only mode, the one eligible scale set;
 - the canonical bounded `archivedDisabledAliases` set of Worker-latched
   repository aliases; and
@@ -1738,6 +1769,14 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
   `lastIssuedLeaseExpiryMax`, failure before and response loss after commit, a
   lost longer renewal followed by a shorter lease, and no maximum advance on a
   no-lease response.
+- Acquisition-epoch and operation-deadline enforcement: reject a missing,
+  stale, or delayed-response local epoch; restart with an old cached lease; and
+  enabled-disabled-enabled ABA. Exercise exact deadline equality, overflow,
+  missing/expired tail slices, insufficient slack, cancellation-resistant
+  transport, late success, timer-versus-admission serialization, same-epoch
+  unjoinable fatal, transition-owned fatal, and ambiguous remote completion.
+  No dropped or late result may Ack or release a runner; journal read-back must
+  reconcile remote ambiguity without reviving authority.
 - Released-listener job acceptance rejects an expired or superseded lease
   session/generation/local deadline in addition to acquisition epoch and fence,
   including a still-live predecessor controller at the exact expiry boundary.

@@ -90,7 +90,8 @@ lifecycle-owned responsibility the closed interfaces cannot express safely.
 
 - protocol version, fleet, holder, server epoch, and session;
 - lease generation and mode (`disabled`, `canary-only`, or `enabled`);
-- exact acquisition-policy digest and repository-policy revision;
+- exact acquisition-policy digest, repository-policy revision, and the local
+  acquisition-policy epoch accepted from this heartbeat;
 - maximum capacity and the one eligible canary scale set when canary-only;
 - a canonical bounded `archivedDisabledAliases` set of Worker-latched
   repository aliases; and
@@ -102,11 +103,25 @@ the lease deadline from that attempt-start timestamp, the returned duration,
 and the approved shortening margin. A response received at or after that
 deadline grants no lease, so response latency cannot make local authority
 outlive server expiry. Every operation also rejects its repository alias when
-it appears in the signed disable set. The controller never extends authority
-from wall time, status, or an administrative command. The existing local
-`AcquisitionPermitProvider` interface may derive an operation-scoped proof from
-the cached lease while the local epoch barrier and host fence remain held; it
-performs no network call and creates no remote per-operation state.
+it appears in the signed disable set. Lease installation and every later use
+require the authenticated local epoch and digest to equal the current persisted
+policy; every policy transition atomically advances the epoch and discards the
+cache while the existing barrier remains closed through old-operation join.
+The controller never extends authority from wall time, status, or an
+administrative command.
+
+Each poll/acquire/JIT operation shortens its ordinary deadline to the earlier
+of that deadline and the monotonic local lease deadline minus the existing
+positive cancel/join/fatal/termination tail. Checked arithmetic, exact equality,
+missing tail bounds, or insufficient slack fails before the call. One small
+per-operation mutex serializes the deadline handler with a two-way
+`active -> admitted|dropped` token: the handler cancels only while active; the
+normal path admits only before the shortened deadline with uncancelled context
+and unchanged epoch/lease identity, then disarms the handler. A dropped, late,
+or ambiguous result may enter only the existing reconciliation journal and
+cannot Ack or release a runner. The existing local
+`AcquisitionPermitProvider` derives its proof from the cached lease, performs
+no network call, and creates no remote per-operation state.
 
 Archive restriction is deliberately bounded rather than falsely described as
 instantaneous. The Worker persists the last successful archive observation for
@@ -304,10 +319,11 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
   responses.
 - [ ] Implement the one-step session exchange and signed heartbeat response.
 - [ ] Implement exact `AcquisitionLeaseV1` validation, send-anchored monotonic
-  local expiry, and the signed archive-disable set; prove stale, future,
-  wrong-holder, wrong-policy, wrong-generation, altered, late-response,
-  unknown/duplicate/unsorted alias, and expired leases cannot authorize
-  acquisition.
+  local expiry, authenticated local acquisition-policy epoch, and the signed
+  archive-disable set. Prove stale, future, wrong-holder, wrong-policy,
+  wrong-local-epoch, wrong-generation, altered, late-response,
+  unknown/duplicate/unsorted alias, expired, and old-cache-after-restart leases
+  cannot authorize acquisition; include enabled-disabled-enabled ABA.
 - [ ] Prove missing/stale archive evidence is restrictive, a failed metadata
   read cannot refresh evidence age, and the archive event-to-denial interval
   never exceeds the approved evidence-age plus remaining-local-lease bound.
@@ -419,6 +435,12 @@ and add focused Go tests; keep the current lifecycle engine and phase table.
   persist no remote per-operation record.
 - [ ] Hold local epoch, eligibility, capacity, policy-digest, lease-generation,
   and fleet-fence guards through the acquisition decision.
+- [ ] Bound every poll/acquire/JIT call, its validation, and non-authorizing
+  durable preparation by the earlier ordinary deadline or monotonic local lease
+  deadline minus the proven termination tail. Serialize deadline cancellation
+  and admission with one per-operation mutex and two-way token; only a current,
+  uncancelled, pre-deadline admission may Ack or release a runner. Route late or
+  ambiguous remote effects through the existing journal/read-back path.
 - [ ] On missing/expired/mismatched lease, transition effective capacity to zero
   through the existing barrier; running jobs drain normally.
 - [ ] Bind every released listener to the lease enrollment session/generation

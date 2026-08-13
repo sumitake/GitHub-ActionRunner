@@ -121,14 +121,19 @@ Execute the controller-domain portion of `2026-07-11-controller-runtime.md` usin
 - The lifecycle state machine is persisted before side effects and every transition is idempotent.
 - A complete successful reconciliation cycle is required before a healthy heartbeat can be emitted.
 - The redacting logger accepts only schema-defined fields and the adversarial corpus yields no reusable credential or job-controlled value.
-- Every policy transition invalidates prior pollers and leases. A nonzero
-  poll/acquire/JIT call holds the current host-fleet guard, local epoch barrier,
-  and one valid cached signed Worker lease, then revalidates mode, exact
-  scale-set eligibility, effective capacity, local policy digest, lease
-  generation/holder/expiry, and fence generation. The existing local permit
-  interface may derive an operation proof without remote per-operation state.
-  Canary-only authorizes one exact scale set and one unit. Local CLI/status
-  success alone grants no authority.
+- Every policy transition closes the existing epoch gate, atomically advances
+  the local epoch and discards cached Worker authority, joins prior operations,
+  and reopens only after zero old critical sections remain. Every signed lease
+  authenticates that local epoch. A nonzero poll/acquire/JIT call holds the
+  current host-fleet guard and epoch barrier, revalidates the complete cached
+  lease, and must finish admission before the earlier ordinary deadline or
+  monotonic local lease deadline minus the proven termination tail. One small
+  per-operation mutex serializes deadline cancellation with a two-way
+  admitted/dropped token; only a current, uncancelled, pre-deadline admission
+  may Ack or release a runner. Late or ambiguous effects use the existing
+  journal/read-back path without reviving authority. Canary-only authorizes one
+  exact scale set and one unit. Local CLI/status success alone grants no
+  authority.
 
 **Verification:**
 
@@ -195,11 +200,14 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
 - Worker receipt time determines heartbeat freshness; client time is diagnostic
   only. An accepted heartbeat response returns the only remote acquisition
   authority: one short-lived signed lease for `portable` or governed `legacy`.
-  The lease carries a bounded signed set of Worker-latched archived-disabled
-  repository aliases, so one repository can fail closed without stalling the
-  rest of the fleet. Missing or stale archive evidence is restrictive, and the
-  explicit event-to-denial bound is evidence age plus remaining local lease;
-  the design does not claim asynchronous revocation of a cached lease.
+  The lease authenticates the local acquisition-policy epoch/digest and carries
+  a bounded signed set of Worker-latched archived-disabled repository aliases,
+  so one repository can fail closed without stalling the rest of the fleet.
+  Every poll/acquire/JIT admission must complete before its lease-derived
+  cancellation deadline; late or ambiguous results cannot Ack or release a
+  runner. Missing or stale archive evidence is restrictive, and the explicit
+  event-to-denial bound is evidence age plus remaining local lease; the design
+  does not claim asynchronous revocation of a cached lease.
 - Portable and legacy use the same lease type. A hosted transition advances its
   generation, stops renewal, and waits through
   `lastIssuedLeaseExpiryMax` plus the approved safety margin before it can

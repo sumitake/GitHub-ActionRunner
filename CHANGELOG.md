@@ -52,6 +52,10 @@ Nothing in this section has shipped as a tagged release.
   evidence, and gave the single Cron scheduler an explicit bounded fleet
   inventory so every per-fleet Durable Object is discoverable without a second
   registry.
+- Bound cached leases to the local acquisition-policy epoch and bounded each
+  poll/acquire/JIT admission inside the lease lifetime with serialized
+  cancellation, closing policy ABA and post-expiry completion without adding a
+  revocation service or parallel state machine.
 - Clarified the standalone product boundary: consumer repositories and
   development-time collaboration or review tools are optional integrations,
   never Portable GHAR build, test, release, deployment, or runtime

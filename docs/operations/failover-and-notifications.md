@@ -54,11 +54,15 @@ result from an obsolete epoch is likewise ignored rather than accepted.
 
 The accepted heartbeat response carries the only remote acquisition authority:
 one short-lived signed lease binding the fleet holder, session, generation,
-policy digest, mode, maximum capacity, and a bounded signed set of
-Worker-latched archived-disabled repository aliases. Portable and governed
-legacy rollback use the same lease type. The controller derives its shorter
-monotonic deadline from heartbeat send time, rejects a late response, and
-validates the operator-approved heartbeat/lease inequality. Missing, stale,
+local acquisition-policy epoch/digest, mode, maximum capacity, and a bounded
+signed set of Worker-latched archived-disabled repository aliases. Portable and
+governed legacy rollback use the same lease type. The controller installs and
+uses a lease only while the existing epoch gate is open and its authenticated
+local epoch/digest remains exact. It derives its shorter monotonic deadline
+from heartbeat send time, rejects a late response, and gives each
+poll/acquire/JIT call an earlier cancellation deadline that reserves the
+bounded termination tail. Deadline cancellation and admission are serialized;
+a late or ambiguous result cannot Ack or release a runner. Missing, stale,
 mismatched, or expired leases stop new local acquisition while running jobs
 drain; a signed repository disable stops only that alias. Archive evidence has
 an approved maximum age and missing or stale evidence is restrictive. A cached
