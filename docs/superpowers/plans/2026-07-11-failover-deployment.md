@@ -127,8 +127,10 @@ Archive restriction is deliberately bounded rather than falsely described as
 instantaneous. The Worker persists the last successful archive observation for
 each configured repository. Missing, `archived=true`, or older-than-approved
 evidence places the alias in the restrictive lease set. A pre-restriction lease
-can remain usable only until the earlier of a replacement heartbeat response or
-its existing local deadline. The maximum interval from a just-after-observation
+can remain usable until its existing local deadline: a restrictive replacement
+response stops new controller operations but cannot rewrite a listener already
+released under the prior lease. The normative repository-wide convergence point
+is therefore that deadline. The maximum interval from a just-after-observation
 GitHub archive change is the approved evidence-age bound plus the maximum
 remaining local lease lifetime. Work acquired before that convergence point may
 drain and is audited; work beginning at or after it is denied. This closes the
@@ -326,7 +328,11 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
   cannot authorize acquisition; include enabled-disabled-enabled ABA.
 - [ ] Prove missing/stale archive evidence is restrictive, a failed metadata
   read cannot refresh evidence age, and the archive event-to-denial interval
-  never exceeds the approved evidence-age plus remaining-local-lease bound.
+  never exceeds the approved evidence-age plus remaining-local-lease bound. A
+  restrictive replacement stops new controller acquisition immediately but
+  cannot count as repository-wide convergence while a listener released under
+  the preceding lease remains before its original local deadline; prove the
+  exact deadline boundary.
 - [ ] Write RED tests for the heartbeat/lease inequality, including one wholly
   lost renewal followed by recovery inside the approved budget and rejection
   when any symbolic term makes the inequality false.

@@ -268,19 +268,19 @@ done
 
 (
   cd "$repository"
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.5 \
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 \
     go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" \
     -o "$helper_stage/portable-ghar-network-helper" \
     ./cmd/portable-ghar-network-helper
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.5 \
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 \
     go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" \
     -o "$verifier_stage/portable-ghar-network-verifier" \
     ./cmd/portable-ghar-network-verifier
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.5 \
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 \
     go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" \
     -o "$parser_stage/portable-ghar-network-broker-parser" \
     ./cmd/portable-ghar-network-broker-parser
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.5 \
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 \
     go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" \
     -o "$dialer_stage/portable-ghar-network-broker-dialer" \
     ./cmd/portable-ghar-network-broker-dialer

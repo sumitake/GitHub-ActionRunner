@@ -66,10 +66,12 @@ a late or ambiguous result cannot Ack or release a runner. Missing, stale,
 mismatched, or expired leases stop new local acquisition while running jobs
 drain; a signed repository disable stops only that alias. Archive evidence has
 an approved maximum age and missing or stale evidence is restrictive. A cached
-pre-restriction lease converges by its next replacement or existing local
-deadline, so the documented worst case is evidence age plus remaining lease,
-not an instantaneous remote revocation claim. Administrative status and
-maintenance commands never grant authority.
+pre-restriction lease remains bounded by its existing local deadline. A
+restrictive replacement stops new controller acquisition but cannot rewrite a
+listener already released under the prior lease, so repository-wide convergence
+uses that original deadline. The documented worst case is evidence age plus
+remaining lease, not an instantaneous remote revocation claim. Administrative
+status and maintenance commands never grant authority.
 
 ## Transition, outbox, and read-back
 

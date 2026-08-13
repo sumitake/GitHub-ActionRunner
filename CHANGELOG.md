@@ -49,13 +49,16 @@ Nothing in this section has shipped as a tagged release.
   one signed heartbeat lease, one Cron scheduler, six routing states, and
   authoritative receipt-based cutover verification.
 - Made archive restriction honestly lease-bounded and fail-closed on stale
-  evidence, and gave the single Cron scheduler an explicit bounded fleet
-  inventory so every per-fleet Durable Object is discoverable without a second
-  registry.
+  evidence; already-released listeners remain bounded by their original local
+  lease deadline rather than an impossible replacement-response revocation.
+  The single Cron scheduler also has an explicit bounded fleet inventory so
+  every per-fleet Durable Object is discoverable without a second registry.
 - Bound cached leases to the local acquisition-policy epoch and bounded each
   poll/acquire/JIT admission inside the lease lifetime with serialized
   cancellation, closing policy ABA and post-expiry completion without adding a
   revocation service or parallel state machine.
+- Advanced the exact Go toolchain pin from 1.26.5 to 1.26.6 after the required
+  vulnerability gate identified four reachable standard-library advisories.
 - Clarified the standalone product boundary: consumer repositories and
   development-time collaboration or review tools are optional integrations,
   never Portable GHAR build, test, release, deployment, or runtime

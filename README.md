@@ -209,7 +209,7 @@ uses only synthetic values -- `owner/repository`, `example-fleet`, and
 
 ## Development and CI
 
-Toolchains are pinned: Go 1.26.5, Node.js 24.18.0, npm 12.0.1, and
+Toolchains are pinned: Go 1.26.6, Node.js 24.18.0, npm 12.0.1, and
 TypeScript 6.0.3. Every pull request is required to pass hosted checks
 covering Go (format, vet, tests, race, static analysis, vulnerability
 scan), the Worker (lint, typecheck, Vitest), shell (ShellCheck, Bats),

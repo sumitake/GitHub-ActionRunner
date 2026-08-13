@@ -27,7 +27,7 @@ script_directory="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
 repository_root="$(CDPATH='' cd -- "$script_directory/.." && pwd -P)"
 cd "$repository_root"
 
-export GOTOOLCHAIN=go1.26.5
+export GOTOOLCHAIN=go1.26.6
 
 log_directory="$(mktemp -d "${TMPDIR:-/tmp}/portable-ghar-runtime-gate.XXXXXX")"
 stages_json=

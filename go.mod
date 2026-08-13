@@ -2,7 +2,7 @@ module github.com/sumitake/portable-ghar
 
 go 1.26.0
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 tool (
 	github.com/rhysd/actionlint/cmd/actionlint

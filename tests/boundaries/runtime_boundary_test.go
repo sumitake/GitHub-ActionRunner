@@ -916,7 +916,7 @@ func checkModuleAndLifecycle(t *testing.T, root string, tracked []string) {
 	for _, exact := range []string{
 		"module github.com/sumitake/portable-ghar\n",
 		"\ngo 1.26.0\n",
-		"\ntoolchain go1.26.5\n",
+		"\ntoolchain go1.26.6\n",
 		"github.com/actions/scaleset v0.4.0",
 	} {
 		if !strings.Contains(module, exact) {

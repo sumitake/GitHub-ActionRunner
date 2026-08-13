@@ -477,15 +477,17 @@ revision still lists an alias as active. The set is bounded by the configured
 repository inventory, contains no duplicates or unknown aliases, can only
 remove authority, and is validated before every local acquisition. The Worker
 cannot asynchronously erase a lease already cached on an outbound-only
-controller. Authority therefore converges no later than the earlier of the next
-accepted heartbeat carrying the restriction or that lease's shorter local
-deadline. From a GitHub archive change immediately after fresh evidence, the
-worst-case bound is `A` plus the maximum remaining local lease lifetime. If
-Worker, Cron, or GitHub metadata service is unavailable, evidence becomes stale
-and no later response can renew that alias; the current lease still expires.
-This bounded propagation window is an explicit residual, not an instantaneous
-revocation claim or a reason to add push delivery or per-acquisition remote
-calls.
+controller. A restrictive replacement response stops new controller
+poll/acquire/JIT admission for that alias, but it cannot alter a listener
+already released under the preceding lease. To avoid a second revocation or
+listener-drain protocol, the normative repository-wide convergence point is
+that lease's shorter local deadline, not the replacement response. From a
+GitHub archive change immediately after fresh evidence, the worst-case bound is
+`A` plus the maximum remaining local lease lifetime. If Worker, Cron, or GitHub
+metadata service is unavailable, evidence becomes stale and no later response
+can renew that alias; the current lease still expires. This bounded propagation
+window is an explicit residual, not an instantaneous revocation claim or a
+reason to add push delivery or per-acquisition remote calls.
 
 The next operator-approved repository-policy revision must also record the
 alias as `archived-disabled`, which forces zero effective capacity. This
@@ -1780,6 +1782,10 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
 - Released-listener job acceptance rejects an expired or superseded lease
   session/generation/local deadline in addition to acquisition epoch and fence,
   including a still-live predecessor controller at the exact expiry boundary.
+- Archive restriction stops new controller admission on the first restrictive
+  replacement lease but does not claim repository-wide convergence before every
+  already-released listener's original local deadline. Exercise the exact
+  deadline boundary and prove no listener accepts after it.
 - Zero-listener quiescence accepts only a heartbeat from the exact enrollment
   session and lease generation being drained. A replacement's
   `predecessor-lease-draining` heartbeat cannot attest for predecessor
