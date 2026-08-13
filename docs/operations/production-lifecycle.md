@@ -53,7 +53,7 @@ still be accepting work. The intended sequence is:
    reused, until its retention window expires;
 4. replace the pinned controller binary and images, then run compatibility
    and host-profile probes;
-5. start the replacement disabled, and clear every open queue-risk row
+5. start the replacement disabled, and clear every open queue-risk record
    through authenticated GitHub read-back before any new acquisition;
 6. set canary-only intent, release the hosted hold into a new recovery
    epoch, receive one short-lived canary-only lease while consumer routing
@@ -189,6 +189,14 @@ Observability first passes one **projection-readiness gate** before any canary:
   no-data; and
 - exact adapter configuration, collector scope, dashboard revision, and
   independent rollback anchors are recorded.
+
+Grafana and InfluxDB are the operator-selected projection stack for the current
+deployment profile, so that profile must pass the concrete checks above. The
+portable product contract is capability-based: another deployment may supply
+an equivalently reviewed read-only projection and time-series sink without a
+source change, provided it passes the same schema, freshness, no-data, identity,
+and rollback evidence. Neither product becomes routing or acquisition
+authority.
 
 Grafana is not re-promoted into a per-phase routing state machine. After that
 one gate, a small read-only cutover verifier evaluates authoritative receipts:

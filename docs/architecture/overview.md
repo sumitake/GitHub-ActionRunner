@@ -193,8 +193,12 @@ epoch, or replayed.
 
 The same accepted heartbeat returns the only remote acquisition authority: a
 short-lived signed lease binding fleet holder, session, lease generation,
-policy digest, mode, and capacity. Portable and governed legacy rollback use
-the same lease type. One Cron Trigger claims bounded batches from the durable
+policy digest, mode, capacity, and a bounded restrictive set of Worker-latched
+archived-disabled repository aliases. Portable and governed legacy rollback use
+the same lease type. The controller anchors its shorter local deadline at
+heartbeat send time, rejects a response that arrives too late, and validates
+the operator-approved heartbeat/lease inequality before acquiring. One Cron
+Trigger claims bounded batches from the durable
 outbox; Durable Object alarms and private runtime storage contracts are not a
 second scheduler.
 
@@ -206,7 +210,9 @@ fresh heartbeat proves the expected acquisition policy, full capacity, and
 matching enabled lease. The persisted routing model has six authority states:
 hosted, draining-to-hosted, Portable canary, Portable, legacy canary, and
 legacy. Implementation checkpoints remain transition outcomes rather than
-expanding the state graph.
+expanding the state graph. Fail-closed bootstrap persists hosted only after
+read-back, and a failed canary returns directly to hosted because routing never
+left hosted.
 See [Failover and notifications](../operations/failover-and-notifications.md)
 for the full failover state machine.
 

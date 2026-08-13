@@ -35,10 +35,14 @@ result from an obsolete epoch is likewise ignored rather than accepted.
 
 The accepted heartbeat response carries the only remote acquisition authority:
 one short-lived signed lease binding the fleet holder, session, generation,
-policy digest, mode, and maximum capacity. Portable and governed legacy
-rollback use the same lease type. Missing, stale, mismatched, or expired leases
-stop new local acquisition while running jobs drain; administrative status and
-maintenance commands never grant authority.
+policy digest, mode, maximum capacity, and a bounded signed set of
+Worker-latched archived-disabled repository aliases. Portable and governed
+legacy rollback use the same lease type. The controller derives its shorter
+monotonic deadline from heartbeat send time, rejects a late response, and
+validates the operator-approved heartbeat/lease inequality. Missing, stale,
+mismatched, or expired leases stop new local acquisition while running jobs
+drain; a signed repository disable stops only that alias. Administrative status
+and maintenance commands never grant authority.
 
 ## Transition, outbox, and read-back
 
@@ -58,15 +62,23 @@ execute newly persisted work, but recovery never depends on another request.
 Durable Object alarms and private runtime-storage behavior are deliberately not
 a second recovery path.
 
+With Cron functioning, the operator-approved hosted-transition completion
+budget covers the last lease window, safety margin, one Cron period, bounded
+delivery jitter, and one due-work execution/read-back attempt. If that budget
+is exceeded, or Cron is unavailable, the transition remains incomplete and
+visible; it is never reported as hosted success.
+
 The routing state machine stays small: hosted, draining-to-hosted, Portable
 canary, Portable, legacy canary, and legacy. API calls, canary outcomes,
 read-backs, queue-risk clearance, and notifications are transition evidence,
-not additional authority states.
+not additional authority states. Bootstrap issues no lease and enters hosted
+only after exact read-back. A failed canary revokes its canary lease and returns
+directly to hosted because routing never left hosted.
 
 ## Canary-gated failback
 
 Routing never fails back to self-hosted runners on health alone. Recovery
-requires, in order: every open queue-risk row from the latest hosted
+requires, in order: every open queue-risk record from the latest hosted
 transition cleared by authenticated GitHub read-back; a canary run tied
 to the current transition epoch that observes
 `runner.environment=self-hosted` at the exact expected workflow revision;

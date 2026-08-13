@@ -326,12 +326,17 @@ acquisition critical section, acquires a current `portable` host-fleet guard,
 and validates one cached signed acquisition lease before the external effect.
 The lease binds the fleet, exclusive holder (`portable` or governed `legacy`),
 server enrollment epoch/session, lease generation, allowed acquisition mode,
-exact policy digest/repository-policy revision, maximum capacity, and a short
-server-owned lifetime. The client converts the lifetime to a strictly shorter
-monotonic local deadline when the response is received; it never extends a
-lease from client wall time. The operation immediately revalidates mode, exact
-eligible scale set, capacity, local policy epoch/digest, lease generation and
-holder, and host-fence generation while retaining the local guards. The
+exact policy digest/repository-policy revision, maximum capacity, a canonical
+bounded `archivedDisabledAliases` set of Worker-latched repository aliases, and a
+short server-owned lifetime. The client records a monotonic timestamp before
+sending the heartbeat and derives its local deadline from that timestamp, the
+server-owned duration, and the approved shortening margin. A response received
+at or after that deadline grants no lease, so request processing and return
+latency can only shorten local authority; client wall time never extends it.
+The operation immediately revalidates mode, exact eligible scale set,
+capacity, local policy epoch/digest, lease generation and holder,
+host-fence generation, and that its repository alias is absent from the signed
+disable set while retaining the local guards. The
 existing `AcquisitionPermitProvider` interface may produce an operation-scoped
 local proof from that cached lease, but it performs no remote call and creates
 no remote per-operation state.
@@ -347,9 +352,20 @@ acquisition. Work may remain queued on a self-hosted route until the Worker and
 its scheduler recover; the system never converts that availability loss into
 unbounded local authority.
 
+Let `H` be the maximum configured interval between heartbeat-attempt starts,
+`D` the enforced end-to-end heartbeat deadline, `S` the local shortening
+margin, `L` the server-owned lease duration, and `N` the operator-approved
+number of wholly lost renewal attempts the lease must tolerate. Configuration
+is valid only when `N >= 1` and `L > (N + 1) * H + D + S`. Source defines this
+inequality but supplies no numeric default. It preserves bounded authority
+during Worker loss while ensuring one dropped renewal does not unnecessarily
+zero a healthy fleet.
+
 Before a hosted transition, the Durable Object increments the lease generation
 and stops renewal. It waits through the last server-recorded expiry plus a fixed
-clock/termination safety margin before persisting hosted mutation work. It does
+clock/termination safety margin before persisting hosted mutation work. The
+send-anchored local deadline above already accounts for heartbeat request and
+response latency and is always earlier than that server expiry. It does
 not need a close message from every poll or JIT operation. The local epoch
 barrier still cancels and joins prior operations; an unjoinable call persists
 fatal/zero capacity and terminates the controller before the server margin can
@@ -385,11 +401,18 @@ failover. Each repository carries a latched eligibility state — `active`,
 `archived-disabled`, or `pending-reactivation`. The Worker is the sole live
 reader of GitHub `archived` state (it alone holds Metadata read); it observes
 archival through its bounded five-minute integrity sweep. On observing
-`archived=true` the Worker latches that repository to `archived-disabled`: it
-stops renewing any lease whose policy still authorizes that repository and
-forces the next signed policy digest to give that alias zero capacity. The
-controller cannot acquire for it after the shorter local lease deadline. This
-per-repository disable inserts no fleet-wide queue-risk row
+`archived=true` the Worker latches that repository to `archived-disabled` in
+the per-fleet Durable Object. Every later lease includes the exact sorted set
+of latched disabled aliases, authenticated as part of the lease, even if the
+controller's configuration revision still lists the alias as active. The set
+is bounded by the configured repository inventory, contains no duplicates or
+unknown aliases, can only remove authority, and is validated before every local
+acquisition. A current pre-observation lease remains usable only until its
+shorter local deadline; a renewed lease disables that alias without disabling
+unrelated repositories or introducing a second authority protocol. The next
+operator-approved repository-policy revision must also record the alias as
+`archived-disabled`, which forces zero effective capacity. This per-repository
+disable inserts no fleet-wide queue-risk record
 and never blocks acquisition for other repositories; a job already running when
 archival is observed drains normally, and no new work is admitted. The
 eligibility state is durable and latched: a later live `archived=false` does
@@ -448,7 +471,7 @@ An upgrade proceeds through:
 5. replace the pinned controller binary and images;
 6. run compatibility and host-profile probes;
 7. start the replacement disabled;
-8. clear every open queue-risk row through authenticated same-transition GitHub
+8. clear every open queue-risk record through authenticated same-transition GitHub
    read-back and selective recovery while local acquisition remains zero;
 9. set canary-only intent, release the hosted hold into a new recovery epoch,
    receive one canary-only lease inside the local epoch barrier, and run the
@@ -977,16 +1000,27 @@ no-lease result. The lease is the only remote acquisition authority. It binds:
   session;
 - lease generation and allowed mode (`disabled`, `canary-only`, or `enabled`);
 - exact acquisition-policy digest and repository-policy revision;
-- maximum capacity and, for canary-only mode, the one eligible scale set; and
+- maximum capacity and, for canary-only mode, the one eligible scale set;
+- the canonical bounded `archivedDisabledAliases` set of Worker-latched
+  repository aliases; and
 - a short server-owned validity duration and server expiry for audit.
 
-The controller converts the duration to a strictly shorter monotonic local
-deadline at receipt. It never extends authority from local wall time, a cached
-status response, or a maintenance command. Every later heartbeat replaces the
-prior lease; leases are not renewed by administrative traffic. A missing,
-invalid, stale, mismatched, or expired lease stops new acquisition while
-already-running jobs drain. This is the defined safe degradation when the
-Worker or scheduler is unavailable.
+The controller records monotonic time before sending the heartbeat and derives
+the strictly shorter local deadline from that attempt-start timestamp, the
+server duration, and the approved shortening margin. A response received at or
+after that deadline grants no lease. The signed disable set must be sorted,
+duplicate-free, bounded by, and a subset of the current repository inventory;
+every acquisition rejects an alias present in it. The controller never extends
+authority from local wall time, a cached status response, or a maintenance
+command. Every later heartbeat replaces the prior lease; leases are not
+renewed by administrative traffic. A missing, invalid, stale, mismatched, or
+expired lease stops new acquisition while already-running jobs drain. This is
+the defined safe degradation when the Worker or scheduler is unavailable.
+
+The §6.2 heartbeat/lease inequality is normative for this protocol. A
+configuration that cannot tolerate its operator-approved number of wholly lost
+renewals while keeping local authority strictly shorter than server authority
+is invalid before enrollment.
 
 During a governed rollback, the fenced legacy wrapper uses the same managed
 heartbeat client to establish a new server-owned session only after portable
@@ -1012,7 +1046,8 @@ SQLite uses six responsibility-based tables:
 - `request_nonces`: digests and expiries for session and administrative replay
   protection;
 - `repositories`: aliases, expected selectors/workflow identities, confirmed
-  routes, archive eligibility, and open queue-risk evidence;
+  routes, archive eligibility, and at most one bounded `openQueueRisk` record
+  for the latest applicable transition epoch;
 - `transitions`: one row per routing transition with its epoch, desired state,
   canary identity/result, and terminal read-back evidence;
 - `due_work`: a closed-kind idempotent outbox for GitHub mutation/read-back,
@@ -1048,13 +1083,24 @@ and new jobs may queue until the control plane recovers. This availability
 residual is explicit and observable; it is safer and simpler than a second
 scheduler with different recovery semantics.
 
+When Cron is functioning, the operator-approved hosted-transition completion
+budget must cover the last lease validity window, hosted safety margin, one
+Cron period, the platform's bounded delivery jitter, and one bounded due-work
+execution/read-back attempt. Exceeding that budget leaves the transition
+incomplete and alerts; a Cron outage has no finite completion guarantee and
+can never be reported as hosted success. The source defines this inequality
+but supplies none of its numeric terms.
+
 Repository additions are accepted only while the hosted hold is active and the private configuration revision increments exactly once with a matching canonical digest. The Durable Object inserts each new repository unconfirmed-hosted, queues one row for each of its route/scale-set/legacy-label variables, reads each back independently, and persists its canary workflow/expected revision before the hold can release. Routine expansion never relies on direct variable writes; identity mutation, revision skip/rollback/digest mismatch, and removal require separate retirement handling.
 
 ### 9.5 Failover state machine
 
 ```text
+UNINITIALIZED (not an authority state) -> HOSTED
 HOSTED -> PORTABLE_CANARY -> PORTABLE
+PORTABLE_CANARY -> HOSTED
 HOSTED -> LEGACY_CANARY   -> LEGACY
+LEGACY_CANARY -> HOSTED
 PORTABLE -> DRAINING_TO_HOSTED -> HOSTED
 LEGACY   -> DRAINING_TO_HOSTED -> HOSTED
 ```
@@ -1064,6 +1110,12 @@ read-backs, lease expiry, queue-risk clearance, and notifications are outcomes
 inside a transition, not extra top-level states. A transition row records their
 progress idempotently; adding a routing state requires a distinct externally
 observable authority configuration, not another implementation checkpoint.
+`UNINITIALIZED` is a fail-closed bootstrap condition, not a seventh persisted
+authority state: it issues no lease and enters `HOSTED` only after every
+configured repository has been read back hosted. A failed or cancelled canary
+advances the lease generation, stops canary renewal, and returns directly to
+`HOSTED` because routing never left hosted; it does not invent a draining
+transition or queue-risk record.
 
 - `HOSTED`: every configured repository is read back hosted and no local lease
   renews.
@@ -1096,7 +1148,7 @@ Default policy:
   heartbeat in the unchanged Worker transition epoch proves the expected policy
   digest and complete capacity;
 - zero local acquisition, including canary-only mode or legacy runner restore,
-  until every queue-risk row from the latest hosted transition is cleared by
+  until every queue-risk record from the latest hosted transition is cleared by
   authenticated GitHub read-back and selective recovery;
 - one current signed lease for either local holder; a hosted transition first
   advances its generation, stops renewal, and drains all prior authority;
@@ -1113,8 +1165,10 @@ workflow-binding, evidence-digest, and legacy-canary agreement creates the
 explicit `legacy` route outbox and permits `LEGACY`. Every repository then reads
 back the explicit `legacy` value. An administrative hosted hold blocks that
 commit but may allow the bounded canary evidence needed for rollback. Any
-unhealthy legacy observation enters `DRAINING_TO_HOSTED`. Variable deletion
-never selects a local state.
+unhealthy legacy observation enters `DRAINING_TO_HOSTED` only after `LEGACY`
+has been confirmed. An unhealthy or cancelled `LEGACY_CANARY` returns directly
+to `HOSTED` after revoking its canary lease. Variable deletion never selects a
+local state.
 
 An authenticated, disabled-by-default administrative hosted hold can enter from
 any state. Enabling it persists hosted transition intent and blocks recovery
@@ -1122,7 +1176,7 @@ until every repository reads back hosted. Releasing it creates a new recovery
 epoch and leaves routing hosted in `PORTABLE_CANARY` while a current-epoch
 canary runs; because
 routing was already hosted throughout the hold, the release inserts no
-queue-risk row and does not re-block acquisition. Canary success
+queue-risk record and does not re-block acquisition. Canary success
 does not create a local-route outbox: the controller must first enable full
 acquisition and, while the Worker remains in that transition epoch, a heartbeat
 from the same enrollment session with sequence newer than the canary observation
@@ -1213,24 +1267,28 @@ duplicate execution claim.
 
 The flag is durable, not derived from volatile object memory. A hosted
 transition that changes a repository's effective route away from `self-hosted`
-(an actual failover) atomically inserts one `queue_risk` row for that repository
-and transition epoch with the last verified source head (or explicit unknown)
-and a sanitized evidence digest; obtaining a fresh head never delays a safety
-transition. A transition that leaves an already-hosted repository hosted —
+(an actual failover) atomically sets that repository's single bounded
+`openQueueRisk` record to the transition epoch, last verified source head (or
+explicit unknown), and a sanitized evidence digest. Obtaining a fresh head
+never delays a safety transition. A transition that leaves an already-hosted
+repository hosted —
 releasing an administrative hold, a recovery that never left hosted, or a
-per-repository archive disable — inserts no `queue_risk` row and does not
+per-repository archive disable — creates no `openQueueRisk` record and does not
 re-block acquisition, because no job could have been assigned to Portable while
 that repository was already routed hosted. It survives object
 eviction and remains visible until an authenticated, nonce-protected
-`/v1/admin/queue-recovery` request supplies same-epoch selective-recovery
-evidence. The Worker re-reads the exact GitHub run/job state before an idempotent
-clear transaction records `cleared_at`; stale epochs, ambiguous reads, and a
-second clear cannot erase newer risk. Automatic cancellation or rerun remains
-prohibited. While any row from the latest hosted transition is open, the Worker
+`queue-recovery` member of `POST /v1/admin/command` supplies same-epoch
+selective-recovery evidence. The Worker re-reads the exact GitHub run/job state
+before an idempotent clear transaction records the result in `audit_events`
+and sets `openQueueRisk` to null; stale epochs, ambiguous reads, and a second
+clear cannot erase newer risk. Automatic cancellation or rerun remains
+prohibited. While any current record from the latest hosted transition is
+open, the Worker
 issues no acquisition lease, the controller must
 remain `disabled`, Portable canary-only acquisition is blocked, and legacy
-launchers/runners cannot be restored. Clearing the last row establishes the
-queue-risk-cleared condition within `HOSTED`; any new hosted transition first
+launchers/runners cannot be restored. Clearing the last record establishes the
+queue-risk-cleared condition within `HOSTED`; prior cleared history is retained
+only in bounded `audit_events`. Any new hosted transition first
 advances the lease generation and drains every earlier lease, then creates a
 new open risk generation. An admin-status response is never itself a clearance
 artifact.
@@ -1624,7 +1682,7 @@ Before changing a deployment, capture its live controller/supervisor scripts, im
    step reports `github-hosted`.
 4. Under the Worker hosted hold, suspend the legacy fleet to `none`, hand `none`
    to Portable only in disabled mode, and keep all local acquisition at zero.
-5. Clear every latest-transition queue-risk row through authenticated GitHub
+5. Clear every latest-transition queue-risk record through authenticated GitHub
    read-back/selective recovery, then receive a canary-only lease. Add one
    read-only, secretless repository under a new Worker configuration revision
    and target its unique scale-set name as one GitHub.com runner label.
@@ -1665,7 +1723,7 @@ The legacy external watcher is retired only after positive observation of:
    dials, and pending acquisition. Retain stable slot ledgers through `T` and
    prove they are unavailable to a fresh bucket.
 6. While the fence is `none` and all local acquisition remains zero, clear every
-   latest-transition queue-risk row through authenticated GitHub read-back and
+   latest-transition queue-risk record through authenticated GitHub read-back and
    selective recovery.
 7. Change the host-local fleet-generation fence from `none` to the captured
    `legacy` generation and prove both watchdog paths honor the same exclusive
@@ -1755,7 +1813,7 @@ Preserve legacy rollback artifacts through a defined soak. After the soak and a 
   blobs/job IDs/checks and a successful GitHub-hosted route-attestation run;
   missing or unknown route values remain hosted.
 - No Portable canary/full acquisition or legacy restore begins while the latest
-  hosted transition has an open queue-risk row; clearing requires authenticated
+  hosted transition has an open queue-risk record; clearing requires authenticated
   exact GitHub read-back and selective recovery.
 - Stale/fatal health routes affected repositories hosted and reads back confirmation.
 - Ambiguous GitHub responses reconcile idempotently.
@@ -1839,16 +1897,25 @@ Material changes integrated from review:
 
 The remaining strongest concern is the shared-kernel container boundary. That concern is accepted only within the explicit non-VM design and is not represented as stronger isolation than it provides.
 
-The implementation-plan adversarial review added twelve load-bearing clarifications; code generation, when it is eventually authorized, must respect all of them:
+The implementation-plan adversarial review added twelve load-bearing safety
+objectives. Code generation, when it is eventually authorized, must preserve
+each objective through the current mechanism named in this specification;
+historical mechanisms explicitly marked as superseded below are not
+implementation requirements:
 
 - safe first boot remains hosted and follows the same current-epoch canary path as recovery;
-- enrollment and administrative HMAC requests add timestamp and single-use nonce replay resistance, with completion bound to its initiating nonce/challenge pair;
+- enrollment and administrative HMAC requests add timestamp and single-use
+  nonce replay resistance; the historical challenge/complete mechanism is
+  superseded by the nonce-bound one-step session response in §9.2;
 - GitHub.com scale-set workflows target the scale-set name as one runner label;
-- the private secondary notification is complete only after a separately signed end-to-end Signal receipt from a separate failure domain;
+- the historical mandatory Signal receipt is superseded by the provider-neutral
+  optional signed webhook boundary in §9.7; notification failure never gates
+  routing safety;
 - a stable-inode, per-holder fleet-generation fence makes new/legacy mutual exclusion continuously enforceable against watchdog races;
 - a Worker-owned hosted hold prevents automatic failback from racing maintenance, upgrade, or retirement;
 - every local acquisition-policy change uses a bounded epoch barrier; stale pollers are joined, while an uninterruptible upstream call forces fatal process termination and disabled restart;
-- Durable Object alarms guarantee persisted GitHub, canary, and notification due work after eviction/crash;
+- the historical Durable Object alarm mechanism is superseded by the one Cron
+  scheduler and bounded `due_work` outbox in §9.4;
 - repository additions reconcile hosted under a monotonic configuration revision before canary;
 - dark deployment uses a zero-capacity observer while the legacy fleet owns the fence;
 - QTS lifecycle operations journal and recover forward without rolling fence generations back; and

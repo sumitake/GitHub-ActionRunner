@@ -181,16 +181,27 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
 - Worker receipt time determines heartbeat freshness; client time is diagnostic
   only. An accepted heartbeat response returns the only remote acquisition
   authority: one short-lived signed lease for `portable` or governed `legacy`.
+  The lease carries a bounded signed set of Worker-latched archived-disabled
+  repository aliases, so one repository can fail closed without stalling the
+  rest of the fleet.
 - Portable and legacy use the same lease type. A hosted transition advances its
   generation, stops renewal, and waits through the last expiry plus the approved
-  safety margin before it can confirm hosted.
+  safety margin before it can confirm hosted. The client anchors its shorter
+  monotonic deadline at heartbeat send time, rejects late responses, and the
+  operator-approved heartbeat/lease values must satisfy the normative
+  missed-renewal inequality in the failover plan.
 - The routing machine has only hosted, draining-to-hosted, Portable canary,
   Portable, legacy canary, and legacy. Canary/API/read-back/retry checkpoints are
-  transition outcomes rather than extra authority states.
+  transition outcomes rather than extra authority states. Bootstrap enters
+  hosted only after read-back; a failed Portable or legacy canary revokes its
+  lease and returns directly to hosted because routing never left hosted.
 - Desired routing mutations are persisted before bounded GitHub calls,
   transactionally claimed, and read back after success or ambiguity. One Cron
   Trigger recovers bounded due work after eviction/crash; no Durable Object alarm
-  or private storage contract is a second scheduler.
+  or private storage contract is a second scheduler. With Cron functioning,
+  hosted-transition completion is bounded by the operator-approved lease,
+  margin, Cron, delivery-jitter, and due-work inequality; an outage remains
+  incomplete and visible rather than becoming false success.
 - Repository additions reconcile hosted plus exact expected scale-set and
   legacy-label companions under a monotonic configuration revision before a
   canary or local route.
@@ -397,10 +408,12 @@ Run the controller commands on the verified target. The legacy suspend command m
 The mode-restricted private `queue-recovery.json` is produced by the documented
 selective-recovery procedure from exact latest-transition GitHub run/job
 read-back. It records no claim that a queued job migrated, and it is invalidated
-by any newer hosted transition. The admin tool must clear every configured row
-before the first nonzero acquisition command. That status result and the local
-mode command are evidence/intent only: each later poll/acquire/JIT must validate
-the current signed lease inside the controller's policy-epoch barrier. If a
+by any newer hosted transition. The admin tool must clear every configured
+record before the first nonzero acquisition command. Its `queue-recovery` CLI
+subcommand emits the `queue-recovery` member of `POST /v1/admin/command`; it is
+not a separate Worker endpoint. That status result and the local mode command
+are evidence/intent only: each later poll/acquire/JIT must validate the current
+signed lease inside the controller's policy-epoch barrier. If a
 newer hosted transition starts between commands, lease generation advances and
 the external call cannot begin; hosted intent waits until all earlier authority
 expires or drains.

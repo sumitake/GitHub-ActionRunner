@@ -90,23 +90,39 @@ lifecycle-owned responsibility the closed interfaces cannot express safely.
 - protocol version, fleet, holder, server epoch, and session;
 - lease generation and mode (`disabled`, `canary-only`, or `enabled`);
 - exact acquisition-policy digest and repository-policy revision;
-- maximum capacity and the one eligible canary scale set when canary-only; and
+- maximum capacity and the one eligible canary scale set when canary-only;
+- a canonical bounded `archivedDisabledAliases` set of Worker-latched
+  repository aliases; and
 - server-owned validity duration, server expiry for audit, and response MAC.
 
-The controller converts the duration to a strictly shorter monotonic deadline
-at receipt. It never extends authority from wall time, status, or an
-administrative command. The existing local `AcquisitionPermitProvider`
-interface may derive an operation-scoped proof from the cached lease while the
-local epoch barrier and host fence remain held; it performs no network call and
-creates no remote per-operation state.
+The controller records monotonic time before sending the heartbeat and derives
+the lease deadline from that attempt-start timestamp, the returned duration,
+and the approved shortening margin. A response received at or after that
+deadline grants no lease, so response latency cannot make local authority
+outlive server expiry. Every operation also rejects its repository alias when
+it appears in the signed disable set. The controller never extends authority
+from wall time, status, or an administrative command. The existing local
+`AcquisitionPermitProvider` interface may derive an operation-scoped proof from
+the cached lease while the local epoch barrier and host fence remain held; it
+performs no network call and creates no remote per-operation state.
+
+The operator-approved heartbeat configuration must satisfy
+`L > (N + 1) * H + D + S`, where `H` is the maximum interval between attempt
+starts, `D` is the enforced end-to-end heartbeat deadline, `S` is the local
+shortening margin, `L` is the server-owned lease duration, and `N >= 1` is the
+number of wholly lost renewal attempts to tolerate. Source supplies no numeric
+default.
 
 ### Routing states
 
 Only these authority states are persisted:
 
 ```text
+UNINITIALIZED (not an authority state) -> HOSTED
 HOSTED -> PORTABLE_CANARY -> PORTABLE
+PORTABLE_CANARY -> HOSTED
 HOSTED -> LEGACY_CANARY   -> LEGACY
+LEGACY_CANARY -> HOSTED
 PORTABLE -> DRAINING_TO_HOSTED -> HOSTED
 LEGACY   -> DRAINING_TO_HOSTED -> HOSTED
 ```
@@ -114,6 +130,9 @@ LEGACY   -> DRAINING_TO_HOSTED -> HOSTED
 Canary dispatch/result, GitHub mutation/read-back, lease expiry, queue-risk
 clearance, notifications, and retries are transition outcomes, not additional
 routing states. All Portable-to-legacy movement passes through hosted.
+Bootstrap issues no lease and persists `HOSTED` only after exact hosted
+read-back. A failed or cancelled canary revokes its canary lease and returns
+directly to `HOSTED`, because routing never left hosted.
 
 ### Durable data
 
@@ -179,13 +198,19 @@ explicit, observable, and never reported as hosted failover.
   run.
 - Every hosted transition advances the lease generation and stops renewal
   before routing work begins. It waits through the last server-recorded expiry
-  plus the approved safety margin before hosted confirmation.
-- Open queue-risk evidence from the latest local-to-hosted transition blocks
+  plus the approved safety margin before hosted confirmation. With Cron
+  functioning, its completion budget covers the lease window, safety margin,
+  one Cron period, bounded delivery jitter, and one bounded due-work
+  execution/read-back attempt; an outage never becomes false success.
+- Open queue-risk evidence from the latest local-to-hosted transition is one
+  bounded current record per repository and blocks
   Portable and legacy canary/acquisition until authenticated selective recovery
   is read back. Never cancel or rerun user work automatically.
 - Repository archive state is a durable per-repository eligibility latch. It
-  cannot be cleared by a later unarchive observation without an operator-
-  approved configuration revision, hosted reconciliation, and canary.
+  is carried in the lease as a signed restrictive alias set, so one archived
+  repository stops without stalling unrelated repositories. It cannot be
+  cleared by a later unarchive observation without an operator-approved
+  configuration revision, hosted reconciliation, and canary.
 - A hosted hold is the only maintenance freeze. An operator hold dominates
   runner-upgrade automation and never auto-releases.
 - One current lease type authorizes either fenced local holder. Portable and
@@ -233,9 +258,14 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
   server epoch rollover, old-session rejection, sequence ordering, unknown
   fields, size limits, and generic rejection responses.
 - [ ] Implement the one-step session exchange and signed heartbeat response.
-- [ ] Implement exact `AcquisitionLeaseV1` validation and monotonic local expiry;
-  prove stale, future, wrong-holder, wrong-policy, wrong-generation, altered,
-  and expired leases cannot authorize acquisition.
+- [ ] Implement exact `AcquisitionLeaseV1` validation, send-anchored monotonic
+  local expiry, and the signed archive-disable set; prove stale, future,
+  wrong-holder, wrong-policy, wrong-generation, altered, late-response,
+  unknown/duplicate/unsorted alias, and expired leases cannot authorize
+  acquisition.
+- [ ] Write RED tests for the heartbeat/lease inequality, including one wholly
+  lost renewal followed by recovery inside the approved budget and rejection
+  when any symbolic term makes the inequality false.
 - [ ] Prove a lost/ambiguous heartbeat response grants no lease and re-enrollment
   invalidates the old session without permanent lockout.
 - [ ] Run Go race tests, Worker lint/typecheck/Vitest, schema validation, and
@@ -249,8 +279,10 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
 - [ ] Write RED tests for first boot, migration replay, transaction rollback,
   bounded nonce/audit retention, unique transition epochs, and closed due-work
   kinds.
-- [ ] Implement the six tables and typed repositories. Unknown migrations,
-  schema drift, and corrupt identity fail hosted/closed.
+- [ ] Implement the six tables and typed repositories, including at most one
+  bounded `openQueueRisk` record per repository for the latest applicable
+  transition. Cleared history moves only to bounded audit events. Unknown
+  migrations, schema drift, and corrupt identity fail hosted/closed.
 - [ ] Write RED tests for bounded batch ordering, expiring claims, crash after
   claim, ambiguous effect, permanent failure, retry ceilings, and Cron outage.
 - [ ] Implement one Cron scanner/claimer. Request handlers may claim only work
@@ -263,9 +295,10 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
 **Files:** Create `worker/src/github/{client,outbox,attestation}.ts`,
 `worker/src/routing/machine.ts`, fixtures, and focused Worker tests.
 
-- [ ] Write RED tests for the six allowed states/transitions and reject direct
-  Portable-to-legacy movement, inferred local routes, and checkpoint-shaped
-  extra authority states.
+- [ ] Write RED tests for the six persisted authority states, fail-closed
+  bootstrap into `HOSTED`, both direct canary-abort edges, and the allowed
+  active-route transitions; reject direct Portable-to-legacy movement, inferred
+  local routes, and checkpoint-shaped extra authority states.
 - [ ] Persist transition plus variable-specific due rows before bounded GitHub
   calls. Classify `404`, `422`, rate-limit, timeout, and partial results from
   structured responses and exact read-back.
@@ -282,14 +315,18 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
 consumer-neutral templates under `config/examples/` or `tests/fixtures/`.
 
 - [ ] Implement Portable canary while routing stays hosted, with exactly one
-  canary scale set and one capacity unit in the signed lease.
+  canary scale set and one capacity unit in the signed lease; a failed or
+  cancelled canary revokes that lease and returns directly to `HOSTED`.
 - [ ] Require the canary result plus a newer same-session enabled heartbeat and
   matching full-capacity lease before self-hosted intent.
 - [ ] Persist queue-risk evidence for actual local-to-hosted transitions. Clear
-  it only through nonce-protected selective GitHub read-back; never auto-cancel
-  or rerun work.
-- [ ] Implement the archive-disabled latch and operator reactivation path. A
-  queued-forever archived dispatch is inert, never progress.
+  it only through the nonce-protected `queue-recovery` member of the closed
+  admin-command union plus selective GitHub read-back; never auto-cancel or
+  rerun work.
+- [ ] Implement the archive-disabled latch, the signed restrictive alias set in
+  each lease, and the operator reactivation path. A queued-forever archived
+  dispatch is inert, never progress, and unrelated repositories retain their
+  current lease authority.
 - [ ] Implement legacy canary and explicit legacy routing with the same lease
   type and one host fence. Prove watchdog races cannot yield dual holders.
 - [ ] Add stale/late/wrong-head/wrong-label/wrong-environment canary tests and
@@ -400,6 +437,9 @@ packet approved.
   expiry tests pass across Go and Worker implementations.
 - [ ] Exactly one routing writer, one scheduler, one lease protocol, six routing
   states, and one local lifecycle engine are present.
+- [ ] Send-anchored lease expiry, the heartbeat/lease inequality, and the
+  signed archive-disable set pass exact cross-language tests without adding a
+  second authority protocol.
 - [ ] Every external effect is durably intended, bounded, idempotent, and read
   back before success.
 - [ ] Worker/Cron outage expires local authority and is reported as queued/
