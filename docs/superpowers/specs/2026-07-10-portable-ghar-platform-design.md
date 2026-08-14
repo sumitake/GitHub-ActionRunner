@@ -1219,7 +1219,9 @@ does not regress. A poll/acquire/JIT operation retains its original cancellation
 deadline but may finish across such renewals: final admission atomically loads
 one immutable current cache entry, validates signature, expiry, key, and local
 deadline from that same entry, and requires the original key, exact fence
-generation, local epoch/digest, and both deadlines still to match. Any
+generation, and local epoch/digest to remain exact. Authority-clock time must
+also be strictly before both the operation's original cancellation deadline and
+the current entry's checked admission deadline. Any
 authority-field change, no-lease response, missing cache, invalid signature,
 stale sequence, regressing deadline, mismatch, or expiry drops admission while
 already-running jobs drain. This is the defined safe degradation when the
@@ -1411,9 +1413,11 @@ An authenticated, disabled-by-default administrative hosted hold can enter from
 any state. Enabling it persists hosted transition intent and blocks recovery
 until every repository reads back hosted. Releasing it creates a new recovery
 epoch and leaves routing hosted in `PORTABLE_CANARY` while a current-epoch
-canary runs; because
-routing was already hosted throughout the hold, the release inserts no
-queue-risk record and does not re-block acquisition. Canary success
+canary runs. Because routing was already hosted throughout the hold, the release
+itself inserts no new queue-risk record. It never clears or bypasses an existing
+record: the default queue-risk gate still denies every canary-only lease and
+local acquisition until all latest-transition records are cleared. After that
+gate is clear, release adds no second acquisition block. Canary success
 does not create a local-route outbox: the controller must first set enabled
 intent and, while the Worker remains in that transition epoch, a heartbeat from
 the same enrollment session with sequence newer than the canary observation
