@@ -231,8 +231,11 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
 - The routing machine has only hosted, draining-to-hosted, Portable canary,
   Portable, legacy canary, and legacy. Canary/API/read-back/retry checkpoints are
   transition outcomes rather than extra authority states. Bootstrap enters
-  hosted only after read-back; a failed Portable or legacy canary revokes its
-  lease and returns directly to hosted because routing never left hosted.
+  hosted only after read-back. A failed Portable or legacy canary advances its
+  generation, stops renewal, and reuses draining-to-hosted until the issued-
+  lease maximum plus margin and local listener drain complete. Routing remains
+  hosted, so this residual creates no route mutation or queue-risk row, but a
+  cached canary lease is never treated as asynchronously revoked.
 - Desired routing mutations are persisted before bounded GitHub calls,
   transactionally claimed, and read back after success or ambiguity. One Cron
   Trigger addresses every configured deterministic fleet object and recovers
@@ -491,6 +494,10 @@ Execute every drill from the failover-deployment plan against secretless canary 
 - repeated newer-sequence authority-equivalent renewals across a poll longer
   than one heartbeat interval, plus one-at-a-time mutation of every closed
   admission-key field, fence generation, and current safe deadline;
+- failed and cancelled Portable/legacy canaries immediately after lease issue:
+  generation advances and renewal stops, routing remains hosted, and `HOSTED`
+  persists only after the exact issued-lease maximum, margin, and listener-drain
+  boundary;
 - simultaneous Worker and Cron unavailability while GitHub still routes local:
   the short lease expires, no new local acquisition occurs, queued work remains
   visible, and no hosted-confirmation claim is fabricated;

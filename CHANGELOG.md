@@ -59,7 +59,9 @@ Nothing in this section has shipped as a tagged release.
   renewal without starving long polls while every real policy, fence, holder,
   generation, capacity, archive, or duration change still drops admission. This
   closes policy ABA and post-expiry completion without adding a revocation
-  service or parallel state machine.
+  service or parallel state machine. Failed canaries likewise reuse the existing
+  draining-to-hosted lease boundary instead of claiming instant cached-lease
+  revocation.
 - Advanced the exact Go toolchain pin from 1.26.5 to 1.26.6 after the required
   vulnerability gate identified four reachable standard-library advisories.
 - Clarified the standalone product boundary: consumer repositories and

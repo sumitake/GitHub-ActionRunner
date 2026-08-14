@@ -168,9 +168,9 @@ Only these authority states are persisted:
 ```text
 UNINITIALIZED (not an authority state) -> HOSTED
 HOSTED -> PORTABLE_CANARY -> PORTABLE
-PORTABLE_CANARY -> HOSTED
+PORTABLE_CANARY -> DRAINING_TO_HOSTED -> HOSTED
 HOSTED -> LEGACY_CANARY   -> LEGACY
-LEGACY_CANARY -> HOSTED
+LEGACY_CANARY -> DRAINING_TO_HOSTED -> HOSTED
 PORTABLE -> DRAINING_TO_HOSTED -> HOSTED
 LEGACY   -> DRAINING_TO_HOSTED -> HOSTED
 ```
@@ -179,8 +179,11 @@ Canary dispatch/result, GitHub mutation/read-back, lease expiry, queue-risk
 clearance, notifications, and retries are transition outcomes, not additional
 routing states. All Portable-to-legacy movement passes through hosted.
 Bootstrap issues no lease and persists `HOSTED` only after exact hosted
-read-back. A failed or cancelled canary revokes its canary lease and returns
-directly to `HOSTED`, because routing never left hosted.
+read-back. A failed or cancelled canary advances the lease generation, stops
+renewal, and uses the existing `DRAINING_TO_HOSTED` state through
+`lastIssuedLeaseExpiryMax` plus the approved safety margin and local listener
+drain. Routing never left hosted, so no route mutation or queue-risk record is
+needed, but `HOSTED` is not persisted until the bounded lease residual ends.
 
 ### Durable data
 
@@ -434,7 +437,11 @@ consumer-neutral templates under `config/examples/` or `tests/fixtures/`.
 
 - [ ] Implement Portable canary while routing stays hosted, with exactly one
   canary scale set and one capacity unit in the signed lease; a failed or
-  cancelled canary revokes that lease and returns directly to `HOSTED`.
+  cancelled canary advances the generation, stops renewal, and reuses
+  `DRAINING_TO_HOSTED` until the fleet-global issued-lease maximum plus margin
+  and local listener drain complete. Prove routing stays hosted without a new
+  mutation/queue-risk row and no cached canary lease admits at or after the
+  exact boundary.
 - [ ] Require the canary result plus a newer same-session enabled heartbeat as
   full-capacity route-readiness evidence before self-hosted intent, but issue no
   enabled lease while routing remains hosted. After exact self-hosted read-back

@@ -106,8 +106,11 @@ The routing state machine stays small: hosted, draining-to-hosted, Portable
 canary, Portable, legacy canary, and legacy. API calls, canary outcomes,
 read-backs, queue-risk clearance, and notifications are transition evidence,
 not additional authority states. Bootstrap issues no lease and enters hosted
-only after exact read-back. A failed canary revokes its canary lease and returns
-directly to hosted because routing never left hosted.
+only after exact read-back. A failed canary advances the lease generation,
+stops renewal, and reuses draining-to-hosted until the issued-lease maximum plus
+margin and local listener drain complete. Routing never left hosted, so no route
+mutation or queue-risk record is needed; the cached lease is bounded rather than
+described as asynchronously revoked.
 
 ## Canary-gated failback
 

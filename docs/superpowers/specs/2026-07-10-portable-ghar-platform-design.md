@@ -1308,9 +1308,9 @@ Repository additions are accepted only while the hosted hold is active and the p
 ```text
 UNINITIALIZED (not an authority state) -> HOSTED
 HOSTED -> PORTABLE_CANARY -> PORTABLE
-PORTABLE_CANARY -> HOSTED
+PORTABLE_CANARY -> DRAINING_TO_HOSTED -> HOSTED
 HOSTED -> LEGACY_CANARY   -> LEGACY
-LEGACY_CANARY -> HOSTED
+LEGACY_CANARY -> DRAINING_TO_HOSTED -> HOSTED
 PORTABLE -> DRAINING_TO_HOSTED -> HOSTED
 LEGACY   -> DRAINING_TO_HOSTED -> HOSTED
 ```
@@ -1323,15 +1323,21 @@ observable authority configuration, not another implementation checkpoint.
 `UNINITIALIZED` is a fail-closed bootstrap condition, not a seventh persisted
 authority state: it issues no lease and enters `HOSTED` only after every
 configured repository has been read back hosted. A failed or cancelled canary
-advances the lease generation, stops canary renewal, and returns directly to
-`HOSTED` because routing never left hosted; it does not invent a draining
-transition or queue-risk record.
+advances the lease generation, stops canary renewal, and uses the existing
+`DRAINING_TO_HOSTED` state until `lastIssuedLeaseExpiryMax` plus the approved
+safety margin has passed and its local listener drain is complete. Routing
+never left hosted, so hosted read-back is already satisfied and this path
+creates no GitHub routing mutation or queue-risk record. It persists `HOSTED`
+only after the bounded lease residual; no response is treated as asynchronous
+revocation.
 
 - `HOSTED`: every configured repository is read back hosted and no local lease
   renews.
 - `DRAINING_TO_HOSTED`: lease generation has advanced, renewal has stopped, and
   hosted mutation/read-back plus the `lastIssuedLeaseExpiryMax` boundary and
-  local listener drain are in progress.
+  local listener drain are in progress. When entered from a failed canary,
+  routing is already read back hosted and only the existing lease/listener
+  boundary remains.
 - `PORTABLE_CANARY`: routing remains hosted; one canary-only Portable lease
   authorizes exactly one capacity unit and one persisted canary scale set.
 - `PORTABLE`: routing is read back self-hosted and a matching enabled Portable
@@ -1378,9 +1384,9 @@ explicit `legacy` route outbox and permits `LEGACY`. Every repository then reads
 back the explicit `legacy` value. An administrative hosted hold blocks that
 commit but may allow the bounded canary evidence needed for rollback. Any
 unhealthy legacy observation enters `DRAINING_TO_HOSTED` only after `LEGACY`
-has been confirmed. An unhealthy or cancelled `LEGACY_CANARY` returns directly
-to `HOSTED` after revoking its canary lease. Variable deletion never selects a
-local state.
+has been confirmed. An unhealthy or cancelled `LEGACY_CANARY` advances the
+generation and uses that same bounded drain before `HOSTED`; it cannot revoke a
+cached lease asynchronously. Variable deletion never selects a local state.
 
 An authenticated, disabled-by-default administrative hosted hold can enter from
 any state. Enabling it persists hosted transition intent and blocks recovery
@@ -1838,6 +1844,11 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
   missing cache, bad MAC, expired/regressing renewals, and a successor that
   would extend the original operation deadline. Race atomic cache replacement
   and prove admission validates one whole immutable entry, never mixed fields.
+- Failed/cancelled Portable and legacy canaries immediately after lease issue:
+  generation advances and renewal stops; the existing draining state persists
+  through the exact issued-lease maximum, margin, and local listener boundary;
+  hosted routing is never mutated; no queue-risk row is created; and `HOSTED`
+  cannot persist early or admit from the residual lease at/after the boundary.
 - Released-listener job acceptance rejects an expired or superseded lease
   session/generation/local deadline in addition to acquisition epoch and fence,
   including a still-live predecessor controller at the exact expiry boundary.

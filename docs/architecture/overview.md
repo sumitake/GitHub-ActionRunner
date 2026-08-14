@@ -241,8 +241,10 @@ enabled lease that starts local acquisition. The persisted routing model has six
 hosted, draining-to-hosted, Portable canary, Portable, legacy canary, and
 legacy. Implementation checkpoints remain transition outcomes rather than
 expanding the state graph. Fail-closed bootstrap persists hosted only after
-read-back, and a failed canary returns directly to hosted because routing never
-left hosted.
+read-back. A failed canary advances the lease generation and reuses
+draining-to-hosted through the existing issued-lease/listener boundary before
+persisting hosted. Routing itself never left hosted, so this adds no route
+mutation or queue-risk record and does not pretend to revoke a cached lease.
 See [Failover and notifications](../operations/failover-and-notifications.md)
 for the full failover state machine.
 
