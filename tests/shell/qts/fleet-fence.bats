@@ -41,7 +41,7 @@ setup() {
 @test "Go command tests cover exact forwarding and stale-authority refusal" {
   run env \
     GOCACHE="$BATS_TEST_TMPDIR/go-cache" \
-    GOTOOLCHAIN=go1.26.5 \
+    GOTOOLCHAIN=go1.26.6 \
     go test ./cmd/portable-ghar-fleet-fence \
       -run 'Test(HandoffInspectAndGuardUseOneCanonicalFence|GuardNeverStartsChildWithoutExactAuthority|GuardRenewalFailureTerminatesAndReapsChild|GuardChildRetainsFenceIfParentIsKilled|GuardEscalatesForwardedTerminationAndReapsChild)' \
       -count=1

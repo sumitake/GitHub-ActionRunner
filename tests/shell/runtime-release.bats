@@ -551,7 +551,7 @@ PY
   mkdir -m 700 "$WORK/bin"
 
   run bash -c '
-    exec env GOTOOLCHAIN=go1.26.5 \
+    exec env GOTOOLCHAIN=go1.26.6 \
       go run ./internal/buildinfo/cmd/portable-ghar-build-identity \
       "$1" "$2" 2>"$3"
   ' _ "$version" "$commit" "$WORK/build-identity.stderr"
@@ -562,7 +562,7 @@ PY
   run env \
     PGHAR_EXPECTED_BUILD_VERSION="$version" \
     PGHAR_EXPECTED_BUILD_COMMIT="$commit" \
-    GOTOOLCHAIN=go1.26.5 \
+    GOTOOLCHAIN=go1.26.6 \
     go test \
     -run '^TestLinkedIdentity$' \
     -count=1 \
@@ -574,7 +574,7 @@ PY
   run env \
     PGHAR_EXPECTED_BUILD_VERSION="$version" \
     PGHAR_EXPECTED_BUILD_COMMIT="$commit" \
-    GOTOOLCHAIN=go1.26.5 \
+    GOTOOLCHAIN=go1.26.6 \
     go test \
     -run '^TestLinkedIdentity$' \
     -count=1 \
@@ -584,7 +584,7 @@ PY
 
   while IFS="$(printf '\t')" read -r name package; do
     run bash -c '
-      exec env GOTOOLCHAIN=go1.26.5 \
+      exec env GOTOOLCHAIN=go1.26.6 \
         go list -json "$1" 2>"$2"
     ' _ "$package" "$WORK/go-list.stderr"
     [ "$status" -eq 0 ]
@@ -599,7 +599,7 @@ PY
       CGO_ENABLED=0 \
       GOOS=linux \
       GOARCH=amd64 \
-      GOTOOLCHAIN=go1.26.5 \
+      GOTOOLCHAIN=go1.26.6 \
       go build \
       -trimpath \
       -buildvcs=false \

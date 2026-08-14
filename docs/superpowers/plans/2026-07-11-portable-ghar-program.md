@@ -6,13 +6,18 @@
 
 **Goal:** Build, publish, deploy, validate, and operate Portable GHAR as the generic source-of-truth for ephemeral GitHub Actions runners on a QTS Docker host, then retire the pre-existing runner fleet and external watcher only after a successful reliability soak and rollback rehearsal.
 
-**Architecture:** A Go controller acquires jobs through an exact-pinned `actions/scaleset` adapter and launches one constrained runner per job. On the QTS reference host, the runner shares only an empty `--network none` namespace with a capless loopback relay; a separately jailed, dial-bounded broker owns all real network sockets through a per-job Unix channel, and the listener is released only after namespace, policy, destination, resource-budget, and conntrack proofs pass. A QTS host watchdog may restart or reconcile the controller but cannot change workflow routing; while the legacy fleet owns the stable per-holder generation fence it can run only a zero-capacity observer. A scheduled official-release observer builds and attests immutable one-version runner candidates outside job containers, scale sets disable in-place updates, and whole-container destruction reclaims every job cgroup/tmpfs/workspace. A Cloudflare Worker backed by one SQLite Durable Object per fleet is the only automatic routing authority; cron plus a Durable Object alarm reconcile versioned configuration and persisted due work, signed outbound heartbeats drive health and runner-upgrade holds, idempotent GitHub variable mutations are read back, failback requires an epoch-bound secretless canary, and email/signed-webhook notifications retry independently.
+**Architecture:** A Go controller acquires jobs through an exact-pinned `actions/scaleset` adapter and launches one constrained runner per job. On the QTS reference host, the runner shares only an empty `--network none` namespace with a capless loopback relay; a separately jailed, dial-bounded broker owns all real network sockets through a per-job Unix channel, and the listener is released only after namespace, policy, destination, resource-budget, and conntrack proofs pass. A QTS host watchdog may restart or reconcile the controller but cannot change workflow routing; while the legacy fleet owns the stable per-holder generation fence it can run only a zero-capacity observer. A scheduled official-release observer builds and attests immutable one-version runner candidates outside job containers, scale sets disable in-place updates, and whole-container destruction reclaims every job cgroup/tmpfs/workspace. A Cloudflare Worker backed by one SQLite Durable Object per fleet is the only automatic routing authority; one Cron Trigger addresses each deterministic object from one bounded validated private fleet inventory and reconciles persisted due work, accepted heartbeat responses renew one short-lived signed acquisition lease, idempotent GitHub variable mutations are read back, failback requires an epoch-bound secretless canary, and email/optional-webhook notifications retry independently.
 
 **Tech Stack:** Go, SQLite, Docker/OCI, POSIX shell and Bats, TypeScript, Cloudflare Workers, Durable Objects SQLite, Vitest, JSON Schema, GitHub Apps and REST API, GitHub Actions, CodeQL, Gitleaks, Trivy, Syft/CycloneDX or SPDX SBOM tooling.
 
 ## Global Constraints
 
 - The review-gated design in `docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md` is authoritative for planning. Phase 2 source implementation is complete; its deferred operational evidence remains separately gated, and any further material architecture change requires a revised design review.
+- Correctness, security, operational reliability, practical simplicity, and
+  elegant boundaries are co-equal blocking acceptance criteria. Bound every
+  dependency and resource, name and test safe degradation, read back every
+  external effect, retain one authority per decision, and reject complexity
+  that does not satisfy a current requirement.
 - The public repository must contain only generic source, schemas, synthetic fixtures, documentation, and reproducible build metadata. Actual host, network, repository, account, notification, schedule, credential, and migration values stay in a mode-restricted private overlay outside the repository.
 - Never place a GitHub App private key, installation token, Cloudflare token, heartbeat key, JIT configuration, webhook URL, notification destination, raw production log, or private denylist in a command transcript, test fixture, issue, pull request, commit, release, or delegate prompt.
 - All public pull-request checks run on GitHub-hosted runners with no deployment secrets, no `pull_request_target`, least-privilege permissions, `persist-credentials: false`, timeouts, concurrency cancellation, and Actions pinned to full commit SHAs.
@@ -24,7 +29,11 @@
 - The new and legacy fleets must never acquire the same workflow workload concurrently during rollback or retirement.
 - The fence uses one stable lock inode, a monotonic generation header, and independent renewal records for every same-fleet controller/watchdog holder; dark deployment while `legacy` is active is observer-only.
 - Every local acquisition-policy change—mode, eligible scale sets, or effective capacity—uses one bounded epoch CAS that invalidates and joins old pollers/leases and drains acquisition critical sections. Watchdog/probe stops, host-pressure reductions, canary narrowing, suspend, and observer startup use no weaker path; an unjoinable upstream call persists fatal/zero capacity and terminates the controller process.
-- No persisted GitHub mutation, canary check, or notification retry may depend on a future request: cron plus the fleet object's alarm must claim and resume all due work after eviction/crash.
+- No persisted GitHub mutation, canary check, or notification retry may depend
+  on a future request. One Cloudflare Cron Trigger claims and resumes bounded
+  due work after eviction/crash by directly addressing every ID in one bounded
+  validated private fleet inventory; no alarm, enumerable-namespace assumption,
+  second registry, or second scheduler duplicates it.
 - Every live legacy adoption/suspend/retirement mutation goes through a positively matched QTS target adapter with fixed typed actions and post-action read-back.
 - Preserve existing consumer-workflow job and required-check names. Keep secret-bearing, release, deployment-write, and unsupported browser/container jobs GitHub-hosted unless separately reviewed.
 - A source merge is not a deployment. Every production transition requires positive read-back from the target host, GitHub, Cloudflare, and the affected workflow.
@@ -86,7 +95,7 @@ Execute `2026-07-11-public-foundation.md` through its repository-foundation, con
 **Required evidence before Phase 2:**
 
 ```sh
-GOTOOLCHAIN=go1.26.5 go test -race ./...
+GOTOOLCHAIN=go1.26.6 go test -race ./...
 npm ci --ignore-scripts
 npm run --workspace worker test
 bats tests/shell
@@ -112,15 +121,41 @@ Execute the controller-domain portion of `2026-07-11-controller-runtime.md` usin
 - The lifecycle state machine is persisted before side effects and every transition is idempotent.
 - A complete successful reconciliation cycle is required before a healthy heartbeat can be emitted.
 - The redacting logger accepts only schema-defined fields and the adversarial corpus yields no reusable credential or job-controlled value.
-- Every policy transition invalidates prior pollers and leases; a nonzero poll/acquire/JIT call obtains both the current host-fleet guard and one fresh operation-bound Worker permit inside the same ordered epoch critical section, then revalidates mode, exact scale-set eligibility, effective capacity, lease, local epoch/digest, Worker transition/permit generation, and server expiry. Canary-only permits one exact scale set and one unit. Local CLI/status success alone grants no authority.
+- Every policy transition closes the existing epoch gate, atomically advances
+  the local epoch and discards cached Worker authority, joins prior operations,
+  and reopens only after zero old critical sections remain. Every signed lease
+  authenticates that local epoch. A nonzero poll/acquire/JIT call holds the
+  current host-fleet guard and epoch barrier, revalidates the complete cached
+  lease, and must finish admission before one authority-clock deadline: the
+  earlier of `now + configured call duration` or local lease deadline minus the
+  proven termination tail. One small
+  per-operation mutex serializes deadline cancellation with a two-way
+  admitted/dropped token. Each operation snapshots its original deadline, the
+  closed canonical admission-authority key, and exact fence generation. The
+  deadline stays armed while one journal-authorized path performs an at-most-once
+  Ack or listener-release attempt; no mutex is held across journal or external
+  I/O. Short barriers immediately before and after the effect each atomically
+  validate one immutable current cache entry against that snapshot and both
+  deadlines. The held listener independently checks its original local deadline
+  at the actual release point. Newer-sequence pure renewals may move only
+  envelope timing/MAC fields, so long polls do not starve; any authority or
+  fence change drops. Ack is non-authorizing and cannot make work eligible or
+  release a runner. Late or ambiguous effects use the existing idempotent
+  journal/read-back path without retry or revived authority. Canary-only
+  authorizes one exact scale set and one unit. Local CLI/status success alone
+  grants no authority. One injected authority clock supplies both time and
+  absolute deadline waits; Linux/QTS uses suspend-aware `CLOCK_BOOTTIME`, and a
+  target without positive clock/waiter proof remains disabled. Lease caches and
+  derived deadlines are process-memory-only, so restart/reboot starts with no
+  acquisition authority.
 
 **Verification:**
 
 ```sh
-GOTOOLCHAIN=go1.26.5 go test -race ./internal/admission/... ./internal/controller/... ./internal/githubscale/... ./internal/lifecycle/... ./internal/redaction/... ./internal/state/...
-GOTOOLCHAIN=go1.26.5 go vet ./...
-GOTOOLCHAIN=go1.26.5 go tool staticcheck ./...
-GOTOOLCHAIN=go1.26.5 go tool govulncheck ./...
+GOTOOLCHAIN=go1.26.6 go test -race ./internal/admission/... ./internal/controller/... ./internal/githubscale/... ./internal/lifecycle/... ./internal/redaction/... ./internal/state/...
+GOTOOLCHAIN=go1.26.6 go vet ./...
+GOTOOLCHAIN=go1.26.6 go tool staticcheck ./...
+GOTOOLCHAIN=go1.26.6 go tool govulncheck ./...
 ```
 
 Expected: all commands exit 0; fault-injection tests cover every persisted lifecycle boundary.
@@ -161,48 +196,87 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
 
 **Required behaviors:**
 
-- The server owns enrollment epochs and consumes single-use challenges.
-- Fleet, random session, challenge, epoch, and monotonic sequence are authenticated with constant-time comparison.
-- Worker receipt time determines freshness; client time is diagnostic only.
-- Desired routing mutations are persisted per repository before GitHub calls, transactionally claimed, read back after success or ambiguity, and retried idempotently by cron plus Durable Object alarms after eviction/crash. Every due-row create/reschedule uses closed SQL-only mutation data carrying the one exact persisted `dueAtMs`; the helper derives the equal-or-earlier alarm from that field and commits alarm plus row in the same storage transaction, with no caller-supplied second deadline, callback, or Promise surface.
-- Repository additions reconcile hosted plus exact expected scale-set/legacy-label companions under a monotonic configuration revision and persisted canary identity before the hold may release.
-- Recovery remains hosted until a current-epoch secretless canary succeeds,
-  full acquisition is enabled locally, and—without changing the Worker epoch—a
-  same-session/newer-sequence heartbeat proves the expected policy digest and
-  complete capacity; obsolete/late canaries and canary-only acquisition cannot
-  fail back.
-- Email and webhook share a sanitized event ID but have independent persisted delivery attempts and retries.
-- Notification failure never blocks a safety routing mutation.
-- Every hosted transition persists queue risk until an authenticated same-epoch
-  GitHub read-back and selective recovery clears it idempotently.
-- Portable remains disabled and legacy work-accepting components remain stopped
-  until the latest queue-risk generation is completely cleared.
-- Every Portable acquisition effect requires a fresh Worker permit; the legacy
-  compatibility wrapper requires a short renewable Worker process lease. A
-  hosted transition revokes issuance and drains prior authority before it
-  creates hosted intent or the next queue-risk generation.
-- A signed non-current runner-release heartbeat enters a Worker-owned
-  `runner-upgrade` hosted hold. Candidate rejection or interruption remains
-  hosted; exact qualified-candidate selection under disabled acquisition and
-  zero listeners auto-releases only that machine-created hold into the normal
-  recovery-canary path. Operator-created holds remain manual.
-- An existing operator hold takes precedence over the runner-upgrade state:
-  release evidence and permit drain persist, but the reason cannot change,
-  every maintenance request returns `wait-hosted`, and no staging, selection,
-  or auto-release occurs. After authenticated operator release, only a fresh
-  non-current heartbeat may begin the runner-upgrade sequence.
-- The host learns each automatic phase only through a fresh signed read-only
-  maintenance directive: `stage-permitted`, `replace-permitted`,
-  `canary-permitted`, then `enable-permitted`. Staging waits for hosted
-  read-back, permit drain, queue clearance, and zero assigned jobs; selection
-  waits for the exact later qualified tuple. A missing, expired, stale-session,
-  wrong-request, wrong-generation, wrong-candidate, or wrong-policy directive
-  means `wait-hosted` and cannot mutate routing.
-- Phase 2 may ship the controller-side release observer, immutable-candidate
-  journal, and fail-closed directive-provider interface, but unattended runner
-  replacement is not operational until this task supplies the authenticated
-  client plus the Worker state machine. The forced-version-bump success
-  criterion is proved only by the integrated Phase 2 + Phase 3 system.
+- One timestamped, nonce-bearing, HMAC-authenticated session request creates a
+  server-owned epoch/session and lease generation. Exact signed response
+  binding, nonce replay, sequence, expiry, and old-session tests fail closed.
+- Re-enrollment rejects old-session traffic immediately but carries one
+  server-owned `leaseNotBefore` restriction through the fleet-global monotonic
+  maximum expiry of every issued lease plus the hosted-transition safety
+  margin. Issuance and maximum advancement are one transaction. The new session
+  may reconcile during that bounded drain but receives no acquisition lease;
+  first enrollment is not delayed, and an intervening no-lease session or
+  repeated enrollment cannot shorten the restriction. Drain status is visible
+  as liveness only, never acquisition readiness, hosted success, or
+  zero-listener quiescence evidence. Quiescence proof binds to the exact
+  enrollment session and lease generation being drained; supersession before
+  exact proof leaves a governed local transition incomplete under hosted-safe
+  routing and alerts.
+- Worker receipt time determines heartbeat freshness; client time is diagnostic
+  only. An accepted heartbeat response returns the only remote acquisition
+  authority: one short-lived signed lease for `portable` or governed `legacy`.
+  The lease authenticates the local acquisition-policy epoch/digest and carries
+  a bounded signed set of Worker-latched archived-disabled repository aliases,
+  so one repository can fail closed without stalling the rest of the fleet.
+  Every poll/acquire/JIT admission must complete before its lease-derived
+  cancellation deadline. Routine renewals preserve a long in-flight operation
+  only when the closed canonical admission-authority key and exact host-fleet
+  fence generation remain equal. The deadline stays armed through the
+  at-most-once Ack or listener-release attempt; final admission revalidates one
+  whole immutable current cache entry after the effect and before both its safe
+  deadline and the operation's original deadline. A held listener also enforces
+  its captured local lease deadline at the release point. Late, ambiguous,
+  non-equivalent, or mixed-entry results cannot release a runner, and Ack itself
+  grants no authority. Missing or stale archive evidence is restrictive, and
+  the explicit event-to-denial bound is evidence age plus remaining local
+  lease; the design does not claim asynchronous revocation of a cached lease.
+- Portable and legacy use the same lease type. A hosted transition advances its
+  generation, stops renewal, and waits through
+  `lastIssuedLeaseExpiryMax` plus the approved safety margin before it can
+  confirm hosted. The client anchors its shorter authority-clock deadline at
+  heartbeat send time, rejects late responses, and the operator-approved
+  heartbeat/lease values must satisfy the normative missed-renewal inequality
+  in the failover plan.
+- Every released listener carries the lease session/generation and shorter
+  local deadline used at release. Job acceptance revalidates those bindings
+  alongside local epoch/fence and destroys the listener on expiry or
+  supersession, so predecessor listeners cannot create post-drain work.
+- The routing machine has only hosted, draining-to-hosted, Portable canary,
+  Portable, legacy canary, and legacy. Canary/API/read-back/retry checkpoints are
+  transition outcomes rather than extra authority states. Bootstrap enters
+  hosted only after read-back. A failed Portable or legacy canary advances its
+  generation, stops renewal, and reuses draining-to-hosted until the issued-
+  lease maximum plus margin. Routing remains hosted, and shorter local listener
+  authority has ended by that server boundary, so this residual needs no route
+  mutation, queue-risk row, or later controller drain report; a cached canary
+  lease is never treated as asynchronously revoked.
+- Desired routing mutations are persisted before bounded GitHub calls,
+  transactionally claimed, and read back after success or ambiguity. One Cron
+  Trigger addresses every configured deterministic fleet object and recovers
+  bounded due work after eviction/crash; no Durable Object alarm, private
+  storage contract, or separate registry is a second scheduler. With Cron functioning,
+  hosted-transition completion is bounded by the operator-approved lease,
+  margin, Cron, delivery-jitter, and due-work inequality; an outage remains
+  incomplete and visible rather than becoming false success.
+- Repository additions reconcile hosted plus exact expected scale-set and
+  legacy-label companions under a monotonic configuration revision before a
+  canary or local route.
+- Recovery remains hosted until queue risk is cleared, a current-epoch
+  secretless canary succeeds, and a newer same-session heartbeat proves the
+  expected policy/full capacity as route-readiness evidence without granting an
+  enabled lease. After self-hosted read-back, a subsequent matching heartbeat
+  must return the enabled lease before local acquisition begins.
+- Email and optional webhook share a sanitized event ID but have independent
+  bounded delivery attempts. Notification failure never blocks routing, and no
+  particular downstream messaging bridge is mandatory.
+- An operator hold dominates runner-upgrade state and never auto-releases. A
+  machine-created runner-upgrade hold remains hosted through rejected,
+  interrupted, stale, or incompatible candidates.
+- Maintenance directives are intent only and bind exact session, transition,
+  lease/configuration, release, and policy identities. They never replace the
+  lease or grant routing authority.
+- Phase 2's release observer and journal become unattended only after this task
+  supplies the authenticated client and six-state Worker control plane. A forced
+  version bump is proven only by the integrated system.
 
 **Verification:**
 
@@ -305,10 +379,9 @@ node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVAT
 npm exec --workspace worker -- wrangler deploy --config "$PORTABLE_GHAR_PRIVATE_OVERLAY/rendered/wrangler.jsonc"
 node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route hosted --expect-hold true --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/after-noop-redeploy.json"
 node scripts/ops/probe-private-deployment.mjs --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --phase postdeploy --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/postdeploy-probe.json"
-node scripts/ops/record-signal-receipt.mjs --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --receipt "$PORTABLE_GHAR_PRIVATE_OVERLAY/signal-delivery-receipt.json" --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/signal-delivery.json"
 ```
 
-Expected: migrations, generated bindings, and configuration revision match; one fleet object preserves enrollment/config/outbox/hosted-hold state across the explicit no-op redeploy; GitHub reads confirm every managed repository is hosted; the hold transition's email and signed-webhook rows deliver independently. The matching Signal receipt is ingested before this deployment phase is considered complete.
+Expected: migrations, generated bindings, and configuration revision match; one fleet object preserves enrollment/config/outbox/hosted-hold state across the explicit no-op redeploy; GitHub reads confirm every managed repository is hosted; the hold transition's email and optional signed-webhook rows deliver independently.
 
 **Step 3: Enroll and heartbeat with acquisition disabled**
 
@@ -358,7 +431,8 @@ with no workflow that can route self-hosted is excluded from the private fleet
 configuration, receives no scale set or idle capacity, and is not retained as a
 canary merely because a legacy runner profile still exists for it. A repository
 whose live GitHub `archived` state is `true` is likewise excluded with effective
-capacity zero regardless of what any local or private-overlay inventory says;
+capacity zero after the explicitly bounded evidence-age plus remaining-lease
+propagation window, regardless of what any local or private-overlay inventory says;
 unarchiving alone never restores eligibility, and reactivation follows the
 archive-state contract in the platform design (operator-approved configuration
 revision, fresh eligibility audit, hosted bootstrap and read-back, queue-risk
@@ -392,13 +466,15 @@ Run the controller commands on the verified target. The legacy suspend command m
 The mode-restricted private `queue-recovery.json` is produced by the documented
 selective-recovery procedure from exact latest-transition GitHub run/job
 read-back. It records no claim that a queued job migrated, and it is invalidated
-by any newer hosted transition. The admin tool must clear every configured row
-before the first nonzero acquisition command. That status result and the local
-mode command are evidence/intent only: each later poll/acquire/JIT must obtain a
-fresh Worker permit inside the controller's policy-epoch barrier. If a newer
-hosted transition starts between commands, permit generation is revoked and the
-external call cannot begin; hosted intent waits until all earlier authority is
-drained.
+by any newer hosted transition. The admin tool must clear every configured
+record before the first nonzero acquisition command. Its `queue-recovery` CLI
+subcommand emits the `queue-recovery` member of `POST /v1/admin/command`; it is
+not a separate Worker endpoint. That status result and the local mode command
+are evidence/intent only: each later poll/acquire/JIT must validate the current
+signed lease inside the controller's policy-epoch barrier. If a
+newer hosted transition starts between commands, lease generation advances and
+the external call cannot begin; hosted intent waits until all earlier authority
+expires or drains.
 
 For each later repository-risk expansion, add exactly one repository plus its workflow/expected revision under a new private `configRevision`, then run:
 
@@ -417,7 +493,7 @@ portable-ghar-controller acquisition --set=enabled --expected=canary-only --json
 node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --expect-route self-hosted --expect-hold false --expect-acquisition enabled --require-current-epoch-canary --require-acquisition-enabled-confirmed --wait-seconds 600 --evidence-out "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence/expansion-enabled.json"
 ```
 
-The private runbook resolves `PORTABLE_GHAR_CANARY_SCALE_SET` from the validated overlay without printing it. The status command validates the response configuration revision against the current overlay but is not an acquisition credential. Routine expansion never writes the transition variable directly. Expected: every acquisition command completes the bounded epoch barrier; every external poll/acquire/JIT also holds a fresh exact Worker permit; a current-epoch exact-revision canary completes while consumer routing remains hosted; without a Worker epoch change, a later same-enrollment-session/newer-sequence `enabled` heartbeat with the exact policy digest and full expected capacity precedes self-hosted outbox creation/read-back; one ephemeral runner accepts exactly one job; original required check names pass; runner, adapter, held/running broker, helper, verifier, and per-job socket directories are destroyed; the stable slot ledger remains through `T`; no credential/workspace residue remains; email and webhook record the same sanitized routing event ID. If any assertion fails, reacquire the hosted hold before diagnosis.
+The private runbook resolves `PORTABLE_GHAR_CANARY_SCALE_SET` from the validated overlay without printing it. The status command validates the response configuration revision against the current overlay but is not an acquisition credential. Routine expansion never writes the transition variable directly. Expected: every acquisition command completes the bounded epoch barrier; every external poll/acquire/JIT holds one current exact signed lease; a current-epoch exact-revision canary completes while consumer routing remains hosted; without a Worker epoch change, a later same-enrollment-session/newer-sequence `enabled` heartbeat with the exact policy digest and full expected capacity supplies route-readiness evidence without an enabled lease before self-hosted outbox creation/read-back; only after exact self-hosted read-back does a subsequent matching heartbeat return the enabled lease; one ephemeral runner then accepts exactly one job; original required check names pass; runner, adapter, held/running broker, helper, verifier, and per-job socket directories are destroyed; the stable slot ledger remains through `T`; no credential/workspace residue remains; email and webhook record the same sanitized routing event ID. If any assertion fails, reacquire the hosted hold before diagnosis.
 
 ## Program Task 10: Exercise Failure and Rollback Paths
 
@@ -428,7 +504,36 @@ Execute every drill from the failover-deployment plan against secretless canary 
 - host watchdog restart and host reboot;
 - adapter/broker/helper/verifier failure, socket replacement, token-ledger rollback, and contradiction;
 - delayed, duplicate, reordered, replayed, and dropped heartbeats;
-- local state loss followed by server-owned re-enrollment;
+- repeated newer-sequence authority-equivalent renewals across a poll longer
+  than one heartbeat interval, plus one-at-a-time mutation of every closed
+  admission-key field, fence generation, and current safe deadline;
+- failed and cancelled Portable/legacy canaries immediately after lease issue:
+  generation advances and renewal stops, routing remains hosted, and `HOSTED`
+  persists only after the exact issued-lease maximum and margin even when no
+  later controller heartbeat arrives;
+- host suspension with a cached lease, in-flight operation, and released
+  listener: `CLOCK_BOOTTIME` advances through suspension, the absolute waiter
+  becomes due on resume, and no expired operation or listener can Ack, release,
+  or accept work before the next heartbeat;
+- simultaneous Worker and Cron unavailability while GitHub still routes local:
+  the short lease expires, no new local acquisition occurs, queued work remains
+  visible, and no hosted-confirmation claim is fabricated;
+- archive change just after fresh evidence, stale/failed metadata observation,
+  and a still-current cached lease: denial occurs within the approved evidence-
+  age plus remaining-lease bound, work acquired before the bound is audited,
+  and unrelated repositories continue;
+- one fleet Cron call times out while other configured fleets contain due work:
+  every configured object is still addressed once and the failed fleet remains
+  visible for bounded retry;
+- local state loss followed by server-owned re-enrollment, including a live
+  predecessor process with cached authority, an intervening no-lease session,
+  repeated enrollment during the drain, lost post-commit lease responses, a
+  shorter later lease, and exact-boundary issuance without concurrent
+  acquisition;
+- zero-listener quiescence bound to the exact drained enrollment session and
+  lease generation, including rejection of a replacement drain heartbeat that
+  reports zero only for its new generation and hosted-safe handling when the
+  drained session is superseded before proof;
 - governed legacy rollback publisher re-enrollment with matching active-fleet/
   fence generation, plus stale/fatal mismatch back to hosted;
 - partial/rate-limited/ambiguous GitHub mutations;
@@ -469,6 +574,8 @@ Daily evidence must show:
 
 - heartbeat sequence and reconciliation timestamp advancing;
 - controller, Docker, watchdog, Worker cron, and Durable Object health;
+- current signed lease generation/holder/mode/expiry agrees with the active
+  routing state, and no acquisition begins after local monotonic expiry;
 - assignments received/completed/destroyed with no duplicate job execution;
 - zero idle runner, adapter, or released-broker containers outside active jobs;
   held brokers exist only for a persisted pre-release assignment and every
@@ -487,7 +594,7 @@ Daily evidence must show:
 - no private-egress success from scheduled probes;
 - no JIT/App/Worker/heartbeat secrets in logs or diagnostics;
 - outboxes drained or explained;
-- primary email, signed webhook, and matching end-to-end Signal receipt through the separate failure domain;
+- primary email and optional signed webhook delivery/failure evidence;
 - GitHub routing state confirmed rather than inferred;
 - continuous current-generation fence renewals with no dual-fleet holder observation;
 - legacy fleet and watcher retained but unable to acquire transition-routed work.
@@ -550,7 +657,7 @@ node scripts/ops/control-plane-admin.mjs status --overlay "$PORTABLE_GHAR_PRIVAT
 node scripts/ops/verify-retirement-gates.mjs --phase final --overlay "$PORTABLE_GHAR_PRIVATE_OVERLAY" --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
-Expected: the released hold creates a new recovery epoch; the authenticated status evidence proves a matching current-epoch canary while consumer routes remain hosted, then a fresh enabled/full-capacity heartbeat before self-hosted outbox/read-back; managed read-only workloads return to Portable GHAR; the final gate confirms the legacy fleet remains absent and fenced out. On any failure, reacquire the hosted hold and stop acquisition.
+Expected: the released hold creates a new recovery epoch; the authenticated status evidence proves a matching current-epoch canary while consumer routes remain hosted, then a fresh enabled/full-capacity heartbeat supplies route-readiness evidence without an enabled lease before self-hosted outbox/read-back. Only after exact self-hosted read-back does a subsequent matching heartbeat return the enabled lease; managed read-only workloads then return to Portable GHAR. The final gate confirms the legacy fleet remains absent and fenced out. On any failure, reacquire the hosted hold and stop acquisition.
 
 **Step 5: Preserve rollback material for 30 days**
 
@@ -567,9 +674,15 @@ Update `README.md` only after production behavior has been positively observed s
 - assignment and runner lifecycle;
 - network-readiness barrier and residual shared-kernel risk;
 - external failover and current-epoch canary lifecycle;
-- Worker-owned hosted hold, configuration reconciliation, and cron/alarm due-work lifecycle;
+- short-lived signed acquisition lease and explicit Worker/Cron outage
+  degradation;
+- Worker-owned hosted hold, six-state routing machine, configuration
+  reconciliation, and one-Cron
+  due-work lifecycle;
 - bounded acquisition-policy epoch barrier, fatal handling for unjoinable upstream calls, dark-observer normalization, and per-holder generation fence;
-- email, signed-webhook, and separately signed Signal-receipt workflow;
+- email and optional signed-webhook workflow;
+- read-only health export, one-way InfluxDB adapter, Grafana projection, and
+  authoritative receipt-based cutover verifier;
 - generic production topology and authority matrix;
 - deployment, upgrade, rollback, soak, and retirement flows;
 - consumer-workflow migration and unsupported job classes;
@@ -608,10 +721,16 @@ Tag the first stable release only after all required checks, release rehearsal, 
 - The Cloudflare Worker/DO is the sole automatic routing writer and all mutations are confirmed through GitHub read-back.
 - Every hosted transition's queue-risk generation is durable, and no Portable
   or legacy acquisition resumes before its authenticated selective recovery.
-- Every nonzero local acquisition holds current Worker-issued authority, and a
-  hosted transition revokes/drains prior permits or the legacy process lease
-  before claiming the hard zero-acquisition state.
-- Email and signed-webhook notifications work independently and retry without affecting safety; matching Signal delivery is proven by a separate-key receipt from a separate failure domain.
+- Every nonzero local acquisition holds one current Worker-issued signed lease,
+  and a hosted transition advances the shared generation and waits for prior
+  authority to expire/drain before claiming hosted confirmation.
+- A replacement enrollment rejects the predecessor session but withholds new
+  lease authority through the carried-forward fleet-global issued-lease expiry
+  maximum and safety margin, so same-fleet controllers cannot overlap
+  acquisition authority.
+- Email and optional signed-webhook notifications work independently and retry
+  without affecting safety; no downstream messaging product is a routing or
+  completion dependency.
 - All selected consumer workflows retain their job/check contracts and complete on the new fleet with hosted fallback verified.
 - The 14-day qualifying soak and full rollback rehearsal pass.
 - Legacy runners, host-side legacy writers, and the external watcher are retired without overlapping acquisition; retained rollback artifacts remain verified for 30 days.

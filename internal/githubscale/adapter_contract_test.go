@@ -2186,7 +2186,7 @@ func main() {
 	binPath := filepath.Join(t.TempDir(), "zz_liveprobe_helper")
 	buildCmd := exec.Command("go", "build", "-o", binPath, "./internal/githubscale/testdata/zz_liveprobe_helper")
 	buildCmd.Dir = moduleRoot
-	buildCmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.5")
+	buildCmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.6")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build helper: %v\n%s", err, out)
 	}

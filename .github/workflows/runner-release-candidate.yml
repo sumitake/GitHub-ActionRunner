@@ -64,7 +64,7 @@ jobs:
     outputs:
       tree_tar_sha256: ${{ steps.package.outputs.tree_tar_sha256 }}
     env:
-      GOTOOLCHAIN: go1.26.5
+      GOTOOLCHAIN: go1.26.6
       SOURCE_COMMIT: ${{ needs.runner-candidate-admission.outputs.source_commit }}
       SOURCE_TREE: ${{ needs.runner-candidate-admission.outputs.source_tree }}
       ARTIFACT_VERSION: ${{ needs.runner-candidate-admission.outputs.artifact_version }}
@@ -114,7 +114,7 @@ jobs:
     outputs:
       tree_tar_sha256: ${{ steps.package.outputs.tree_tar_sha256 }}
     env:
-      GOTOOLCHAIN: go1.26.5
+      GOTOOLCHAIN: go1.26.6
       SOURCE_COMMIT: ${{ needs.runner-candidate-admission.outputs.source_commit }}
       SOURCE_TREE: ${{ needs.runner-candidate-admission.outputs.source_tree }}
       ARTIFACT_VERSION: ${{ needs.runner-candidate-admission.outputs.artifact_version }}

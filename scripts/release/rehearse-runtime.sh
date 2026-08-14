@@ -1448,7 +1448,7 @@ def main():
                 "GOCACHE": os.fspath(caches / "go-build"),
                 "GOMODCACHE": os.fspath(caches / "go-mod"),
                 "GOPATH": os.fspath(caches / "gopath"),
-                "GOTOOLCHAIN": "go1.26.5",
+                "GOTOOLCHAIN": "go1.26.6",
                 "SOURCE_DATE_EPOCH": str(source_epoch),
                 "TRIVY_CACHE_DIR": os.fspath(caches / "trivy"),
                 "SYFT_CHECK_FOR_APP_UPDATE": "false",

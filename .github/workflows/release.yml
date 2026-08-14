@@ -57,7 +57,7 @@ jobs:
     outputs:
       tree_tar_sha256: ${{ steps.package.outputs.tree_tar_sha256 }}
     env:
-      GOTOOLCHAIN: go1.26.5
+      GOTOOLCHAIN: go1.26.6
       SOURCE_COMMIT: ${{ needs.release-admission.outputs.source_commit }}
       SOURCE_TREE: ${{ needs.release-admission.outputs.source_tree }}
       RELEASE_VERSION: ${{ needs.release-admission.outputs.version }}
@@ -106,7 +106,7 @@ jobs:
     outputs:
       tree_tar_sha256: ${{ steps.package.outputs.tree_tar_sha256 }}
     env:
-      GOTOOLCHAIN: go1.26.5
+      GOTOOLCHAIN: go1.26.6
       SOURCE_COMMIT: ${{ needs.release-admission.outputs.source_commit }}
       SOURCE_TREE: ${{ needs.release-admission.outputs.source_tree }}
       RELEASE_VERSION: ${{ needs.release-admission.outputs.version }}
