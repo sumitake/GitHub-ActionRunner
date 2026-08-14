@@ -221,10 +221,15 @@ a response that arrives too late, and bounds every poll/acquire/JIT admission by
 an earlier cancellation deadline that reserves the existing termination tail.
 A per-operation mutex makes deadline cancellation mutually exclusive with its
 two-way admitted/dropped decision; late and ambiguous results cannot Ack or
-release a runner. Archive
-evidence has a bounded maximum age; missing or stale evidence is restrictive,
-and revocation converges within that evidence-age bound plus the remaining
-local lease rather than pretending a cached lease can be erased asynchronously.
+release a runner. One injected authority clock supplies both observations and
+absolute deadline waits; Linux/QTS uses suspend-aware `CLOCK_BOOTTIME`, while a
+target without positive clock/waiter proof remains acquisition-disabled. Host
+sleep therefore consumes cached lease, operation, and listener lifetime without
+trusting wall time. Lease caches and derived deadlines are process-memory-only;
+restart/reboot starts with no authority. Archive evidence has a bounded maximum
+age; missing or stale evidence is restrictive, and revocation converges within
+that evidence-age bound plus the remaining local lease rather than pretending a
+cached lease can be erased asynchronously.
 One Cron Trigger validates one bounded private fleet-ID inventory, directly
 addresses every listed deterministic Durable Object, and claims bounded batches
 from each durable outbox; Durable Object alarms, namespace enumeration, and
@@ -242,9 +247,11 @@ hosted, draining-to-hosted, Portable canary, Portable, legacy canary, and
 legacy. Implementation checkpoints remain transition outcomes rather than
 expanding the state graph. Fail-closed bootstrap persists hosted only after
 read-back. A failed canary advances the lease generation and reuses
-draining-to-hosted through the existing issued-lease/listener boundary before
-persisting hosted. Routing itself never left hosted, so this adds no route
-mutation or queue-risk record and does not pretend to revoke a cached lease.
+draining-to-hosted through the issued-lease maximum plus margin before
+persisting hosted. Routing itself never left hosted, and every local listener
+deadline is strictly earlier than that boundary, so this adds no route mutation,
+queue-risk row, or positive controller-drain dependency and does not pretend to
+revoke a cached lease.
 See [Failover and notifications](../operations/failover-and-notifications.md)
 for the full failover state machine.
 

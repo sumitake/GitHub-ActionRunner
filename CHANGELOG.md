@@ -61,7 +61,10 @@ Nothing in this section has shipped as a tagged release.
   closes policy ABA and post-expiry completion without adding a revocation
   service or parallel state machine. Failed canaries likewise reuse the existing
   draining-to-hosted lease boundary instead of claiming instant cached-lease
-  revocation.
+  revocation without adding a controller-drain dependency. Linux/QTS authority
+  deadlines use one suspend-aware `CLOCK_BOOTTIME` adapter for both time and
+  waits, so host sleep cannot preserve expired acquisition authority;
+  restart/reboot begins with an empty cache.
 - Advanced the exact Go toolchain pin from 1.26.5 to 1.26.6 after the required
   vulnerability gate identified four reachable standard-library advisories.
 - Clarified the standalone product boundary: consumer repositories and

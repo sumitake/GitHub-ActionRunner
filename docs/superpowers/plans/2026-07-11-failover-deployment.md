@@ -106,9 +106,14 @@ derived local deadline, and response MAC are renewal-envelope data. Unknown,
 duplicate, missing, or noncanonical fields fail validation instead of being
 ignored by the key derivation.
 
-The controller records monotonic time before sending the heartbeat and derives
-the lease deadline from that attempt-start timestamp, the returned duration,
-and the approved shortening margin. A response received at or after that
+The controller uses one injected suspend-aware monotonic authority clock for
+heartbeat send anchors, lease/operation comparisons, and absolute deadline
+wakeups. Linux/QTS production uses `CLOCK_BOOTTIME` for both `Now` and
+`WaitUntil`; a target that cannot prove both keeps acquisition disabled rather
+than falling back to suspend-pausing `CLOCK_MONOTONIC`. The controller records
+that clock before sending the heartbeat and derives the lease deadline from
+that attempt-start observation, the returned duration, and the approved
+shortening margin. A response received at or after that
 deadline grants no lease, so response latency cannot make local authority
 outlive server expiry. Every operation also rejects its repository alias when
 it appears in the signed disable set. Lease installation and every later use
@@ -118,11 +123,13 @@ cache while the existing barrier remains closed through old-operation join.
 The controller never extends authority from wall time, status, or an
 administrative command.
 
-Each poll/acquire/JIT operation shortens its ordinary deadline to the earlier
-of that deadline and the monotonic local lease deadline minus the existing
-positive cancel/join/fatal/termination tail. Checked arithmetic, exact equality,
-missing tail bounds, or insufficient slack fails before the call. One small
-per-operation mutex serializes the deadline handler with a two-way
+The signed lease cache and derived deadlines are process-memory-only; controller
+restart begins empty, and per-job containers never restart after host reboot.
+Each poll/acquire/JIT operation sets one authority-clock deadline to the earlier
+of `now + configured call duration` and the local lease deadline minus the
+existing positive cancel/join/fatal/termination tail. Checked arithmetic, exact
+equality, missing tail bounds, or insufficient slack fails before the call. One
+small per-operation mutex serializes the deadline handler with a two-way
 `active -> admitted|dropped` token: the handler cancels only while active; the
 normal path snapshots the canonical key, original shortened deadline, and exact
 host-fleet fence generation. At final commit it atomically loads one immutable
@@ -181,9 +188,11 @@ routing states. All Portable-to-legacy movement passes through hosted.
 Bootstrap issues no lease and persists `HOSTED` only after exact hosted
 read-back. A failed or cancelled canary advances the lease generation, stops
 renewal, and uses the existing `DRAINING_TO_HOSTED` state through
-`lastIssuedLeaseExpiryMax` plus the approved safety margin and local listener
-drain. Routing never left hosted, so no route mutation or queue-risk record is
-needed, but `HOSTED` is not persisted until the bounded lease residual ends.
+`lastIssuedLeaseExpiryMax` plus the approved safety margin. Routing never left
+hosted, and every released listener's local deadline is strictly earlier than
+that boundary, so no route mutation, queue-risk row, or positive controller
+drain report is needed. `HOSTED` is not persisted until the bounded lease
+residual ends.
 
 ### Durable data
 
@@ -340,12 +349,19 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
   sequence ordering, unknown fields, size limits, and generic rejection
   responses.
 - [ ] Implement the one-step session exchange and signed heartbeat response.
-- [ ] Implement exact `AcquisitionLeaseV1` validation, send-anchored monotonic
-  local expiry, authenticated local acquisition-policy epoch, and the signed
-  archive-disable set. Prove stale, future, wrong-holder, wrong-policy,
+- [ ] Implement exact `AcquisitionLeaseV1` validation, send-anchored
+  authority-clock expiry, authenticated local acquisition-policy epoch, and the
+  signed archive-disable set. Prove stale, future, wrong-holder, wrong-policy,
   wrong-local-epoch, wrong-generation, altered, late-response,
   unknown/duplicate/unsorted alias, expired, and old-cache-after-restart leases
   cannot authorize acquisition; include enabled-disabled-enabled ABA.
+- [ ] Implement one injected authority clock with Linux/QTS `CLOCK_BOOTTIME`
+  `Now` and absolute `WaitUntil`; use it for send anchors, local lease deadlines,
+  operation cancellation, final admission, and listener job acceptance. Prove
+  host suspension counts against every deadline and unsupported clock/waiter
+  capability leaves acquisition disabled with no ordinary-monotonic fallback.
+  Keep the cache and derived deadlines process-memory-only; restart/reboot begins
+  with no acquisition authority.
 - [ ] Implement the closed canonical admission-authority key and strict total V1
   field mapping. Prove repeated authority-equivalent renewals during a long poll
   preserve one admission, while one-at-a-time changes to every key field,
@@ -438,10 +454,10 @@ consumer-neutral templates under `config/examples/` or `tests/fixtures/`.
 - [ ] Implement Portable canary while routing stays hosted, with exactly one
   canary scale set and one capacity unit in the signed lease; a failed or
   cancelled canary advances the generation, stops renewal, and reuses
-  `DRAINING_TO_HOSTED` until the fleet-global issued-lease maximum plus margin
-  and local listener drain complete. Prove routing stays hosted without a new
-  mutation/queue-risk row and no cached canary lease admits at or after the
-  exact boundary.
+  `DRAINING_TO_HOSTED` until the fleet-global issued-lease maximum plus margin.
+  Prove routing stays hosted without a new mutation/queue-risk row, reaches
+  `HOSTED` without a later controller heartbeat, and admits no cached canary
+  lease at or after the exact boundary.
 - [ ] Require the canary result plus a newer same-session enabled heartbeat as
   full-capacity route-readiness evidence before self-hosted intent, but issue no
   enabled lease while routing remains hosted. After exact self-hosted read-back
@@ -472,9 +488,10 @@ and add focused Go tests; keep the current lifecycle engine and phase table.
 - [ ] Hold local epoch, eligibility, capacity, policy-digest, lease-generation,
   and fleet-fence guards through the acquisition decision.
 - [ ] Bound every poll/acquire/JIT call, its validation, and non-authorizing
-  durable preparation by the earlier ordinary deadline or monotonic local lease
-  deadline minus the proven termination tail. Serialize deadline cancellation
-  and admission with one per-operation mutex and two-way token. Snapshot the
+  durable preparation by one authority-clock deadline: the earlier of
+  `now + configured call duration` or local lease deadline minus the proven
+  termination tail. Serialize deadline cancellation and admission with one
+  per-operation mutex and two-way token. Snapshot the
   original deadline, closed admission-authority key, and exact fence generation;
   final admission atomically validates one whole current cache entry and both
   its safe deadline and the original deadline. A newer-sequence pure renewal

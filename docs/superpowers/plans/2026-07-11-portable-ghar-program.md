@@ -126,8 +126,9 @@ Execute the controller-domain portion of `2026-07-11-controller-runtime.md` usin
   and reopens only after zero old critical sections remain. Every signed lease
   authenticates that local epoch. A nonzero poll/acquire/JIT call holds the
   current host-fleet guard and epoch barrier, revalidates the complete cached
-  lease, and must finish admission before the earlier ordinary deadline or
-  monotonic local lease deadline minus the proven termination tail. One small
+  lease, and must finish admission before one authority-clock deadline: the
+  earlier of `now + configured call duration` or local lease deadline minus the
+  proven termination tail. One small
   per-operation mutex serializes deadline cancellation with a two-way
   admitted/dropped token. Each operation snapshots its original deadline, the
   closed canonical admission-authority key, and exact fence generation; final
@@ -138,7 +139,11 @@ Execute the controller-domain portion of `2026-07-11-controller-runtime.md` usin
   Ack or release a runner. Late or ambiguous effects use the existing
   idempotent journal/read-back path without reviving authority. Canary-only
   authorizes one exact scale set and one unit. Local CLI/status success alone
-  grants no authority.
+  grants no authority. One injected authority clock supplies both time and
+  absolute deadline waits; Linux/QTS uses suspend-aware `CLOCK_BOOTTIME`, and a
+  target without positive clock/waiter proof remains disabled. Lease caches and
+  derived deadlines are process-memory-only, so restart/reboot starts with no
+  acquisition authority.
 
 **Verification:**
 
@@ -220,7 +225,7 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
 - Portable and legacy use the same lease type. A hosted transition advances its
   generation, stops renewal, and waits through
   `lastIssuedLeaseExpiryMax` plus the approved safety margin before it can
-  confirm hosted. The client anchors its shorter monotonic deadline at
+  confirm hosted. The client anchors its shorter authority-clock deadline at
   heartbeat send time, rejects late responses, and the operator-approved
   heartbeat/lease values must satisfy the normative missed-renewal inequality
   in the failover plan.
@@ -233,9 +238,10 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
   transition outcomes rather than extra authority states. Bootstrap enters
   hosted only after read-back. A failed Portable or legacy canary advances its
   generation, stops renewal, and reuses draining-to-hosted until the issued-
-  lease maximum plus margin and local listener drain complete. Routing remains
-  hosted, so this residual creates no route mutation or queue-risk row, but a
-  cached canary lease is never treated as asynchronously revoked.
+  lease maximum plus margin. Routing remains hosted, and shorter local listener
+  authority has ended by that server boundary, so this residual needs no route
+  mutation, queue-risk row, or later controller drain report; a cached canary
+  lease is never treated as asynchronously revoked.
 - Desired routing mutations are persisted before bounded GitHub calls,
   transactionally claimed, and read back after success or ambiguity. One Cron
   Trigger addresses every configured deterministic fleet object and recovers
@@ -496,8 +502,12 @@ Execute every drill from the failover-deployment plan against secretless canary 
   admission-key field, fence generation, and current safe deadline;
 - failed and cancelled Portable/legacy canaries immediately after lease issue:
   generation advances and renewal stops, routing remains hosted, and `HOSTED`
-  persists only after the exact issued-lease maximum, margin, and listener-drain
-  boundary;
+  persists only after the exact issued-lease maximum and margin even when no
+  later controller heartbeat arrives;
+- host suspension with a cached lease, in-flight operation, and released
+  listener: `CLOCK_BOOTTIME` advances through suspension, the absolute waiter
+  becomes due on resume, and no expired operation or listener can Ack, release,
+  or accept work before the next heartbeat;
 - simultaneous Worker and Cron unavailability while GitHub still routes local:
   the short lease expires, no new local acquisition occurs, queued work remains
   visible, and no hosted-confirmation claim is fabricated;

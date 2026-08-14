@@ -329,9 +329,10 @@ governed `legacy`), server enrollment epoch/session, lease generation, allowed a
 exact policy digest/repository-policy revision, the authenticated local
 acquisition-policy epoch reported by that heartbeat, maximum capacity, a
 canonical bounded `archivedDisabledAliases` set of Worker-latched repository
-aliases, and a short server-owned lifetime. The client records a monotonic
-timestamp before sending the heartbeat and derives its local deadline from that
-timestamp, the server-owned duration, and the approved shortening margin. A
+aliases, and a short server-owned lifetime. The client records an
+authority-clock observation before sending the heartbeat and derives its local
+deadline from that observation, the server-owned duration, and the approved
+shortening margin. A
 response received at or after that deadline grants no lease, so request
 processing and return latency can only shorten local authority; client wall
 time never extends it. Lease installation re-enters the open epoch barrier and
@@ -341,8 +342,21 @@ live. Every cache use repeats that authenticated epoch comparison, closing an
 enabled-to-disabled-to-enabled ABA even when every other policy field returns
 to the same value.
 
-The operation snapshots one immutable verified cache entry, its monotonic local
-deadline `D_lease`, the exact current host-fleet fence generation, and a
+All acquisition-authority timestamps, comparisons, and deadline wakeups use one
+injected suspend-aware monotonic authority clock. The Linux/QTS production
+adapter uses `CLOCK_BOOTTIME` for both `Now` and absolute `WaitUntil`, so host
+suspension advances lease and operation deadlines without trusting adjustable
+wall time. A target that cannot positively prove both operations against that
+clock keeps acquisition disabled; it does not fall back to ordinary
+`CLOCK_MONOTONIC`. Tests use one fake implementation of the same small clock
+interface rather than a resume detector or second lifecycle state machine.
+The signed lease cache and every derived deadline are process-memory-only;
+controller restart begins with no authority, and per-job containers never
+restart after a host reboot. No boot-relative deadline is reconstructed from
+persisted wall time.
+
+The operation snapshots one immutable verified cache entry, its suspend-aware
+local deadline `D_lease`, the exact current host-fleet fence generation, and a
 canonical admission-authority key. That key contains every authority-bearing
 field in the closed `AcquisitionLeaseV1` schema: protocol version, fleet,
 holder, server epoch/session, lease generation, mode, policy digest,
@@ -354,7 +368,7 @@ MAC. The V1 decoder rejects an unknown, duplicate, missing, or noncanonical
 field rather than silently omitting it from the key. A schema change therefore
 requires a new closed lease version.
 
-On the same monotonic clock, checked arithmetic sets
+On that same authority clock, checked arithmetic sets
 `D_cancel = min(now + T_call, D_lease - M)`, where `T_call` is the configured
 operation duration and the existing positive forced-termination tail `M` is
 partitioned into bounded cancel/join, durable-fatal-write, and termination
@@ -371,11 +385,12 @@ active; after admission or drop it is a no-op. The normal path may persist only
 the existing non-authorizing assignment/journal preparation, then re-enters a
 short barrier-protected commit and, under the same mutex, atomically loads one
 immutable current cache entry. It changes to `admitted` only when the context is
-not cancelled, monotonic time is strictly before both the operation's original
-`D_cancel` and the current entry's own checked `D_current - M` admission
-deadline, the current entry validates completely, its admission-authority key equals the snapshot,
-the exact host-fleet fence generation and local epoch/digest still match, and
-validation and preparation completed. Signature, expiry, key, and deadline
+not cancelled, authority-clock time is strictly before both the operation's
+original `D_cancel` and the current entry's own checked `D_current - M`
+admission deadline, the current entry validates completely, its
+admission-authority key equals the snapshot, the exact host-fleet fence
+generation and local epoch/digest still match, and validation and preparation
+completed. Signature, expiry, key, and deadline
 come from that same loaded entry; validation never mixes fields from two
 renewals. Admission disarms the deadline handler before releasing the mutex;
 only admission may Ack or release a runner. The existing assignment journal
@@ -1188,10 +1203,11 @@ still drains authority the client might have received. A no-lease decision
 never advances the field. The restriction is therefore safe after host-state
 loss without a positive message from the predecessor process.
 
-The controller records monotonic time before sending the heartbeat and derives
-the strictly shorter local deadline from that attempt-start timestamp, the
-server duration, and the approved shortening margin. A response received at or
-after that deadline grants no lease. The signed disable set must be sorted,
+The controller records suspend-aware authority-clock time before sending the
+heartbeat and derives the strictly shorter local deadline from that
+attempt-start observation, the server duration, and the approved shortening
+margin. A response received at or after that deadline grants no lease. The
+signed disable set must be sorted,
 duplicate-free, bounded by, and a subset of the current repository inventory;
 every acquisition rejects an alias present in it. The controller never extends
 authority from local wall time, a cached status response, or a maintenance
@@ -1325,19 +1341,22 @@ authority state: it issues no lease and enters `HOSTED` only after every
 configured repository has been read back hosted. A failed or cancelled canary
 advances the lease generation, stops canary renewal, and uses the existing
 `DRAINING_TO_HOSTED` state until `lastIssuedLeaseExpiryMax` plus the approved
-safety margin has passed and its local listener drain is complete. Routing
-never left hosted, so hosted read-back is already satisfied and this path
-creates no GitHub routing mutation or queue-risk record. It persists `HOSTED`
-only after the bounded lease residual; no response is treated as asynchronous
-revocation.
+safety margin has passed. Routing never left hosted, so hosted read-back is
+already satisfied and this path creates no GitHub routing mutation or queue-risk
+record. Every released listener's suspend-aware local deadline is strictly
+earlier than that server boundary, so a positive controller heartbeat or
+zero-listener report is not an additional completion dependency. It persists
+`HOSTED` only after the bounded lease residual; no response is treated as
+asynchronous revocation.
 
 - `HOSTED`: every configured repository is read back hosted and no local lease
   renews.
 - `DRAINING_TO_HOSTED`: lease generation has advanced, renewal has stopped, and
   hosted mutation/read-back plus the `lastIssuedLeaseExpiryMax` boundary and
-  local listener drain are in progress. When entered from a failed canary,
-  routing is already read back hosted and only the existing lease/listener
-  boundary remains.
+  local listener drain are in progress for a local-to-hosted route transition.
+  When entered from a failed canary, routing is already read back hosted and
+  the server lease boundary alone proves that its shorter listener authority
+  has ended.
 - `PORTABLE_CANARY`: routing remains hosted; one canary-only Portable lease
   authorizes exactly one capacity unit and one persisted canary scale set.
 - `PORTABLE`: routing is read back self-hosted and a matching enabled Portable
@@ -1844,11 +1863,19 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
   missing cache, bad MAC, expired/regressing renewals, and a successor that
   would extend the original operation deadline. Race atomic cache replacement
   and prove admission validates one whole immutable entry, never mixed fields.
+- Suspend the target after a lease is cached and after a listener is released;
+  advance Worker time past server expiry and the hosted margin; on resume the
+  same `CLOCK_BOOTTIME`-backed clock has advanced, its absolute waiter cancels
+  in-flight work, and acquisition/job acceptance fail before any Ack or release.
+  Reject a target whose `Now` or `WaitUntil` clock proof is unavailable or
+  ordinary suspend-pausing `CLOCK_MONOTONIC`. Restart the controller and reboot
+  the target; neither path may recover cached authority or a derived deadline.
 - Failed/cancelled Portable and legacy canaries immediately after lease issue:
   generation advances and renewal stops; the existing draining state persists
-  through the exact issued-lease maximum, margin, and local listener boundary;
-  hosted routing is never mutated; no queue-risk row is created; and `HOSTED`
-  cannot persist early or admit from the residual lease at/after the boundary.
+  through the exact issued-lease maximum and margin even when no later
+  controller heartbeat arrives; hosted routing is never mutated; no queue-risk
+  row is created; and `HOSTED` cannot persist early or admit from the residual
+  lease at/after the boundary.
 - Released-listener job acceptance rejects an expired or superseded lease
   session/generation/local deadline in addition to acquisition epoch and fence,
   including a still-live predecessor controller at the exact expiry boundary.

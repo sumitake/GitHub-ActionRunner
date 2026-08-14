@@ -58,12 +58,15 @@ local acquisition-policy epoch/digest, mode, maximum capacity, and a bounded
 signed set of Worker-latched archived-disabled repository aliases. Portable and
 governed legacy rollback use the same lease type. The controller installs and
 uses a lease only while the existing epoch gate is open and its authenticated
-local epoch/digest remains exact. It derives its shorter monotonic deadline
-from heartbeat send time, rejects a late response, and gives each
-poll/acquire/JIT call an earlier cancellation deadline that reserves the
-bounded termination tail. Deadline cancellation and admission are serialized;
-a late or ambiguous result cannot Ack or release a runner. Missing, stale,
-mismatched, or expired leases stop new local acquisition while running jobs
+local epoch/digest remains exact. One injected authority clock supplies both
+heartbeat-send observations and absolute deadline waits; Linux/QTS uses
+`CLOCK_BOOTTIME`, and missing target proof leaves acquisition disabled. It
+derives its shorter suspend-aware deadline from heartbeat send time, rejects a
+late response, and gives each poll/acquire/JIT call an earlier cancellation
+deadline that reserves the bounded termination tail. Deadline cancellation and
+admission are serialized; a late or ambiguous result cannot Ack or release a
+runner. Missing, stale, mismatched, or expired leases stop new local acquisition
+while running jobs
 drain; a signed repository disable stops only that alias. Archive evidence has
 an approved maximum age and missing or stale evidence is restrictive. A cached
 pre-restriction lease remains bounded by its existing local deadline. A
@@ -108,8 +111,9 @@ read-backs, queue-risk clearance, and notifications are transition evidence,
 not additional authority states. Bootstrap issues no lease and enters hosted
 only after exact read-back. A failed canary advances the lease generation,
 stops renewal, and reuses draining-to-hosted until the issued-lease maximum plus
-margin and local listener drain complete. Routing never left hosted, so no route
-mutation or queue-risk record is needed; the cached lease is bounded rather than
+margin. Routing never left hosted, and shorter local listener authority has
+ended by that boundary, so no route mutation, queue-risk row, or later
+controller drain report is needed; the cached lease is bounded rather than
 described as asynchronously revoked.
 
 ## Canary-gated failback
