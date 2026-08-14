@@ -324,8 +324,8 @@ policy epoch, repository-policy revision, and capacity enter health.
 Every nonzero poll, acquire, or JIT operation enters the existing epoch-bound
 acquisition critical section, acquires a current `portable` host-fleet guard,
 and validates one cached signed acquisition lease before the external effect.
-The lease binds the fleet, exclusive holder (`portable` or governed `legacy`),
-server enrollment epoch/session, lease generation, allowed acquisition mode,
+The lease binds the protocol version, fleet, exclusive holder (`portable` or
+governed `legacy`), server enrollment epoch/session, lease generation, allowed acquisition mode,
 exact policy digest/repository-policy revision, the authenticated local
 acquisition-policy epoch reported by that heartbeat, maximum capacity, a
 canonical bounded `archivedDisabledAliases` set of Worker-latched repository
@@ -341,29 +341,49 @@ live. Every cache use repeats that authenticated epoch comparison, closing an
 enabled-to-disabled-to-enabled ABA even when every other policy field returns
 to the same value.
 
-The operation snapshots that cached lease identity and its monotonic local
-deadline `D_lease`. On the same monotonic clock, checked arithmetic sets
+The operation snapshots one immutable verified cache entry, its monotonic local
+deadline `D_lease`, the exact current host-fleet fence generation, and a
+canonical admission-authority key. That key contains every authority-bearing
+field in the closed `AcquisitionLeaseV1` schema: protocol version, fleet,
+holder, server epoch/session, lease generation, mode, policy digest,
+repository-policy revision, local policy epoch, maximum capacity, canonical
+present-or-absent canary scale set, canonical archive-disable set, and `L`.
+Only renewal-envelope data is excluded: accepted heartbeat sequence, Worker
+receipt time, absolute server expiry, the derived local deadline, and response
+MAC. The V1 decoder rejects an unknown, duplicate, missing, or noncanonical
+field rather than silently omitting it from the key. A schema change therefore
+requires a new closed lease version.
+
+On the same monotonic clock, checked arithmetic sets
 `D_cancel = min(now + T_call, D_lease - M)`, where `T_call` is the configured
 operation duration and the existing positive forced-termination tail `M` is
 partitioned into bounded cancel/join, durable-fatal-write, and termination
 slices ending strictly before `D_lease`. Equality, overflow, a missing slice,
-or insufficient slack rejects before the external effect. The exact
+or insufficient slack rejects before the external effect. The exact original
 `D_cancel` bounds the local proof, context, transport, result validation, and
-non-authorizing durable preparation; target conformance must prove those calls
-honor cancellation and the complete tail.
+non-authorizing durable preparation; no later renewal may extend it. Target
+conformance must prove those calls honor cancellation and the complete tail.
 
 One per-operation mutex serializes that deadline handler with a two-way
 in-memory completion token (`active -> admitted` or `active -> dropped`). While
 holding the mutex, the deadline handler cancels only when the token is still
 active; after admission or drop it is a no-op. The normal path may persist only
 the existing non-authorizing assignment/journal preparation, then re-enters a
-short barrier-protected commit and, under the same mutex, changes to `admitted`
-only when the context is not cancelled, monotonic time is still strictly before
-`D_cancel`, the epoch and cached-lease identity still match, and validation and
-preparation completed. Admission disarms the deadline handler before releasing
-the mutex; only admission may Ack or release a runner. If cancellation joins
-inside `M`, the handler marks an active token dropped and zeroizes the result.
-If it does not join, the handler persists fatal/zero capacity and terminates
+short barrier-protected commit and, under the same mutex, atomically loads one
+immutable current cache entry. It changes to `admitted` only when the context is
+not cancelled, monotonic time is strictly before both the operation's original
+`D_cancel` and the current entry's own checked `D_current - M` admission
+deadline, the current entry validates completely, its admission-authority key equals the snapshot,
+the exact host-fleet fence generation and local epoch/digest still match, and
+validation and preparation completed. Signature, expiry, key, and deadline
+come from that same loaded entry; validation never mixes fields from two
+renewals. Admission disarms the deadline handler before releasing the mutex;
+only admission may Ack or release a runner. The existing assignment journal
+keeps the upstream result idempotent; its assignment identity does not include
+renewal-envelope fields. A successful admission may therefore Ack or release it
+once under the current authority-equivalent lease. If cancellation joins inside
+`M`, the handler marks an active token dropped and zeroizes the result. If it
+does not join, the handler persists fatal/zero capacity and terminates
 only while the barrier still names its epoch; otherwise the policy-transition
 owner waiting on that registered critical section owns the fatal path. An
 ambiguous upstream effect remains in the existing idempotent assignment journal
@@ -389,6 +409,18 @@ Worker unavailability therefore expires the local lease and stops new
 acquisition. Work may remain queued on a self-hosted route until the Worker and
 its scheduler recover; the system never converts that availability loss into
 unbounded local authority.
+
+A routine renewal is authority-equivalent only when its canonical
+admission-authority key and host-fleet fence generation are unchanged and its
+accepted sequence is newer. Its send-anchored local deadline must not regress;
+it may update only the excluded renewal-envelope data above. This lets an
+operation whose call duration spans one or more heartbeat intervals finish
+without treating a pure renewal as revocation. Any mode, capacity, canary,
+archive restriction, policy, holder, session, generation, duration, or fence
+change is non-equivalent and drops the result. Hosted transition, re-enrollment,
+or local policy change already advances one of those bindings or clears the
+cache. There is no successor-lease protocol, remote per-operation permit, or
+second revocation mechanism.
 
 A replacement enrollment invalidates the predecessor session immediately but
 does not erase a lease that predecessor already cached. In the same atomic
@@ -1109,8 +1141,8 @@ the accepted sequence, Worker receipt time, current routing transition, a
 maintenance directive, and either one `AcquisitionLeaseV1` or an explicit
 no-lease result. The lease is the only remote acquisition authority. It binds:
 
-- fleet, holder (`portable` or governed `legacy`), enrollment epoch, and
-  session;
+- protocol version, fleet, holder (`portable` or governed `legacy`), enrollment
+  epoch, and session;
 - lease generation and allowed mode (`disabled`, `canary-only`, or `enabled`);
 - exact acquisition-policy digest, repository-policy revision, and the local
   acquisition-policy epoch accepted from this heartbeat;
@@ -1119,6 +1151,16 @@ no-lease result. The lease is the only remote acquisition authority. It binds:
   repository aliases; and
 - a short server-owned validity duration `L` and checked server expiry
   `X = Q + L`, where `Q` is this heartbeat's Worker receipt time.
+
+`AcquisitionLeaseV1` is a closed schema. Its canonical admission-authority key
+is the exact tuple of protocol version, fleet, holder, enrollment epoch/session,
+lease generation, mode, policy digest, repository-policy revision, local policy
+epoch, maximum capacity, canonical present-or-absent canary scale set,
+canonical archive-disable set, and `L`. Accepted sequence, `Q`, `X`, the
+send-anchored local deadline, and response MAC authenticate and bound a specific
+renewal envelope but do not change its authority. Unknown, duplicate, missing,
+or noncanonical fields fail V1 validation; they are never ignored while deriving
+the key.
 
 Before the current session's `leaseNotBefore`, an otherwise accepted heartbeat
 returns the closed no-lease reason `predecessor-lease-draining` and records no
@@ -1154,9 +1196,18 @@ duplicate-free, bounded by, and a subset of the current repository inventory;
 every acquisition rejects an alias present in it. The controller never extends
 authority from local wall time, a cached status response, or a maintenance
 command. Every later heartbeat replaces the prior lease; leases are not
-renewed by administrative traffic. A missing, invalid, stale, mismatched, or
-expired lease stops new acquisition while already-running jobs drain. This is
-the defined safe degradation when the Worker or scheduler is unavailable.
+renewed by administrative traffic. A newer heartbeat may replace the cache as
+an authority-equivalent routine renewal only when its canonical key and current
+host-fleet fence generation are unchanged and its send-anchored local deadline
+does not regress. A poll/acquire/JIT operation retains its original cancellation
+deadline but may finish across such renewals: final admission atomically loads
+one immutable current cache entry, validates signature, expiry, key, and local
+deadline from that same entry, and requires the original key, exact fence
+generation, local epoch/digest, and both deadlines still to match. Any
+authority-field change, no-lease response, missing cache, invalid signature,
+stale sequence, regressing deadline, mismatch, or expiry drops admission while
+already-running jobs drain. This is the defined safe degradation when the
+Worker or scheduler is unavailable.
 
 The §6.2 heartbeat/lease inequality is normative for this protocol. A
 configuration that cannot tolerate its operator-approved number of wholly lost
@@ -1779,6 +1830,14 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
   unjoinable fatal, transition-owned fatal, and ambiguous remote completion.
   No dropped or late result may Ack or release a runner; journal read-back must
   reconcile remote ambiguity without reviving authority.
+- Admission-authority renewal: let one long poll span repeated newer-sequence
+  pure renewals and admit its assignment exactly once while the closed canonical
+  key, fence generation, and both deadlines remain valid. Mutate each key field,
+  including `L`, canary absence/presence, and archive aliases, and separately
+  mutate the fence generation; every case drops. Reject unknown lease fields,
+  missing cache, bad MAC, expired/regressing renewals, and a successor that
+  would extend the original operation deadline. Race atomic cache replacement
+  and prove admission validates one whole immutable entry, never mixed fields.
 - Released-listener job acceptance rejects an expired or superseded lease
   session/generation/local deadline in addition to acquisition epoch and fence,
   including a still-live predecessor controller at the exact expiry boundary.

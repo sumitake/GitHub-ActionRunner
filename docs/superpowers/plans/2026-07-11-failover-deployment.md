@@ -98,6 +98,14 @@ lifecycle-owned responsibility the closed interfaces cannot express safely.
 - server-owned validity duration `L`, checked server expiry equal to this
   heartbeat's Worker receipt time plus `L`, and response MAC.
 
+V1 is a closed schema. Its canonical admission-authority key contains every
+authority-bearing field above, including protocol version, canonical
+present-or-absent canary scale set, canonical archive-disable set, and `L`.
+Only the accepted heartbeat sequence, Worker receipt time, absolute expiry,
+derived local deadline, and response MAC are renewal-envelope data. Unknown,
+duplicate, missing, or noncanonical fields fail validation instead of being
+ignored by the key derivation.
+
 The controller records monotonic time before sending the heartbeat and derives
 the lease deadline from that attempt-start timestamp, the returned duration,
 and the approved shortening margin. A response received at or after that
@@ -116,12 +124,21 @@ positive cancel/join/fatal/termination tail. Checked arithmetic, exact equality,
 missing tail bounds, or insufficient slack fails before the call. One small
 per-operation mutex serializes the deadline handler with a two-way
 `active -> admitted|dropped` token: the handler cancels only while active; the
-normal path admits only before the shortened deadline with uncancelled context
-and unchanged epoch/lease identity, then disarms the handler. A dropped, late,
-or ambiguous result may enter only the existing reconciliation journal and
-cannot Ack or release a runner. The existing local
-`AcquisitionPermitProvider` derives its proof from the cached lease, performs
-no network call, and creates no remote per-operation state.
+normal path snapshots the canonical key, original shortened deadline, and exact
+host-fleet fence generation. At final commit it atomically loads one immutable
+current cache entry and admits only before both the original deadline and that
+entry's checked local deadline minus the same termination tail, with uncancelled
+context, a fully valid equal key, and unchanged epoch/digest/fence generation,
+then disarms the handler. Signature, expiry, key, and deadline come from that
+same entry. A newer-sequence routine
+renewal may replace only renewal-envelope data, keep the key/fence unchanged,
+and move its send-anchored deadline forward; it therefore does not starve a
+long operation. Any authority change or regressing renewal drops. A dropped,
+late, or ambiguous result may enter only the existing idempotent reconciliation
+journal, whose assignment identity excludes renewal-envelope fields, and cannot
+Ack or release a runner. The existing local `AcquisitionPermitProvider` derives
+its proof from the cached lease, performs no network call, and creates no remote
+per-operation state.
 
 Archive restriction is deliberately bounded rather than falsely described as
 instantaneous. The Worker persists the last successful archive observation for
@@ -326,6 +343,12 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
   wrong-local-epoch, wrong-generation, altered, late-response,
   unknown/duplicate/unsorted alias, expired, and old-cache-after-restart leases
   cannot authorize acquisition; include enabled-disabled-enabled ABA.
+- [ ] Implement the closed canonical admission-authority key and strict total V1
+  field mapping. Prove repeated authority-equivalent renewals during a long poll
+  preserve one admission, while one-at-a-time changes to every key field,
+  canary absence/presence, archive aliases, `L`, or fence generation drop it.
+  Reject unknown/missing fields, bad MAC, stale sequence, regressing deadline,
+  and mixed-entry cache reads.
 - [ ] Prove missing/stale archive evidence is restrictive, a failed metadata
   read cannot refresh evidence age, and the archive event-to-denial interval
   never exceeds the approved evidence-age plus remaining-local-lease bound. A
@@ -444,9 +467,14 @@ and add focused Go tests; keep the current lifecycle engine and phase table.
 - [ ] Bound every poll/acquire/JIT call, its validation, and non-authorizing
   durable preparation by the earlier ordinary deadline or monotonic local lease
   deadline minus the proven termination tail. Serialize deadline cancellation
-  and admission with one per-operation mutex and two-way token; only a current,
-  uncancelled, pre-deadline admission may Ack or release a runner. Route late or
-  ambiguous remote effects through the existing journal/read-back path.
+  and admission with one per-operation mutex and two-way token. Snapshot the
+  original deadline, closed admission-authority key, and exact fence generation;
+  final admission atomically validates one whole current cache entry and both
+  its safe deadline and the original deadline. A newer-sequence pure renewal
+  may change only envelope timing/MAC fields and cannot extend the original
+  deadline; any authority or fence change drops. Only a current, uncancelled,
+  pre-deadline admission may Ack or release a runner. Route late or ambiguous
+  remote effects through the existing idempotent journal/read-back path.
 - [ ] On missing/expired/mismatched lease, transition effective capacity to zero
   through the existing barrier; running jobs drain normally.
 - [ ] Bind every released listener to the lease enrollment session/generation

@@ -129,11 +129,16 @@ Execute the controller-domain portion of `2026-07-11-controller-runtime.md` usin
   lease, and must finish admission before the earlier ordinary deadline or
   monotonic local lease deadline minus the proven termination tail. One small
   per-operation mutex serializes deadline cancellation with a two-way
-  admitted/dropped token; only a current, uncancelled, pre-deadline admission
-  may Ack or release a runner. Late or ambiguous effects use the existing
-  journal/read-back path without reviving authority. Canary-only authorizes one
-  exact scale set and one unit. Local CLI/status success alone grants no
-  authority.
+  admitted/dropped token. Each operation snapshots its original deadline, the
+  closed canonical admission-authority key, and exact fence generation; final
+  admission atomically validates one immutable current cache entry against that
+  snapshot and both deadlines. Newer-sequence pure renewals may move only
+  envelope timing/MAC fields, so long polls do not starve; any authority or
+  fence change drops. Only a current, uncancelled, pre-deadline admission may
+  Ack or release a runner. Late or ambiguous effects use the existing
+  idempotent journal/read-back path without reviving authority. Canary-only
+  authorizes one exact scale set and one unit. Local CLI/status success alone
+  grants no authority.
 
 **Verification:**
 
@@ -204,10 +209,14 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
   a bounded signed set of Worker-latched archived-disabled repository aliases,
   so one repository can fail closed without stalling the rest of the fleet.
   Every poll/acquire/JIT admission must complete before its lease-derived
-  cancellation deadline; late or ambiguous results cannot Ack or release a
-  runner. Missing or stale archive evidence is restrictive, and the explicit
-  event-to-denial bound is evidence age plus remaining local lease; the design
-  does not claim asynchronous revocation of a cached lease.
+  cancellation deadline. Routine renewals preserve a long in-flight operation
+  only when the closed canonical admission-authority key and exact host-fleet
+  fence generation remain equal; final admission validates one whole immutable
+  current cache entry before both its safe deadline and the operation's original
+  deadline. Late, ambiguous, non-equivalent, or mixed-entry results cannot Ack
+  or release a runner. Missing or stale archive evidence is restrictive, and
+  the explicit event-to-denial bound is evidence age plus remaining local
+  lease; the design does not claim asynchronous revocation of a cached lease.
 - Portable and legacy use the same lease type. A hosted transition advances its
   generation, stops renewal, and waits through
   `lastIssuedLeaseExpiryMax` plus the approved safety margin before it can
@@ -479,6 +488,9 @@ Execute every drill from the failover-deployment plan against secretless canary 
 - host watchdog restart and host reboot;
 - adapter/broker/helper/verifier failure, socket replacement, token-ledger rollback, and contradiction;
 - delayed, duplicate, reordered, replayed, and dropped heartbeats;
+- repeated newer-sequence authority-equivalent renewals across a poll longer
+  than one heartbeat interval, plus one-at-a-time mutation of every closed
+  admission-key field, fence generation, and current safe deadline;
 - simultaneous Worker and Cron unavailability while GitHub still routes local:
   the short lease expires, no new local acquisition occurs, queued work remains
   visible, and no hosted-confirmation claim is fabricated;

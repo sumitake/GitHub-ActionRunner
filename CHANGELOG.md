@@ -55,8 +55,11 @@ Nothing in this section has shipped as a tagged release.
   every per-fleet Durable Object is discoverable without a second registry.
 - Bound cached leases to the local acquisition-policy epoch and bounded each
   poll/acquire/JIT admission inside the lease lifetime with serialized
-  cancellation, closing policy ABA and post-expiry completion without adding a
-  revocation service or parallel state machine.
+  cancellation. A closed admission-authority key now survives routine heartbeat
+  renewal without starving long polls while every real policy, fence, holder,
+  generation, capacity, archive, or duration change still drops admission. This
+  closes policy ABA and post-expiry completion without adding a revocation
+  service or parallel state machine.
 - Advanced the exact Go toolchain pin from 1.26.5 to 1.26.6 after the required
   vulnerability gate identified four reachable standard-library advisories.
 - Clarified the standalone product boundary: consumer repositories and
