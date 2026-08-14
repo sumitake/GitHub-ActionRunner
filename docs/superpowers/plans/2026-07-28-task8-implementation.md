@@ -357,6 +357,18 @@ The implementation must fail closed against:
   terminator; the API returns failure in tests and never reports quiescence.
   Tests release the injected blocked goroutine after observing termination so
   the test process itself has no leak.
+- [ ] Keep the existing per-operation two-way completion token and deadline
+  handler armed through any Ack or listener-release attempt. Persist the
+  existing idempotent effect intent without holding the token mutex, then use
+  that mutex only for short whole-cache-entry checks immediately before and
+  after the at-most-once effect. Both checks require active, uncancelled,
+  strictly pre-deadline state and the captured authority key, epoch/digest, and
+  fence; the post-effect check alone may admit and disarm. The held-listener
+  gate separately enforces its captured original local lease deadline at the
+  actual release point. Ack is non-authorizing. Any cancel, timeout, lost race,
+  mismatch, or uncertain result drops/zeroizes and uses existing read-back
+  without retry. RED tests suspend/deschedule after intent, after the last look,
+  and in flight, including exact equality and handler-versus-post-effect order.
 - [ ] A repository poll cycle owns one epoch reconciliation critical section
   from before lease acquisition through `Poll`, all receipt/event/offer and
   acquisition persistence, demand and broker projection, and `Ack`. The
@@ -437,9 +449,13 @@ The implementation must fail closed against:
   acquisition completion, only for the still-current epoch, and is skipped
   after cancellation.
 - [ ] Ack only after batch events, offers, acquisition result, demand, and
-  broker projections are durable. Preserve the current exact-redelivery
-  protocol. A completed acquisition replay reuses its durable result and does
-  not call `Acquire` twice; an ambiguous acquisition cannot Ack.
+  broker projections are durable, and route it through the still-armed
+  operation effect guard above. Ack is non-authorizing: cancellation before an
+  attempt suppresses it, and an attempt that may have happened becomes durable
+  ambiguity for exact read-back rather than runner authority or a retry.
+  Preserve the current exact-redelivery protocol. A completed acquisition
+  replay reuses its durable result and does not call `Acquire` twice; an
+  ambiguous acquisition cannot start another Ack.
 - [ ] `AdmitOnce` accepts only broker decisions whose durable assignment is
   `acquired`, persists `CAPACITY_RESERVED`, and leaves runner creation to
   reconciliation. Duplicate batches and decisions are harmless; repository,
@@ -465,6 +481,13 @@ The implementation must fail closed against:
   permit for `jit`. Any mismatch closes acquired authority without calling
   `GenerateJIT` and follows Task 7 cleanup-only resolution. Cleanup-only
   GitHub reads/removals remain possible without minting acquisition authority.
+- [ ] Bind the held-listener release request to the exact original local lease
+  deadline captured by the guarded JIT operation. At the actual release point,
+  the gate uses the same suspend-aware authority clock and refuses at or after
+  that deadline or on session/generation/epoch/fence mismatch. Only a
+  trustworthy release that also wins the post-effect operation barrier may be
+  admitted; a possibly released but dropped/ambiguous listener remains governed
+  by the same deadline and Task 7 read-back, never by a second release attempt.
 - [ ] Preserve Task 7's deterministic-name, stale-registration cleanup,
   secret destruction, and ambiguous-release rules. A JIT authority/close
   failure after upstream may have acted marks the assignment ambiguous and is

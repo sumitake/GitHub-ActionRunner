@@ -220,8 +220,14 @@ controller anchors its shorter local deadline at heartbeat send time, rejects
 a response that arrives too late, and bounds every poll/acquire/JIT admission by
 an earlier cancellation deadline that reserves the existing termination tail.
 A per-operation mutex makes deadline cancellation mutually exclusive with its
-two-way admitted/dropped decision; late and ambiguous results cannot Ack or
-release a runner. One injected authority clock supplies both observations and
+two-way admitted/dropped decision. The handler remains armed through one
+journal-authorized at-most-once effect attempt, with short whole-entry checks
+immediately before and after it and no mutex held across I/O. The listener gate
+enforces its captured local lease deadline at the actual release point; Ack is
+non-authorizing, and late or ambiguous results cannot release a runner or cause
+a retry. This assigns authority where it is enforceable instead of pretending a
+userspace clock check can be atomic with a remote send. One injected authority
+clock supplies both observations and
 absolute deadline waits; Linux/QTS uses suspend-aware `CLOCK_BOOTTIME`, while a
 target without positive clock/waiter proof remains acquisition-disabled. Host
 sleep therefore consumes cached lease, operation, and listener lifetime without

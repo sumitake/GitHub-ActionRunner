@@ -379,32 +379,55 @@ non-authorizing durable preparation; no later renewal may extend it. Target
 conformance must prove those calls honor cancellation and the complete tail.
 
 One per-operation mutex serializes that deadline handler with a two-way
-in-memory completion token (`active -> admitted` or `active -> dropped`). While
-holding the mutex, the deadline handler cancels only when the token is still
-active; after admission or drop it is a no-op. The normal path may persist only
-the existing non-authorizing assignment/journal preparation, then re-enters a
-short barrier-protected commit and, under the same mutex, atomically loads one
-immutable current cache entry. It changes to `admitted` only when the context is
-not cancelled, authority-clock time is strictly before both the operation's
-original `D_cancel` and the current entry's own checked `D_current - M`
-admission deadline, the current entry validates completely, its
-admission-authority key equals the snapshot, the exact host-fleet fence
-generation and local epoch/digest still match, and validation and preparation
-completed. Signature, expiry, key, and deadline
-come from that same loaded entry; validation never mixes fields from two
-renewals. Admission disarms the deadline handler before releasing the mutex;
-only admission may Ack or release a runner. The existing assignment journal
-keeps the upstream result idempotent; its assignment identity does not include
-renewal-envelope fields. A successful admission may therefore Ack or release it
-once under the current authority-equivalent lease. If cancellation joins inside
-`M`, the handler marks an active token dropped and zeroizes the result. If it
-does not join, the handler persists fatal/zero capacity and terminates
-only while the barrier still names its epoch; otherwise the policy-transition
-owner waiting on that registered critical section owns the fatal path. An
-ambiguous upstream effect remains in the existing idempotent assignment journal
-for read-back/reconciliation but cannot release a runner from a dropped result.
-The existing `AcquisitionPermitProvider` interface derives the operation proof
-locally from the cached lease and creates no remote per-operation state.
+in-memory completion token (`active -> admitted` or `active -> dropped`). The
+handler waits on the same injected authority clock at the exact original
+`D_cancel`; while holding the mutex it changes only an active token to dropped
+and cancels the operation context. Admitted and dropped are terminal. The mutex
+is never held across durable I/O or an external call.
+
+The normal path first persists only the existing non-authorizing assignment and
+idempotent effect-intent preparation. It then enters a short pre-effect barrier
+and, under the mutex, atomically loads one immutable current cache entry. The
+effect may begin only when the token is active, the context is not cancelled,
+authority-clock time is strictly before both the original `D_cancel` and the
+current entry's checked `D_current - M` deadline, the current entry validates
+completely, its admission-authority key equals the operation snapshot, and the
+exact host-fleet fence generation and local epoch/digest still match. A listener
+release also requires time strictly before the original local lease deadline
+captured for that listener. Signature, expiry, key, and deadline come from the
+same loaded entry; validation never mixes fields from two renewals. Any failure
+changes an active token to dropped and invokes no effect.
+
+After that last look, the one journal-authorized normal path invokes Ack or
+listener release at most once with the original deadline-bound context while
+the token remains active and the handler remains armed. No other path may infer
+permission to invoke from an active token. The held-listener gate independently
+checks the captured session, lease generation, local epoch/fence, and original
+local lease deadline on the same authority clock at the actual release point;
+at or after that deadline it refuses release. Ack is non-authorizing: it may
+retire only the already-durable message attempt and cannot make an assignment
+eligible or release a runner. A userspace caller cannot make an external send
+atomic with its preceding clock check, so safety does not depend on Ack arrival
+time: Ack carries no authority, while the listener repeats the authority check
+where runner release actually occurs.
+
+Immediately after the effect returns, the normal path re-enters the mutex and
+atomically loads one whole current cache entry again. It changes active to
+admitted and disarms the handler only for a trustworthy success from that exact
+attempt while the context remains uncancelled, time remains strictly before the
+same original and current deadlines, and the complete key, fence, epoch, and
+digest checks still pass. Equality fails closed. Every error, timeout,
+cancellation, deadline-handler win, post-effect mismatch, or uncertain outcome
+sets or leaves dropped and zeroizes the in-memory result. If cancellation joins
+inside `M`, existing reconciliation owns any durable effect ambiguity. If it
+does not join, the handler persists fatal/zero capacity and terminates only
+while the barrier still names its epoch; otherwise the policy-transition owner
+waiting on that registered critical section owns the fatal path. An Ack or
+listener release that may already have happened is never retried: the existing
+assignment/effect journal provides read-back and reconciliation, and a possibly
+released listener still self-denies at its original local deadline. The
+existing `AcquisitionPermitProvider` derives the operation proof locally from
+the cached lease and creates no remote per-operation state.
 
 The Durable Object renews a lease only in the signed response to an accepted
 heartbeat whose health, active holder, fence generation, policy digest,
@@ -1226,12 +1249,13 @@ renewed by administrative traffic. A newer heartbeat may replace the cache as
 an authority-equivalent routine renewal only when its canonical key and current
 host-fleet fence generation are unchanged and its send-anchored local deadline
 does not regress. A poll/acquire/JIT operation retains its original cancellation
-deadline but may finish across such renewals: final admission atomically loads
-one immutable current cache entry, validates signature, expiry, key, and local
-deadline from that same entry, and requires the original key, exact fence
-generation, and local epoch/digest to remain exact. Authority-clock time must
-also be strictly before both the operation's original cancellation deadline and
-the current entry's checked admission deadline. Any
+deadline but may finish across such renewals: its pre-effect and post-effect
+barriers each atomically load one immutable current cache entry, validate
+signature, expiry, key, and local deadline from that same entry, and require the
+original key, exact fence generation, and local epoch/digest to remain exact.
+Final admission occurs only in the post-effect barrier. Authority-clock time
+must also be strictly before both the operation's original cancellation deadline
+and the current entry's checked admission deadline. Any
 authority-field change, no-lease response, missing cache, invalid signature,
 stale sequence, regressing deadline, mismatch, or expiry drops admission while
 already-running jobs drain. This is the defined safe degradation when the
@@ -1870,8 +1894,12 @@ Upstream runner binaries, scale-set binaries, and action archives are never comm
   missing/expired tail slices, insufficient slack, cancellation-resistant
   transport, late success, timer-versus-admission serialization, same-epoch
   unjoinable fatal, transition-owned fatal, and ambiguous remote completion.
-  No dropped or late result may Ack or release a runner; journal read-back must
-  reconcile remote ambiguity without reviving authority.
+  Suspend or deschedule after durable intent, after the last pre-effect check,
+  and while Ack/release is in flight; the listener gate must refuse an expired
+  release at the point of effect, and the post-effect barrier must never admit a
+  deadline-handler loss. Ack remains non-authorizing. No dropped or late result
+  may release a runner; journal read-back must reconcile remote ambiguity
+  without retry or revived authority.
 - Admission-authority renewal: let one long poll span repeated newer-sequence
   pure renewals and admit its assignment exactly once while the closed canonical
   key, fence generation, and both deadlines remain valid. Mutate each key field,

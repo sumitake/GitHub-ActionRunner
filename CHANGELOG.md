@@ -62,7 +62,12 @@ Nothing in this section has shipped as a tagged release.
   renewal without starving long polls while every real policy, fence, holder,
   generation, capacity, archive, or duration change still drops admission. This
   closes policy ABA and post-expiry completion without adding a revocation
-  service or parallel state machine. Failed canaries likewise reuse the existing
+  service or parallel state machine. The same deadline remains armed through
+  each at-most-once Ack or listener-release attempt; short pre/post barriers and
+  the held listener's own point-of-release deadline check close suspend gaps
+  without holding a mutex across I/O. Ack remains non-authorizing, and ambiguous
+  effects use the existing journal/read-back path without retry. Failed canaries
+  likewise reuse the existing
   draining-to-hosted lease boundary instead of claiming instant cached-lease
   revocation without adding a controller-drain dependency. Linux/QTS authority
   deadlines use one suspend-aware `CLOCK_BOOTTIME` adapter for both time and

@@ -64,8 +64,11 @@ heartbeat-send observations and absolute deadline waits; Linux/QTS uses
 derives its shorter suspend-aware deadline from heartbeat send time, rejects a
 late response, and gives each poll/acquire/JIT call an earlier cancellation
 deadline that reserves the bounded termination tail. Deadline cancellation and
-admission are serialized; a late or ambiguous result cannot Ack or release a
-runner. Missing, stale, mismatched, or expired leases stop new local acquisition
+admission are serialized with short pre/post checks while the handler remains
+armed through one at-most-once effect attempt. The listener gate enforces its
+captured local lease deadline at the actual release point; Ack is
+non-authorizing. A late or ambiguous result cannot release a runner or trigger
+a retry. Missing, stale, mismatched, or expired leases stop new local acquisition
 while running jobs
 drain; a signed repository disable stops only that alias. Archive evidence has
 an approved maximum age and missing or stale evidence is restrictive. A cached

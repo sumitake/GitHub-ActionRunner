@@ -131,13 +131,17 @@ Execute the controller-domain portion of `2026-07-11-controller-runtime.md` usin
   proven termination tail. One small
   per-operation mutex serializes deadline cancellation with a two-way
   admitted/dropped token. Each operation snapshots its original deadline, the
-  closed canonical admission-authority key, and exact fence generation; final
-  admission atomically validates one immutable current cache entry against that
-  snapshot and both deadlines. Newer-sequence pure renewals may move only
+  closed canonical admission-authority key, and exact fence generation. The
+  deadline stays armed while one journal-authorized path performs an at-most-once
+  Ack or listener-release attempt; no mutex is held across journal or external
+  I/O. Short barriers immediately before and after the effect each atomically
+  validate one immutable current cache entry against that snapshot and both
+  deadlines. The held listener independently checks its original local deadline
+  at the actual release point. Newer-sequence pure renewals may move only
   envelope timing/MAC fields, so long polls do not starve; any authority or
-  fence change drops. Only a current, uncancelled, pre-deadline admission may
-  Ack or release a runner. Late or ambiguous effects use the existing
-  idempotent journal/read-back path without reviving authority. Canary-only
+  fence change drops. Ack is non-authorizing and cannot make work eligible or
+  release a runner. Late or ambiguous effects use the existing idempotent
+  journal/read-back path without retry or revived authority. Canary-only
   authorizes one exact scale set and one unit. Local CLI/status success alone
   grants no authority. One injected authority clock supplies both time and
   absolute deadline waits; Linux/QTS uses suspend-aware `CLOCK_BOOTTIME`, and a
@@ -216,10 +220,13 @@ Execute the Worker, Durable Object, GitHub outbox, canary, email, and webhook po
   Every poll/acquire/JIT admission must complete before its lease-derived
   cancellation deadline. Routine renewals preserve a long in-flight operation
   only when the closed canonical admission-authority key and exact host-fleet
-  fence generation remain equal; final admission validates one whole immutable
-  current cache entry before both its safe deadline and the operation's original
-  deadline. Late, ambiguous, non-equivalent, or mixed-entry results cannot Ack
-  or release a runner. Missing or stale archive evidence is restrictive, and
+  fence generation remain equal. The deadline stays armed through the
+  at-most-once Ack or listener-release attempt; final admission revalidates one
+  whole immutable current cache entry after the effect and before both its safe
+  deadline and the operation's original deadline. A held listener also enforces
+  its captured local lease deadline at the release point. Late, ambiguous,
+  non-equivalent, or mixed-entry results cannot release a runner, and Ack itself
+  grants no authority. Missing or stale archive evidence is restrictive, and
   the explicit event-to-denial bound is evidence age plus remaining local
   lease; the design does not claim asynchronous revocation of a cached lease.
 - Portable and legacy use the same lease type. A hosted transition advances its

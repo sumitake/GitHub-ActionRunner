@@ -132,18 +132,25 @@ equality, missing tail bounds, or insufficient slack fails before the call. One
 small per-operation mutex serializes the deadline handler with a two-way
 `active -> admitted|dropped` token: the handler cancels only while active; the
 normal path snapshots the canonical key, original shortened deadline, and exact
-host-fleet fence generation. At final commit it atomically loads one immutable
-current cache entry and admits only before both the original deadline and that
-entry's checked local deadline minus the same termination tail, with uncancelled
-context, a fully valid equal key, and unchanged epoch/digest/fence generation,
-then disarms the handler. Signature, expiry, key, and deadline come from that
-same entry. A newer-sequence routine
+host-fleet fence generation. The handler uses that same suspend-aware clock and
+remains armed while one journal-authorized path performs an at-most-once Ack or
+listener-release attempt; neither durable nor external I/O holds the mutex. A
+short barrier immediately before the effect atomically loads one immutable
+current cache entry and requires both the original deadline and that entry's
+checked local deadline minus the same termination tail, uncancelled context, a
+fully valid equal key, and unchanged epoch/digest/fence generation. Listener
+release also requires its captured original local lease deadline, which the
+held-listener gate rechecks at the actual release point. A second short barrier
+after a trustworthy success repeats those checks and only then changes the token
+to admitted and disarms the handler. Signature, expiry, key, and deadline come
+from each whole loaded entry. A newer-sequence routine
 renewal may replace only renewal-envelope data, keep the key/fence unchanged,
 and move its send-anchored deadline forward; it therefore does not starve a
 long operation. Any authority change or regressing renewal drops. A dropped,
 late, or ambiguous result may enter only the existing idempotent reconciliation
 journal, whose assignment identity excludes renewal-envelope fields, and cannot
-Ack or release a runner. The existing local `AcquisitionPermitProvider` derives
+release a runner or be retried. Ack is non-authorizing and cannot make work
+eligible. The existing local `AcquisitionPermitProvider` derives
 its proof from the cached lease, performs no network call, and creates no remote
 per-operation state.
 
@@ -501,12 +508,16 @@ and add focused Go tests; keep the current lifecycle engine and phase table.
   termination tail. Serialize deadline cancellation and admission with one
   per-operation mutex and two-way token. Snapshot the
   original deadline, closed admission-authority key, and exact fence generation;
-  final admission atomically validates one whole current cache entry and both
-  its safe deadline and the original deadline. A newer-sequence pure renewal
-  may change only envelope timing/MAC fields and cannot extend the original
-  deadline; any authority or fence change drops. Only a current, uncancelled,
-  pre-deadline admission may Ack or release a runner. Route late or ambiguous
-  remote effects through the existing idempotent journal/read-back path.
+  keep the handler armed through one journal-authorized at-most-once Ack or
+  listener-release attempt, and hold no mutex across durable or external I/O.
+  Short barriers immediately before and after the effect each atomically
+  validate one whole current cache entry and both its safe deadline and the
+  original deadline; listener release also enforces its captured original local
+  lease deadline inside the held-listener gate at the actual release point. A
+  newer-sequence pure renewal may change only envelope timing/MAC fields and
+  cannot extend the original deadline; any authority or fence change drops.
+  Ack is non-authorizing. Route every late or ambiguous effect through the
+  existing idempotent journal/read-back path without retry or runner release.
 - [ ] On missing/expired/mismatched lease, transition effective capacity to zero
   through the existing barrier; running jobs drain normally.
 - [ ] Bind every released listener to the lease enrollment session/generation
