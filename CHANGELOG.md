@@ -47,7 +47,10 @@ Nothing in this section has shipped as a tagged release.
 - Made operational reliability, practical simplicity, and clear boundaries
   blocking design criteria; simplified the planned external control plane to
   one signed heartbeat lease, one Cron scheduler, six routing states, and
-  authoritative receipt-based cutover verification.
+  authoritative receipt-based cutover verification. Heartbeat lease renewal
+  now independently enforces the bounded selector-evidence age, so missed Cron
+  delivery cannot extend local authority indefinitely or require a second
+  scheduler.
 - Made archive restriction honestly lease-bounded and fail-closed on stale
   evidence; already-released listeners remain bounded by their original local
   lease deadline rather than an impossible replacement-response revocation.

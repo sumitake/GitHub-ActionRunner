@@ -440,6 +440,12 @@ modify `worker/src/protocol/version.ts` and configuration schemas.
   structured responses and exact read-back.
 - [ ] Bind hosted confirmation to routing companions, default-branch head,
   workflow blob/content digest, job/check identity, and route-attestation.
+- [ ] On every heartbeat lease decision, compare Worker time with the persisted
+  exact selector-evidence receipt time for every configured repository. Missing,
+  invalid, mismatched, or stale evidence must atomically advance lease
+  generation, persist the existing hosted transition and due work, and return
+  no lease even when Cron delivery is absent. Prove the one Cron scheduler can
+  later resume that work; do not add a heartbeat scheduler or watcher.
 - [ ] Advance lease generation and stop renewal before any hosted transition;
   require the `lastIssuedLeaseExpiryMax` boundary and safety margin before
   hosted confirmation.
@@ -475,7 +481,9 @@ consumer-neutral templates under `config/examples/` or `tests/fixtures/`.
 - [ ] Implement legacy canary and explicit legacy routing with the same lease
   type and one host fence. Prove watchdog races cannot yield dual holders.
 - [ ] Add stale/late/wrong-head/wrong-label/wrong-environment canary tests and
-  combined Worker/GitHub/host failure tests.
+  combined Worker/GitHub/host failure tests. Stop Cron after one valid selector
+  observation, advance Worker time through the evidence-age boundary, and prove
+  a healthy heartbeat still returns no lease and persists resumable hosted work.
 
 ## Task 5: Integrate the controller without a second authority layer
 

@@ -10,7 +10,7 @@ and contract for the local epoch barrier and acquisition interface. Future
 external authority uses one cached, short-lived signed lease renewed by
 heartbeat; the local permit interface derives an operation proof without a
 remote per-operation call. Platform-design §9 and the failover plan are
-normative where this historical plan says “fresh Worker permit.”
+normative over any older permit wording below.
 
 **Goal:** Complete the controller's source-level poll, acquire, admit, one-job
 JIT, reconciliation, revocation, health, and command surfaces without allowing
@@ -19,8 +19,9 @@ create work.
 
 **Architecture:** One persisted acquisition epoch is the only live-policy
 barrier. Every nonzero `Poll`, `Acquire`, or `GenerateJIT` enters that epoch,
-holds one current host-fleet guard and one fresh Worker permit, revalidates its
-exact local inputs, and leaves before a policy transition returns. The
+holds one current host-fleet guard, derives one operation proof locally from one
+whole cached signed Worker lease, revalidates its exact local inputs, and leaves
+before a policy transition returns. The
 admission broker consumes `Statistics.TotalAssignedJobs` as desired runner
 count, journals exact upstream acquisition outcomes before message
 acknowledgement, and never creates a slot for a rejected or ambiguous request.
@@ -339,9 +340,10 @@ The implementation must fail closed against:
   after-persist terminator contract.
 - [ ] Each operation receives an injected explicit deadline and a fresh opaque
   operation ID. For nonzero `poll`, `acquire`, or `jit`: register in the
-  current epoch, acquire the host guard, request the exact Worker permit,
+  current epoch, acquire the host guard, derive the exact operation proof from
+  one whole current cached signed lease without a remote call or remote state,
   re-read policy/digest/mode/scale-set eligibility/effective capacity/epoch
-  and the operation-specific live lease or active reservation, invoke the
+  and that immutable lease entry, invoke the
   external call, finish any operation-specific durable result, close permit
   then host guard, and unregister. On a registration, guard, permit, or
   post-permit revalidation failure, do not invoke the external call; close
@@ -581,14 +583,15 @@ The implementation must fail closed against:
   not a deployed-runtime claim: Task 10 must replace `OpenController` only
   after its runtime manifest supplies every required lifecycle, repository,
   deadline, admission, host, and health input. That factory must still inject
-  unavailable host and Worker-permit providers until their separately planned
-  implementations land, so nonzero work remains impossible. `status --json`
+  unavailable host and lease-backed acquisition providers until their
+  separately planned implementations land, so nonzero work remains impossible.
+  `status --json`
   is the sole local non-owner path: it opens the store read-only, accepts only
   the exact current schema, and emits the closed summary without eligible
   names, repository/assignment identities, paths, or secrets. Dual-process
   mutation is prevented by writer ownership plus refusal of local admin write
   paths, not by relying on SQLite locks. Task 9 supplies only host authority;
-  the remote Worker provider remains a later failover integration.
+  the heartbeat-lease-backed provider remains a later failover integration.
 - [ ] CLI tests hold the writer ownership guard with a fake live process and
   prove every second `run` or local-write attempt fails without mutation;
   admin commands cannot fall back when the live port is absent; injected live

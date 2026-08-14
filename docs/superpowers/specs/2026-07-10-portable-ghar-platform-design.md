@@ -407,9 +407,18 @@ The existing `AcquisitionPermitProvider` interface derives the operation proof
 locally from the cached lease and creates no remote per-operation state.
 
 The Durable Object renews a lease only in the signed response to an accepted
-heartbeat whose health, active holder, fence generation, policy digest, and
-capacity match its current routing state. `canary-only` binds exactly one
-persisted canary scale set and one capacity unit. After a Portable canary
+heartbeat whose health, active holder, fence generation, policy digest,
+capacity, and persisted selector evidence match its current routing state. On
+every lease decision, Worker time must place every configured repository's
+last exact selector observation within the approved evidence-age bound.
+Missing, invalid, mismatched, or stale evidence atomically advances the lease
+generation, persists the existing hosted transition and its due work, and
+returns no lease even when Cron has not run. Earlier authority remains bounded
+only by its already-issued local deadline. This request-path fail-closed check
+does not create a second scheduler: the one Cron path remains responsible for
+bounded GitHub reads and for resuming persisted transition work.
+`canary-only` binds exactly one persisted canary scale set and one capacity
+unit. After a Portable canary
 succeeds, a newer same-session heartbeat may prove enabled intent, the expected
 policy digest, and full capacity as route-readiness evidence while routing is
 still hosted, but its response grants no enabled lease. The local change from
@@ -1185,8 +1194,9 @@ acquisition-ready health, canary/failback evidence, hosted success, or
 zero-listener quiescence evidence, does not change routing, and may leave work
 queued on an existing local route for the bounded remainder of the drain. At or
 after that same Worker-time boundary, normal routing, holder, health, fence,
-policy, and capacity checks determine whether a lease may be issued. A first
-enrollment or already-passed boundary adds no delay. A detected Worker-time
+policy, capacity, and selector-evidence-freshness checks determine whether a
+lease may be issued. A first enrollment or already-passed boundary adds no
+delay. A detected Worker-time
 anomaly fails closed with no lease and an alert rather than fabricating a
 shorter drain.
 
@@ -1478,10 +1488,13 @@ Cron also performs the operator-approved bounded selector-integrity sweep.
 Missing, changed, invalid, duplicate legacy assignment, stale evidence, or
 inaccessible selector state creates a hosted transition; repair occurs only
 after hosted is confirmed. Route confirmation binds the expected selector
-values/digests. A direct external variable mutation between sweeps can cause a
-scheduling failure, so the deployment permission boundary and bounded detection
-interval remain an explicit GitHub-API residual risk; it is never represented
-as successful local routing.
+values/digests. Independently of Cron delivery, the heartbeat lease predicate
+applies the same persisted evidence-age bound and stops renewal as described in
+§6.2, so a lost sweep cannot extend local authority indefinitely. A direct
+external variable mutation between sweeps can cause a scheduling failure, so
+the deployment permission boundary and bounded detection interval remain an
+explicit GitHub-API residual risk; it is never represented as successful local
+routing.
 
 Before a repository can count as hosted-confirmed, the Worker reads the current
 default-branch head and each candidate workflow through the same installation
