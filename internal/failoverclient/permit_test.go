@@ -54,13 +54,16 @@ func TestCachedLeasePermitRejectsStaleExpiredAndArchived(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	provider := CachedLeasePermitProvider{
+	provider, err := NewCachedLeasePermitProvider(CachedLeasePermitConfig{
 		Cache:           cache,
 		Clock:           clock,
 		Holder:          HolderPortable,
 		Fence:           7,
 		CallDuration:    2 * time.Second,
 		TerminationTail: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewCachedLeasePermitProvider: %v", err)
 	}
 	request := controller.AcquisitionPermitRequest{
 		OperationID:     "op-1",
@@ -91,6 +94,16 @@ func TestCachedLeasePermitRejectsStaleExpiredAndArchived(t *testing.T) {
 }
 
 func TestUnsupportedClockCannotAuthorize(t *testing.T) {
+	if _, err := NewCachedLeasePermitProvider(CachedLeasePermitConfig{
+		Cache:           &LeaseCache{},
+		Clock:           NewUnsupportedAuthorityClock(),
+		Holder:          HolderPortable,
+		Fence:           1,
+		CallDuration:    time.Second,
+		TerminationTail: 100 * time.Millisecond,
+	}); err == nil {
+		t.Fatal("unsupported clock accepted")
+	}
 	provider := CachedLeasePermitProvider{
 		Cache:  &LeaseCache{},
 		Clock:  NewUnsupportedAuthorityClock(),
@@ -123,13 +136,16 @@ func TestLeaseGuardCloseFailsAfterOperationDeadline(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	provider := CachedLeasePermitProvider{
+	provider, err := NewCachedLeasePermitProvider(CachedLeasePermitConfig{
 		Cache:           cache,
 		Clock:           clock,
 		Holder:          HolderPortable,
 		Fence:           7,
 		CallDuration:    2 * time.Second,
 		TerminationTail: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewCachedLeasePermitProvider: %v", err)
 	}
 	guard, err := provider.Acquire(context.Background(), controller.AcquisitionPermitRequest{
 		PolicyDigest: strings.Repeat("a", 64),
@@ -151,5 +167,28 @@ func TestLeaseGuardCloseFailsAfterOperationDeadline(t *testing.T) {
 	clock.Advance(10 * time.Second)
 	if err := guard.Close(); err == nil {
 		t.Fatal("Close after deadline succeeded")
+	}
+}
+
+func TestNewCachedLeasePermitProviderRejectsIncompleteConfig(t *testing.T) {
+	clock := NewFakeAuthorityClock(time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC))
+	if _, err := NewCachedLeasePermitProvider(CachedLeasePermitConfig{
+		Clock:           clock,
+		Holder:          HolderPortable,
+		Fence:           7,
+		CallDuration:    time.Second,
+		TerminationTail: 100 * time.Millisecond,
+	}); err == nil {
+		t.Fatal("missing cache accepted")
+	}
+	if _, err := NewCachedLeasePermitProvider(CachedLeasePermitConfig{
+		Cache:           &LeaseCache{},
+		Clock:           clock,
+		Holder:          HolderPortable,
+		Fence:           7,
+		CallDuration:    0,
+		TerminationTail: 100 * time.Millisecond,
+	}); err == nil {
+		t.Fatal("unset call duration accepted")
 	}
 }

@@ -39,6 +39,37 @@ type CachedLeasePermitProvider struct {
 	TerminationTail time.Duration
 }
 
+type CachedLeasePermitConfig struct {
+	Cache           *LeaseCache
+	Clock           AuthorityClock
+	Holder          LeaseHolder
+	Fence           uint64
+	CallDuration    time.Duration
+	TerminationTail time.Duration
+}
+
+func NewCachedLeasePermitProvider(
+	config CachedLeasePermitConfig,
+) (CachedLeasePermitProvider, error) {
+	if config.Cache == nil ||
+		config.Clock == nil ||
+		!config.Clock.Capable() ||
+		config.Fence == 0 ||
+		config.CallDuration <= 0 ||
+		config.TerminationTail <= 0 ||
+		(config.Holder != HolderPortable && config.Holder != HolderLegacy) {
+		return CachedLeasePermitProvider{}, fmt.Errorf("%w: incomplete", ErrLeasePermit)
+	}
+	return CachedLeasePermitProvider{
+		Cache:           config.Cache,
+		Clock:           config.Clock,
+		Holder:          config.Holder,
+		Fence:           config.Fence,
+		CallDuration:    config.CallDuration,
+		TerminationTail: config.TerminationTail,
+	}, nil
+}
+
 func (provider CachedLeasePermitProvider) Acquire(
 	ctx context.Context,
 	request controller.AcquisitionPermitRequest,
