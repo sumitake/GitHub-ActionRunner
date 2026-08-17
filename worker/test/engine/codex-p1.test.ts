@@ -208,19 +208,11 @@ test("canary dispatch and self-hosted read-back enter PORTABLE", async () => {
       status: 200,
       body: value ?? "self-hosted",
     }),
-    dispatchCanary: async () => ({ status: 204, runId: "run-1" }),
     observeCanary: async () => ({
       status: 200,
-      runId: "run-1",
-      body: "runner.environment=self-hosted",
+      body: "pass",
     }),
   };
-  await executeDueWork(
-    store,
-    client,
-    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
-  );
-  expect(store.fleet.canaryPassed).toBe(false);
   await executeDueWork(
     store,
     client,
@@ -317,49 +309,6 @@ test("worker fetch routes a signed heartbeat to the fleet store", async () => {
   );
   expect(response.status).toBe(200);
   expect(await response.text()).toContain('"mode":"enabled"');
-});
-
-test("accepted canary dispatch is not a canary pass", async () => {
-  const store = new MemoryFleetStore("example-fleet", {
-    now: () => "2026-01-01T00:00:10.000Z",
-  });
-  store.fleet.routingState = "HOSTED";
-  persistCanary(store, "2026-01-01T00:00:10.000Z", "PORTABLE_CANARY");
-  await executeDueWork(
-    store,
-    {
-      mutateVariable: async () => ({ status: 200 }),
-      readVariable: async () => ({ status: 200, body: "hosted" }),
-      dispatchCanary: async () => ({ status: 204, runId: "run-1" }),
-      observeCanary: async () => ({
-        status: 200,
-        runId: "run-1",
-        body: "queued",
-      }),
-    },
-    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
-  );
-  expect(store.fleet.canaryPassed).toBe(false);
-  expect(
-    store.dueWork.some(
-      (row) => row.kind === "canary-observe" && row.status === "ready",
-    ),
-  ).toBe(true);
-  await executeDueWork(
-    store,
-    {
-      mutateVariable: async () => ({ status: 200 }),
-      readVariable: async () => ({ status: 200, body: "hosted" }),
-      dispatchCanary: async () => ({ status: 204 }),
-      observeCanary: async () => ({
-        status: 200,
-        runId: "run-1",
-        body: "runner.environment=self-hosted",
-      }),
-    },
-    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
-  );
-  expect(store.fleet.canaryPassed).toBe(true);
 });
 
 test("canary-only or zero-capacity heartbeats do not enqueue self-hosted", async () => {
@@ -485,37 +434,6 @@ test("a new canary epoch clears prior canary success", () => {
   expect(store.fleet.canaryPassed).toBe(false);
 });
 
-test("canary observation must match the dispatched run identity", async () => {
-  const store = new MemoryFleetStore("example-fleet", {
-    now: () => "2026-01-01T00:00:10.000Z",
-  });
-  store.fleet.routingState = "HOSTED";
-  persistCanary(store, "2026-01-01T00:00:10.000Z", "PORTABLE_CANARY");
-  const client = {
-    mutateVariable: async () => ({ status: 200 }),
-    readVariable: async () => ({ status: 200, body: "hosted" }),
-    dispatchCanary: async () => ({ status: 201, runId: "run-new" }),
-    observeCanary: async () => ({
-      status: 200,
-      runId: "run-old",
-      body: "runner.environment=self-hosted",
-    }),
-  };
-  await executeDueWork(
-    store,
-    client,
-    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
-  );
-  await executeDueWork(
-    store,
-    client,
-    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
-  );
-  expect(store.fleet.canaryPassed).toBe(false);
-  const observed = store.dueWork.find((row) => row.kind === "canary-observe");
-  expect(observed?.payload.runId).toBe("run-new");
-});
-
 test("legacy canary readiness enqueues legacy and promotes after read-back", async () => {
   const store = portableStore();
   store.fleet.routingState = "HOSTED";
@@ -545,12 +463,7 @@ test("legacy canary readiness enqueues legacy and promotes after read-back", asy
     {
       mutateVariable: async () => ({ status: 200 }),
       readVariable: async () => ({ status: 200, body: "legacy" }),
-      dispatchCanary: async () => ({ status: 201, runId: "run-1" }),
-      observeCanary: async () => ({
-        status: 200,
-        runId: "run-1",
-        body: "pass",
-      }),
+      observeCanary: async () => ({ status: 200, body: "pass" }),
     },
     store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
   );

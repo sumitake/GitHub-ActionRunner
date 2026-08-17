@@ -9,6 +9,14 @@ import {
 } from "../../src/github/outbox";
 import { MemoryFleetStore } from "../../src/state/memory";
 
+function githubClient(body = "hosted") {
+  return {
+    mutateVariable: async () => ({ status: 200 }),
+    readVariable: async () => ({ status: 200, body }),
+    observeCanary: async () => ({ status: 200, body: "pass" }),
+  };
+}
+
 test("canary abort reuses draining-to-hosted and does not mutate GitHub", () => {
   const store = new MemoryFleetStore("example-fleet", {
     now: () => "2026-01-01T00:00:00.000Z",
@@ -31,26 +39,11 @@ test("GitHub classification and hosted read-back are required for success", asyn
   });
   persistHostedTransition(store, "2026-01-01T00:00:00.000Z");
   const batch = store.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000);
-  await executeDueWork(
-    store,
-    {
-      mutateVariable: async () => ({ status: 200 }),
-      readVariable: async () => ({ status: 200, body: "hosted" }),
-      dispatchCanary: async () => ({ status: 200, runId: "run-1" }),
-      observeCanary: async () => ({
-        status: 200,
-        runId: "run-1",
-        body: "pass",
-      }),
-      deliverEmail: async () => ({ status: 200 }),
-      deliverWebhook: async () => ({ status: 200 }),
-    },
-    batch,
-  );
+  await executeDueWork(store, githubClient("hosted"), batch);
   expect(store.fleet.routingState).toBe("HOSTED");
 });
 
-test("completed failed canary aborts into draining-to-hosted", async () => {
+test("canary observe is pass, fail, or pending", async () => {
   const store = new MemoryFleetStore("example-fleet", {
     now: () => "2026-01-01T00:00:00.000Z",
   });
@@ -59,69 +52,38 @@ test("completed failed canary aborts into draining-to-hosted", async () => {
   await executeDueWork(
     store,
     {
-      mutateVariable: async () => ({ status: 200 }),
-      readVariable: async () => ({ status: 200 }),
-      dispatchCanary: async () => ({ status: 201, runId: "run-1" }),
-      observeCanary: async () => ({
-        status: 200,
-        runId: "run-1",
-        body: "failed",
-      }),
-      deliverEmail: async () => ({ status: 200 }),
-      deliverWebhook: async () => ({ status: 200 }),
-    },
-    store.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000),
-  );
-  await executeDueWork(
-    store,
-    {
-      mutateVariable: async () => ({ status: 200 }),
-      readVariable: async () => ({ status: 200 }),
-      dispatchCanary: async () => ({ status: 201, runId: "run-1" }),
-      observeCanary: async () => ({
-        status: 200,
-        runId: "run-1",
-        body: "failed",
-      }),
-      deliverEmail: async () => ({ status: 200 }),
-      deliverWebhook: async () => ({ status: 200 }),
+      ...githubClient(),
+      observeCanary: async () => ({ status: 200, body: "queued" }),
     },
     store.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000),
   );
   expect(store.fleet.canaryPassed).toBe(false);
-  expect(store.fleet.routingState).toBe("DRAINING_TO_HOSTED");
-});
-
-test("outbox delivers notification rows when the channel succeeds", async () => {
-  const store = new MemoryFleetStore("example-fleet", {
-    now: () => "2026-01-01T00:00:00.000Z",
-  });
+  expect(store.fleet.routingState).toBe("PORTABLE_CANARY");
+  await executeDueWork(
+    store,
+    githubClient(),
+    store.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000),
+  );
+  expect(store.fleet.canaryPassed).toBe(true);
+  store.fleet.canaryPassed = false;
   store.enqueue({
-    id: "email-1",
-    kind: "notify-email",
+    id: "canary-fail",
+    kind: "canary-observe",
     dueAt: "2026-01-01T00:00:00.000Z",
     claimId: null,
     claimExpiresAt: null,
     attempts: 0,
     status: "ready",
-    payload: { eventId: "evt-1" },
+    payload: { workflow: "canary.yml" },
   });
-  const batch = store.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000);
   await executeDueWork(
     store,
     {
-      mutateVariable: async () => ({ status: 200 }),
-      readVariable: async () => ({ status: 200 }),
-      dispatchCanary: async () => ({ status: 200, runId: "run-1" }),
-      observeCanary: async () => ({
-        status: 200,
-        runId: "run-1",
-        body: "pass",
-      }),
-      deliverEmail: async () => ({ status: 200 }),
-      deliverWebhook: async () => ({ status: 200 }),
+      ...githubClient(),
+      observeCanary: async () => ({ status: 200, body: "failed" }),
     },
-    batch,
+    store.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000),
   );
-  expect(batch[0]?.status).toBe("done");
+  expect(store.fleet.canaryPassed).toBe(false);
+  expect(store.fleet.routingState).toBe("DRAINING_TO_HOSTED");
 });

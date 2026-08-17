@@ -16,7 +16,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/sumitake/portable-ghar/internal/controller"
-	"github.com/sumitake/portable-ghar/internal/failoverclient"
 	"github.com/sumitake/portable-ghar/internal/fleetfence"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
 	"github.com/sumitake/portable-ghar/internal/state"
@@ -358,20 +357,7 @@ func openProductionDisabledObserver(
 	if err != nil {
 		return fail(errCommandUnavailable)
 	}
-	leaseCache := &failoverclient.LeaseCache{}
-	external, err := newProductionExternalGraph(productionExternalGraphConfig{
-		Fleet:           expectedFleet,
-		Fence:           manifest.FleetGeneration,
-		Cache:           leaseCache,
-		CallDuration:    timings.operation,
-		TerminationTail: timings.operation,
-	})
-	if err != nil {
-		return fail(errCommandUnavailable)
-	}
-	callCtx, callCancel = context.WithTimeout(ctx, timings.operation)
-	_ = external.Populate(callCtx)
-	callCancel()
+	external := newUnavailableExternalGraph()
 	process, err := newDisabledControllerProcess(
 		disabledControllerProcessConfig{
 			Admin: disabledAdminConfig{
@@ -379,7 +365,7 @@ func openProductionDisabledObserver(
 				Authority:          localAuthority,
 				Broker:             broker,
 				Fleet:              fleetAuthority,
-				External:           external,
+				External:           &external,
 				Ownership:          ownership,
 				Desired:            desired,
 				ExpectedFleet:      expectedFleet,

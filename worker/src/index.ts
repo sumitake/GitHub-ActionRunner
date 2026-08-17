@@ -7,6 +7,8 @@ import {
 
 export { FleetDurableObject } from "./state/durable";
 
+// The Worker entrypoint stays fail-closed until inventory, HMAC secrets,
+// and a fleet store are bound. dispatchFleetRequest is the testable router.
 export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);

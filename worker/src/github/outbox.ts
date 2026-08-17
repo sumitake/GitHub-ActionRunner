@@ -6,7 +6,6 @@ export type GitHubResult = {
   status: number;
   retryAfterMs?: number;
   body?: string;
-  runId?: string;
 };
 
 export type GitHubClient = {
@@ -16,10 +15,7 @@ export type GitHubClient = {
     signal?: AbortSignal,
   ): Promise<GitHubResult>;
   readVariable(name: string, signal?: AbortSignal): Promise<GitHubResult>;
-  dispatchCanary(signal?: AbortSignal): Promise<GitHubResult>;
-  observeCanary(runId: string, signal?: AbortSignal): Promise<GitHubResult>;
-  deliverEmail(eventId: string, signal?: AbortSignal): Promise<GitHubResult>;
-  deliverWebhook(eventId: string, signal?: AbortSignal): Promise<GitHubResult>;
+  observeCanary(signal?: AbortSignal): Promise<GitHubResult>;
 };
 
 export function persistHostedTransition(
@@ -62,7 +58,7 @@ export function persistCanary(
   failPendingCanaryWork(store);
   store.enqueue({
     id: `canary-${store.fleet.leaseGeneration}`,
-    kind: "canary-dispatch",
+    kind: "canary-observe",
     dueAt: now,
     claimId: null,
     claimExpiresAt: null,
@@ -109,15 +105,10 @@ export async function executeDueWork(
   for (const row of batch) {
     throwIfAborted(signal);
     if (row.kind === "notify-email" || row.kind === "notify-webhook") {
-      await settleNotification(store, client, row, signal);
-      continue;
-    }
-    if (row.kind === "canary-dispatch") {
-      await settleCanaryDispatch(store, client, row, signal);
       continue;
     }
     if (row.kind === "canary-observe") {
-      await settleCanaryObserve(store, client, row, signal);
+      await settleCanary(store, client, row, signal);
       continue;
     }
     if (row.kind === "github-mutate-route") {
@@ -146,57 +137,28 @@ export async function executeDueWork(
   }
 }
 
-async function settleCanaryDispatch(
+async function settleCanary(
   store: MemoryFleetStore,
   client: GitHubClient,
   row: DueWorkRecord,
   signal?: AbortSignal,
 ): Promise<void> {
-  const result = await client.dispatchCanary(signal);
-  const classed = classifyGitHub(result);
-  if (classed === "ok" && result.runId) {
-    row.status = "done";
-    enqueueCanaryObserve(store, row.dueAt, result.runId);
-    store.recordAudit("canary-dispatched");
+  const result = await client.observeCanary(signal);
+  if (classifyGitHub(result) !== "ok") {
+    if (classifyGitHub(result) === "permanent") {
+      row.status = "failed";
+      return;
+    }
+    releaseClaim(row);
     return;
   }
-  if (classed === "ok") {
-    row.status = "failed";
-    store.recordAudit("canary-dispatch-missing-run");
-    return;
-  }
-  if (classed === "permanent") {
-    row.status = "failed";
-    return;
-  }
-  releaseClaim(row);
-}
-
-async function settleCanaryObserve(
-  store: MemoryFleetStore,
-  client: GitHubClient,
-  row: DueWorkRecord,
-  signal?: AbortSignal,
-): Promise<void> {
-  const runId = row.payload.runId ?? "";
-  const result = await client.observeCanary(runId, signal);
-  if (
-    classifyGitHub(result) === "ok" &&
-    runId !== "" &&
-    result.runId === runId &&
-    canaryObservationPassed(result.body)
-  ) {
+  if (canaryPassed(result.body)) {
     row.status = "done";
     store.fleet.canaryPassed = true;
     store.recordAudit("canary-passed");
     return;
   }
-  if (
-    classifyGitHub(result) === "ok" &&
-    runId !== "" &&
-    result.runId === runId &&
-    canaryObservationFailed(result.body)
-  ) {
+  if (canaryFailed(result.body)) {
     row.status = "failed";
     store.recordAudit("canary-failed");
     if (
@@ -207,38 +169,10 @@ async function settleCanaryObserve(
     }
     return;
   }
-  if (classifyGitHub(result) === "permanent") {
-    row.status = "failed";
-    return;
-  }
   releaseClaim(row);
 }
 
-async function settleNotification(
-  store: MemoryFleetStore,
-  client: GitHubClient,
-  row: DueWorkRecord,
-  signal?: AbortSignal,
-): Promise<void> {
-  const eventId = row.payload.eventId ?? "";
-  const result =
-    row.kind === "notify-email"
-      ? await client.deliverEmail(eventId, signal)
-      : await client.deliverWebhook(eventId, signal);
-  const classed = classifyGitHub(result);
-  if (classed === "ok") {
-    row.status = "done";
-    return;
-  }
-  if (classed === "permanent") {
-    row.status = "failed";
-    store.recordAudit(`notify-failed:${row.kind}`);
-    return;
-  }
-  releaseClaim(row);
-}
-
-function canaryObservationPassed(body: string | undefined): boolean {
+function canaryPassed(body: string | undefined): boolean {
   return (
     body === "pass" ||
     body === "success" ||
@@ -246,7 +180,7 @@ function canaryObservationPassed(body: string | undefined): boolean {
   );
 }
 
-function canaryObservationFailed(body: string | undefined): boolean {
+function canaryFailed(body: string | undefined): boolean {
   return (
     body === "fail" ||
     body === "failed" ||
@@ -256,40 +190,10 @@ function canaryObservationFailed(body: string | undefined): boolean {
   );
 }
 
-function enqueueCanaryObserve(
-  store: MemoryFleetStore,
-  now: string,
-  runId: string,
-): void {
-  const pending = store.dueWork.some(
-    (row) =>
-      row.kind === "canary-observe" &&
-      row.payload.runId === runId &&
-      (row.status === "ready" || row.status === "claimed"),
-  );
-  if (pending) {
-    return;
-  }
-  store.enqueue({
-    id: `canary-observe-${store.fleet.leaseGeneration}`,
-    kind: "canary-observe",
-    dueAt: now,
-    claimId: null,
-    claimExpiresAt: null,
-    attempts: 0,
-    status: "ready",
-    payload: {
-      workflow: "canary.yml",
-      runId,
-      generation: String(store.fleet.leaseGeneration),
-    },
-  });
-}
-
 function failPendingCanaryWork(store: MemoryFleetStore): void {
   for (const row of store.dueWork) {
     if (
-      (row.kind === "canary-dispatch" || row.kind === "canary-observe") &&
+      row.kind === "canary-observe" &&
       (row.status === "ready" || row.status === "claimed")
     ) {
       row.status = "failed";
@@ -323,26 +227,28 @@ function completeRoute(
     value === "self-hosted" &&
     store.fleet.routingState === "PORTABLE_CANARY"
   ) {
-    assertTransition("PORTABLE_CANARY", "PORTABLE");
-    store.transitions.push({
-      epoch: store.fleet.leaseGeneration,
-      from: "PORTABLE_CANARY",
-      to: "PORTABLE",
-    });
-    store.fleet.routingState = "PORTABLE";
-    store.recordAudit("canary-promoted-portable");
+    promote(store, "PORTABLE_CANARY", "PORTABLE", "canary-promoted-portable");
     return;
   }
   if (value === "legacy" && store.fleet.routingState === "LEGACY_CANARY") {
-    assertTransition("LEGACY_CANARY", "LEGACY");
-    store.transitions.push({
-      epoch: store.fleet.leaseGeneration,
-      from: "LEGACY_CANARY",
-      to: "LEGACY",
-    });
-    store.fleet.routingState = "LEGACY";
-    store.recordAudit("canary-promoted-legacy");
+    promote(store, "LEGACY_CANARY", "LEGACY", "canary-promoted-legacy");
   }
+}
+
+function promote(
+  store: MemoryFleetStore,
+  from: Extract<RoutingState, "PORTABLE_CANARY" | "LEGACY_CANARY">,
+  to: Extract<RoutingState, "PORTABLE" | "LEGACY">,
+  audit: string,
+): void {
+  assertTransition(from, to);
+  store.transitions.push({
+    epoch: store.fleet.leaseGeneration,
+    from,
+    to,
+  });
+  store.fleet.routingState = to;
+  store.recordAudit(audit);
 }
 
 function completeHosted(store: MemoryFleetStore): void {
