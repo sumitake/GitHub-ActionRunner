@@ -133,7 +133,9 @@ test("save uses a storage transaction instead of SQL BEGIN", () => {
   saveFleetStore(sql, store);
   expect(transacted).toBe(true);
   expect(
-    statements.some((query) => /^(BEGIN|COMMIT|ROLLBACK)\b/i.test(query.trim())),
+    statements.some((query) =>
+      /^(BEGIN|COMMIT|ROLLBACK)\b/i.test(query.trim()),
+    ),
   ).toBe(false);
 });
 

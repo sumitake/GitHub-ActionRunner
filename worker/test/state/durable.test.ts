@@ -1,7 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vitest";
 
-import { hexToBytes, MAC_HEADER, signCanonical, TIMESTAMP_HEADER } from "../../src/protocol/auth";
+import {
+  hexToBytes,
+  MAC_HEADER,
+  signCanonical,
+  TIMESTAMP_HEADER,
+} from "../../src/protocol/auth";
 import { canonicalize } from "../../src/protocol/canonical";
 import { FleetDurableObject } from "../../src/state/durable";
 import { MemoryFleetStore } from "../../src/state/memory";
@@ -81,14 +86,19 @@ function sharedSql(): {
         const isSelect = /^\s*SELECT/i.test(query);
         if (binds.length === 0) {
           if (isSelect) {
-            return { toArray: () => db.prepare(query).all() as Record<string, unknown>[] };
+            return {
+              toArray: () =>
+                db.prepare(query).all() as Record<string, unknown>[],
+            };
           }
           db.exec(query);
           return { toArray: () => [] };
         }
         const stmt = db.prepare(query);
         if (isSelect) {
-          return { toArray: () => stmt.all(...binds) as Record<string, unknown>[] };
+          return {
+            toArray: () => stmt.all(...binds) as Record<string, unknown>[],
+          };
         }
         stmt.run(...binds);
         return { toArray: () => [] };
@@ -170,6 +180,8 @@ test("overlapping same-sequence heartbeats issue only one lease", async () => {
   const statuses = [first.status, second.status].sort();
   const bodies = [await first.text(), await second.text()];
   expect(statuses).toEqual([200, 401]);
-  expect(bodies.filter((bodyText) => bodyText.includes('"mode":"enabled"'))).toHaveLength(1);
+  expect(
+    bodies.filter((bodyText) => bodyText.includes('"mode":"enabled"')),
+  ).toHaveLength(1);
   expect(transactionCalls.count).toBeGreaterThan(0);
 });

@@ -156,7 +156,8 @@ test("production fetch stays fail-closed without a fleet Durable Object", async 
       getByName(name: string) {
         routed = name;
         return {
-          fetch: async () => new Response("from-durable-object", { status: 200 }),
+          fetch: async () =>
+            new Response("from-durable-object", { status: 200 }),
         };
       },
     },

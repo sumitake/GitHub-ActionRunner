@@ -35,7 +35,8 @@ try {
   process.exit(1);
 }
 
-const keys = document && typeof document === "object" ? Object.keys(document).sort() : [];
+const keys =
+  document && typeof document === "object" ? Object.keys(document).sort() : [];
 const required = [
   "accountRef",
   "fleetIds",

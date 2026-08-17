@@ -124,15 +124,19 @@ test("matching Worker-owned policy can mint an enabled lease", async () => {
 });
 
 test("PORTABLE and LEGACY reject non-enabled snapshots", async () => {
-  const portable = await heartbeat(portableStore(), "2026-01-01T00:00:10.000Z", {
-    snapshot: {
-      policyEpoch: 1,
-      policyDigest: digest,
-      repositoryPolicyRevision: 1,
-      acquisitionMode: "canary-only",
-      unassignedReleasedListeners: 0,
+  const portable = await heartbeat(
+    portableStore(),
+    "2026-01-01T00:00:10.000Z",
+    {
+      snapshot: {
+        policyEpoch: 1,
+        policyDigest: digest,
+        repositoryPolicyRevision: 1,
+        acquisitionMode: "canary-only",
+        unassignedReleasedListeners: 0,
+      },
     },
-  });
+  );
   expect(portable.status).toBe(200);
   expect(portable.body).toContain("lease-disabled");
   expect(portable.body).not.toContain('"mode":"enabled"');
