@@ -1,9 +1,10 @@
 import {
   parseCronBindings,
   parseWorkerBindings,
+  type FleetNamespace,
   type WorkerEnv,
 } from "./bindings";
-import { dispatchFleetRequest } from "./gateway";
+import { dispatchFleetRequest, fleetIdFromBody } from "./gateway";
 import { runCronTick } from "./scheduler/cron";
 import type { DueWorkRecord } from "./state/memory";
 import {
@@ -53,11 +54,34 @@ export async function handleWorkerFetch(
   ) {
     return rejected();
   }
-  return dispatchFleetRequest(request, {
-    inventoriedFleetIds: bindings.inventoriedFleetIds,
-    secrets: bindings.secrets,
-    storeFor: storeFor ?? isolateStoreFor,
-  });
+  if (storeFor !== undefined) {
+    return dispatchFleetRequest(request, {
+      inventoriedFleetIds: bindings.inventoriedFleetIds,
+      secrets: bindings.secrets,
+      storeFor,
+    });
+  }
+  const fleets = fleetNamespace(env);
+  if (fleets === null) {
+    return rejected();
+  }
+  const fleetId = fleetIdFromBody(await request.clone().text());
+  if (fleetId === null) {
+    return rejected();
+  }
+  return fleets.getByName(fleetId).fetch(request);
+}
+
+function fleetNamespace(env: WorkerEnv): FleetNamespace | null {
+  const fleet = env.FLEET;
+  if (fleet === undefined || fleet === null || typeof fleet !== "object") {
+    return null;
+  }
+  const candidate = fleet as { getByName?: unknown };
+  if (typeof candidate.getByName !== "function") {
+    return null;
+  }
+  return fleet as FleetNamespace;
 }
 
 export async function handleWorkerScheduled(

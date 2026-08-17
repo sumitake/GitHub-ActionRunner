@@ -2,7 +2,11 @@ import type { GatewaySecrets } from "./gateway";
 import { hexToBytes } from "./protocol/auth";
 import { FLEET_ID } from "./protocol/messages";
 
-export type WorkerEnv = Record<string, string | undefined>;
+export type FleetNamespace = {
+  getByName(name: string): { fetch(request: Request): Promise<Response> };
+};
+
+export type WorkerEnv = Record<string, unknown>;
 
 export type ParsedWorkerBindings = {
   inventoriedFleetIds: string[];
@@ -19,7 +23,7 @@ export type ParsedCronBindings = ParsedWorkerBindings & {
 
 function requiredPositiveInt(env: WorkerEnv, name: string): number | null {
   const raw = env[name];
-  if (raw === undefined || raw === "") {
+  if (typeof raw !== "string" || raw === "") {
     return null;
   }
   if (!/^[1-9][0-9]*$/.test(raw)) {
@@ -32,8 +36,8 @@ function requiredPositiveInt(env: WorkerEnv, name: string): number | null {
   return value;
 }
 
-function parseFleetIds(raw: string | undefined): string[] | null {
-  if (raw === undefined || raw === "") {
+function parseFleetIds(raw: unknown): string[] | null {
+  if (typeof raw !== "string" || raw === "") {
     return null;
   }
   const fleetIds = raw.split(",").map((item) => item.trim());
@@ -82,7 +86,7 @@ export function parseWorkerBindings(
   }
   let hmacKey: Uint8Array;
   try {
-    hmacKey = hexToBytes(env.HMAC_KEY ?? "");
+    hmacKey = hexToBytes(typeof env.HMAC_KEY === "string" ? env.HMAC_KEY : "");
   } catch {
     return null;
   }
@@ -115,9 +119,9 @@ export function parseCronBindings(env: WorkerEnv): ParsedCronBindings | null {
     maxFleets === null ||
     claimTtlMs === null ||
     perFleetDeadlineMs === null ||
-    inventoryRevision === undefined ||
+    typeof inventoryRevision !== "string" ||
     inventoryRevision === "" ||
-    inventoryDigest === undefined ||
+    typeof inventoryDigest !== "string" ||
     inventoryDigest === ""
   ) {
     return null;

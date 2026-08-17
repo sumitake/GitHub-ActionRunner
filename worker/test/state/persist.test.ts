@@ -90,3 +90,40 @@ test("missing fleet row hydrates an empty store", () => {
   expect(loaded.fleet.epoch).toBe(0);
   expect(loaded.fleet.routingState).toBe("UNINITIALIZED");
 });
+
+test("a failed save keeps the previous snapshot", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(FLEET_SCHEMA_SQL);
+  let fleetInserts = 0;
+  const sql: FleetSql = {
+    run(query: string, ...binds: unknown[]) {
+      if (query.includes("INSERT INTO fleet_state") && fleetInserts++ >= 1) {
+        throw new Error("insert failed");
+      }
+      if (binds.length === 0) {
+        db.exec(query);
+        return;
+      }
+      db.prepare(query).run(...binds);
+    },
+    all(query: string, ...binds: unknown[]) {
+      return db.prepare(query).all(...binds) as Record<string, unknown>[];
+    },
+  };
+  const clock = { now: () => "2026-01-01T00:00:10.000Z" };
+  const first = new MemoryFleetStore("example-fleet", clock);
+  first.fleet.epoch = 3;
+  first.fleet.routingState = "PORTABLE";
+  first.fleet.policyDigest = "a".repeat(64);
+  saveFleetStore(sql, first);
+
+  const second = loadFleetStore(sql, "example-fleet", clock);
+  second.fleet.epoch = 9;
+  second.fleet.routingState = "HOSTED";
+  expect(() => saveFleetStore(sql, second)).toThrow("insert failed");
+
+  const loaded = loadFleetStore(sql, "example-fleet", clock);
+  expect(loaded.fleet.epoch).toBe(3);
+  expect(loaded.fleet.routingState).toBe("PORTABLE");
+  expect(loaded.fleet.policyDigest).toBe("a".repeat(64));
+});

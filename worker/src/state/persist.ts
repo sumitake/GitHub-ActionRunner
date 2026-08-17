@@ -72,6 +72,25 @@ export function loadFleetStore(
 
 export function saveFleetStore(sql: FleetSql, store: MemoryFleetStore): void {
   const fleet = store.fleet;
+  sql.run("BEGIN IMMEDIATE");
+  try {
+    replaceFleetSnapshot(sql, store, fleet);
+    sql.run("COMMIT");
+  } catch (error) {
+    try {
+      sql.run("ROLLBACK");
+    } catch {
+      // Keep the original save failure.
+    }
+    throw error;
+  }
+}
+
+function replaceFleetSnapshot(
+  sql: FleetSql,
+  store: MemoryFleetStore,
+  fleet: MemoryFleetStore["fleet"],
+): void {
   sql.run("DELETE FROM fleet_state");
   sql.run("DELETE FROM request_nonces");
   sql.run("DELETE FROM repositories");

@@ -1,7 +1,5 @@
 import { parseWorkerBindings, type WorkerEnv } from "../bindings";
-import { dispatchFleetRequest } from "../gateway";
-import { parseCanonical } from "../protocol/canonical";
-import { FLEET_ID } from "../protocol/messages";
+import { dispatchFleetRequest, fleetIdFromBody } from "../gateway";
 import { loadFleetStore, saveFleetStore, type FleetSql } from "./persist";
 import { FLEET_SCHEMA_SQL } from "./schema";
 
@@ -40,28 +38,14 @@ function fleetSql(sql: SqlStorage): FleetSql {
   };
 }
 
-function fleetIdFromBody(body: string): string | null {
-  try {
-    const value = parseCanonical(body);
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-      return null;
-    }
-    const fleetId = (value as { fleetId?: unknown }).fleetId;
-    if (typeof fleetId !== "string" || !FLEET_ID.test(fleetId)) {
-      return null;
-    }
-    return fleetId;
-  } catch {
-    return null;
-  }
-}
-
 // FleetDurableObject is the sole per-fleet SQLite authority. Alarms are not a
-// second scheduler and are never installed here.
+// second scheduler and are never installed here. Incoming fetches are queued
+// because awaiting HMAC verification opens the isolate input gate.
 export class FleetDurableObject {
   private readonly sql: FleetSql;
   private readonly env: WorkerEnv;
   private readonly objectName: string | undefined;
+  private tail: Promise<void> = Promise.resolve();
 
   constructor(ctx: DurableContext, env: WorkerEnv = {}) {
     ctx.storage.sql.exec(FLEET_SCHEMA_SQL);
@@ -70,7 +54,16 @@ export class FleetDurableObject {
     this.objectName = ctx.id?.name;
   }
 
-  async fetch(request: Request): Promise<Response> {
+  fetch(request: Request): Promise<Response> {
+    const result = this.tail.then(() => this.handle(request));
+    this.tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private async handle(request: Request): Promise<Response> {
     const bindings = parseWorkerBindings(this.env);
     if (bindings === null) {
       return rejected();

@@ -22,7 +22,7 @@ function rejected(): Response {
   return Response.json({ error: "rejected" }, { status: 401 });
 }
 
-function fleetIdFromBody(body: string): string | null {
+export function fleetIdFromBody(body: string): string | null {
   try {
     const value = parseCanonical(body);
     if (value === null || typeof value !== "object" || Array.isArray(value)) {

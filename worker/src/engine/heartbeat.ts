@@ -236,9 +236,13 @@ function evaluateLease(
   } else if (fleet.maxCapacity < 1) {
     return "capacity-zero";
   }
+  const mode = request.snapshot.acquisitionMode;
+  if (mode !== "enabled" && mode !== "canary-only") {
+    return "lease-disabled";
+  }
   if (
-    request.snapshot.acquisitionMode === "disabled" ||
-    request.snapshot.acquisitionMode === "fatal"
+    (fleet.routingState === "PORTABLE" || fleet.routingState === "LEGACY") &&
+    mode !== "enabled"
   ) {
     return "lease-disabled";
   }

@@ -113,6 +113,59 @@ test("worker fetch uses the gateway when bindings parse", async () => {
   expect(await accepted.text()).toContain('"mode":"enabled"');
 });
 
+test("production fetch stays fail-closed without a fleet Durable Object", async () => {
+  const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");
+  const body = canonicalize({
+    protocolVersion: 1,
+    fleetId: "example-fleet",
+    epoch: 1,
+    sessionId: session,
+    sequence: 1,
+    holder: "portable",
+    fenceGeneration: 1,
+    timestamp,
+    snapshot: {
+      policyEpoch: 1,
+      policyDigest: digest,
+      repositoryPolicyRevision: 1,
+      acquisitionMode: "enabled",
+      unassignedReleasedListeners: 0,
+    },
+  });
+  const mac = await signCanonical(
+    hexToBytes(keyHex),
+    "POST",
+    "/v1/heartbeat",
+    timestamp,
+    body,
+  );
+  const request = () =>
+    new Request("https://worker.example/v1/heartbeat", {
+      method: "POST",
+      headers: { [TIMESTAMP_HEADER]: timestamp, [MAC_HEADER]: mac },
+      body,
+    });
+  const isolated = await handleWorkerFetch(request(), validEnv());
+  expect(isolated.status).toBe(401);
+  expect(await isolated.text()).not.toContain("lease");
+
+  let routed: string | undefined;
+  const forwarded = await handleWorkerFetch(request(), {
+    ...validEnv(),
+    FLEET: {
+      getByName(name: string) {
+        routed = name;
+        return {
+          fetch: async () => new Response("from-durable-object", { status: 200 }),
+        };
+      },
+    },
+  });
+  expect(routed).toBe("example-fleet");
+  expect(forwarded.status).toBe(200);
+  expect(await forwarded.text()).toBe("from-durable-object");
+});
+
 test("cron bindings and scheduled tick stay fail-closed without a client", async () => {
   expect(parseCronBindings(validEnv())).toBeNull();
   const cronEnv = {

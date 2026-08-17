@@ -123,6 +123,49 @@ test("matching Worker-owned policy can mint an enabled lease", async () => {
   expect(result.body).toContain('"maxCapacity":2');
 });
 
+test("PORTABLE and LEGACY reject non-enabled snapshots", async () => {
+  const portable = await heartbeat(portableStore(), "2026-01-01T00:00:10.000Z", {
+    snapshot: {
+      policyEpoch: 1,
+      policyDigest: digest,
+      repositoryPolicyRevision: 1,
+      acquisitionMode: "canary-only",
+      unassignedReleasedListeners: 0,
+    },
+  });
+  expect(portable.status).toBe(200);
+  expect(portable.body).toContain("lease-disabled");
+  expect(portable.body).not.toContain('"mode":"enabled"');
+
+  const unknown = portableStore();
+  const unknownMode = await heartbeat(unknown, "2026-01-01T00:00:10.000Z", {
+    snapshot: {
+      policyEpoch: 1,
+      policyDigest: digest,
+      repositoryPolicyRevision: 1,
+      acquisitionMode: "maybe",
+      unassignedReleasedListeners: 0,
+    },
+  });
+  expect(unknownMode.body).toContain("lease-disabled");
+  expect(unknownMode.body).not.toContain('"mode":"enabled"');
+
+  const legacyStore = portableStore();
+  legacyStore.fleet.routingState = "LEGACY";
+  const legacy = await heartbeat(legacyStore, "2026-01-01T00:00:10.000Z", {
+    holder: "legacy",
+    snapshot: {
+      policyEpoch: 1,
+      policyDigest: digest,
+      repositoryPolicyRevision: 1,
+      acquisitionMode: "canary-only",
+      unassignedReleasedListeners: 0,
+    },
+  });
+  expect(legacy.body).toContain("lease-disabled");
+  expect(legacy.body).not.toContain('"mode":"enabled"');
+});
+
 test("stale selector evidence enqueues a named hosted route mutation", async () => {
   const store = portableStore();
   store.fleet.routingState = "PORTABLE";
