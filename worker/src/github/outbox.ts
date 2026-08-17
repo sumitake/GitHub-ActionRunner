@@ -18,6 +18,8 @@ export type GitHubClient = {
   readVariable(name: string, signal?: AbortSignal): Promise<GitHubResult>;
   dispatchCanary(signal?: AbortSignal): Promise<GitHubResult>;
   observeCanary(runId: string, signal?: AbortSignal): Promise<GitHubResult>;
+  deliverEmail(eventId: string, signal?: AbortSignal): Promise<GitHubResult>;
+  deliverWebhook(eventId: string, signal?: AbortSignal): Promise<GitHubResult>;
 };
 
 export function persistHostedTransition(
@@ -107,8 +109,7 @@ export async function executeDueWork(
   for (const row of batch) {
     throwIfAborted(signal);
     if (row.kind === "notify-email" || row.kind === "notify-webhook") {
-      row.status = "failed";
-      store.recordAudit(`notify-failed:${row.kind}`);
+      await settleNotification(store, client, row, signal);
       continue;
     }
     if (row.kind === "canary-dispatch") {
@@ -190,8 +191,48 @@ async function settleCanaryObserve(
     store.recordAudit("canary-passed");
     return;
   }
+  if (
+    classifyGitHub(result) === "ok" &&
+    runId !== "" &&
+    result.runId === runId &&
+    canaryObservationFailed(result.body)
+  ) {
+    row.status = "failed";
+    store.recordAudit("canary-failed");
+    if (
+      store.fleet.routingState === "PORTABLE_CANARY" ||
+      store.fleet.routingState === "LEGACY_CANARY"
+    ) {
+      abortCanary(store);
+    }
+    return;
+  }
   if (classifyGitHub(result) === "permanent") {
     row.status = "failed";
+    return;
+  }
+  releaseClaim(row);
+}
+
+async function settleNotification(
+  store: MemoryFleetStore,
+  client: GitHubClient,
+  row: DueWorkRecord,
+  signal?: AbortSignal,
+): Promise<void> {
+  const eventId = row.payload.eventId ?? "";
+  const result =
+    row.kind === "notify-email"
+      ? await client.deliverEmail(eventId, signal)
+      : await client.deliverWebhook(eventId, signal);
+  const classed = classifyGitHub(result);
+  if (classed === "ok") {
+    row.status = "done";
+    return;
+  }
+  if (classed === "permanent") {
+    row.status = "failed";
+    store.recordAudit(`notify-failed:${row.kind}`);
     return;
   }
   releaseClaim(row);
@@ -202,6 +243,16 @@ function canaryObservationPassed(body: string | undefined): boolean {
     body === "pass" ||
     body === "success" ||
     body === "runner.environment=self-hosted"
+  );
+}
+
+function canaryObservationFailed(body: string | undefined): boolean {
+  return (
+    body === "fail" ||
+    body === "failed" ||
+    body === "failure" ||
+    body === "cancelled" ||
+    body === "canceled"
   );
 }
 

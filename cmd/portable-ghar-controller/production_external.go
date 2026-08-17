@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/failoverclient"
@@ -10,17 +11,25 @@ import (
 	"github.com/sumitake/portable-ghar/internal/health"
 )
 
+type productionLeasePopulator interface {
+	Populate(ctx context.Context, cache *failoverclient.LeaseCache) error
+}
+
 type productionExternalGraphConfig struct {
-	Fleet  fleetfence.Fleet
-	Holder failoverclient.LeaseHolder
-	Fence  uint64
-	Clock  failoverclient.AuthorityClock
-	Cache  *failoverclient.LeaseCache
+	Fleet           fleetfence.Fleet
+	Holder          failoverclient.LeaseHolder
+	Fence           uint64
+	Clock           failoverclient.AuthorityClock
+	Cache           *failoverclient.LeaseCache
+	Populator       productionLeasePopulator
+	CallDuration    time.Duration
+	TerminationTail time.Duration
 }
 
 type productionExternalGraph struct {
-	holder  failoverclient.LeaseHolder
-	permits failoverclient.CachedLeasePermitProvider
+	holder    failoverclient.LeaseHolder
+	permits   failoverclient.CachedLeasePermitProvider
+	populator productionLeasePopulator
 }
 
 var _ disabledExternalGraph = (*productionExternalGraph)(nil)
@@ -53,14 +62,24 @@ func newProductionExternalGraph(
 		return nil, errDisabledExternalUnavailable
 	}
 	return &productionExternalGraph{
-		holder: holder,
+		holder:    holder,
+		populator: config.Populator,
 		permits: failoverclient.CachedLeasePermitProvider{
-			Cache:  cache,
-			Clock:  clock,
-			Holder: holder,
-			Fence:  config.Fence,
+			Cache:           cache,
+			Clock:           clock,
+			Holder:          holder,
+			Fence:           config.Fence,
+			CallDuration:    config.CallDuration,
+			TerminationTail: config.TerminationTail,
 		},
 	}, nil
+}
+
+func (graph *productionExternalGraph) Populate(ctx context.Context) error {
+	if graph == nil || graph.populator == nil || graph.permits.Cache == nil {
+		return nil
+	}
+	return graph.populator.Populate(ctx, graph.permits.Cache)
 }
 
 func (graph *productionExternalGraph) Holder() failoverclient.LeaseHolder {

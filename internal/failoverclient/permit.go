@@ -5,23 +5,38 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/sumitake/portable-ghar/internal/controller"
 )
 
 var ErrLeasePermit = errors.New("failoverclient: lease permit")
 
-type leaseGuard struct{}
+type leaseGuard struct {
+	clock    AuthorityClock
+	deadline time.Time
+}
 
-func (leaseGuard) Close() error { return nil }
+func (guard leaseGuard) Close() error {
+	if guard.clock == nil {
+		return fmt.Errorf("%w: unavailable", ErrLeasePermit)
+	}
+	now, err := guard.clock.Now()
+	if err != nil || !now.Before(guard.deadline) {
+		return fmt.Errorf("%w: expired", ErrLeasePermit)
+	}
+	return nil
+}
 
 // CachedLeasePermitProvider derives a local operation proof from the process
 // memory lease cache. It makes no network call and persists no remote record.
 type CachedLeasePermitProvider struct {
-	Cache  *LeaseCache
-	Clock  AuthorityClock
-	Holder LeaseHolder
-	Fence  uint64
+	Cache           *LeaseCache
+	Clock           AuthorityClock
+	Holder          LeaseHolder
+	Fence           uint64
+	CallDuration    time.Duration
+	TerminationTail time.Duration
 }
 
 func (provider CachedLeasePermitProvider) Acquire(
@@ -59,7 +74,16 @@ func (provider CachedLeasePermitProvider) Acquire(
 		(lease.CanaryScaleSet == nil || *lease.CanaryScaleSet != request.ScaleSetName) {
 		return nil, fmt.Errorf("%w: canary set", ErrLeasePermit)
 	}
-	return leaseGuard{}, nil
+	deadline, err := OperationDeadline(
+		now,
+		entry.LocalDeadline,
+		provider.CallDuration,
+		provider.TerminationTail,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrLeasePermit, err)
+	}
+	return leaseGuard{clock: provider.Clock, deadline: deadline}, nil
 }
 
 var _ controller.AcquisitionPermitProvider = CachedLeasePermitProvider{}

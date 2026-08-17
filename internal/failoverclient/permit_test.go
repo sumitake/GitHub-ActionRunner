@@ -54,7 +54,14 @@ func TestCachedLeasePermitRejectsStaleExpiredAndArchived(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	provider := CachedLeasePermitProvider{Cache: cache, Clock: clock, Holder: HolderPortable, Fence: 7}
+	provider := CachedLeasePermitProvider{
+		Cache:           cache,
+		Clock:           clock,
+		Holder:          HolderPortable,
+		Fence:           7,
+		CallDuration:    2 * time.Second,
+		TerminationTail: time.Second,
+	}
 	request := controller.AcquisitionPermitRequest{
 		OperationID:     "op-1",
 		RepositoryAlias: "repo-b",
@@ -95,5 +102,54 @@ func TestUnsupportedClockCannotAuthorize(t *testing.T) {
 		PolicyEpoch:  1,
 	}); err == nil {
 		t.Fatal("unsupported clock authorized")
+	}
+}
+
+func TestLeaseGuardCloseFailsAfterOperationDeadline(t *testing.T) {
+	clock := NewFakeAuthorityClock(time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC))
+	cache := &LeaseCache{}
+	lease := testLease(LeaseEnabled)
+	key, err := lease.AdmissionAuthorityKey()
+	if err != nil {
+		t.Fatalf("key: %v", err)
+	}
+	if err := cache.Install(CachedLease{
+		Lease:         lease,
+		Key:           key,
+		Sequence:      4,
+		Fence:         7,
+		LocalDeadline: time.Date(2026, 1, 1, 0, 0, 7, 0, time.UTC),
+		SendAnchor:    time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	provider := CachedLeasePermitProvider{
+		Cache:           cache,
+		Clock:           clock,
+		Holder:          HolderPortable,
+		Fence:           7,
+		CallDuration:    2 * time.Second,
+		TerminationTail: time.Second,
+	}
+	guard, err := provider.Acquire(context.Background(), controller.AcquisitionPermitRequest{
+		PolicyDigest: strings.Repeat("a", 64),
+		PolicyEpoch:  9,
+	})
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if err := guard.Close(); err != nil {
+		t.Fatalf("Close while current: %v", err)
+	}
+	guard, err = provider.Acquire(context.Background(), controller.AcquisitionPermitRequest{
+		PolicyDigest: strings.Repeat("a", 64),
+		PolicyEpoch:  9,
+	})
+	if err != nil {
+		t.Fatalf("Acquire second: %v", err)
+	}
+	clock.Advance(10 * time.Second)
+	if err := guard.Close(); err == nil {
+		t.Fatal("Close after deadline succeeded")
 	}
 }
