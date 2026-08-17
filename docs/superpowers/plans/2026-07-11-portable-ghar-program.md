@@ -3,6 +3,11 @@
 <!-- markdownlint-disable MD013 MD036 -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to execute each phase plan task-by-task. Do not combine source, deployment, and retirement gates into one unreviewed change.
+> **Current pre-deployment execution handoff:**
+> `docs/superpowers/plans/2026-08-16-grok-primary-builder-handoff.md`
+> assigns Grok as the primary builder for the remaining pre-deployment work,
+> permits bounded subagents, and requires a full Codex exact-head adversarial
+> review before merge or any deployment action.
 
 **Goal:** Build, publish, deploy, validate, and operate Portable GHAR as the generic source-of-truth for ephemeral GitHub Actions runners on a QTS Docker host, then retire the pre-existing runner fleet and external watcher only after a successful reliability soak and rollback rehearsal.
 
