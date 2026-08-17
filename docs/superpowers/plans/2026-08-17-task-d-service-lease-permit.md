@@ -30,7 +30,7 @@ Bypass classes this slice must keep closed:
 ## Failure modes
 
 | Dependency | Failure | Degradation |
-|---|---|---|
+| --- | --- | --- |
 | Lease cache | empty / missing | `Acquire` denies |
 | Authority clock | unsupported / error | `Acquire` denies |
 | Deadline terms | unset call duration or tail | `Acquire` denies |
@@ -44,6 +44,7 @@ No retry, no failover to a stub permit, no network.
 ### 1. Fail-closed constructor
 
 **Files:**
+
 - Modify: `internal/failoverclient/permit.go`
 - Test: `internal/failoverclient/permit_test.go`
 

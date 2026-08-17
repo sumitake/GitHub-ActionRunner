@@ -9,7 +9,7 @@
 ## Failure modes
 
 | Input | Degradation |
-|---|---|
+| --- | --- |
 | Missing/invalid HMAC key | 401 |
 | Missing/invalid fleet inventory | 401 |
 | Any timeout/duration unset or non-positive | 401 |

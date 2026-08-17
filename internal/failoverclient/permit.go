@@ -60,14 +60,7 @@ func NewCachedLeasePermitProvider(
 		(config.Holder != HolderPortable && config.Holder != HolderLegacy) {
 		return CachedLeasePermitProvider{}, fmt.Errorf("%w: incomplete", ErrLeasePermit)
 	}
-	return CachedLeasePermitProvider{
-		Cache:           config.Cache,
-		Clock:           config.Clock,
-		Holder:          config.Holder,
-		Fence:           config.Fence,
-		CallDuration:    config.CallDuration,
-		TerminationTail: config.TerminationTail,
-	}, nil
+	return CachedLeasePermitProvider(config), nil
 }
 
 func (provider CachedLeasePermitProvider) Acquire(
