@@ -15,7 +15,15 @@ if [ ! -d "$overlay" ]; then
   exit 1
 fi
 
-mode=$(stat -f '%Lp' "$overlay" 2>/dev/null || stat -c '%a' "$overlay")
+mode=
+if mode="$(stat -c '%a' "$overlay" 2>/dev/null)"; then
+  :
+elif mode="$(stat -f '%Lp' "$overlay" 2>/dev/null)"; then
+  :
+else
+  printf '%s\n' mode >&2
+  exit 1
+fi
 if [ "$mode" != 700 ]; then
   printf '%s\n' mode >&2
   exit 1
