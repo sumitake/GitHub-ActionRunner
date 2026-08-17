@@ -9,9 +9,14 @@ export type GitHubResult = {
 };
 
 export type GitHubClient = {
-  mutateVariable(name: string, value: string): Promise<GitHubResult>;
-  readVariable(name: string): Promise<GitHubResult>;
-  dispatchCanary(): Promise<GitHubResult>;
+  mutateVariable(
+    name: string,
+    value: string,
+    signal?: AbortSignal,
+  ): Promise<GitHubResult>;
+  readVariable(name: string, signal?: AbortSignal): Promise<GitHubResult>;
+  dispatchCanary(signal?: AbortSignal): Promise<GitHubResult>;
+  observeCanary(signal?: AbortSignal): Promise<GitHubResult>;
 };
 
 export function persistHostedTransition(
@@ -92,25 +97,32 @@ export async function executeDueWork(
   store: MemoryFleetStore,
   client: GitHubClient,
   batch: DueWorkRecord[],
+  signal?: AbortSignal,
 ): Promise<void> {
   for (const row of batch) {
+    throwIfAborted(signal);
     if (row.kind === "notify-email" || row.kind === "notify-webhook") {
       row.status = "failed";
       store.recordAudit(`notify-failed:${row.kind}`);
       continue;
     }
     if (row.kind === "canary-dispatch") {
-      await settleCanary(store, client, row);
+      await settleCanaryDispatch(store, client, row, signal);
+      continue;
+    }
+    if (row.kind === "canary-observe") {
+      await settleCanaryObserve(store, client, row, signal);
       continue;
     }
     if (row.kind === "github-mutate-route") {
       const result = await client.mutateVariable(
         row.payload.name ?? "",
         row.payload.value ?? "",
+        signal,
       );
       const classed = classifyGitHub(result);
       if (classed === "ok") {
-        const read = await client.readVariable(row.payload.name ?? "");
+        const read = await client.readVariable(row.payload.name ?? "", signal);
         if (classifyGitHub(read) === "ok" && read.body === row.payload.value) {
           row.status = "done";
           completeRoute(store, row.payload.value);
@@ -128,17 +140,18 @@ export async function executeDueWork(
   }
 }
 
-async function settleCanary(
+async function settleCanaryDispatch(
   store: MemoryFleetStore,
   client: GitHubClient,
   row: DueWorkRecord,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const result = await client.dispatchCanary();
+  const result = await client.dispatchCanary(signal);
   const classed = classifyGitHub(result);
   if (classed === "ok") {
     row.status = "done";
-    store.fleet.canaryPassed = true;
-    store.recordAudit("canary-passed");
+    enqueueCanaryObserve(store, row.dueAt);
+    store.recordAudit("canary-dispatched");
     return;
   }
   if (classed === "permanent") {
@@ -146,6 +159,61 @@ async function settleCanary(
     return;
   }
   releaseClaim(row);
+}
+
+async function settleCanaryObserve(
+  store: MemoryFleetStore,
+  client: GitHubClient,
+  row: DueWorkRecord,
+  signal?: AbortSignal,
+): Promise<void> {
+  const result = await client.observeCanary(signal);
+  if (classifyGitHub(result) === "ok" && canaryObservationPassed(result.body)) {
+    row.status = "done";
+    store.fleet.canaryPassed = true;
+    store.recordAudit("canary-passed");
+    return;
+  }
+  if (classifyGitHub(result) === "permanent") {
+    row.status = "failed";
+    return;
+  }
+  releaseClaim(row);
+}
+
+function canaryObservationPassed(body: string | undefined): boolean {
+  return (
+    body === "pass" ||
+    body === "success" ||
+    body === "runner.environment=self-hosted"
+  );
+}
+
+function enqueueCanaryObserve(store: MemoryFleetStore, now: string): void {
+  const pending = store.dueWork.some(
+    (row) =>
+      row.kind === "canary-observe" &&
+      (row.status === "ready" || row.status === "claimed"),
+  );
+  if (pending) {
+    return;
+  }
+  store.enqueue({
+    id: `canary-observe-${store.fleet.leaseGeneration}`,
+    kind: "canary-observe",
+    dueAt: now,
+    claimId: null,
+    claimExpiresAt: null,
+    attempts: 0,
+    status: "ready",
+    payload: { workflow: "canary.yml" },
+  });
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("due-work aborted");
+  }
 }
 
 function releaseClaim(row: DueWorkRecord): void {

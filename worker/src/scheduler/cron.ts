@@ -43,7 +43,11 @@ export async function runCronTick(
   perFleetDeadlineMs: number,
   claimTtlMs: number,
   now: () => string,
-  execute: (store: MemoryFleetStore, batch: DueWorkRecord[]) => Promise<void>,
+  execute: (
+    store: MemoryFleetStore,
+    batch: DueWorkRecord[],
+    signal: AbortSignal,
+  ) => Promise<void>,
 ): Promise<{ addressed: string[]; failed: string[] }> {
   const fleetIds = validateFleetInventory(inventory, maxFleets);
   if (!Number.isInteger(claimTtlMs) || claimTtlMs <= 0) {
@@ -58,16 +62,49 @@ export async function runCronTick(
       continue;
     }
     store.fleet.inventoried = true;
+    const abort = new AbortController();
+    let batch: DueWorkRecord[] = [];
+    const work = (async () => {
+      batch = store.claimReady(now(), 8, claimTtlMs);
+      await execute(store, batch, abort.signal);
+    })();
     try {
-      const batch = store.claimReady(now(), 8, claimTtlMs);
-      const work = execute(store, batch);
       await withDeadline(work, perFleetDeadlineMs);
       addressed.push(fleetId);
     } catch {
+      abort.abort();
+      const joined = await joinWork(work, perFleetDeadlineMs);
+      if (!joined) {
+        pinClaims(batch);
+      }
       failed.push(fleetId);
     }
   }
   return { addressed, failed };
+}
+
+async function joinWork(
+  work: Promise<unknown>,
+  deadlineMs: number,
+): Promise<boolean> {
+  const settled = work.then(
+    () => true,
+    () => true,
+  );
+  try {
+    await withDeadline(settled, deadlineMs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pinClaims(batch: DueWorkRecord[]): void {
+  for (const row of batch) {
+    if (row.status === "claimed") {
+      row.claimExpiresAt = "9999-12-31T23:59:59.000Z";
+    }
+  }
 }
 
 async function withDeadline<T>(

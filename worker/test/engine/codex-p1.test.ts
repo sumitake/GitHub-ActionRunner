@@ -203,15 +203,21 @@ test("canary dispatch and self-hosted read-back enter PORTABLE", async () => {
       status: 200,
       body: value ?? "self-hosted",
     }),
-    dispatchCanary: async () => ({ status: 200, body: "pass" }),
+    dispatchCanary: async () => ({ status: 204 }),
+    observeCanary: async () => ({
+      status: 200,
+      body: "runner.environment=self-hosted",
+    }),
   };
   await executeDueWork(
     store,
-    {
-      mutateVariable: client.mutateVariable,
-      readVariable: async () => ({ status: 200, body: "self-hosted" }),
-      dispatchCanary: client.dispatchCanary,
-    },
+    client,
+    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
+  );
+  expect(store.fleet.canaryPassed).toBe(false);
+  await executeDueWork(
+    store,
+    client,
     store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
   );
   expect(store.fleet.canaryPassed).toBe(true);
@@ -223,6 +229,7 @@ test("canary dispatch and self-hosted read-back enter PORTABLE", async () => {
   store.fleet.sequence = 0;
   store.fleet.policyDigest = digest;
   store.fleet.configRevision = 1;
+  store.fleet.maxCapacity = 2;
   store.fleet.canaryScaleSet = "canary-set";
   store.putRepository({
     alias: "repo-a",
@@ -234,7 +241,16 @@ test("canary dispatch and self-hosted read-back enter PORTABLE", async () => {
     selectorEvidenceAt: "2026-01-01T00:00:09.000Z",
     openQueueRisk: null,
   });
-  const ready = await heartbeat(store, "2026-01-01T00:00:10.000Z");
+  const ready = await heartbeat(store, "2026-01-01T00:00:10.000Z", {
+    snapshot: {
+      policyEpoch: 1,
+      policyDigest: digest,
+      repositoryPolicyRevision: 1,
+      acquisitionMode: "enabled",
+      unassignedReleasedListeners: 0,
+      capacity: { configured: 2, effective: 2 },
+    },
+  });
   expect(ready.body).toContain('"mode":"canary-only"');
   expect(ready.body).not.toContain('"mode":"enabled"');
   const selfHosted = store.dueWork.find(
@@ -244,11 +260,7 @@ test("canary dispatch and self-hosted read-back enter PORTABLE", async () => {
   expect(selfHosted).toBeDefined();
   await executeDueWork(
     store,
-    {
-      mutateVariable: async () => ({ status: 200 }),
-      readVariable: async () => ({ status: 200, body: "self-hosted" }),
-      dispatchCanary: client.dispatchCanary,
-    },
+    client,
     store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
   );
   expect(store.fleet.routingState).toBe("PORTABLE");
@@ -298,4 +310,133 @@ test("worker fetch routes a signed heartbeat to the fleet store", async () => {
   );
   expect(response.status).toBe(200);
   expect(await response.text()).toContain('"mode":"enabled"');
+});
+
+test("accepted canary dispatch is not a canary pass", async () => {
+  const store = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:10.000Z",
+  });
+  store.fleet.routingState = "HOSTED";
+  persistCanary(store, "2026-01-01T00:00:10.000Z", "PORTABLE_CANARY");
+  await executeDueWork(
+    store,
+    {
+      mutateVariable: async () => ({ status: 200 }),
+      readVariable: async () => ({ status: 200, body: "hosted" }),
+      dispatchCanary: async () => ({ status: 204 }),
+      observeCanary: async () => ({ status: 200, body: "queued" }),
+    },
+    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
+  );
+  expect(store.fleet.canaryPassed).toBe(false);
+  expect(
+    store.dueWork.some(
+      (row) => row.kind === "canary-observe" && row.status === "ready",
+    ),
+  ).toBe(true);
+  await executeDueWork(
+    store,
+    {
+      mutateVariable: async () => ({ status: 200 }),
+      readVariable: async () => ({ status: 200, body: "hosted" }),
+      dispatchCanary: async () => ({ status: 204 }),
+      observeCanary: async () => ({
+        status: 200,
+        body: "runner.environment=self-hosted",
+      }),
+    },
+    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
+  );
+  expect(store.fleet.canaryPassed).toBe(true);
+});
+
+test("canary-only or zero-capacity heartbeats do not enqueue self-hosted", async () => {
+  const store = portableStore();
+  store.fleet.routingState = "PORTABLE_CANARY";
+  store.fleet.canaryPassed = true;
+  store.fleet.canaryScaleSet = "canary-set";
+  const denied = await heartbeat(store, "2026-01-01T00:00:10.000Z", {
+    snapshot: {
+      policyEpoch: 1,
+      policyDigest: digest,
+      repositoryPolicyRevision: 1,
+      acquisitionMode: "canary-only",
+      unassignedReleasedListeners: 0,
+      capacity: { configured: 2, effective: 0 },
+    },
+  });
+  expect(denied.body).toContain('"mode":"canary-only"');
+  expect(
+    store.dueWork.some(
+      (row) =>
+        row.kind === "github-mutate-route" &&
+        row.payload.value === "self-hosted",
+    ),
+  ).toBe(false);
+});
+
+test("signed lease keeps the accepted local policy epoch", async () => {
+  const store = portableStore();
+  store.fleet.configRevision = 1;
+  const result = await heartbeat(store, "2026-01-01T00:00:10.000Z", {
+    snapshot: {
+      policyEpoch: 9,
+      policyDigest: digest,
+      repositoryPolicyRevision: 1,
+      acquisitionMode: "enabled",
+      unassignedReleasedListeners: 0,
+    },
+  });
+  expect(result.body).toContain('"localPolicyEpoch":9');
+  expect(result.body).toContain('"repositoryPolicyRevision":1');
+});
+
+test("cron aborts timed-out work and pins unjoined claims", async () => {
+  const hung = new MemoryFleetStore("hung-fleet", {
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  hung.enqueue({
+    id: "due-hung",
+    kind: "canary-dispatch",
+    dueAt: "2026-01-01T00:00:00.000Z",
+    claimId: null,
+    claimExpiresAt: null,
+    attempts: 0,
+    status: "ready",
+    payload: {},
+  });
+  const healthy = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  let aborted = false;
+  const result = await runCronTick(
+    { revision: "1", digest: "a", fleetIds: ["hung-fleet", "example-fleet"] },
+    4,
+    new Map([
+      ["hung-fleet", hung],
+      ["example-fleet", healthy],
+    ]),
+    20,
+    5_000,
+    () => "2026-01-01T00:00:00.000Z",
+    async (store, _batch, signal) => {
+      if (store.fleet.fleetId !== "hung-fleet") {
+        return;
+      }
+      if (signal === undefined) {
+        await new Promise(() => undefined);
+      }
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          reject(new Error("aborted"));
+        });
+      });
+    },
+  );
+  expect(aborted).toBe(true);
+  expect(result.failed).toContain("hung-fleet");
+  expect(result.addressed).toContain("example-fleet");
+  expect(hung.dueWork[0]?.status).toBe("claimed");
+  expect(hung.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000)).toHaveLength(0);
 });

@@ -357,7 +357,13 @@ func openProductionDisabledObserver(
 	if err != nil {
 		return fail(errCommandUnavailable)
 	}
-	external := newUnavailableExternalGraph()
+	external, err := newProductionExternalGraph(productionExternalGraphConfig{
+		Fleet: expectedFleet,
+		Fence: manifest.FleetGeneration,
+	})
+	if err != nil {
+		return fail(errCommandUnavailable)
+	}
 	process, err := newDisabledControllerProcess(
 		disabledControllerProcessConfig{
 			Admin: disabledAdminConfig{
@@ -365,7 +371,7 @@ func openProductionDisabledObserver(
 				Authority:          localAuthority,
 				Broker:             broker,
 				Fleet:              fleetAuthority,
-				External:           &external,
+				External:           external,
 				Ownership:          ownership,
 				Desired:            desired,
 				ExpectedFleet:      expectedFleet,

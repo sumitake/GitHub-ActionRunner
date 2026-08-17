@@ -257,6 +257,14 @@ func validateZeroCapacitySummary(
 	return nil
 }
 
+type disabledExternalGraph interface {
+	controller.AcquisitionPermitProvider
+	controller.ReplayVerifier
+	controller.HostedRouter
+	controller.HealthPublisher
+	PollTargets() []controller.PollTarget
+}
+
 type unavailableExternalGraph struct{}
 
 var (

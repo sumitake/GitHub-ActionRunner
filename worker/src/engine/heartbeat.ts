@@ -47,6 +47,10 @@ type HeartbeatRequest = {
     repositoryPolicyRevision: number;
     acquisitionMode: string;
     unassignedReleasedListeners: number;
+    capacity?: {
+      configured?: number;
+      effective?: number;
+    };
   };
 };
 
@@ -158,7 +162,7 @@ export async function handleHeartbeat(
     );
     return { status: 200, body, timestamp: receiptTime, macHex };
   }
-  if (fleet.routingState === "PORTABLE_CANARY" && fleet.canaryPassed) {
+  if (readyForSelfHostedRoute(fleet, request)) {
     enqueueNamedRoute(store, receiptTime, "self-hosted");
   }
   const lease = issueLease(store, secrets, request, receiptTime);
@@ -234,6 +238,19 @@ function evaluateLease(
   return null;
 }
 
+function readyForSelfHostedRoute(
+  fleet: MemoryFleetStore["fleet"],
+  request: HeartbeatRequest,
+): boolean {
+  return (
+    fleet.routingState === "PORTABLE_CANARY" &&
+    fleet.canaryPassed &&
+    request.snapshot.acquisitionMode === "enabled" &&
+    request.snapshot.capacity?.effective === fleet.maxCapacity &&
+    fleet.maxCapacity >= 1
+  );
+}
+
 function enqueueNamedRoute(
   store: MemoryFleetStore,
   now: string,
@@ -303,7 +320,7 @@ function issueLease(
     mode,
     policyDigest: requirePolicyDigest(fleet.policyDigest),
     repositoryPolicyRevision: fleet.configRevision,
-    localPolicyEpoch: fleet.configRevision,
+    localPolicyEpoch: request.snapshot.policyEpoch,
     maxCapacity: mode === "canary-only" ? 1 : fleet.maxCapacity,
     canaryScaleSet: mode === "canary-only" ? fleet.canaryScaleSet : null,
     archivedDisabledAliases: aliases,

@@ -28,7 +28,7 @@ type disabledAdminConfig struct {
 	Authority          completeLocalAuthority
 	Broker             *zeroDemandBroker
 	Fleet              fleetAuthority
-	External           *unavailableExternalGraph
+	External           disabledExternalGraph
 	Ownership          controllerOwnershipLease
 	Desired            controller.AcquisitionPolicy
 	ExpectedFleet      fleetfence.Fleet
@@ -83,7 +83,7 @@ type disabledAdminService struct {
 	authority          completeLocalAuthority
 	broker             *zeroDemandBroker
 	fleet              fleetAuthority
-	external           *unavailableExternalGraph
+	external           disabledExternalGraph
 	ownership          controllerOwnershipLease
 	desired            controller.AcquisitionPolicy
 	expectedFleet      fleetfence.Fleet
