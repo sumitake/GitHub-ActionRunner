@@ -19,6 +19,7 @@ test("missing archive evidence is restrictive and stale selector issues no lease
   store.fleet.sequence = 0;
   store.fleet.leaseGeneration = 1;
   store.fleet.routingState = "PORTABLE";
+  store.fleet.fenceGeneration = 1;
   store.putRepository({
     alias: "repo-a",
     expectedRoute: "self-hosted",

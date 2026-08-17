@@ -6,6 +6,7 @@ export type GitHubResult = {
   status: number;
   retryAfterMs?: number;
   body?: string;
+  runId?: string;
 };
 
 export type GitHubClient = {
@@ -16,7 +17,7 @@ export type GitHubClient = {
   ): Promise<GitHubResult>;
   readVariable(name: string, signal?: AbortSignal): Promise<GitHubResult>;
   dispatchCanary(signal?: AbortSignal): Promise<GitHubResult>;
-  observeCanary(signal?: AbortSignal): Promise<GitHubResult>;
+  observeCanary(runId: string, signal?: AbortSignal): Promise<GitHubResult>;
 };
 
 export function persistHostedTransition(
@@ -55,6 +56,8 @@ export function persistCanary(
     to: next,
   });
   store.fleet.routingState = next;
+  store.fleet.canaryPassed = false;
+  failPendingCanaryWork(store);
   store.enqueue({
     id: `canary-${store.fleet.leaseGeneration}`,
     kind: "canary-dispatch",
@@ -75,6 +78,8 @@ export function abortCanary(store: MemoryFleetStore): void {
   assertTransition(from, "DRAINING_TO_HOSTED");
   store.fleet.leaseGeneration += 1;
   store.fleet.routingState = "DRAINING_TO_HOSTED";
+  store.fleet.canaryPassed = false;
+  failPendingCanaryWork(store);
   store.recordAudit("canary-aborted-drain");
 }
 
@@ -148,10 +153,15 @@ async function settleCanaryDispatch(
 ): Promise<void> {
   const result = await client.dispatchCanary(signal);
   const classed = classifyGitHub(result);
-  if (classed === "ok") {
+  if (classed === "ok" && result.runId) {
     row.status = "done";
-    enqueueCanaryObserve(store, row.dueAt);
+    enqueueCanaryObserve(store, row.dueAt, result.runId);
     store.recordAudit("canary-dispatched");
+    return;
+  }
+  if (classed === "ok") {
+    row.status = "failed";
+    store.recordAudit("canary-dispatch-missing-run");
     return;
   }
   if (classed === "permanent") {
@@ -167,8 +177,14 @@ async function settleCanaryObserve(
   row: DueWorkRecord,
   signal?: AbortSignal,
 ): Promise<void> {
-  const result = await client.observeCanary(signal);
-  if (classifyGitHub(result) === "ok" && canaryObservationPassed(result.body)) {
+  const runId = row.payload.runId ?? "";
+  const result = await client.observeCanary(runId, signal);
+  if (
+    classifyGitHub(result) === "ok" &&
+    runId !== "" &&
+    result.runId === runId &&
+    canaryObservationPassed(result.body)
+  ) {
     row.status = "done";
     store.fleet.canaryPassed = true;
     store.recordAudit("canary-passed");
@@ -189,10 +205,15 @@ function canaryObservationPassed(body: string | undefined): boolean {
   );
 }
 
-function enqueueCanaryObserve(store: MemoryFleetStore, now: string): void {
+function enqueueCanaryObserve(
+  store: MemoryFleetStore,
+  now: string,
+  runId: string,
+): void {
   const pending = store.dueWork.some(
     (row) =>
       row.kind === "canary-observe" &&
+      row.payload.runId === runId &&
       (row.status === "ready" || row.status === "claimed"),
   );
   if (pending) {
@@ -206,8 +227,25 @@ function enqueueCanaryObserve(store: MemoryFleetStore, now: string): void {
     claimExpiresAt: null,
     attempts: 0,
     status: "ready",
-    payload: { workflow: "canary.yml" },
+    payload: {
+      workflow: "canary.yml",
+      runId,
+      generation: String(store.fleet.leaseGeneration),
+    },
   });
+}
+
+function failPendingCanaryWork(store: MemoryFleetStore): void {
+  for (const row of store.dueWork) {
+    if (
+      (row.kind === "canary-dispatch" || row.kind === "canary-observe") &&
+      (row.status === "ready" || row.status === "claimed")
+    ) {
+      row.status = "failed";
+      row.claimId = null;
+      row.claimExpiresAt = null;
+    }
+  }
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -242,6 +280,17 @@ function completeRoute(
     });
     store.fleet.routingState = "PORTABLE";
     store.recordAudit("canary-promoted-portable");
+    return;
+  }
+  if (value === "legacy" && store.fleet.routingState === "LEGACY_CANARY") {
+    assertTransition("LEGACY_CANARY", "LEGACY");
+    store.transitions.push({
+      epoch: store.fleet.leaseGeneration,
+      from: "LEGACY_CANARY",
+      to: "LEGACY",
+    });
+    store.fleet.routingState = "LEGACY";
+    store.recordAudit("canary-promoted-legacy");
   }
 }
 

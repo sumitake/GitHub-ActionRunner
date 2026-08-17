@@ -2,7 +2,11 @@ import { expect, test } from "vitest";
 
 import { handleHeartbeat } from "../../src/engine/heartbeat";
 import { dispatchFleetRequest } from "../../src/gateway";
-import { executeDueWork, persistCanary } from "../../src/github/outbox";
+import {
+  abortCanary,
+  executeDueWork,
+  persistCanary,
+} from "../../src/github/outbox";
 import {
   hexToBytes,
   MAC_HEADER,
@@ -39,6 +43,7 @@ function portableStore(): MemoryFleetStore {
   store.fleet.sequence = 0;
   store.fleet.leaseGeneration = 1;
   store.fleet.routingState = "PORTABLE";
+  store.fleet.fenceGeneration = 1;
   store.fleet.policyDigest = digest;
   store.fleet.configRevision = 1;
   store.fleet.maxCapacity = 2;
@@ -203,9 +208,10 @@ test("canary dispatch and self-hosted read-back enter PORTABLE", async () => {
       status: 200,
       body: value ?? "self-hosted",
     }),
-    dispatchCanary: async () => ({ status: 204 }),
+    dispatchCanary: async () => ({ status: 204, runId: "run-1" }),
     observeCanary: async () => ({
       status: 200,
+      runId: "run-1",
       body: "runner.environment=self-hosted",
     }),
   };
@@ -227,6 +233,7 @@ test("canary dispatch and self-hosted read-back enter PORTABLE", async () => {
   store.fleet.epoch = 1;
   store.fleet.sessionId = session;
   store.fleet.sequence = 0;
+  store.fleet.fenceGeneration = 1;
   store.fleet.policyDigest = digest;
   store.fleet.configRevision = 1;
   store.fleet.maxCapacity = 2;
@@ -323,8 +330,12 @@ test("accepted canary dispatch is not a canary pass", async () => {
     {
       mutateVariable: async () => ({ status: 200 }),
       readVariable: async () => ({ status: 200, body: "hosted" }),
-      dispatchCanary: async () => ({ status: 204 }),
-      observeCanary: async () => ({ status: 200, body: "queued" }),
+      dispatchCanary: async () => ({ status: 204, runId: "run-1" }),
+      observeCanary: async () => ({
+        status: 200,
+        runId: "run-1",
+        body: "queued",
+      }),
     },
     store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
   );
@@ -342,6 +353,7 @@ test("accepted canary dispatch is not a canary pass", async () => {
       dispatchCanary: async () => ({ status: 204 }),
       observeCanary: async () => ({
         status: 200,
+        runId: "run-1",
         body: "runner.environment=self-hosted",
       }),
     },
@@ -439,4 +451,179 @@ test("cron aborts timed-out work and pins unjoined claims", async () => {
   expect(result.addressed).toContain("example-fleet");
   expect(hung.dueWork[0]?.status).toBe("claimed");
   expect(hung.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000)).toHaveLength(0);
+});
+
+test("heartbeat fence and holder must match Worker-owned fleet state", async () => {
+  const store = portableStore();
+  store.fleet.fenceGeneration = 4;
+  const staleFence = await heartbeat(store, "2026-01-01T00:00:10.000Z", {
+    fenceGeneration: 1,
+  });
+  expect(staleFence.body).toContain("invalid-request");
+  expect(staleFence.body).not.toContain('"mode":"enabled"');
+  store.fleet.sequence = 0;
+  const wrongHolder = await heartbeat(store, "2026-01-01T00:00:10.000Z", {
+    fenceGeneration: 4,
+    holder: "legacy",
+  });
+  expect(wrongHolder.body).toContain("invalid-request");
+  expect(wrongHolder.body).not.toContain('"mode":"enabled"');
+});
+
+test("a new canary epoch clears prior canary success", () => {
+  const store = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  store.fleet.routingState = "HOSTED";
+  persistCanary(store, "2026-01-01T00:00:00.000Z", "PORTABLE_CANARY");
+  store.fleet.canaryPassed = true;
+  abortCanary(store);
+  expect(store.fleet.canaryPassed).toBe(false);
+  store.fleet.routingState = "HOSTED";
+  store.fleet.canaryPassed = true;
+  persistCanary(store, "2026-01-01T00:00:00.000Z", "PORTABLE_CANARY");
+  expect(store.fleet.canaryPassed).toBe(false);
+});
+
+test("canary observation must match the dispatched run identity", async () => {
+  const store = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:10.000Z",
+  });
+  store.fleet.routingState = "HOSTED";
+  persistCanary(store, "2026-01-01T00:00:10.000Z", "PORTABLE_CANARY");
+  const client = {
+    mutateVariable: async () => ({ status: 200 }),
+    readVariable: async () => ({ status: 200, body: "hosted" }),
+    dispatchCanary: async () => ({ status: 201, runId: "run-new" }),
+    observeCanary: async () => ({
+      status: 200,
+      runId: "run-old",
+      body: "runner.environment=self-hosted",
+    }),
+  };
+  await executeDueWork(
+    store,
+    client,
+    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
+  );
+  await executeDueWork(
+    store,
+    client,
+    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
+  );
+  expect(store.fleet.canaryPassed).toBe(false);
+  const observed = store.dueWork.find((row) => row.kind === "canary-observe");
+  expect(observed?.payload.runId).toBe("run-new");
+});
+
+test("legacy canary readiness enqueues legacy and promotes after read-back", async () => {
+  const store = portableStore();
+  store.fleet.routingState = "HOSTED";
+  persistCanary(store, "2026-01-01T00:00:10.000Z", "LEGACY_CANARY");
+  store.fleet.canaryPassed = true;
+  store.fleet.canaryScaleSet = "canary-set";
+  store.fleet.sequence = 0;
+  const ready = await heartbeat(store, "2026-01-01T00:00:10.000Z", {
+    holder: "legacy",
+    snapshot: {
+      policyEpoch: 1,
+      policyDigest: digest,
+      repositoryPolicyRevision: 1,
+      acquisitionMode: "enabled",
+      unassignedReleasedListeners: 0,
+      capacity: { configured: 2, effective: 2 },
+    },
+  });
+  expect(ready.body).toContain('"mode":"canary-only"');
+  const legacy = store.dueWork.find(
+    (row) =>
+      row.kind === "github-mutate-route" && row.payload.value === "legacy",
+  );
+  expect(legacy).toBeDefined();
+  await executeDueWork(
+    store,
+    {
+      mutateVariable: async () => ({ status: 200 }),
+      readVariable: async () => ({ status: 200, body: "legacy" }),
+      dispatchCanary: async () => ({ status: 201, runId: "run-1" }),
+      observeCanary: async () => ({
+        status: 200,
+        runId: "run-1",
+        body: "pass",
+      }),
+    },
+    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
+  );
+  expect(store.fleet.routingState).toBe("LEGACY");
+});
+
+test("stale selector drains prior leases before hosted mutation is due", async () => {
+  const store = portableStore();
+  store.fleet.lastIssuedLeaseExpiryMax = "2026-01-01T00:02:00.000Z";
+  store.fleet.routingState = "PORTABLE";
+  store.putRepository({
+    alias: "repo-a",
+    expectedRoute: "self-hosted",
+    confirmedRoute: "self-hosted",
+    archiveLatched: false,
+    archiveObservedAt: "2026-01-01T00:00:09.000Z",
+    archived: false,
+    selectorEvidenceAt: "2026-01-01T00:00:00.000Z",
+    openQueueRisk: null,
+  });
+  store.now = () => "2026-01-01T00:01:10.000Z";
+  const result = await heartbeat(store, "2026-01-01T00:01:10.000Z");
+  expect(result.body).toContain("stale-selector-evidence");
+  expect(store.fleet.routingState).toBe("DRAINING_TO_HOSTED");
+  const hosted = store.dueWork.find(
+    (row) => row.kind === "github-mutate-route",
+  );
+  expect(hosted?.payload).toEqual({
+    name: "PORTABLE_GHAR_ROUTE",
+    value: "hosted",
+  });
+  expect(hosted?.dueAt).toBe("2026-01-01T00:02:01.000Z");
+  expect(store.claimReady("2026-01-01T00:01:10.000Z", 8, 5_000)).toHaveLength(
+    0,
+  );
+});
+
+test("unjoined cron timeout fails the claim so later work can be recovered", async () => {
+  const hung = new MemoryFleetStore("hung-fleet", {
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  hung.enqueue({
+    id: "due-hung",
+    kind: "canary-dispatch",
+    dueAt: "2026-01-01T00:00:00.000Z",
+    claimId: null,
+    claimExpiresAt: null,
+    attempts: 0,
+    status: "ready",
+    payload: {},
+  });
+  await runCronTick(
+    { revision: "1", digest: "a", fleetIds: ["hung-fleet"] },
+    4,
+    new Map([["hung-fleet", hung]]),
+    20,
+    5_000,
+    () => "2026-01-01T00:00:00.000Z",
+    async () => {
+      await new Promise(() => undefined);
+    },
+  );
+  expect(hung.dueWork[0]?.status).toBe("failed");
+  expect(hung.dueWork[0]?.claimExpiresAt).not.toBe("9999-12-31T23:59:59.000Z");
+  hung.enqueue({
+    id: "due-retry",
+    kind: "canary-dispatch",
+    dueAt: "2026-01-01T00:00:00.000Z",
+    claimId: null,
+    claimExpiresAt: null,
+    attempts: 0,
+    status: "ready",
+    payload: {},
+  });
+  expect(hung.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000)).toHaveLength(1);
 });

@@ -12,7 +12,7 @@ import {
   type RoutingState,
 } from "../protocol/messages";
 import { HEARTBEAT_PROTOCOL_VERSION } from "../protocol/version";
-import { isLocalAuthorityState } from "../routing/machine";
+import { assertTransition, isLocalAuthorityState } from "../routing/machine";
 import { noLease, type MemoryFleetStore } from "../state/memory";
 
 export type HeartbeatSecrets = {
@@ -21,6 +21,7 @@ export type HeartbeatSecrets = {
   leaseDurationMs: number;
   archiveEvidenceMaxAgeMs: number;
   selectorEvidenceMaxAgeMs: number;
+  hostedTransitionSafetyMarginMs: number;
 };
 
 export type HeartbeatInput = {
@@ -132,7 +133,6 @@ export async function handleHeartbeat(
     return reject();
   }
   fleet.sequence = request.sequence;
-  fleet.holder = request.holder;
   if (fleet.leaseNotBefore !== null && receiptTime < fleet.leaseNotBefore) {
     const body = encodeResponse(
       store,
@@ -162,8 +162,9 @@ export async function handleHeartbeat(
     );
     return { status: 200, body, timestamp: receiptTime, macHex };
   }
-  if (readyForSelfHostedRoute(fleet, request)) {
-    enqueueNamedRoute(store, receiptTime, "self-hosted");
+  const localRoute = readyLocalRoute(fleet, request);
+  if (localRoute !== null) {
+    enqueueNamedRoute(store, receiptTime, localRoute);
   }
   const lease = issueLease(store, secrets, request, receiptTime);
   const body = encodeResponse(store, receiptTime, lease, null);
@@ -185,6 +186,12 @@ function evaluateLease(
   receiptTime: string,
 ): NoLeaseReason | null {
   const fleet = store.fleet;
+  if (
+    isLocalAuthorityState(fleet.routingState) &&
+    !fenceMatches(fleet, request)
+  ) {
+    return "invalid-request";
+  }
   if (fleet.hostedHold) {
     return "hosted-hold";
   }
@@ -208,7 +215,7 @@ function evaluateLease(
       Date.parse(receiptTime) - Date.parse(evidenceAt) >
         secrets.selectorEvidenceMaxAgeMs
     ) {
-      enqueueNamedRoute(store, receiptTime, "hosted");
+      beginHostedDrain(store, secrets, receiptTime);
       return "stale-selector-evidence";
     }
   }
@@ -238,17 +245,97 @@ function evaluateLease(
   return null;
 }
 
-function readyForSelfHostedRoute(
+function fenceMatches(
   fleet: MemoryFleetStore["fleet"],
   request: HeartbeatRequest,
 ): boolean {
-  return (
-    fleet.routingState === "PORTABLE_CANARY" &&
-    fleet.canaryPassed &&
-    request.snapshot.acquisitionMode === "enabled" &&
-    request.snapshot.capacity?.effective === fleet.maxCapacity &&
-    fleet.maxCapacity >= 1
+  if (
+    fleet.fenceGeneration < 1 ||
+    request.fenceGeneration !== fleet.fenceGeneration
+  ) {
+    return false;
+  }
+  const holder = expectedHolder(fleet.routingState);
+  return holder !== null && request.holder === holder;
+}
+
+function expectedHolder(
+  state: MemoryFleetStore["fleet"]["routingState"],
+): "portable" | "legacy" | null {
+  if (state === "PORTABLE" || state === "PORTABLE_CANARY") {
+    return "portable";
+  }
+  if (state === "LEGACY" || state === "LEGACY_CANARY") {
+    return "legacy";
+  }
+  return null;
+}
+
+function readyLocalRoute(
+  fleet: MemoryFleetStore["fleet"],
+  request: HeartbeatRequest,
+): "self-hosted" | "legacy" | null {
+  if (
+    !fleet.canaryPassed ||
+    request.snapshot.acquisitionMode !== "enabled" ||
+    request.snapshot.capacity?.effective !== fleet.maxCapacity ||
+    fleet.maxCapacity < 1
+  ) {
+    return null;
+  }
+  if (fleet.routingState === "PORTABLE_CANARY") {
+    return "self-hosted";
+  }
+  if (fleet.routingState === "LEGACY_CANARY") {
+    return "legacy";
+  }
+  return null;
+}
+
+function beginHostedDrain(
+  store: MemoryFleetStore,
+  secrets: HeartbeatSecrets,
+  receiptTime: string,
+): void {
+  const from = store.fleet.routingState;
+  if (isLocalAuthorityState(from)) {
+    assertTransition(from, "DRAINING_TO_HOSTED");
+    store.transitions.push({
+      epoch: store.fleet.leaseGeneration,
+      from,
+      to: "DRAINING_TO_HOSTED",
+    });
+    store.fleet.routingState = "DRAINING_TO_HOSTED";
+    store.fleet.canaryPassed = false;
+    store.fleet.leaseGeneration += 1;
+  }
+  const dueAt =
+    store.fleet.lastIssuedLeaseExpiryMax === null ||
+    !(secrets.hostedTransitionSafetyMarginMs > 0)
+      ? receiptTime
+      : addMs(
+          store.fleet.lastIssuedLeaseExpiryMax,
+          secrets.hostedTransitionSafetyMarginMs,
+        );
+  const pending = store.dueWork.some(
+    (row) =>
+      row.kind === "github-mutate-route" &&
+      row.payload.value === "hosted" &&
+      (row.status === "ready" || row.status === "claimed"),
   );
+  if (pending) {
+    return;
+  }
+  store.enqueue({
+    id: `route-${store.fleet.leaseGeneration}`,
+    kind: "github-mutate-route",
+    dueAt,
+    claimId: null,
+    claimExpiresAt: null,
+    attempts: 0,
+    status: "ready",
+    payload: { name: "PORTABLE_GHAR_ROUTE", value: "hosted" },
+  });
 }
 
 function enqueueNamedRoute(

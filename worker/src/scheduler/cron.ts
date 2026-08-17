@@ -75,7 +75,7 @@ export async function runCronTick(
       abort.abort();
       const joined = await joinWork(work, perFleetDeadlineMs);
       if (!joined) {
-        pinClaims(batch);
+        failUnjoinedClaims(store, batch);
       }
       failed.push(fleetId);
     }
@@ -99,10 +99,16 @@ async function joinWork(
   }
 }
 
-function pinClaims(batch: DueWorkRecord[]): void {
+function failUnjoinedClaims(
+  store: MemoryFleetStore,
+  batch: DueWorkRecord[],
+): void {
   for (const row of batch) {
     if (row.status === "claimed") {
-      row.claimExpiresAt = "9999-12-31T23:59:59.000Z";
+      row.status = "failed";
+      row.claimId = null;
+      row.claimExpiresAt = null;
+      store.recordAudit(`due-work-unjoined:${row.id}`);
     }
   }
 }

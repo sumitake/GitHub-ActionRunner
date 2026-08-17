@@ -36,8 +36,12 @@ test("GitHub classification and hosted read-back are required for success", asyn
     {
       mutateVariable: async () => ({ status: 200 }),
       readVariable: async () => ({ status: 200, body: "hosted" }),
-      dispatchCanary: async () => ({ status: 200 }),
-      observeCanary: async () => ({ status: 200, body: "pass" }),
+      dispatchCanary: async () => ({ status: 200, runId: "run-1" }),
+      observeCanary: async () => ({
+        status: 200,
+        runId: "run-1",
+        body: "pass",
+      }),
     },
     batch,
   );

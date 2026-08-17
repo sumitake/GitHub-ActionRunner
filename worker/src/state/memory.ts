@@ -24,6 +24,7 @@ export type FleetRecord = {
   lastIssuedLeaseExpiryMax: string | null;
   leaseNotBefore: string | null;
   holder: Holder;
+  fenceGeneration: number;
   routingState: RoutingState | "UNINITIALIZED";
   hostedHold: boolean;
   configRevision: number;
@@ -81,6 +82,7 @@ export class MemoryFleetStore {
       lastIssuedLeaseExpiryMax: null,
       leaseNotBefore: null,
       holder: "none",
+      fenceGeneration: 0,
       routingState: "UNINITIALIZED",
       hostedHold: false,
       configRevision: 0,
