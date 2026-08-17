@@ -5,6 +5,8 @@ import {
   SESSION_PATH,
 } from "./protocol/auth";
 
+export { FleetDurableObject } from "./state/durable";
+
 export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
