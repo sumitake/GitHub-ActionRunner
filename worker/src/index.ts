@@ -1,5 +1,11 @@
-import { parseWorkerBindings, type WorkerEnv } from "./bindings";
+import {
+  parseCronBindings,
+  parseWorkerBindings,
+  type WorkerEnv,
+} from "./bindings";
 import { dispatchFleetRequest } from "./gateway";
+import { runCronTick } from "./scheduler/cron";
+import type { DueWorkRecord } from "./state/memory";
 import {
   ADMIN_COMMAND_PATH,
   ADMIN_STATUS_PATH,
@@ -54,11 +60,44 @@ export async function handleWorkerFetch(
   });
 }
 
+export async function handleWorkerScheduled(
+  env: WorkerEnv,
+  execute?: (
+    store: MemoryFleetStore,
+    batch: DueWorkRecord[],
+    signal: AbortSignal,
+  ) => Promise<void>,
+  storeFor: (fleetId: string) => MemoryFleetStore = isolateStoreFor,
+  now: () => string = () => new Date().toISOString(),
+): Promise<{ addressed: string[]; failed: string[] } | null> {
+  const cron = parseCronBindings(env);
+  if (cron === null || execute === undefined) {
+    return null;
+  }
+  const stores = new Map<string, MemoryFleetStore>();
+  for (const fleetId of cron.inventoriedFleetIds) {
+    stores.set(fleetId, storeFor(fleetId));
+  }
+  return runCronTick(
+    {
+      revision: cron.inventoryRevision,
+      digest: cron.inventoryDigest,
+      fleetIds: cron.inventoriedFleetIds,
+    },
+    cron.maxFleets,
+    stores,
+    cron.perFleetDeadlineMs,
+    cron.claimTtlMs,
+    now,
+    execute,
+  );
+}
+
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     return handleWorkerFetch(request, env);
   },
-  async scheduled(): Promise<void> {
-    return;
+  async scheduled(_event: unknown, env: WorkerEnv): Promise<void> {
+    await handleWorkerScheduled(env);
   },
 };

@@ -2,7 +2,7 @@
 
 **Goal:** The Worker `fetch` entrypoint uses `dispatchFleetRequest` when inventory and secrets parse, and stays 401 when they do not.
 
-**Not in this slice:** Durable Object SQL load/save, Cron GitHub execution, heartbeat HTTP from the controller, live Cloudflare deploy.
+**Also landed:** SQLite load/save of the six-table fleet store, and Cron scheduling only when inventory bounds and an execute client are present. Still no live GitHub or Cloudflare deploy.
 
 **Why this is small:** The router and MemoryFleetStore already exist. `index.ts` is still a dead 401 switch. Wiring it without a complete SQL adapter or a GitHub client is the honest next step. The isolate store is not crash-safe; the DO remains the future SQLite authority and keeps failing closed.
 

@@ -1,0 +1,92 @@
+import { DatabaseSync } from "node:sqlite";
+import { expect, test } from "vitest";
+
+import { MemoryFleetStore } from "../../src/state/memory";
+import {
+  loadFleetStore,
+  saveFleetStore,
+  type FleetSql,
+} from "../../src/state/persist";
+import { FLEET_SCHEMA_SQL } from "../../src/state/schema";
+
+function memorySql(): FleetSql {
+  const db = new DatabaseSync(":memory:");
+  db.exec(FLEET_SCHEMA_SQL);
+  return {
+    run(query: string, ...binds: unknown[]) {
+      if (binds.length === 0) {
+        db.exec(query);
+        return;
+      }
+      db.prepare(query).run(...binds);
+    },
+    all(query: string, ...binds: unknown[]) {
+      return db.prepare(query).all(...binds) as Record<string, unknown>[];
+    },
+  };
+}
+
+test("fleet store survives save and load", () => {
+  const sql = memorySql();
+  const clock = { now: () => "2026-01-01T00:00:10.000Z" };
+  const store = new MemoryFleetStore("example-fleet", clock);
+  store.fleet.inventoried = true;
+  store.fleet.epoch = 3;
+  store.fleet.sessionId = "c".repeat(64);
+  store.fleet.sequence = 4;
+  store.fleet.leaseGeneration = 5;
+  store.fleet.holder = "portable";
+  store.fleet.fenceGeneration = 7;
+  store.fleet.routingState = "PORTABLE";
+  store.fleet.policyDigest = "a".repeat(64);
+  store.fleet.configRevision = 2;
+  store.fleet.maxCapacity = 2;
+  store.fleet.canaryPassed = true;
+  store.rememberNonce("n".repeat(64), "2026-01-01T00:01:00.000Z");
+  store.putRepository({
+    alias: "repo-a",
+    expectedRoute: "self-hosted",
+    confirmedRoute: "self-hosted",
+    archiveLatched: false,
+    archiveObservedAt: "2026-01-01T00:00:09.000Z",
+    archived: false,
+    selectorEvidenceAt: "2026-01-01T00:00:09.000Z",
+    openQueueRisk: null,
+  });
+  store.enqueue({
+    id: "due-1",
+    kind: "canary-observe",
+    dueAt: "2026-01-01T00:00:10.000Z",
+    claimId: null,
+    claimExpiresAt: null,
+    attempts: 1,
+    status: "ready",
+    payload: { workflow: "canary.yml" },
+  });
+  store.transitions.push({ epoch: 5, from: "HOSTED", to: "PORTABLE_CANARY" });
+  store.recordAudit("session-accepted");
+  saveFleetStore(sql, store);
+
+  const loaded = loadFleetStore(sql, "example-fleet", clock);
+  expect(loaded.fleet.epoch).toBe(3);
+  expect(loaded.fleet.fenceGeneration).toBe(7);
+  expect(loaded.fleet.routingState).toBe("PORTABLE");
+  expect(loaded.fleet.canaryPassed).toBe(true);
+  expect(loaded.fleet.maxCapacity).toBe(2);
+  expect(loaded.nonces.get("n".repeat(64))).toBe("2026-01-01T00:01:00.000Z");
+  expect(loaded.repositories.get("repo-a")?.expectedRoute).toBe("self-hosted");
+  expect(loaded.dueWork).toHaveLength(1);
+  expect(loaded.dueWork[0]?.payload.workflow).toBe("canary.yml");
+  expect(loaded.transitions).toEqual([
+    { epoch: 5, from: "HOSTED", to: "PORTABLE_CANARY" },
+  ]);
+  expect(loaded.audit).toContain("session-accepted");
+});
+
+test("missing fleet row hydrates an empty store", () => {
+  const loaded = loadFleetStore(memorySql(), "example-fleet", {
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  expect(loaded.fleet.epoch).toBe(0);
+  expect(loaded.fleet.routingState).toBe("UNINITIALIZED");
+});

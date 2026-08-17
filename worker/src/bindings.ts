@@ -9,6 +9,14 @@ export type ParsedWorkerBindings = {
   secrets: GatewaySecrets;
 };
 
+export type ParsedCronBindings = ParsedWorkerBindings & {
+  inventoryRevision: string;
+  inventoryDigest: string;
+  maxFleets: number;
+  claimTtlMs: number;
+  perFleetDeadlineMs: number;
+};
+
 function requiredPositiveInt(env: WorkerEnv, name: string): number | null {
   const raw = env[name];
   if (raw === undefined || raw === "") {
@@ -92,5 +100,34 @@ export function parseWorkerBindings(
       selectorEvidenceMaxAgeMs,
       hostedTransitionSafetyMarginMs,
     },
+  };
+}
+
+export function parseCronBindings(env: WorkerEnv): ParsedCronBindings | null {
+  const base = parseWorkerBindings(env);
+  const maxFleets = requiredPositiveInt(env, "MAX_FLEETS");
+  const claimTtlMs = requiredPositiveInt(env, "CLAIM_TTL_MS");
+  const perFleetDeadlineMs = requiredPositiveInt(env, "PER_FLEET_DEADLINE_MS");
+  const inventoryRevision = env.FLEET_INVENTORY_REVISION;
+  const inventoryDigest = env.FLEET_INVENTORY_DIGEST;
+  if (
+    base === null ||
+    maxFleets === null ||
+    claimTtlMs === null ||
+    perFleetDeadlineMs === null ||
+    inventoryRevision === undefined ||
+    inventoryRevision === "" ||
+    inventoryDigest === undefined ||
+    inventoryDigest === ""
+  ) {
+    return null;
+  }
+  return {
+    ...base,
+    inventoryRevision,
+    inventoryDigest,
+    maxFleets,
+    claimTtlMs,
+    perFleetDeadlineMs,
   };
 }

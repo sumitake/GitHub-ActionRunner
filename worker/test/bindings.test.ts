@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 
-import { parseWorkerBindings } from "../src/bindings";
-import { handleWorkerFetch } from "../src/index";
+import { parseCronBindings, parseWorkerBindings } from "../src/bindings";
+import { handleWorkerFetch, handleWorkerScheduled } from "../src/index";
 import {
   hexToBytes,
   MAC_HEADER,
@@ -111,4 +111,38 @@ test("worker fetch uses the gateway when bindings parse", async () => {
   );
   expect(accepted.status).toBe(200);
   expect(await accepted.text()).toContain('"mode":"enabled"');
+});
+
+test("cron bindings and scheduled tick stay fail-closed without a client", async () => {
+  expect(parseCronBindings(validEnv())).toBeNull();
+  const cronEnv = {
+    ...validEnv(),
+    MAX_FLEETS: "4",
+    CLAIM_TTL_MS: "5000",
+    PER_FLEET_DEADLINE_MS: "20",
+    FLEET_INVENTORY_REVISION: "1",
+    FLEET_INVENTORY_DIGEST: "a",
+  };
+  expect(parseCronBindings(cronEnv)?.maxFleets).toBe(4);
+  expect(await handleWorkerScheduled(cronEnv)).toBeNull();
+  const store = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  store.enqueue({
+    id: "due-1",
+    kind: "github-readback",
+    dueAt: "2026-01-01T00:00:00.000Z",
+    claimId: null,
+    claimExpiresAt: null,
+    attempts: 0,
+    status: "ready",
+    payload: {},
+  });
+  const result = await handleWorkerScheduled(
+    cronEnv,
+    async () => undefined,
+    () => store,
+    () => "2026-01-01T00:00:00.000Z",
+  );
+  expect(result?.addressed).toEqual(["example-fleet"]);
 });

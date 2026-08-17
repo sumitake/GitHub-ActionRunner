@@ -1,6 +1,7 @@
 export const FLEET_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS fleet_state (
   fleet_id TEXT PRIMARY KEY,
+  inventoried INTEGER NOT NULL,
   epoch INTEGER NOT NULL,
   session_id TEXT,
   sequence INTEGER NOT NULL,
@@ -8,10 +9,14 @@ CREATE TABLE IF NOT EXISTS fleet_state (
   last_issued_lease_expiry_max TEXT,
   lease_not_before TEXT,
   holder TEXT NOT NULL,
+  fence_generation INTEGER NOT NULL,
   routing_state TEXT NOT NULL,
   hosted_hold INTEGER NOT NULL,
   config_revision INTEGER NOT NULL,
-  policy_digest TEXT
+  policy_digest TEXT,
+  max_capacity INTEGER NOT NULL,
+  canary_scale_set TEXT,
+  canary_passed INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS request_nonces (
   digest TEXT PRIMARY KEY,
