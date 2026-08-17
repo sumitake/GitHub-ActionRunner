@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"syscall"
+	"time"
 )
 
 const (
@@ -37,6 +38,9 @@ type ExecCommandRunner struct {
 	StdoutLimit int
 	StderrLimit int
 	StdinLimit  int
+	// ReapTimeout bounds Wait after the owned process group is signaled.
+	// A nonpositive value restores, rather than removes, the bound.
+	ReapTimeout time.Duration
 }
 
 // NewExecCommandRunner returns fixed safe stream bounds. Callers may lower the
@@ -103,14 +107,17 @@ func (r *ExecCommandRunner) Run(ctx context.Context, argv []string, extraFiles [
 
 	var waitErr error
 	canceled := false
+	reaped := true
 	select {
 	case waitErr = <-waited:
 	case <-ctx.Done():
 		canceled = true
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		waitErr = <-waited
+		waitErr, reaped = FinishOwnedProcess(cmd.Process.Pid, waited, r.ReapTimeout)
 	}
 
+	if canceled && !reaped {
+		return Result{ExitCode: -1}, errors.New("hostruntime: command cleanup failed")
+	}
 	result := commandResult(cmd, stdout, stderr)
 	if canceled {
 		return result, errors.New("hostruntime: command canceled")

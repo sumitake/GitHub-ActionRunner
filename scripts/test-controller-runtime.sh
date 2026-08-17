@@ -8,6 +8,8 @@
 
 set -euo pipefail
 umask 077
+# CI and agent invocations must never block on a terminal prompt.
+exec </dev/null
 
 if [ "$#" -ne 1 ]; then
   printf '%s\n' arguments >&2
