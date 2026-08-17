@@ -1,0 +1,301 @@
+import { expect, test } from "vitest";
+
+import { handleHeartbeat } from "../../src/engine/heartbeat";
+import { dispatchFleetRequest } from "../../src/gateway";
+import { executeDueWork, persistCanary } from "../../src/github/outbox";
+import {
+  hexToBytes,
+  MAC_HEADER,
+  signCanonical,
+  TIMESTAMP_HEADER,
+} from "../../src/protocol/auth";
+import { canonicalize } from "../../src/protocol/canonical";
+import { runCronTick } from "../../src/scheduler/cron";
+import { MemoryFleetStore } from "../../src/state/memory";
+
+const key = hexToBytes("0b".repeat(32));
+const digest = "a".repeat(64);
+const session = "c".repeat(64);
+
+function secrets() {
+  return {
+    hmacKey: key,
+    timestampWindowMs: 5_000,
+    nonceTtlMs: 60_000,
+    hostedTransitionSafetyMarginMs: 1_000,
+    leaseDurationMs: 8_000,
+    archiveEvidenceMaxAgeMs: 60_000,
+    selectorEvidenceMaxAgeMs: 60_000,
+  };
+}
+
+function portableStore(): MemoryFleetStore {
+  const store = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:10.000Z",
+  });
+  store.fleet.inventoried = true;
+  store.fleet.epoch = 1;
+  store.fleet.sessionId = session;
+  store.fleet.sequence = 0;
+  store.fleet.leaseGeneration = 1;
+  store.fleet.routingState = "PORTABLE";
+  store.fleet.policyDigest = digest;
+  store.fleet.configRevision = 1;
+  store.fleet.maxCapacity = 2;
+  store.putRepository({
+    alias: "repo-a",
+    expectedRoute: "self-hosted",
+    confirmedRoute: "self-hosted",
+    archiveLatched: false,
+    archiveObservedAt: "2026-01-01T00:00:09.000Z",
+    archived: false,
+    selectorEvidenceAt: "2026-01-01T00:00:09.000Z",
+    openQueueRisk: null,
+  });
+  return store;
+}
+
+async function heartbeat(
+  store: MemoryFleetStore,
+  timestamp: string,
+  extra: Record<string, unknown> = {},
+) {
+  const body = canonicalize({
+    protocolVersion: 1,
+    fleetId: "example-fleet",
+    epoch: 1,
+    sessionId: session,
+    sequence: 1,
+    holder: "portable",
+    fenceGeneration: 1,
+    timestamp,
+    snapshot: {
+      policyEpoch: 1,
+      policyDigest: digest,
+      repositoryPolicyRevision: 1,
+      acquisitionMode: "enabled",
+      unassignedReleasedListeners: 0,
+    },
+    ...extra,
+  });
+  const mac = await signCanonical(
+    key,
+    "POST",
+    "/v1/heartbeat",
+    timestamp,
+    body,
+  );
+  return handleHeartbeat(store, secrets(), {
+    method: "POST",
+    path: "/v1/heartbeat",
+    timestamp,
+    macHex: mac,
+    body,
+    inventoried: true,
+  });
+}
+
+test("heartbeat outside the timestamp window is rejected", async () => {
+  const store = portableStore();
+  const result = await heartbeat(store, "2026-01-01T00:00:00.000Z");
+  expect(result.status).toBe(401);
+  expect(result.body).not.toContain("enabled");
+});
+
+test("unsigned controller policy cannot mint a lease", async () => {
+  const store = portableStore();
+  store.fleet.policyDigest = "f".repeat(64);
+  const result = await heartbeat(store, "2026-01-01T00:00:10.000Z");
+  expect(result.status).toBe(200);
+  expect(result.body).toContain("policy-mismatch");
+  expect(result.body).not.toContain('"mode":"enabled"');
+});
+
+test("matching Worker-owned policy can mint an enabled lease", async () => {
+  const result = await heartbeat(portableStore(), "2026-01-01T00:00:10.000Z");
+  expect(result.status).toBe(200);
+  expect(result.body).toContain('"mode":"enabled"');
+  expect(result.body).toContain('"maxCapacity":2');
+});
+
+test("stale selector evidence enqueues a named hosted route mutation", async () => {
+  const store = portableStore();
+  store.fleet.routingState = "PORTABLE";
+  store.putRepository({
+    alias: "repo-a",
+    expectedRoute: "self-hosted",
+    confirmedRoute: "self-hosted",
+    archiveLatched: false,
+    archiveObservedAt: "2026-01-01T00:00:09.000Z",
+    archived: false,
+    selectorEvidenceAt: "2026-01-01T00:00:00.000Z",
+    openQueueRisk: null,
+  });
+  store.now = () => "2026-01-01T00:01:10.000Z";
+  const result = await heartbeat(store, "2026-01-01T00:01:10.000Z");
+  expect(result.body).toContain("stale-selector-evidence");
+  const row = store.dueWork.find((item) => item.kind === "github-mutate-route");
+  expect(row?.payload).toEqual({
+    name: "PORTABLE_GHAR_ROUTE",
+    value: "hosted",
+  });
+});
+
+test("due-work claims expire in the future and are not immediately reclaimed", () => {
+  const store = portableStore();
+  store.enqueue({
+    id: "due-1",
+    kind: "github-readback",
+    dueAt: "2026-01-01T00:00:10.000Z",
+    claimId: null,
+    claimExpiresAt: null,
+    attempts: 0,
+    status: "ready",
+    payload: {},
+  });
+  const first = store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000);
+  expect(first).toHaveLength(1);
+  expect(first[0]?.claimExpiresAt).toBe("2026-01-01T00:00:15.000Z");
+  const second = store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000);
+  expect(second).toHaveLength(0);
+  expect(() => store.claimReady("2026-01-01T00:00:10.000Z", 8, 0)).toThrow();
+});
+
+test("cron abandons a hung fleet and still addresses later fleets", async () => {
+  const hung = new MemoryFleetStore("hung-fleet", {
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  const healthy = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  const seen: string[] = [];
+  const result = await runCronTick(
+    { revision: "1", digest: "a", fleetIds: ["hung-fleet", "example-fleet"] },
+    4,
+    new Map([
+      ["hung-fleet", hung],
+      ["example-fleet", healthy],
+    ]),
+    20,
+    5_000,
+    () => "2026-01-01T00:00:00.000Z",
+    async (store) => {
+      seen.push(store.fleet.fleetId);
+      if (store.fleet.fleetId === "hung-fleet") {
+        await new Promise(() => undefined);
+      }
+    },
+  );
+  expect(seen).toContain("hung-fleet");
+  expect(result.failed).toContain("hung-fleet");
+  expect(result.addressed).toContain("example-fleet");
+});
+
+test("canary dispatch and self-hosted read-back enter PORTABLE", async () => {
+  const store = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:10.000Z",
+  });
+  store.fleet.routingState = "HOSTED";
+  persistCanary(store, "2026-01-01T00:00:10.000Z", "PORTABLE_CANARY");
+  const client = {
+    mutateVariable: async () => ({ status: 200 }),
+    readVariable: async (_name: string, value?: string) => ({
+      status: 200,
+      body: value ?? "self-hosted",
+    }),
+    dispatchCanary: async () => ({ status: 200, body: "pass" }),
+  };
+  await executeDueWork(
+    store,
+    {
+      mutateVariable: client.mutateVariable,
+      readVariable: async () => ({ status: 200, body: "self-hosted" }),
+      dispatchCanary: client.dispatchCanary,
+    },
+    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
+  );
+  expect(store.fleet.canaryPassed).toBe(true);
+  expect(store.fleet.routingState).toBe("PORTABLE_CANARY");
+
+  store.fleet.inventoried = true;
+  store.fleet.epoch = 1;
+  store.fleet.sessionId = session;
+  store.fleet.sequence = 0;
+  store.fleet.policyDigest = digest;
+  store.fleet.configRevision = 1;
+  store.fleet.canaryScaleSet = "canary-set";
+  store.putRepository({
+    alias: "repo-a",
+    expectedRoute: "hosted",
+    confirmedRoute: "hosted",
+    archiveLatched: false,
+    archiveObservedAt: "2026-01-01T00:00:09.000Z",
+    archived: false,
+    selectorEvidenceAt: "2026-01-01T00:00:09.000Z",
+    openQueueRisk: null,
+  });
+  const ready = await heartbeat(store, "2026-01-01T00:00:10.000Z");
+  expect(ready.body).toContain('"mode":"canary-only"');
+  expect(ready.body).not.toContain('"mode":"enabled"');
+  const selfHosted = store.dueWork.find(
+    (row) =>
+      row.kind === "github-mutate-route" && row.payload.value === "self-hosted",
+  );
+  expect(selfHosted).toBeDefined();
+  await executeDueWork(
+    store,
+    {
+      mutateVariable: async () => ({ status: 200 }),
+      readVariable: async () => ({ status: 200, body: "self-hosted" }),
+      dispatchCanary: client.dispatchCanary,
+    },
+    store.claimReady("2026-01-01T00:00:10.000Z", 8, 5_000),
+  );
+  expect(store.fleet.routingState).toBe("PORTABLE");
+});
+
+test("worker fetch routes a signed heartbeat to the fleet store", async () => {
+  const store = portableStore();
+  const timestamp = "2026-01-01T00:00:10.000Z";
+  const body = canonicalize({
+    protocolVersion: 1,
+    fleetId: "example-fleet",
+    epoch: 1,
+    sessionId: session,
+    sequence: 1,
+    holder: "portable",
+    fenceGeneration: 1,
+    timestamp,
+    snapshot: {
+      policyEpoch: 1,
+      policyDigest: digest,
+      repositoryPolicyRevision: 1,
+      acquisitionMode: "enabled",
+      unassignedReleasedListeners: 0,
+    },
+  });
+  const mac = await signCanonical(
+    key,
+    "POST",
+    "/v1/heartbeat",
+    timestamp,
+    body,
+  );
+  const response = await dispatchFleetRequest(
+    new Request("https://worker.example/v1/heartbeat", {
+      method: "POST",
+      headers: {
+        [TIMESTAMP_HEADER]: timestamp,
+        [MAC_HEADER]: mac,
+      },
+      body,
+    }),
+    {
+      inventoriedFleetIds: ["example-fleet"],
+      secrets: secrets(),
+      storeFor: () => store,
+    },
+  );
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain('"mode":"enabled"');
+});

@@ -11,6 +11,7 @@ export type GitHubResult = {
 export type GitHubClient = {
   mutateVariable(name: string, value: string): Promise<GitHubResult>;
   readVariable(name: string): Promise<GitHubResult>;
+  dispatchCanary(): Promise<GitHubResult>;
 };
 
 export function persistHostedTransition(
@@ -98,6 +99,10 @@ export async function executeDueWork(
       store.recordAudit(`notify-failed:${row.kind}`);
       continue;
     }
+    if (row.kind === "canary-dispatch") {
+      await settleCanary(store, client, row);
+      continue;
+    }
     if (row.kind === "github-mutate-route") {
       const result = await client.mutateVariable(
         row.payload.name ?? "",
@@ -108,22 +113,67 @@ export async function executeDueWork(
         const read = await client.readVariable(row.payload.name ?? "");
         if (classifyGitHub(read) === "ok" && read.body === row.payload.value) {
           row.status = "done";
-          if (row.payload.value === "hosted") {
-            completeHosted(store);
-          }
+          completeRoute(store, row.payload.value);
           continue;
         }
-        row.status = "ready";
-        row.claimId = null;
+        releaseClaim(row);
         continue;
       }
       if (classed === "permanent") {
         row.status = "failed";
         continue;
       }
-      row.status = "ready";
-      row.claimId = null;
+      releaseClaim(row);
     }
+  }
+}
+
+async function settleCanary(
+  store: MemoryFleetStore,
+  client: GitHubClient,
+  row: DueWorkRecord,
+): Promise<void> {
+  const result = await client.dispatchCanary();
+  const classed = classifyGitHub(result);
+  if (classed === "ok") {
+    row.status = "done";
+    store.fleet.canaryPassed = true;
+    store.recordAudit("canary-passed");
+    return;
+  }
+  if (classed === "permanent") {
+    row.status = "failed";
+    return;
+  }
+  releaseClaim(row);
+}
+
+function releaseClaim(row: DueWorkRecord): void {
+  row.status = "ready";
+  row.claimId = null;
+  row.claimExpiresAt = null;
+}
+
+function completeRoute(
+  store: MemoryFleetStore,
+  value: string | undefined,
+): void {
+  if (value === "hosted") {
+    completeHosted(store);
+    return;
+  }
+  if (
+    value === "self-hosted" &&
+    store.fleet.routingState === "PORTABLE_CANARY"
+  ) {
+    assertTransition("PORTABLE_CANARY", "PORTABLE");
+    store.transitions.push({
+      epoch: store.fleet.leaseGeneration,
+      from: "PORTABLE_CANARY",
+      to: "PORTABLE",
+    });
+    store.fleet.routingState = "PORTABLE";
+    store.recordAudit("canary-promoted-portable");
   }
 }
 

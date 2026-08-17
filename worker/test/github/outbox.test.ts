@@ -30,12 +30,13 @@ test("GitHub classification and hosted read-back are required for success", asyn
     now: () => "2026-01-01T00:00:00.000Z",
   });
   persistHostedTransition(store, "2026-01-01T00:00:00.000Z");
-  const batch = store.claimReady("2026-01-01T00:00:00.000Z", 8);
+  const batch = store.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000);
   await executeDueWork(
     store,
     {
       mutateVariable: async () => ({ status: 200 }),
       readVariable: async () => ({ status: 200, body: "hosted" }),
+      dispatchCanary: async () => ({ status: 200 }),
     },
     batch,
   );

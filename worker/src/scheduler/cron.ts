@@ -41,10 +41,14 @@ export async function runCronTick(
   maxFleets: number,
   stores: Map<string, MemoryFleetStore>,
   perFleetDeadlineMs: number,
+  claimTtlMs: number,
   now: () => string,
   execute: (store: MemoryFleetStore, batch: DueWorkRecord[]) => Promise<void>,
 ): Promise<{ addressed: string[]; failed: string[] }> {
   const fleetIds = validateFleetInventory(inventory, maxFleets);
+  if (!Number.isInteger(claimTtlMs) || claimTtlMs <= 0) {
+    throw new CronError("claim ttl is unset");
+  }
   const addressed: string[] = [];
   const failed: string[] = [];
   for (const fleetId of fleetIds) {
@@ -54,19 +58,39 @@ export async function runCronTick(
       continue;
     }
     store.fleet.inventoried = true;
-    const started = Date.now();
     try {
-      const batch = store.claimReady(now(), 8);
-      await execute(store, batch);
-      if (Date.now() - started > perFleetDeadlineMs) {
-        throw new CronError("per-fleet deadline exceeded");
-      }
+      const batch = store.claimReady(now(), 8, claimTtlMs);
+      const work = execute(store, batch);
+      await withDeadline(work, perFleetDeadlineMs);
       addressed.push(fleetId);
     } catch {
       failed.push(fleetId);
     }
   }
   return { addressed, failed };
+}
+
+async function withDeadline<T>(
+  work: Promise<T>,
+  deadlineMs: number,
+): Promise<T> {
+  if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) {
+    throw new CronError("per-fleet deadline is unset");
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new CronError("per-fleet deadline exceeded"));
+    }, deadlineMs);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    void work.catch(() => undefined);
+  }
 }
 
 export function assertNoDurableObjectAlarms(source: string): void {

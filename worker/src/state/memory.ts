@@ -28,6 +28,9 @@ export type FleetRecord = {
   hostedHold: boolean;
   configRevision: number;
   policyDigest: string | null;
+  maxCapacity: number;
+  canaryScaleSet: string | null;
+  canaryPassed: boolean;
 };
 
 export type RepositoryRecord = {
@@ -82,6 +85,9 @@ export class MemoryFleetStore {
       hostedHold: false,
       configRevision: 0,
       policyDigest: null,
+      maxCapacity: 0,
+      canaryScaleSet: null,
+      canaryPassed: false,
     };
   }
 
@@ -113,7 +119,10 @@ export class MemoryFleetStore {
     this.dueWork.push(work);
   }
 
-  claimReady(now: string, limit: number): DueWorkRecord[] {
+  claimReady(now: string, limit: number, claimTtlMs: number): DueWorkRecord[] {
+    if (!Number.isInteger(claimTtlMs) || claimTtlMs <= 0) {
+      throw new Error("claim ttl is unset");
+    }
     const claimed: DueWorkRecord[] = [];
     for (const row of this.dueWork) {
       if (claimed.length >= limit) {
@@ -131,7 +140,7 @@ export class MemoryFleetStore {
       if (row.status === "ready" && row.dueAt <= now) {
         row.status = "claimed";
         row.claimId = `claim-${row.id}-${now}`;
-        row.claimExpiresAt = now;
+        row.claimExpiresAt = addMs(now, claimTtlMs);
         row.attempts += 1;
         claimed.push(row);
       }
@@ -145,6 +154,14 @@ export class MemoryFleetStore {
       this.audit.shift();
     }
   }
+}
+
+function addMs(timestamp: string, deltaMs: number): string {
+  const next = Date.parse(timestamp) + deltaMs;
+  if (!Number.isFinite(next)) {
+    throw new Error("claim timestamp is invalid");
+  }
+  return new Date(next).toISOString().replace(/\.(\d{3})\d*Z$/, ".$1Z");
 }
 
 export function noLease(reason: NoLeaseReason): {

@@ -1,4 +1,8 @@
-import { signCanonical, verifyCanonical } from "../protocol/auth";
+import {
+  assertTimestampWindow,
+  signCanonical,
+  verifyCanonical,
+} from "../protocol/auth";
 import { canonicalize, parseCanonical } from "../protocol/canonical";
 import {
   parseLease,
@@ -99,6 +103,11 @@ export async function handleHeartbeat(
     ) {
       throw new Error("binding");
     }
+    assertTimestampWindow(
+      receiptTime,
+      request.timestamp,
+      secrets.timestampWindowMs,
+    );
   } catch {
     return reject();
   }
@@ -149,6 +158,9 @@ export async function handleHeartbeat(
     );
     return { status: 200, body, timestamp: receiptTime, macHex };
   }
+  if (fleet.routingState === "PORTABLE_CANARY" && fleet.canaryPassed) {
+    enqueueNamedRoute(store, receiptTime, "self-hosted");
+  }
   const lease = issueLease(store, secrets, request, receiptTime);
   const body = encodeResponse(store, receiptTime, lease, null);
   const macHex = await signCanonical(
@@ -192,19 +204,26 @@ function evaluateLease(
       Date.parse(receiptTime) - Date.parse(evidenceAt) >
         secrets.selectorEvidenceMaxAgeMs
     ) {
-      fleet.leaseGeneration += 1;
-      store.enqueue({
-        id: `hosted-${fleet.leaseGeneration}`,
-        kind: "github-mutate-route",
-        dueAt: receiptTime,
-        claimId: null,
-        claimExpiresAt: null,
-        attempts: 0,
-        status: "ready",
-        payload: { route: "hosted" },
-      });
+      enqueueNamedRoute(store, receiptTime, "hosted");
       return "stale-selector-evidence";
     }
+  }
+  if (
+    fleet.policyDigest === null ||
+    fleet.policyDigest !== request.snapshot.policyDigest ||
+    fleet.configRevision !== request.snapshot.repositoryPolicyRevision
+  ) {
+    return "policy-mismatch";
+  }
+  if (
+    fleet.routingState === "PORTABLE_CANARY" ||
+    fleet.routingState === "LEGACY_CANARY"
+  ) {
+    if (fleet.canaryScaleSet === null) {
+      return "policy-mismatch";
+    }
+  } else if (fleet.maxCapacity < 1) {
+    return "capacity-zero";
   }
   if (
     request.snapshot.acquisitionMode === "disabled" ||
@@ -213,6 +232,33 @@ function evaluateLease(
     return "lease-disabled";
   }
   return null;
+}
+
+function enqueueNamedRoute(
+  store: MemoryFleetStore,
+  now: string,
+  value: string,
+): void {
+  const pending = store.dueWork.some(
+    (row) =>
+      row.kind === "github-mutate-route" &&
+      row.payload.value === value &&
+      (row.status === "ready" || row.status === "claimed"),
+  );
+  if (pending) {
+    return;
+  }
+  store.fleet.leaseGeneration += 1;
+  store.enqueue({
+    id: `route-${store.fleet.leaseGeneration}`,
+    kind: "github-mutate-route",
+    dueAt: now,
+    claimId: null,
+    claimExpiresAt: null,
+    attempts: 0,
+    status: "ready",
+    payload: { name: "PORTABLE_GHAR_ROUTE", value },
+  });
 }
 
 function issueLease(
@@ -255,11 +301,11 @@ function issueLease(
     sessionId: request.sessionId,
     leaseGeneration: fleet.leaseGeneration,
     mode,
-    policyDigest: request.snapshot.policyDigest,
-    repositoryPolicyRevision: request.snapshot.repositoryPolicyRevision,
-    localPolicyEpoch: request.snapshot.policyEpoch,
-    maxCapacity: mode === "canary-only" ? 1 : 2,
-    canaryScaleSet: mode === "canary-only" ? "canary-set" : null,
+    policyDigest: requirePolicyDigest(fleet.policyDigest),
+    repositoryPolicyRevision: fleet.configRevision,
+    localPolicyEpoch: fleet.configRevision,
+    maxCapacity: mode === "canary-only" ? 1 : fleet.maxCapacity,
+    canaryScaleSet: mode === "canary-only" ? fleet.canaryScaleSet : null,
     archivedDisabledAliases: aliases,
     durationMs: secrets.leaseDurationMs,
     expiry,
@@ -272,6 +318,13 @@ function issueLease(
   }
   fleet.holder = holder;
   return lease;
+}
+
+function requirePolicyDigest(digest: string | null): string {
+  if (digest === null) {
+    throw new Error("worker policy digest is unset");
+  }
+  return digest;
 }
 
 function encodeResponse(

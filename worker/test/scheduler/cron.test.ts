@@ -54,6 +54,7 @@ test("cron addresses every configured fleet and does not use alarms", async () =
     4,
     new Map([["example-fleet", store]]),
     1_000,
+    5_000,
     () => "2026-01-01T00:00:00.000Z",
     async (next, batch) => {
       expect(next.fleet.fleetId).toBe("example-fleet");
