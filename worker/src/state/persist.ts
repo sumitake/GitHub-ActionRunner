@@ -11,6 +11,7 @@ import {
 export type FleetSql = {
   run(query: string, ...binds: unknown[]): void;
   all(query: string, ...binds: unknown[]): Record<string, unknown>[];
+  transaction(work: () => void): void;
 };
 
 export function loadFleetStore(
@@ -71,19 +72,9 @@ export function loadFleetStore(
 }
 
 export function saveFleetStore(sql: FleetSql, store: MemoryFleetStore): void {
-  const fleet = store.fleet;
-  sql.run("BEGIN IMMEDIATE");
-  try {
-    replaceFleetSnapshot(sql, store, fleet);
-    sql.run("COMMIT");
-  } catch (error) {
-    try {
-      sql.run("ROLLBACK");
-    } catch {
-      // Keep the original save failure.
-    }
-    throw error;
-  }
+  sql.transaction(() => {
+    replaceFleetSnapshot(sql, store, store.fleet);
+  });
 }
 
 function replaceFleetSnapshot(

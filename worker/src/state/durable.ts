@@ -12,6 +12,7 @@ type SqlStorage = {
 
 type DurableStorage = {
   sql: SqlStorage;
+  transactionSync(closure: () => void): void;
 };
 
 type DurableContext = {
@@ -23,17 +24,23 @@ function rejected(): Response {
   return Response.json({ error: "rejected" }, { status: 401 });
 }
 
-function fleetSql(sql: SqlStorage): FleetSql {
+function fleetSql(storage: DurableStorage): FleetSql {
   return {
     run(query: string, ...binds: unknown[]) {
-      sql.exec(query, ...binds);
+      storage.sql.exec(query, ...binds);
     },
     all(query: string, ...binds: unknown[]) {
-      const cursor = sql.exec(query, ...binds);
+      const cursor = storage.sql.exec(query, ...binds);
       if (cursor !== undefined && typeof cursor.toArray === "function") {
         return cursor.toArray();
       }
       return [];
+    },
+    transaction(work: () => void) {
+      if (typeof storage.transactionSync !== "function") {
+        throw new Error("durable storage transaction is unavailable");
+      }
+      storage.transactionSync(work);
     },
   };
 }
@@ -49,7 +56,7 @@ export class FleetDurableObject {
 
   constructor(ctx: DurableContext, env: WorkerEnv = {}) {
     ctx.storage.sql.exec(FLEET_SCHEMA_SQL);
-    this.sql = fleetSql(ctx.storage.sql);
+    this.sql = fleetSql(ctx.storage);
     this.env = env;
     this.objectName = ctx.id?.name;
   }

@@ -25,6 +25,21 @@ function validEnv(): Record<string, string> {
   };
 }
 
+function sqliteTransaction(db: DatabaseSync, work: () => void): void {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    work();
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Keep the original failure.
+    }
+    throw error;
+  }
+}
+
 function sharedSql(): {
   sql: {
     exec(
@@ -33,12 +48,36 @@ function sharedSql(): {
     ): { toArray: () => Record<string, unknown>[] };
   };
   persist: FleetSql;
+  transactionSync: (work: () => void) => void;
+  transactionCalls: { count: number };
 } {
   const db = new DatabaseSync(":memory:");
   db.exec(FLEET_SCHEMA_SQL);
+  const transactionCalls = { count: 0 };
+  const persist: FleetSql = {
+    run(query: string, ...binds: unknown[]) {
+      if (/^(BEGIN|COMMIT|ROLLBACK)\b/i.test(query.trim())) {
+        throw new Error("SQL transaction control is unsupported");
+      }
+      if (binds.length === 0) {
+        db.exec(query);
+        return;
+      }
+      db.prepare(query).run(...binds);
+    },
+    all(query: string, ...binds: unknown[]) {
+      return db.prepare(query).all(...binds) as Record<string, unknown>[];
+    },
+    transaction(work: () => void) {
+      sqliteTransaction(db, work);
+    },
+  };
   return {
     sql: {
       exec(query: string, ...binds: unknown[]) {
+        if (/^(BEGIN|COMMIT|ROLLBACK)\b/i.test(query.trim())) {
+          throw new Error("SQL transaction control is unsupported");
+        }
         const isSelect = /^\s*SELECT/i.test(query);
         if (binds.length === 0) {
           if (isSelect) {
@@ -55,23 +94,17 @@ function sharedSql(): {
         return { toArray: () => [] };
       },
     },
-    persist: {
-      run(query: string, ...binds: unknown[]) {
-        if (binds.length === 0) {
-          db.exec(query);
-          return;
-        }
-        db.prepare(query).run(...binds);
-      },
-      all(query: string, ...binds: unknown[]) {
-        return db.prepare(query).all(...binds) as Record<string, unknown>[];
-      },
+    persist,
+    transactionSync(work: () => void) {
+      transactionCalls.count += 1;
+      sqliteTransaction(db, work);
     },
+    transactionCalls,
   };
 }
 
 test("overlapping same-sequence heartbeats issue only one lease", async () => {
-  const { sql, persist } = sharedSql();
+  const { sql, persist, transactionSync, transactionCalls } = sharedSql();
   const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");
   const store = new MemoryFleetStore("example-fleet", { now: () => timestamp });
   store.fleet.inventoried = true;
@@ -97,7 +130,7 @@ test("overlapping same-sequence heartbeats issue only one lease", async () => {
   saveFleetStore(persist, store);
 
   const durable = new FleetDurableObject(
-    { storage: { sql }, id: { name: "example-fleet" } },
+    { storage: { sql, transactionSync }, id: { name: "example-fleet" } },
     validEnv(),
   );
   const body = canonicalize({
@@ -138,4 +171,5 @@ test("overlapping same-sequence heartbeats issue only one lease", async () => {
   const bodies = [await first.text(), await second.text()];
   expect(statuses).toEqual([200, 401]);
   expect(bodies.filter((bodyText) => bodyText.includes('"mode":"enabled"'))).toHaveLength(1);
+  expect(transactionCalls.count).toBeGreaterThan(0);
 });

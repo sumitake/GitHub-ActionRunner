@@ -9,19 +9,37 @@ import {
 } from "../../src/state/persist";
 import { FLEET_SCHEMA_SQL } from "../../src/state/schema";
 
+function applySql(db: DatabaseSync, query: string, binds: unknown[]): void {
+  if (binds.length === 0) {
+    db.exec(query);
+    return;
+  }
+  db.prepare(query).run(...binds);
+}
+
 function memorySql(): FleetSql {
   const db = new DatabaseSync(":memory:");
   db.exec(FLEET_SCHEMA_SQL);
   return {
     run(query: string, ...binds: unknown[]) {
-      if (binds.length === 0) {
-        db.exec(query);
-        return;
-      }
-      db.prepare(query).run(...binds);
+      applySql(db, query, binds);
     },
     all(query: string, ...binds: unknown[]) {
       return db.prepare(query).all(...binds) as Record<string, unknown>[];
+    },
+    transaction(work: () => void) {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        work();
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // Keep the original failure.
+        }
+        throw error;
+      }
     },
   };
 }
@@ -91,6 +109,34 @@ test("missing fleet row hydrates an empty store", () => {
   expect(loaded.fleet.routingState).toBe("UNINITIALIZED");
 });
 
+test("save uses a storage transaction instead of SQL BEGIN", () => {
+  const statements: string[] = [];
+  let transacted = false;
+  const inner = memorySql();
+  const sql: FleetSql = {
+    run(query: string, ...binds: unknown[]) {
+      statements.push(query);
+      inner.run(query, ...binds);
+    },
+    all(query: string, ...binds: unknown[]) {
+      return inner.all(query, ...binds);
+    },
+    transaction(work: () => void) {
+      transacted = true;
+      inner.transaction(work);
+    },
+  };
+  const store = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:10.000Z",
+  });
+  store.fleet.epoch = 3;
+  saveFleetStore(sql, store);
+  expect(transacted).toBe(true);
+  expect(
+    statements.some((query) => /^(BEGIN|COMMIT|ROLLBACK)\b/i.test(query.trim())),
+  ).toBe(false);
+});
+
 test("a failed save keeps the previous snapshot", () => {
   const db = new DatabaseSync(":memory:");
   db.exec(FLEET_SCHEMA_SQL);
@@ -100,14 +146,24 @@ test("a failed save keeps the previous snapshot", () => {
       if (query.includes("INSERT INTO fleet_state") && fleetInserts++ >= 1) {
         throw new Error("insert failed");
       }
-      if (binds.length === 0) {
-        db.exec(query);
-        return;
-      }
-      db.prepare(query).run(...binds);
+      applySql(db, query, binds);
     },
     all(query: string, ...binds: unknown[]) {
       return db.prepare(query).all(...binds) as Record<string, unknown>[];
+    },
+    transaction(work: () => void) {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        work();
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // Keep the original failure.
+        }
+        throw error;
+      }
     },
   };
   const clock = { now: () => "2026-01-01T00:00:10.000Z" };
