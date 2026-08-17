@@ -1,0 +1,8 @@
+{
+  "keyHex": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+  "method": "POST",
+  "path": "/v1/session",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "canonicalBodyFile": "session-request.canonical.txt",
+  "macHex": "d0acdebb993bbd04d8d0acba995ff52cdc8431b7fce40fe005f93bd12aa74f17"
+}
