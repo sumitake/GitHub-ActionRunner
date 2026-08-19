@@ -87,4 +87,15 @@ Nothing in this section has shipped as a tagged release.
 - Limit the systemd watchdog oneshot to reaping its own process; controller
   termination remains bound to the watchdog's process-identity authority.
 
+- Scoped the release-admission Trivy image scans to fixable findings
+  (`--ignore-unfixed`): the pinned Debian base permanently carries
+  HIGH/CRITICAL entries with no published vendor fix, which left the gate
+  with no achievable green state and blocked every release. The source
+  filesystem scan still blocks on unfixed findings, secret scanning is
+  unchanged, and all package versions remain recorded in the release SBOMs.
+- Added a weekly `Vulnerability Watch` workflow that re-runs the full
+  release-gate policy against default-branch source and turns red the week
+  any previously unfixable HIGH/CRITICAL finding in the pinned runner base
+  image gains an upstream fix, prompting a deliberate base-image bump.
+
 [Unreleased]: https://github.com/sumitake/portable-ghar/compare/main...HEAD

@@ -1,0 +1,54 @@
+name: Vulnerability Watch
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+permissions: {}
+jobs:
+  source-full-policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-source-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout default-branch source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Scan source with the full release-gate policy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+  base-image-fixable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-base-image-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout default-branch source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Resolve the pinned runner base image reference
+        id: base
+        run: 'set -euo pipefail; ref="$(awk ''/^FROM /{print $2; exit}'' images/runner/Dockerfile)"; case "$ref" in *@sha256:*) ;; *) echo "base image reference is not digest-pinned" >&2; exit 1 ;; esac; printf "ref=%s\n" "$ref" >>"$GITHUB_OUTPUT"'
+      - name: Fail when a previously unfixable base CVE gains a fix
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.base.outputs.ref }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
