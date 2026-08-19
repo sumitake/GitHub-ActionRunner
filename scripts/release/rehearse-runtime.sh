@@ -1847,6 +1847,13 @@ def main():
             log=log,
             timeout=3600,
         )
+        # Image scans admit only findings an upstream fix exists for. The
+        # pinned Debian base permanently carries unfixable HIGH/CRITICAL
+        # entries (no vendor fix published), so blocking on them would leave
+        # the gate with no achievable green state; the scheduled
+        # vulnerability-watch workflow turns red the week any of them gains a
+        # fix, and every package version remains recorded in the SBOMs. The
+        # source fs scan above deliberately keeps unfixed findings blocking.
         for entry in runtime["images"]:
             run(
                 [
@@ -1858,6 +1865,7 @@ def main():
                     "vuln,secret",
                     "--severity",
                     "HIGH,CRITICAL",
+                    "--ignore-unfixed",
                     "--exit-code",
                     "1",
                     "--no-progress",
