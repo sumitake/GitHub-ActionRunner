@@ -137,7 +137,7 @@ make_repo() {
   git -C "$WORK" config user.name "Dev Example"
   cd "$WORK"
 
-  run bash "$SCRIPT" 1.0.0 "$OUT/x"
+  run env SOURCE_DATE_EPOCH= bash "$SCRIPT" 1.0.0 "$OUT/x"
   [ "$status" -ne 0 ]
   [[ "$output" == *"SOURCE_DATE_EPOCH"* ]]
 }
