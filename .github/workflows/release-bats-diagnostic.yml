@@ -1,0 +1,35 @@
+name: Release Bats Diagnostic
+on:
+  push:
+    branches:
+      - dev/codex/release-bats-diagnostic-archived
+permissions: {}
+jobs:
+  release-bats-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-release-bats-diagnostic-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      GOTOOLCHAIN: go1.26.6
+    steps:
+      - name: Checkout exact diagnostic source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install Bats
+        uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+      - name: Run tracked Bats inventory under release isolation
+        env:
+          PGHAR_DIAGNOSTIC_HOME: ${{ runner.temp }}/release-bats-diagnostic/home
+          GOPATH: ${{ runner.temp }}/release-bats-diagnostic/gopath
+          GOCACHE: ${{ runner.temp }}/release-bats-diagnostic/go-build
+          GOMODCACHE: ${{ runner.temp }}/release-bats-diagnostic/go-mod
+        run: 'set -euo pipefail; umask 077; install -d -m 700 "$PGHAR_DIAGNOSTIC_HOME" "$GOPATH" "$GOCACHE" "$GOMODCACHE"; export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"; go version; bats --version; node --version; npm --version; python3 --version; git rev-parse HEAD; files=(); while IFS= read -r -d "" bats_file; do files+=("$bats_file"); done < <(git ls-files -z -- "tests/shell/*.bats" "tests/shell/**/*.bats"); test "${#files[@]}" -gt 0; printf "tracked_bats_files=%s\n" "${#files[@]}"; bats --print-output-on-failure "${files[@]}"'
