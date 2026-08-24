@@ -330,19 +330,18 @@ This task executes only on operator-owned storage outside the public repository.
 umask 077
 mkdir -p "$PORTABLE_GHAR_PRIVATE_OVERLAY/evidence" "$PORTABLE_GHAR_PRIVATE_OVERLAY/rollback" "$PORTABLE_GHAR_PRIVATE_OVERLAY/rendered"
 chmod 0700 "$PORTABLE_GHAR_PRIVATE_OVERLAY"
-scripts/ops/assert-private-overlay.sh "$PORTABLE_GHAR_PRIVATE_OVERLAY"
 ```
 
-Expected: the overlay exists outside the repository, its root is mode `0700`, every populated file is mode `0600`, and it contains secret references rather than secret values wherever supported.
+Expected: the overlay exists outside the repository and its root is mode `0700`. The released validator below rejects any populated directory or file that does not meet the recursive private-root contract.
 
 **Step 2: Validate without rendering secrets**
 
 ```sh
 node scripts/validate-failover-config.mjs --config "$PORTABLE_GHAR_PRIVATE_OVERLAY/failover.json"
-scripts/ops/assert-private-overlay.sh "$PORTABLE_GHAR_PRIVATE_OVERLAY"
+portable-ghar validate-private-overlay --private "$PORTABLE_GHAR_PRIVATE_OVERLAY/controller-runtime.json"
 ```
 
-Expected: strict schema and secret-reference validation passes; output is exactly `failover configuration: PASS`. The host overlay also carries the operator-approved `/runner` and `/tmp` tmpfs, memory/swap cgroup, maximum-concurrency, host-reserve, and runner-release-cadence tuple with its evidence digest; host validation must reject it until p99/margin and 32 GiB host-budget inequalities pass. Live target/account/service checks are performed separately by the typed private probe.
+Expected: Worker rendering validation passes separately. The released Go command validates the canonical host overlay and emits a typed revision/mode receipt without printing private paths or references. The host overlay also carries the operator-approved `/runner` and `/tmp` tmpfs, memory/swap cgroup, maximum-concurrency, host-reserve, and runner-release-cadence tuple with its evidence digest; host validation must reject it until p99/margin and 32 GiB host-budget inequalities pass. Live target/account/service checks are performed separately by the typed private probe.
 
 **Step 3: Capture the live legacy rollback source**
 

@@ -1,11 +1,7 @@
-import {
-  bytesToHex,
-  hexToBytes,
-  signCanonical,
-  verifyCanonical,
-} from "../protocol/auth";
+import { bytesToHex, signCanonical, verifyCanonical } from "../protocol/auth";
 import { canonicalize } from "../protocol/canonical";
 import {
+  HEX64,
   parseSessionRequest,
   type SessionRequestV1,
   type SessionResponseV1,
@@ -29,6 +25,14 @@ export type SessionInput = {
   inventoried: boolean;
 };
 
+export type SessionIDSource = () => string;
+
+function randomSessionID(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return bytesToHex(bytes);
+}
+
 function addMs(timestamp: string, deltaMs: number): string {
   return new Date(Date.parse(timestamp) + deltaMs)
     .toISOString()
@@ -48,6 +52,7 @@ export async function handleSession(
   store: MemoryFleetStore,
   secrets: SessionSecrets,
   input: SessionInput,
+  sessionIDSource: SessionIDSource = randomSessionID,
 ): Promise<{
   status: number;
   body: string;
@@ -104,19 +109,30 @@ export async function handleSession(
     return reject();
   }
   store.expireNonces(receiptTime);
-  if (
-    !store.rememberNonce(request.nonce, addMs(receiptTime, secrets.nonceTtlMs))
-  ) {
+  if (store.nonces.has(request.nonce)) {
     store.recordAudit("session-rejected-nonce");
     return reject();
   }
   const fleet = store.fleet;
-  fleet.inventoried = true;
-  fleet.epoch += 1;
-  fleet.leaseGeneration += 1;
-  fleet.sessionId = bytesToHex(hexToBytes(request.nonce));
-  fleet.sequence = 0;
-  fleet.holder = "none";
+  let sessionId: string;
+  try {
+    sessionId = sessionIDSource();
+    if (!HEX64.test(sessionId) || sessionId === request.nonce) {
+      throw new Error("session identity");
+    }
+  } catch {
+    store.recordAudit("session-rejected-session-id");
+    return reject();
+  }
+  const nextEpoch = fleet.epoch + 1;
+  const nextLeaseGeneration = fleet.leaseGeneration + 1;
+  if (
+    !Number.isSafeInteger(nextEpoch) ||
+    !Number.isSafeInteger(nextLeaseGeneration)
+  ) {
+    store.recordAudit("session-rejected-counter-overflow");
+    return reject();
+  }
   const candidate =
     fleet.lastIssuedLeaseExpiryMax === null
       ? receiptTime
@@ -124,7 +140,7 @@ export async function handleSession(
           fleet.lastIssuedLeaseExpiryMax,
           secrets.hostedTransitionSafetyMarginMs,
         );
-  fleet.leaseNotBefore = maxTimestamp([
+  const leaseNotBefore = maxTimestamp([
     receiptTime,
     fleet.leaseNotBefore,
     candidate,
@@ -133,11 +149,11 @@ export async function handleSession(
     protocolVersion: HEARTBEAT_PROTOCOL_VERSION,
     fleetId: fleet.fleetId,
     nonce: request.nonce,
-    epoch: fleet.epoch,
-    sessionId: fleet.sessionId,
-    sequence: fleet.sequence,
-    leaseGeneration: fleet.leaseGeneration,
-    leaseNotBefore: fleet.leaseNotBefore,
+    epoch: nextEpoch,
+    sessionId,
+    sequence: 0,
+    leaseGeneration: nextLeaseGeneration,
+    leaseNotBefore,
     receiptTime,
   };
   const body = canonicalize(response);
@@ -148,6 +164,20 @@ export async function handleSession(
     receiptTime,
     body,
   );
+  if (
+    !store.rememberNonce(request.nonce, addMs(receiptTime, secrets.nonceTtlMs))
+  ) {
+    store.recordAudit("session-rejected-nonce");
+    return reject();
+  }
+  fleet.inventoried = true;
+  fleet.epoch = nextEpoch;
+  fleet.leaseGeneration = nextLeaseGeneration;
+  fleet.sessionId = sessionId;
+  fleet.sequence = 0;
+  fleet.holder = "none";
+  fleet.leaseNotBefore = leaseNotBefore;
+  fleet.canaryEvidence = null;
   store.recordAudit("session-accepted");
   return { status: 200, body, timestamp: receiptTime, macHex };
 }

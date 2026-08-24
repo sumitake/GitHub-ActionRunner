@@ -26,8 +26,17 @@ var (
 	rfc3339MsZ      = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
 )
 
+const protocolTimestampLayout = "2006-01-02T15:04:05.000Z"
+
+func FormatProtocolTimestamp(value time.Time) string {
+	return value.UTC().Truncate(time.Millisecond).Format(protocolTimestampLayout)
+}
+
 func MACInput(method, path, timestamp string, canonicalBody []byte) ([]byte, error) {
-	if method != "POST" || !strings.HasPrefix(path, "/v1/") || !rfc3339MsZ.MatchString(timestamp) {
+	if method != "POST" || !strings.HasPrefix(path, "/v1/") {
+		return nil, fmt.Errorf("%w: mac input", ErrProtocolAuth)
+	}
+	if _, err := parseProtocolTimestamp(timestamp); err != nil {
 		return nil, fmt.Errorf("%w: mac input", ErrProtocolAuth)
 	}
 	var builder strings.Builder
@@ -66,14 +75,14 @@ func VerifyCanonical(key []byte, method, path, timestamp string, canonicalBody [
 }
 
 func AssertTimestampWindow(receipt, request string, window time.Duration) error {
-	if window <= 0 || !rfc3339MsZ.MatchString(receipt) || !rfc3339MsZ.MatchString(request) {
+	if window <= 0 {
 		return fmt.Errorf("%w: timestamp window", ErrProtocolAuth)
 	}
-	receiptTime, err := time.Parse(time.RFC3339Nano, receipt)
+	receiptTime, err := parseProtocolTimestamp(receipt)
 	if err != nil {
 		return fmt.Errorf("%w: timestamp window", ErrProtocolAuth)
 	}
-	requestTime, err := time.Parse(time.RFC3339Nano, request)
+	requestTime, err := parseProtocolTimestamp(request)
 	if err != nil {
 		return fmt.Errorf("%w: timestamp window", ErrProtocolAuth)
 	}
@@ -82,6 +91,17 @@ func AssertTimestampWindow(receipt, request string, window time.Duration) error 
 		return fmt.Errorf("%w: timestamp outside window", ErrProtocolAuth)
 	}
 	return nil
+}
+
+func parseProtocolTimestamp(value string) (time.Time, error) {
+	if !rfc3339MsZ.MatchString(value) {
+		return time.Time{}, fmt.Errorf("%w: timestamp", ErrProtocolAuth)
+	}
+	parsed, err := time.Parse(protocolTimestampLayout, value)
+	if err != nil || parsed.Format(protocolTimestampLayout) != value {
+		return time.Time{}, fmt.Errorf("%w: timestamp", ErrProtocolAuth)
+	}
+	return parsed, nil
 }
 
 func DecodeHex(value string) ([]byte, error) {

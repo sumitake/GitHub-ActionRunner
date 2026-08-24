@@ -50,9 +50,13 @@ export function deliverNotifications(
     }
     if (fail.has(row.kind)) {
       row.status = "failed";
+      row.claimId = null;
+      row.claimExpiresAt = null;
       store.recordAudit(`${row.kind}-failed`);
       continue;
     }
     row.status = "done";
+    row.claimId = null;
+    row.claimExpiresAt = null;
   }
 }

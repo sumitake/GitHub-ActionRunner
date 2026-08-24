@@ -1,6 +1,7 @@
 import type { GatewaySecrets } from "./gateway";
-import { hexToBytes } from "./protocol/auth";
-import { FLEET_ID } from "./protocol/messages";
+import { constantTimeEqualHex, hexToBytes } from "./protocol/auth";
+import { isCanonicalInventoryRevision } from "./protocol/cron";
+import { FLEET_ID, HEX64, MAX_LEASE_DURATION_MS } from "./protocol/messages";
 
 export type FleetNamespace = {
   getByName(name: string): { fetch(request: Request): Promise<Response> };
@@ -13,12 +14,17 @@ export type ParsedWorkerBindings = {
   secrets: GatewaySecrets;
 };
 
-export type ParsedCronBindings = ParsedWorkerBindings & {
+export type ParsedCronBindings = {
+  inventoriedFleetIds: string[];
+  cronHmacKey: Uint8Array;
+  timestampWindowMs: number;
+  nonceTtlMs: number;
   inventoryRevision: string;
   inventoryDigest: string;
   maxFleets: number;
-  claimTtlMs: number;
   perFleetDeadlineMs: number;
+  cronBudgetOverheadMs: number;
+  cronTickBudgetMs: number;
 };
 
 function requiredPositiveInt(env: WorkerEnv, name: string): number | null {
@@ -30,7 +36,7 @@ function requiredPositiveInt(env: WorkerEnv, name: string): number | null {
     return null;
   }
   const value = Number.parseInt(raw, 10);
-  if (!Number.isInteger(value) || value <= 0) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
     return null;
   }
   return value;
@@ -78,6 +84,7 @@ export function parseWorkerBindings(
     timestampWindowMs === null ||
     nonceTtlMs === null ||
     leaseDurationMs === null ||
+    leaseDurationMs > MAX_LEASE_DURATION_MS ||
     archiveEvidenceMaxAgeMs === null ||
     selectorEvidenceMaxAgeMs === null ||
     hostedTransitionSafetyMarginMs === null
@@ -108,30 +115,73 @@ export function parseWorkerBindings(
 }
 
 export function parseCronBindings(env: WorkerEnv): ParsedCronBindings | null {
-  const base = parseWorkerBindings(env);
+  const fleetIds = parseFleetIds(env.FLEET_IDS);
+  const timestampWindowMs = requiredPositiveInt(env, "TIMESTAMP_WINDOW_MS");
+  const nonceTtlMs = requiredPositiveInt(env, "NONCE_TTL_MS");
   const maxFleets = requiredPositiveInt(env, "MAX_FLEETS");
-  const claimTtlMs = requiredPositiveInt(env, "CLAIM_TTL_MS");
   const perFleetDeadlineMs = requiredPositiveInt(env, "PER_FLEET_DEADLINE_MS");
+  const cronBudgetOverheadMs = requiredPositiveInt(
+    env,
+    "CRON_BUDGET_OVERHEAD_MS",
+  );
+  const cronTickBudgetMs = requiredPositiveInt(env, "CRON_TICK_BUDGET_MS");
   const inventoryRevision = env.FLEET_INVENTORY_REVISION;
   const inventoryDigest = env.FLEET_INVENTORY_DIGEST;
+  const hmacKeyHex = env.HMAC_KEY;
+  const cronHmacKeyHex = env.CRON_HMAC_KEY;
+  let hmacKey: Uint8Array;
+  let cronHmacKey: Uint8Array;
+  try {
+    hmacKey = hexToBytes(typeof hmacKeyHex === "string" ? hmacKeyHex : "");
+    cronHmacKey = hexToBytes(
+      typeof cronHmacKeyHex === "string" ? cronHmacKeyHex : "",
+    );
+  } catch {
+    return null;
+  }
   if (
-    base === null ||
+    fleetIds === null ||
+    timestampWindowMs === null ||
+    nonceTtlMs === null ||
     maxFleets === null ||
-    claimTtlMs === null ||
     perFleetDeadlineMs === null ||
+    cronBudgetOverheadMs === null ||
+    cronTickBudgetMs === null ||
     typeof inventoryRevision !== "string" ||
-    inventoryRevision === "" ||
+    !isCanonicalInventoryRevision(inventoryRevision) ||
     typeof inventoryDigest !== "string" ||
-    inventoryDigest === ""
+    !HEX64.test(inventoryDigest) ||
+    typeof hmacKeyHex !== "string" ||
+    typeof cronHmacKeyHex !== "string" ||
+    hmacKey.byteLength < 32 ||
+    cronHmacKey.byteLength < 32 ||
+    constantTimeEqualHex(cronHmacKeyHex, hmacKeyHex) ||
+    cronTickBudgetMs > 900_000 ||
+    fleetIds.length > maxFleets
   ) {
     return null;
   }
+  for (let index = 1; index < fleetIds.length; index += 1) {
+    if (fleetIds[index]! <= fleetIds[index - 1]!) {
+      return null;
+    }
+  }
+  const requiredBudget =
+    BigInt(maxFleets) * BigInt(perFleetDeadlineMs) +
+    BigInt(cronBudgetOverheadMs);
+  if (requiredBudget > BigInt(cronTickBudgetMs)) {
+    return null;
+  }
   return {
-    ...base,
+    inventoriedFleetIds: fleetIds,
+    cronHmacKey,
+    timestampWindowMs,
+    nonceTtlMs,
     inventoryRevision,
     inventoryDigest,
     maxFleets,
-    claimTtlMs,
     perFleetDeadlineMs,
+    cronBudgetOverheadMs,
+    cronTickBudgetMs,
   };
 }

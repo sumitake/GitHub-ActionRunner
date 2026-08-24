@@ -23,6 +23,32 @@ function secrets() {
   };
 }
 
+function snapshot(observedAt: string) {
+  return {
+    observedAt,
+    fleetAlias: "example-fleet",
+    acquisitionMode: "enabled" as const,
+    policyEpoch: 1,
+    policyDigest: digest,
+    repositoryPolicyRevision: 1,
+    capacity: {
+      configured: 1,
+      effective: 1,
+      occupied: 0,
+      available: 1,
+      queued: 0,
+    },
+    assignedJobs: 0,
+    runningJobs: 0,
+    oldestLiveAssignmentAgeMs: 0,
+    unassignedReleasedListeners: 0,
+    lastTerminalAt: null,
+    hostProfileId: "strict-linux-v1" as const,
+    degraded: false,
+    buildId: digest,
+  };
+}
+
 test("session replay and old-session heartbeats fail closed", async () => {
   let now = Date.parse("2026-01-01T00:00:00.000Z");
   const store = new MemoryFleetStore("example-fleet", {
@@ -53,6 +79,7 @@ test("session replay and old-session heartbeats fail closed", async () => {
   expect(first.status).toBe(200);
   const session = parseSessionResponse(first.body);
   expect(session.nonce).toBe(nonce);
+  expect(session.sessionId).not.toBe(nonce);
   const replay = await handleSession(store, secrets(), {
     method: "POST",
     path: "/v1/session",
@@ -73,13 +100,7 @@ test("session replay and old-session heartbeats fail closed", async () => {
     holder: "portable",
     fenceGeneration: 1,
     timestamp: new Date(now).toISOString(),
-    snapshot: {
-      policyEpoch: 1,
-      policyDigest: digest,
-      repositoryPolicyRevision: 1,
-      acquisitionMode: "enabled",
-      unassignedReleasedListeners: 0,
-    },
+    snapshot: snapshot(new Date(now).toISOString()),
   });
   const hbMac = await signCanonical(
     key,
@@ -98,6 +119,303 @@ test("session replay and old-session heartbeats fail closed", async () => {
   });
   expect(oldSession.status).toBe(200);
   expect(oldSession.body).toContain("invalid-request");
+
+  now += 10;
+  const replacementNonce = "e".repeat(64);
+  const replacementTimestamp = new Date(now).toISOString();
+  const replacementBody = canonicalize({
+    buildId: digest,
+    fleetId: "example-fleet",
+    nonce: replacementNonce,
+    protocolVersion: 1,
+    timestamp: replacementTimestamp,
+  });
+  const replacementMac = await signCanonical(
+    key,
+    "POST",
+    "/v1/session",
+    replacementTimestamp,
+    replacementBody,
+  );
+  const replacement = await handleSession(
+    store,
+    secrets(),
+    {
+      method: "POST",
+      path: "/v1/session",
+      timestamp: replacementTimestamp,
+      macHex: replacementMac,
+      body: replacementBody,
+      inventoried: true,
+    },
+    () => "f".repeat(64),
+  );
+  expect(replacement.status).toBe(200);
+  const replacementSession = parseSessionResponse(replacement.body);
+  expect(replacementSession.epoch).toBe(session.epoch + 1);
+  expect(replacementSession.sessionId).toBe("f".repeat(64));
+
+  now += 10;
+  const oldTimestamp = new Date(now).toISOString();
+  const actualOldBody = canonicalize({
+    protocolVersion: 1,
+    fleetId: "example-fleet",
+    epoch: session.epoch,
+    sessionId: session.sessionId,
+    sequence: 1,
+    holder: "portable",
+    fenceGeneration: 1,
+    timestamp: oldTimestamp,
+    snapshot: snapshot(oldTimestamp),
+  });
+  const actualOldMac = await signCanonical(
+    key,
+    "POST",
+    "/v1/heartbeat",
+    oldTimestamp,
+    actualOldBody,
+  );
+  const actualOldSession = await handleHeartbeat(store, secrets(), {
+    method: "POST",
+    path: "/v1/heartbeat",
+    timestamp: oldTimestamp,
+    macHex: actualOldMac,
+    body: actualOldBody,
+    inventoried: true,
+  });
+  expect(actualOldSession.status).toBe(200);
+  expect(actualOldSession.body).toContain("invalid-request");
+  expect(store.fleet).toMatchObject({
+    epoch: replacementSession.epoch,
+    sessionId: replacementSession.sessionId,
+    sequence: 0,
+  });
+});
+
+test("partial heartbeat fails before sequence mutation", async () => {
+  const store = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  store.fleet.epoch = 2;
+  store.fleet.sessionId = "d".repeat(64);
+  const body = canonicalize({
+    protocolVersion: 1,
+    fleetId: "example-fleet",
+    epoch: 2,
+    sessionId: store.fleet.sessionId,
+    sequence: 1,
+    holder: "portable",
+    fenceGeneration: 1,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    snapshot: {
+      policyEpoch: 1,
+      policyDigest: digest,
+      repositoryPolicyRevision: 1,
+      acquisitionMode: "enabled",
+      unassignedReleasedListeners: 0,
+    },
+  });
+  const mac = await signCanonical(
+    key,
+    "POST",
+    "/v1/heartbeat",
+    "2026-01-01T00:00:00.000Z",
+    body,
+  );
+
+  const response = await handleHeartbeat(store, secrets(), {
+    method: "POST",
+    path: "/v1/heartbeat",
+    timestamp: "2026-01-01T00:00:00.000Z",
+    macHex: mac,
+    body,
+    inventoried: true,
+  });
+
+  expect(response.status).toBe(401);
+  expect(store.fleet.sequence).toBe(0);
+});
+
+test("stale observed health fails before sequence mutation", async () => {
+  const store = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:10.000Z",
+  });
+  store.fleet.epoch = 2;
+  store.fleet.sessionId = "d".repeat(64);
+  const timestamp = "2026-01-01T00:00:10.000Z";
+  const body = canonicalize({
+    protocolVersion: 1,
+    fleetId: "example-fleet",
+    epoch: 2,
+    sessionId: store.fleet.sessionId,
+    sequence: 1,
+    holder: "portable",
+    fenceGeneration: 1,
+    timestamp,
+    snapshot: snapshot("2026-01-01T00:00:00.000Z"),
+  });
+  const mac = await signCanonical(
+    key,
+    "POST",
+    "/v1/heartbeat",
+    timestamp,
+    body,
+  );
+
+  const response = await handleHeartbeat(store, secrets(), {
+    method: "POST",
+    path: "/v1/heartbeat",
+    timestamp,
+    macHex: mac,
+    body,
+    inventoried: true,
+  });
+
+  expect(response.status).toBe(401);
+  expect(store.fleet.sequence).toBe(0);
+});
+
+test("duplicate heartbeat sequence is rejected without a second mutation", async () => {
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  const store = new MemoryFleetStore("example-fleet", { now: () => timestamp });
+  store.fleet.epoch = 2;
+  store.fleet.sessionId = "d".repeat(64);
+  const body = canonicalize({
+    protocolVersion: 1,
+    fleetId: "example-fleet",
+    epoch: 2,
+    sessionId: store.fleet.sessionId,
+    sequence: 1,
+    holder: "portable",
+    fenceGeneration: 1,
+    timestamp,
+    snapshot: snapshot(timestamp),
+  });
+  const mac = await signCanonical(
+    key,
+    "POST",
+    "/v1/heartbeat",
+    timestamp,
+    body,
+  );
+  const input = {
+    method: "POST",
+    path: "/v1/heartbeat",
+    timestamp,
+    macHex: mac,
+    body,
+    inventoried: true,
+  };
+  const accepted = await handleHeartbeat(store, secrets(), input);
+  expect(accepted.status).toBe(200);
+  expect(store.fleet.sequence).toBe(1);
+  const duplicate = await handleHeartbeat(store, secrets(), input);
+  expect(duplicate.status).toBe(401);
+  expect(store.fleet.sequence).toBe(1);
+});
+
+test("session identity failure and counter overflow leave authority unchanged", async () => {
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  const body = canonicalize({
+    buildId: digest,
+    fleetId: "example-fleet",
+    nonce,
+    protocolVersion: 1,
+    timestamp,
+  });
+  const mac = await signCanonical(key, "POST", "/v1/session", timestamp, body);
+  const input = {
+    method: "POST",
+    path: "/v1/session",
+    timestamp,
+    macHex: mac,
+    body,
+    inventoried: true,
+  };
+
+  for (const source of [
+    () => nonce,
+    () => {
+      throw new Error("rng failed");
+    },
+  ]) {
+    const store = new MemoryFleetStore("example-fleet", {
+      now: () => timestamp,
+    });
+    const response = await handleSession(store, secrets(), input, source);
+    expect(response.status).toBe(401);
+    expect(store.nonces.size).toBe(0);
+    expect(store.fleet).toMatchObject({
+      epoch: 0,
+      leaseGeneration: 0,
+      sessionId: null,
+      sequence: 0,
+    });
+  }
+
+  const overflow = new MemoryFleetStore("example-fleet", {
+    now: () => timestamp,
+  });
+  overflow.fleet.epoch = Number.MAX_SAFE_INTEGER;
+  overflow.fleet.leaseGeneration = Number.MAX_SAFE_INTEGER;
+  const response = await handleSession(overflow, secrets(), input, () =>
+    "d".repeat(64),
+  );
+  expect(response.status).toBe(401);
+  expect(overflow.nonces.size).toBe(0);
+  expect(overflow.fleet).toMatchObject({
+    epoch: Number.MAX_SAFE_INTEGER,
+    leaseGeneration: Number.MAX_SAFE_INTEGER,
+    sessionId: null,
+    sequence: 0,
+  });
+});
+
+test("malformed session envelopes leave all authority counters unchanged", async () => {
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  const body = canonicalize({
+    buildId: digest,
+    fleetId: "example-fleet",
+    nonce,
+    protocolVersion: 1,
+    timestamp,
+  });
+  const macHex = await signCanonical(
+    key,
+    "POST",
+    "/v1/session",
+    timestamp,
+    body,
+  );
+  const validInput = {
+    method: "POST",
+    path: "/v1/session",
+    timestamp,
+    macHex,
+    body,
+    inventoried: true,
+  };
+  for (const input of [
+    { ...validInput, method: "PUT" },
+    { ...validInput, path: "/v1/heartbeat" },
+    { ...validInput, timestamp: "2026-01-01T00:00:01.000Z" },
+    { ...validInput, macHex: "0".repeat(64) },
+  ]) {
+    const store = new MemoryFleetStore("example-fleet", {
+      now: () => timestamp,
+    });
+    const response = await handleSession(store, secrets(), input, () =>
+      "d".repeat(64),
+    );
+    expect(response.status).toBe(401);
+    expect(store.nonces.size).toBe(0);
+    expect(store.fleet).toMatchObject({
+      epoch: 0,
+      leaseGeneration: 0,
+      sessionId: null,
+      sequence: 0,
+    });
+  }
 });
 
 test("predecessor drain grants no lease before leaseNotBefore", async () => {
@@ -141,13 +459,7 @@ test("predecessor drain grants no lease before leaseNotBefore", async () => {
     holder: "portable",
     fenceGeneration: 1,
     timestamp: hbTs,
-    snapshot: {
-      policyEpoch: 1,
-      policyDigest: digest,
-      repositoryPolicyRevision: 1,
-      acquisitionMode: "enabled",
-      unassignedReleasedListeners: 0,
-    },
+    snapshot: snapshot(hbTs),
   });
   const hbMac = await signCanonical(key, "POST", "/v1/heartbeat", hbTs, hbBody);
   const drained = await handleHeartbeat(store, secrets(), {

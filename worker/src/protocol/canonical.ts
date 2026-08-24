@@ -1,4 +1,4 @@
-const MAX_PROTOCOL_BYTES = 65536;
+export const MAX_PROTOCOL_BYTES = 65_536;
 
 export class ProtocolCodecError extends Error {
   constructor(message: string) {

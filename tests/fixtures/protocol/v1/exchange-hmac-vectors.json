@@ -1,0 +1,45 @@
+{
+  "keyHex": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+  "vectors": [
+    {
+      "name": "session-request",
+      "method": "POST",
+      "path": "/v1/session",
+      "timestamp": "2026-01-01T00:00:00.000Z",
+      "canonicalBodyFile": "session-request.canonical.txt",
+      "macHex": "d0acdebb993bbd04d8d0acba995ff52cdc8431b7fce40fe005f93bd12aa74f17"
+    },
+    {
+      "name": "session-response",
+      "method": "POST",
+      "path": "/v1/session",
+      "timestamp": "2026-01-01T00:00:00.000Z",
+      "canonicalBodyFile": "session-response.canonical.txt",
+      "macHex": "60bc12cd626d53fe9e2833be386c7aabf97eb50f82e5eded071169c12519633c"
+    },
+    {
+      "name": "heartbeat-request",
+      "method": "POST",
+      "path": "/v1/heartbeat",
+      "timestamp": "2026-01-01T00:00:01.000Z",
+      "canonicalBodyFile": "heartbeat-request.canonical.txt",
+      "macHex": "71ef966bbba231b6cb94225c2ec497301e2893e962a2e73eabad178de4c88d5b"
+    },
+    {
+      "name": "heartbeat-response-lease",
+      "method": "POST",
+      "path": "/v1/heartbeat",
+      "timestamp": "2026-01-01T00:00:01.000Z",
+      "canonicalBodyFile": "heartbeat-response-lease.canonical.txt",
+      "macHex": "0852803df38decba2b6af4de4780af79046adeafead3bad788fb15f5159430cb"
+    },
+    {
+      "name": "heartbeat-response-no-lease",
+      "method": "POST",
+      "path": "/v1/heartbeat",
+      "timestamp": "2026-01-01T00:00:01.000Z",
+      "canonicalBodyFile": "heartbeat-response-no-lease.canonical.txt",
+      "macHex": "6027de4d741e5a694266348998038849a6c9b31667f7241f82d78d4b76b9adef"
+    }
+  ]
+}

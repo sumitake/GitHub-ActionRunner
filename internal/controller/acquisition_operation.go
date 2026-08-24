@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -16,9 +17,12 @@ var ErrAcquisitionGuardClose = errors.New(
 )
 
 type guardedAcquisitionOperation struct {
-	operation *acquisitionOperation
-	permit    AcquisitionGuard
-	host      AcquisitionGuard
+	operation       *acquisitionOperation
+	operationCancel context.CancelFunc
+	permit          AcquisitionPermitGuard
+	host            AcquisitionGuard
+	closeOnce       sync.Once
+	closeErr        error
 }
 
 type trackedCallResult[T any] struct {
@@ -31,25 +35,32 @@ func (s *Service) acquireGuardedOperation(
 	kind string,
 	repositoryAlias string,
 	scaleSetName string,
-	revalidate func(AcquisitionPolicy, CapacitySummary) error,
+	revalidate func(context.Context, AcquisitionPolicy, CapacitySummary) error,
 ) (*guardedAcquisitionOperation, error) {
 	if err := s.recheckActiveConformance(ctx); err != nil {
 		return nil, err
 	}
+	operationCtx, operationCancel := boundedContext(ctx, s.operationTimeout)
 	barrier := s.barrierSnapshot()
 	if barrier == nil {
+		operationCancel()
 		return nil, ErrServiceNotReady
 	}
 	operation, err := barrier.beginOperation(
-		ctx,
+		operationCtx,
 		kind,
 		repositoryAlias,
 		scaleSetName,
 	)
 	if err != nil {
+		operationCancel()
 		return nil, err
 	}
-	fail := func(cause error, permit, host AcquisitionGuard) error {
+	fail := func(
+		cause error,
+		permit AcquisitionPermitGuard,
+		host AcquisitionGuard,
+	) error {
 		var cleanup []error
 		if permit != nil {
 			cleanup = append(cleanup, permit.Close())
@@ -58,6 +69,7 @@ func (s *Service) acquireGuardedOperation(
 			cleanup = append(cleanup, host.Close())
 		}
 		cleanup = append(cleanup, operation.Close())
+		operationCancel()
 		cleanupErr := errors.Join(cleanup...)
 		if cleanupErr != nil {
 			cleanupErr = fmt.Errorf("%w: %v", ErrAcquisitionGuardClose, cleanupErr)
@@ -74,13 +86,17 @@ func (s *Service) acquireGuardedOperation(
 		)
 	}
 	digest := operation.Digest()
+	policy := operation.Policy()
 	permit, err := s.permits.Acquire(operation.Context(), AcquisitionPermitRequest{
-		OperationID:     operation.ID(),
-		RepositoryAlias: repositoryAlias,
-		ScaleSetName:    scaleSetName,
-		PolicyDigest:    hex.EncodeToString(digest[:]),
-		OperationKind:   kind,
-		PolicyEpoch:     operation.Epoch(),
+		OperationID:              operation.ID(),
+		RepositoryAlias:          repositoryAlias,
+		ScaleSetName:             scaleSetName,
+		PolicyDigest:             hex.EncodeToString(digest[:]),
+		OperationKind:            kind,
+		PolicyEpoch:              operation.Epoch(),
+		PolicyMode:               policy.Mode,
+		MaxCapacity:              policy.MaxCapacity,
+		RepositoryPolicyRevision: policy.RepositoryPolicyRevision,
 	})
 	if err != nil {
 		return nil, fail(
@@ -112,29 +128,82 @@ func (s *Service) acquireGuardedOperation(
 		return nil, fail(ErrAdmissionConflict, permit, host)
 	}
 	if revalidate != nil {
-		if err := revalidate(current, capacity); err != nil {
+		if err := revalidate(permit.Context(), current, capacity); err != nil {
 			return nil, fail(err, permit, host)
 		}
 	}
+	if err := permit.Revalidate(); err != nil {
+		return nil, fail(
+			fmt.Errorf("%w: worker permit changed: %w", ErrAcquisitionUnavailable, err),
+			permit,
+			host,
+		)
+	}
 	return &guardedAcquisitionOperation{
-		operation: operation,
-		permit:    permit,
-		host:      host,
+		operation:       operation,
+		operationCancel: operationCancel,
+		permit:          permit,
+		host:            host,
 	}, nil
+}
+
+func (g *guardedAcquisitionOperation) Binding() AcquisitionPermitBinding {
+	if g == nil || g.permit == nil {
+		return AcquisitionPermitBinding{}
+	}
+	return g.permit.Binding()
+}
+
+func (g *guardedAcquisitionOperation) Revalidate() error {
+	if g == nil || g.permit == nil {
+		return ErrAcquisitionOperationClosed
+	}
+	return g.permit.Revalidate()
+}
+
+func (g *guardedAcquisitionOperation) ValidateBinding(
+	ctx context.Context,
+	binding AcquisitionPermitBinding,
+) error {
+	if g == nil || g.permit == nil {
+		return ErrAcquisitionOperationClosed
+	}
+	return g.permit.ValidateBinding(ctx, binding)
+}
+
+func (g *guardedAcquisitionOperation) Context() context.Context {
+	if g == nil || g.permit == nil {
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cancel(ErrAcquisitionOperationClosed)
+		return ctx
+	}
+	return g.permit.Context()
+}
+
+func (g *guardedAcquisitionOperation) Admit() error {
+	if g == nil || g.permit == nil {
+		return ErrAcquisitionOperationClosed
+	}
+	return g.permit.Admit()
 }
 
 func (g *guardedAcquisitionOperation) Close() error {
 	if g == nil || g.operation == nil {
 		return ErrAcquisitionOperationClosed
 	}
-	permitErr := g.permit.Close()
-	hostErr := g.host.Close()
-	operationErr := g.operation.Close()
-	closeErr := errors.Join(permitErr, hostErr, operationErr)
-	if closeErr != nil {
-		return fmt.Errorf("%w: %v", ErrAcquisitionGuardClose, closeErr)
-	}
-	return nil
+	g.closeOnce.Do(func() {
+		permitErr := g.permit.Close()
+		hostErr := g.host.Close()
+		operationErr := g.operation.Close()
+		if g.operationCancel != nil {
+			g.operationCancel()
+		}
+		closeErr := errors.Join(permitErr, hostErr, operationErr)
+		if closeErr != nil {
+			g.closeErr = fmt.Errorf("%w: %v", ErrAcquisitionGuardClose, closeErr)
+		}
+	})
+	return g.closeErr
 }
 
 func closeGuardedAfter[T any](
@@ -152,8 +221,28 @@ func runTrackedCall[T any](
 	joinTimeout time.Duration,
 	call func(context.Context) (T, error),
 ) (T, <-chan trackedCallResult[T], error, error) {
+	if ctx == nil {
+		var zero T
+		return zero, nil, nil, context.Canceled
+	}
+	if err := ctx.Err(); err != nil {
+		var zero T
+		cause := context.Cause(ctx)
+		if cause == nil {
+			cause = err
+		}
+		return zero, nil, nil, cause
+	}
 	result := make(chan trackedCallResult[T], 1)
 	go func() {
+		if err := ctx.Err(); err != nil {
+			cause := context.Cause(ctx)
+			if cause == nil {
+				cause = err
+			}
+			result <- trackedCallResult[T]{err: cause}
+			return
+		}
 		value, err := call(ctx)
 		result <- trackedCallResult[T]{value: value, err: err}
 	}()

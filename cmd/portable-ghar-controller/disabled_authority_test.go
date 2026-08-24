@@ -169,6 +169,9 @@ func TestUnavailableExternalGraphNeverProvidesExternalAuthority(t *testing.T) {
 	); !errors.Is(err, errDisabledExternalUnavailable) {
 		t.Fatalf("Acquire() error = %v", err)
 	}
+	if err := graph.Invalidate(ctx); !errors.Is(err, errDisabledExternalUnavailable) {
+		t.Fatalf("Invalidate() error = %v", err)
+	}
 	if _, err := graph.VerifyCurrentOffer(
 		ctx,
 		githubscale.Fleet{},

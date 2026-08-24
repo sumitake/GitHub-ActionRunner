@@ -28,9 +28,17 @@ type JITAuthorizationRequest struct {
 	Request      githubscale.JITRequest
 }
 
+// JITAuthorizationResult carries the one-use secret and the same still-active
+// operation guard. The lifecycle owner must keep that guard through listener
+// release and close it exactly once on every terminal path.
+type JITAuthorizationResult struct {
+	Config githubscale.JITConfig
+	Permit AcquisitionPermitGuard
+}
+
 // JITAuthorizer is the only lifecycle path allowed to invoke GenerateJIT.
 type JITAuthorizer interface {
-	GenerateJITAuthorized(context.Context, JITAuthorizationRequest) (githubscale.JITConfig, error)
+	GenerateJITAuthorized(context.Context, JITAuthorizationRequest) (JITAuthorizationResult, error)
 }
 
 // GenerateJITAuthorized performs one epoch-bound JIT request only after the
@@ -40,24 +48,26 @@ type JITAuthorizer interface {
 func (s *Service) GenerateJITAuthorized(
 	ctx context.Context,
 	request JITAuthorizationRequest,
-) (githubscale.JITConfig, error) {
+) (JITAuthorizationResult, error) {
 	if err := validateJITAuthorizationRequest(request); err != nil {
-		return githubscale.JITConfig{}, err
+		return JITAuthorizationResult{}, err
 	}
 	if _, ready := s.policySnapshot(); !ready {
-		return githubscale.JITConfig{}, ErrServiceNotReady
+		return JITAuthorizationResult{}, ErrServiceNotReady
 	}
 
-	operationCtx, cancel := boundedContext(ctx, s.operationTimeout)
-	defer cancel()
 	guarded, err := s.acquireGuardedOperation(
-		operationCtx,
+		ctx,
 		"jit",
 		request.Assignment.Key.RepositoryAlias,
 		request.ScaleSetName,
-		func(current AcquisitionPolicy, capacity CapacitySummary) error {
+		func(
+			permitCtx context.Context,
+			current AcquisitionPolicy,
+			capacity CapacitySummary,
+		) error {
 			return s.revalidateJITAuthorization(
-				operationCtx,
+				permitCtx,
 				current,
 				capacity,
 				request,
@@ -67,16 +77,16 @@ func (s *Service) GenerateJITAuthorized(
 	if err != nil {
 		authorizationErr := fmt.Errorf("%w: %w", ErrJITAuthorization, err)
 		if errors.Is(err, ErrAcquisitionGuardClose) {
-			return githubscale.JITConfig{}, errors.Join(
+			return JITAuthorizationResult{}, errors.Join(
 				authorizationErr,
 				ErrJITFatal,
 			)
 		}
-		return githubscale.JITConfig{}, authorizationErr
+		return JITAuthorizationResult{}, authorizationErr
 	}
 
 	config, pending, callErr, cancelErr := runTrackedCall(
-		guarded.operation.Context(),
+		guarded.Context(),
 		s.transitionJoinTimeout,
 		func(callCtx context.Context) (githubscale.JITConfig, error) {
 			return request.Session.GenerateJIT(callCtx, request.Request)
@@ -90,7 +100,7 @@ func (s *Service) GenerateJITAuthorized(
 			}
 			_ = guarded.Close()
 		}()
-		return githubscale.JITConfig{}, errors.Join(
+		return JITAuthorizationResult{}, errors.Join(
 			ErrJITMayHaveActed,
 			ErrJITFatal,
 			ErrAcquisitionOperationUnjoinable,
@@ -104,24 +114,28 @@ func (s *Service) GenerateJITAuthorized(
 		if closeErr != nil {
 			closeErr = errors.Join(closeErr, ErrJITFatal)
 		}
-		return githubscale.JITConfig{}, errors.Join(
+		return JITAuthorizationResult{}, errors.Join(
 			ErrJITMayHaveActed,
 			callErr,
 			cancelErr,
 			closeErr,
 		)
 	}
-	if closeErr := guarded.Close(); closeErr != nil {
+	if revalidateErr := guarded.Revalidate(); revalidateErr != nil {
 		if config.Encoded != nil {
 			config.Encoded.Destroy()
 		}
-		return githubscale.JITConfig{}, errors.Join(
+		closeErr := guarded.Close()
+		if closeErr != nil {
+			closeErr = errors.Join(closeErr, ErrJITFatal)
+		}
+		return JITAuthorizationResult{}, errors.Join(
 			ErrJITMayHaveActed,
-			ErrJITFatal,
+			revalidateErr,
 			closeErr,
 		)
 	}
-	return config, nil
+	return JITAuthorizationResult{Config: config, Permit: guarded}, nil
 }
 
 func validateJITAuthorizationRequest(request JITAuthorizationRequest) error {

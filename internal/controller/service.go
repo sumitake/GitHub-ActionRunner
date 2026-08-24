@@ -772,6 +772,9 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	s.ready = false
 	s.mu.Unlock()
+	if err := s.permits.Invalidate(ctx); err != nil {
+		return fmt.Errorf("%w: invalidate permit authority: %w", ErrStartupRestore, err)
+	}
 
 	desired, err := s.transitions.Snapshot(ctx)
 	if err != nil {
@@ -1003,6 +1006,14 @@ func (s *Service) Transition(
 	if err != nil {
 		return AcquisitionPolicy{}, fmt.Errorf("%w: close gate: %w", ErrAcquisitionTransition, err)
 	}
+	if err := s.permits.Invalidate(ctx); err != nil {
+		s.markNotReady()
+		return AcquisitionPolicy{}, fmt.Errorf(
+			"%w: invalidate permit authority: %w",
+			ErrAcquisitionTransition,
+			err,
+		)
+	}
 	persisted, transitionErr := s.transitions.Transition(ctx, expectedEpoch, canonical)
 	if transitionErr != nil {
 		proofCtx, proofCancel := context.WithTimeout(
@@ -1080,6 +1091,18 @@ func (s *Service) Transition(
 			old,
 			ReasonAcquisitionJoin,
 			ErrAcquisitionQuiescence,
+		)
+	}
+	// A heartbeat already registered in the old epoch can observe the first
+	// invalidation's revision before epoch publication. Once every old section
+	// has joined, clear once more while the gate is still closed so no such
+	// late old-epoch install can survive reopening.
+	if err := s.permits.Invalidate(joinCtx); err != nil {
+		return AcquisitionPolicy{}, s.failTransitionAfterCASLocked(
+			persisted,
+			old,
+			ReasonAcquisitionResult,
+			fmt.Errorf("post-join permit invalidation: %w", err),
 		)
 	}
 	revoked, err := s.state.MarkPreRunningRevoked(joinCtx, persisted.Epoch, s.now())
@@ -1416,6 +1439,20 @@ func (s *Service) reconcileOnceAfterHostPressure(
 		if errors.Is(err, ErrJITFatal) {
 			return CycleReceipt{}, s.enterFatal(ReasonAcquisitionJoin, err)
 		}
+		if errors.Is(err, ErrAcquisitionPermitAuthority) {
+			pressureCtx, pressureCancel := context.WithTimeout(
+				context.Background(),
+				s.transitionJoinTimeout,
+			)
+			pressureErr := s.applyPressure(pressureCtx, 0)
+			pressureCancel()
+			if pressureErr != nil {
+				return CycleReceipt{}, errors.Join(
+					fmt.Errorf("%w: cycle: %w", ErrReconciliation, err),
+					fmt.Errorf("zero invalid permit authority: %w", pressureErr),
+				)
+			}
+		}
 		return CycleReceipt{}, fmt.Errorf("%w: cycle: %w", ErrReconciliation, err)
 	}
 	observedAt := s.now()
@@ -1475,6 +1512,12 @@ func (s *Service) reconcileOnceAfterHostPressure(
 	if summary.LatestTerminalAt.After(lastTerminalAt) {
 		lastTerminalAt = summary.LatestTerminalAt
 	}
+	if summary.OldestLiveAssignmentAge < 0 {
+		return CycleReceipt{}, fmt.Errorf(
+			"%w: negative live-assignment age",
+			ErrReconciliation,
+		)
+	}
 	current, ready := s.policySnapshot()
 	if !ready || !equalAcquisitionPolicy(policy, current) {
 		return CycleReceipt{}, fmt.Errorf(
@@ -1502,8 +1545,13 @@ func (s *Service) reconcileOnceAfterHostPressure(
 			err,
 		)
 	}
+	heartbeatObservedAt := observedAt.UTC().Truncate(time.Millisecond)
+	heartbeatLastTerminalAt := time.Time{}
+	if !lastTerminalAt.IsZero() {
+		heartbeatLastTerminalAt = lastTerminalAt.UTC().Truncate(time.Millisecond)
+	}
 	snapshot := health.Snapshot{
-		ObservedAt:                  observedAt,
+		ObservedAt:                  heartbeatObservedAt,
 		FleetAlias:                  s.fleetAlias,
 		AcquisitionMode:             mode,
 		PolicyEpoch:                 current.Epoch,
@@ -1512,9 +1560,9 @@ func (s *Service) reconcileOnceAfterHostPressure(
 		Capacity:                    healthCapacitySummary(capacity),
 		AssignedJobs:                summary.AssignedJobs,
 		RunningJobs:                 summary.RunningJobs,
-		OldestLiveAssignmentAge:     summary.OldestLiveAssignmentAge,
+		OldestLiveAssignmentAge:     summary.OldestLiveAssignmentAge.Truncate(time.Millisecond),
 		UnassignedReleasedListeners: summary.UnassignedReleasedListeners,
-		LastTerminalAt:              lastTerminalAt,
+		LastTerminalAt:              heartbeatLastTerminalAt,
 		HostProfileID:               s.hostProfileID,
 		Degraded:                    s.degraded,
 		BuildID:                     s.buildID,
@@ -1526,11 +1574,39 @@ func (s *Service) reconcileOnceAfterHostPressure(
 			err,
 		)
 	}
-	if err := s.health.Publish(reconcileCtx, snapshot); err != nil {
+	barrier := s.barrierSnapshot()
+	if barrier == nil {
+		return CycleReceipt{}, ErrServiceNotReady
+	}
+	critical, err := barrier.beginCritical(
+		reconcileCtx,
+		s.fleetAlias,
+		0,
+	)
+	if err != nil {
+		return CycleReceipt{}, fmt.Errorf(
+			"%w: enter heartbeat barrier: %w",
+			ErrReconciliation,
+			err,
+		)
+	}
+	publishErr := s.health.Publish(critical.Context(), snapshot)
+	publishCause := context.Cause(critical.Context())
+	if epochCause := context.Cause(critical.epoch.ctx); epochCause != nil {
+		publishCause = epochCause
+	}
+	closeErr := critical.Close()
+	if publishErr != nil || publishCause != nil || closeErr != nil {
+		failure := errors.Join(publishErr, publishCause, closeErr)
+		if publishCause == nil && reconcileCtx.Err() == nil {
+			if pressureErr := s.applyPressure(reconcileCtx, 0); pressureErr != nil {
+				failure = errors.Join(failure, pressureErr)
+			}
+		}
 		return CycleReceipt{}, fmt.Errorf(
 			"%w: publish heartbeat: %w",
 			ErrReconciliation,
-			err,
+			failure,
 		)
 	}
 	return receipt, nil
@@ -1660,6 +1736,20 @@ func (s *Service) pollOnceAfterHostPressure(
 	if errors.As(pollErr, &fatal) {
 		return s.enterFatal(fatal.reason, fatal.cause)
 	}
+	if errors.Is(pollErr, ErrAcquisitionPermitAuthority) {
+		pressureCtx, pressureCancel := context.WithTimeout(
+			context.Background(),
+			s.transitionJoinTimeout,
+		)
+		pressureErr := s.applyPressure(pressureCtx, 0)
+		pressureCancel()
+		if pressureErr != nil {
+			return errors.Join(
+				pollErr,
+				fmt.Errorf("zero invalid permit authority: %w", pressureErr),
+			)
+		}
+	}
 	return pollErr
 }
 
@@ -1741,12 +1831,64 @@ func (s *Service) retireRevokedReferences(
 	return nil
 }
 
+type guardedPollBatch struct {
+	batch   githubscale.Batch
+	guarded *guardedAcquisitionOperation
+}
+
+type guardedLocalAcquisition struct {
+	offers  []observedOffer
+	guarded *guardedAcquisitionOperation
+}
+
+func closeGuardedOperations(guarded []*guardedAcquisitionOperation) error {
+	var closeErrors []error
+	for index := len(guarded) - 1; index >= 0; index-- {
+		if guarded[index] != nil {
+			closeErrors = append(closeErrors, guarded[index].Close())
+		}
+	}
+	return errors.Join(closeErrors...)
+}
+
+func revalidateGuardedOperations(guarded []*guardedAcquisitionOperation) error {
+	for index := len(guarded) - 1; index >= 0; index-- {
+		if guarded[index] != nil {
+			if err := guarded[index].Revalidate(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func admitGuardedOperations(guarded []*guardedAcquisitionOperation) error {
+	for index := len(guarded) - 1; index >= 0; index-- {
+		if guarded[index] != nil {
+			if err := guarded[index].Admit(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Service) pollOnceCritical(
 	ctx context.Context,
 	policy AcquisitionPolicy,
 	fleet githubscale.Fleet,
 	session githubscale.Session,
-) error {
+) (resultErr error) {
+	var guardedOperations []*guardedAcquisitionOperation
+	defer func() {
+		if err := closeGuardedOperations(guardedOperations); err != nil {
+			resultErr = errors.Join(resultErr, &fatalOperationError{
+				reason: ReasonAcquisitionJoin,
+				cause:  err,
+			})
+		}
+	}()
+
 	now := s.now()
 	lease, err := s.broker.LeasePoll(fleet.RepositoryAlias, now)
 	if err != nil {
@@ -1765,11 +1907,29 @@ func (s *Service) pollOnceCritical(
 	}
 
 	lastMessageID := s.lastMessageIDLocked(fleet.RepositoryAlias)
-	batch, err := s.pollBatch(ctx, policy, fleet, lease, session, lastMessageID)
+	pollResult, err := s.pollBatch(
+		ctx,
+		policy,
+		fleet,
+		lease,
+		session,
+		lastMessageID,
+	)
+	if pollResult.guarded != nil {
+		guardedOperations = append(guardedOperations, pollResult.guarded)
+	}
 	if err != nil {
 		return fmt.Errorf("%w: upstream poll: %w", ErrPollCycle, err)
 	}
+	batch := pollResult.batch
+	workCtx := ctx
+	if pollResult.guarded != nil {
+		workCtx = pollResult.guarded.Context()
+	}
 	if batch.Empty {
+		if err := admitGuardedOperations(guardedOperations); err != nil {
+			return fmt.Errorf("%w: post-effect authority: %w", ErrPollCycle, err)
+		}
 		return nil
 	}
 	if batch.MessageID <= 0 {
@@ -1789,12 +1949,12 @@ func (s *Service) pollOnceCritical(
 	releaseKeys := s.sequencer.Acquire(keys)
 	defer releaseKeys()
 
-	receipt, err := s.state.RecordMessageReceipt(ctx, envelope, now)
+	receipt, err := s.state.RecordMessageReceipt(workCtx, envelope, now)
 	if err != nil {
 		return fmt.Errorf("%w: persist message receipt: %w", ErrPollCycle, err)
 	}
 	if receipt.State == MessageAckConfirmed {
-		if err := ctx.Err(); err != nil {
+		if err := workCtx.Err(); err != nil {
 			return fmt.Errorf("%w: epoch cancelled before demand: %w", ErrPollCycle, err)
 		}
 		if batch.Statistics.TotalAssignedJobs < 0 {
@@ -1807,23 +1967,38 @@ func (s *Service) pollOnceCritical(
 		); err != nil {
 			return fmt.Errorf("%w: restore exact-redelivery demand: %w", ErrPollCycle, err)
 		}
-		return s.ackMessage(
-			ctx,
+		if err := revalidateGuardedOperations(guardedOperations); err != nil {
+			return &fatalOperationError{
+				reason: ReasonAcquisitionResult,
+				cause:  fmt.Errorf("pre-ack authority: %w", err),
+			}
+		}
+		if err := s.ackMessage(
+			workCtx,
 			fleet.RepositoryAlias,
 			batch.MessageID,
 			receipt,
 			session,
 			now,
-		)
+		); err != nil {
+			return err
+		}
+		if err := admitGuardedOperations(guardedOperations); err != nil {
+			return &fatalOperationError{
+				reason: ReasonAcquisitionResult,
+				cause:  fmt.Errorf("post-ack authority: %w", err),
+			}
+		}
+		return nil
 	}
-	if err := s.events.RecordBatch(ctx, envelope); err != nil {
+	if err := s.events.RecordBatch(workCtx, envelope); err != nil {
 		return fmt.Errorf("%w: persist batch events: %w", ErrPollCycle, err)
 	}
 
 	observed := make([]observedOffer, 0, len(batch.Offers))
 	seen := make(map[AssignmentKey]struct{}, len(batch.Offers))
 	for _, offer := range batch.Offers {
-		record, err := s.state.RecordOffer(ctx, fleet.RepositoryAlias, offer, OfferEvidence{
+		record, err := s.state.RecordOffer(workCtx, fleet.RepositoryAlias, offer, OfferEvidence{
 			Kind:       OfferEvidenceCurrentPoll,
 			MessageID:  batch.MessageID,
 			QueueTime:  offer.QueueTime,
@@ -1848,12 +2023,12 @@ func (s *Service) pollOnceCritical(
 			item.record.State != StateReceived {
 			continue
 		}
-		localEligible, hostedReason := s.localEligibility(ctx, now, fleet, item.offer)
+		localEligible, hostedReason := s.localEligibility(workCtx, now, fleet, item.offer)
 		if localEligible {
 			if err := s.broker.CheckOffer(fleet.RepositoryAlias, item.offer); err != nil {
 				if errors.Is(err, ErrOfferTooLarge) {
 					if err := s.routeHostedLocked(
-						ctx,
+						workCtx,
 						policy,
 						item.record,
 						batch.MessageID,
@@ -1869,7 +2044,7 @@ func (s *Service) pollOnceCritical(
 			continue
 		}
 		if err := s.routeHostedLocked(
-			ctx,
+			workCtx,
 			policy,
 			item.record,
 			batch.MessageID,
@@ -1881,8 +2056,8 @@ func (s *Service) pollOnceCritical(
 
 	var acquiredLocal []observedOffer
 	if len(local) != 0 && lease.Reserved > 0 {
-		acquiredLocal, err = s.acquireLocalOffers(
-			ctx,
+		acquisitionResult, acquisitionErr := s.acquireLocalOffers(
+			workCtx,
 			policy,
 			fleet,
 			session,
@@ -1890,11 +2065,18 @@ func (s *Service) pollOnceCritical(
 			lease,
 			local,
 		)
-		if err != nil {
-			return err
+		if acquisitionResult.guarded != nil {
+			guardedOperations = append(
+				guardedOperations,
+				acquisitionResult.guarded,
+			)
 		}
+		if acquisitionErr != nil {
+			return acquisitionErr
+		}
+		acquiredLocal = acquisitionResult.offers
 	}
-	if err := ctx.Err(); err != nil {
+	if err := workCtx.Err(); err != nil {
 		return fmt.Errorf("%w: epoch cancelled before demand: %w", ErrPollCycle, err)
 	}
 	if batch.Statistics.TotalAssignedJobs < 0 {
@@ -1922,7 +2104,7 @@ func (s *Service) pollOnceCritical(
 		)
 		if err != nil {
 			if errors.Is(err, ErrAdmissionHeadroom) {
-				if clearErr := s.clearQueuedProjectionsLocked(ctx, acquiredLocal); clearErr != nil {
+				if clearErr := s.clearQueuedProjectionsLocked(workCtx, acquiredLocal); clearErr != nil {
 					return &fatalOperationError{
 						reason: ReasonProjectionPersist,
 						cause:  fmt.Errorf("clear queued projections after broker refusal: %w", clearErr),
@@ -1950,7 +2132,7 @@ func (s *Service) pollOnceCritical(
 				}
 			}
 			delete(localByKey, projection.Key)
-			if err := s.state.PersistAdmission(ctx, projection.Key, projection); err != nil {
+			if err := s.state.PersistAdmission(workCtx, projection.Key, projection); err != nil {
 				return &fatalOperationError{
 					reason: ReasonProjectionPersist,
 					cause:  err,
@@ -1965,14 +2147,29 @@ func (s *Service) pollOnceCritical(
 		}
 	}
 
-	return s.ackMessage(
-		ctx,
+	if err := revalidateGuardedOperations(guardedOperations); err != nil {
+		return &fatalOperationError{
+			reason: ReasonAcquisitionResult,
+			cause:  fmt.Errorf("pre-ack authority: %w", err),
+		}
+	}
+	if err := s.ackMessage(
+		workCtx,
 		fleet.RepositoryAlias,
 		batch.MessageID,
 		receipt,
 		session,
 		now,
-	)
+	); err != nil {
+		return err
+	}
+	if err := admitGuardedOperations(guardedOperations); err != nil {
+		return &fatalOperationError{
+			reason: ReasonAcquisitionResult,
+			cause:  fmt.Errorf("post-ack authority: %w", err),
+		}
+	}
+	return nil
 }
 
 func (s *Service) ackMessage(
@@ -2032,10 +2229,10 @@ func (s *Service) pollBatch(
 	lease PollLease,
 	session githubscale.Session,
 	lastMessageID int,
-) (githubscale.Batch, error) {
-	operationCtx, cancel := boundedContext(ctx, s.operationTimeout)
-	defer cancel()
+) (guardedPollBatch, error) {
 	if lease.PollCapacity == 0 {
+		operationCtx, cancel := boundedContext(ctx, s.operationTimeout)
+		defer cancel()
 		operation, err := s.barrierSnapshot().beginOperation(
 			operationCtx,
 			"observer-poll",
@@ -2043,7 +2240,7 @@ func (s *Service) pollBatch(
 			fleet.ScaleSetName,
 		)
 		if err != nil {
-			return githubscale.Batch{}, err
+			return guardedPollBatch{}, err
 		}
 		batch, pending, callErr, cancelErr := runTrackedCall(
 			operation.Context(),
@@ -2057,27 +2254,31 @@ func (s *Service) pollBatch(
 				<-pending
 				_ = operation.Close()
 			}()
-			return githubscale.Batch{}, &fatalOperationError{
+			return guardedPollBatch{}, &fatalOperationError{
 				reason: ReasonAcquisitionJoin,
 				cause:  ErrAcquisitionOperationUnjoinable,
 			}
 		}
 		closeErr := operation.Close()
 		if closeErr != nil {
-			return githubscale.Batch{}, &fatalOperationError{
+			return guardedPollBatch{}, &fatalOperationError{
 				reason: ReasonAcquisitionJoin,
 				cause:  closeErr,
 			}
 		}
-		return batch, errors.Join(cancelErr, callErr)
+		return guardedPollBatch{batch: batch}, errors.Join(cancelErr, callErr)
 	}
 
 	guarded, err := s.acquireGuardedOperation(
-		operationCtx,
+		ctx,
 		"poll",
 		fleet.RepositoryAlias,
 		fleet.ScaleSetName,
-		func(current AcquisitionPolicy, capacity CapacitySummary) error {
+		func(
+			_ context.Context,
+			current AcquisitionPolicy,
+			capacity CapacitySummary,
+		) error {
 			if current.Epoch != policy.Epoch ||
 				lease.Epoch != current.Epoch ||
 				!lease.ExpiresAt.After(s.now()) ||
@@ -2091,15 +2292,15 @@ func (s *Service) pollBatch(
 	)
 	if err != nil {
 		if errors.Is(err, ErrAcquisitionGuardClose) {
-			return githubscale.Batch{}, &fatalOperationError{
+			return guardedPollBatch{}, &fatalOperationError{
 				reason: ReasonAcquisitionResult,
 				cause:  err,
 			}
 		}
-		return githubscale.Batch{}, err
+		return guardedPollBatch{}, err
 	}
 	batch, pending, callErr, cancelErr := runTrackedCall(
-		guarded.operation.Context(),
+		guarded.Context(),
 		s.transitionJoinTimeout,
 		func(callCtx context.Context) (githubscale.Batch, error) {
 			return session.Poll(callCtx, lastMessageID, lease.PollCapacity)
@@ -2107,19 +2308,78 @@ func (s *Service) pollBatch(
 	)
 	if pending != nil {
 		closeGuardedAfter(guarded, pending)
-		return githubscale.Batch{}, &fatalOperationError{
+		return guardedPollBatch{}, &fatalOperationError{
 			reason: ReasonAcquisitionJoin,
 			cause:  ErrAcquisitionOperationUnjoinable,
 		}
 	}
-	closeErr := guarded.Close()
-	if closeErr != nil {
-		return githubscale.Batch{}, &fatalOperationError{
-			reason: ReasonAcquisitionJoin,
-			cause:  closeErr,
+	if callErr != nil || cancelErr != nil {
+		return guardedPollBatch{guarded: guarded}, errors.Join(cancelErr, callErr)
+	}
+	if !validGuardedPollResult(batch) {
+		return guardedPollBatch{guarded: guarded}, fmt.Errorf(
+			"%w: invalid guarded poll result",
+			ErrPollCycle,
+		)
+	}
+	if revalidateErr := guarded.Revalidate(); revalidateErr != nil {
+		return guardedPollBatch{guarded: guarded}, fmt.Errorf(
+			"%w: post-effect authority: %w",
+			ErrPollCycle,
+			revalidateErr,
+		)
+	}
+	return guardedPollBatch{batch: batch, guarded: guarded}, nil
+}
+
+func validGuardedPollResult(batch githubscale.Batch) bool {
+	if batch.Empty {
+		return batch.MessageID == 0 &&
+			!batch.StatisticsPresent &&
+			batch.Statistics == (githubscale.Statistics{}) &&
+			len(batch.Offers) == 0 &&
+			len(batch.Assigned) == 0 &&
+			len(batch.Started) == 0 &&
+			len(batch.Completed) == 0
+	}
+	if batch.MessageID <= 0 || !batch.StatisticsPresent {
+		return false
+	}
+	statistics := []int{
+		batch.Statistics.TotalAvailableJobs,
+		batch.Statistics.TotalAcquiredJobs,
+		batch.Statistics.TotalAssignedJobs,
+		batch.Statistics.TotalRunningJobs,
+		batch.Statistics.TotalRegisteredRunners,
+		batch.Statistics.TotalBusyRunners,
+		batch.Statistics.TotalIdleRunners,
+	}
+	for _, value := range statistics {
+		if value < 0 {
+			return false
 		}
 	}
-	return batch, errors.Join(cancelErr, callErr)
+	for _, offer := range batch.Offers {
+		if offer.RunnerRequestID <= 0 {
+			return false
+		}
+	}
+	for _, event := range batch.Assigned {
+		if _, err := githubscale.NewAssignedEvent(event); err != nil {
+			return false
+		}
+	}
+	for _, event := range batch.Started {
+		if _, err := githubscale.NewStartedEvent(event); err != nil {
+			return false
+		}
+	}
+	for _, event := range batch.Completed {
+		if _, err := githubscale.NewCompletedEvent(event); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) acquireLocalOffers(
@@ -2130,7 +2390,7 @@ func (s *Service) acquireLocalOffers(
 	messageID int,
 	lease PollLease,
 	local []observedOffer,
-) ([]observedOffer, error) {
+) (guardedLocalAcquisition, error) {
 	ordered := append([]observedOffer(nil), local...)
 	sort.Slice(ordered, func(i, j int) bool {
 		left, right := ordered[i].record.Key, ordered[j].record.Key
@@ -2146,7 +2406,10 @@ func (s *Service) acquireLocalOffers(
 		lease.Reserved > lease.PollCapacity ||
 		lease.PollCapacity > policy.MaxCapacity ||
 		!lease.ExpiresAt.After(s.now()) {
-		return nil, fmt.Errorf("%w: invalid acquisition lease", ErrPollCycle)
+		return guardedLocalAcquisition{}, fmt.Errorf(
+			"%w: invalid acquisition lease",
+			ErrPollCycle,
+		)
 	}
 	if len(ordered) > lease.Reserved {
 		ordered = ordered[:lease.Reserved]
@@ -2155,60 +2418,16 @@ func (s *Service) acquireLocalOffers(
 	for i, item := range ordered {
 		keys[i] = item.record.Key
 	}
-	batchRecord, err := s.state.BeginAcquisition(
-		ctx,
-		fleet.RepositoryAlias,
-		messageID,
-		keys,
-		s.now(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("%w: persist acquisition intent: %w", ErrPollCycle, err)
-	}
-	if batchRecord.RepositoryAlias != fleet.RepositoryAlias ||
-		batchRecord.MessageID != messageID ||
-		batchRecord.RequestedCount != len(keys) {
-		return nil, &fatalOperationError{
-			reason: ReasonAcquisitionResult,
-			cause:  ErrDurableIdentityConflict,
-		}
-	}
-	switch batchRecord.Status {
-	case AcquisitionBatchCompleted:
-		if batchRecord.CallAuthorized {
-			return nil, &fatalOperationError{
-				reason: ReasonAcquisitionResult,
-				cause:  ErrDurableIdentityConflict,
-			}
-		}
-		return s.completedAcquisitionOffers(ctx, ordered, batchRecord)
-	case AcquisitionBatchBegun:
-		if !batchRecord.CallAuthorized {
-			return nil, &fatalOperationError{
-				reason: ReasonAcquisitionResult,
-				cause:  ErrAckUncertain,
-			}
-		}
-	case AcquisitionBatchAmbiguous:
-		return nil, &fatalOperationError{
-			reason: ReasonAcquisitionResult,
-			cause:  ErrAckUncertain,
-		}
-	default:
-		return nil, &fatalOperationError{
-			reason: ReasonAcquisitionResult,
-			cause:  ErrDurableIdentityConflict,
-		}
-	}
-
-	operationCtx, operationCancel := boundedContext(ctx, s.operationTimeout)
-	defer operationCancel()
 	guarded, err := s.acquireGuardedOperation(
-		operationCtx,
+		ctx,
 		"acquire",
 		fleet.RepositoryAlias,
 		fleet.ScaleSetName,
-		func(current AcquisitionPolicy, capacity CapacitySummary) error {
+		func(
+			_ context.Context,
+			current AcquisitionPolicy,
+			capacity CapacitySummary,
+		) error {
 			if current.Epoch != policy.Epoch ||
 				lease.Epoch != current.Epoch ||
 				!lease.ExpiresAt.After(s.now()) ||
@@ -2222,37 +2441,111 @@ func (s *Service) acquireLocalOffers(
 		},
 	)
 	if err != nil {
-		finishCtx, finishCancel := context.WithTimeout(
-			context.Background(),
-			s.durableFinishTimeout,
-		)
-		defer finishCancel()
-		if _, abortErr := s.state.AbortAcquisitionBeforeCall(
-			finishCtx,
-			fleet.RepositoryAlias,
-			messageID,
-			s.now(),
-		); abortErr != nil {
-			return nil, &fatalOperationError{
-				reason: ReasonAcquisitionResult,
-				cause:  errors.Join(err, abortErr),
-			}
-		}
 		if errors.Is(err, ErrAcquisitionGuardClose) {
-			return nil, &fatalOperationError{
+			return guardedLocalAcquisition{}, &fatalOperationError{
 				reason: ReasonAcquisitionResult,
 				cause:  err,
 			}
 		}
-		return nil, fmt.Errorf("%w: acquire authority: %w", ErrPollCycle, err)
+		return guardedLocalAcquisition{}, fmt.Errorf(
+			"%w: acquire authority: %w",
+			ErrPollCycle,
+			err,
+		)
+	}
+	result := guardedLocalAcquisition{guarded: guarded}
+
+	batchRecord, err := s.state.BeginAcquisition(
+		guarded.Context(),
+		fleet.RepositoryAlias,
+		messageID,
+		keys,
+		s.now(),
+	)
+	if err != nil {
+		return result, fmt.Errorf(
+			"%w: persist acquisition intent: %w",
+			ErrPollCycle,
+			err,
+		)
+	}
+	if batchRecord.RepositoryAlias != fleet.RepositoryAlias ||
+		batchRecord.MessageID != messageID ||
+		batchRecord.RequestedCount != len(keys) {
+		return result, &fatalOperationError{
+			reason: ReasonAcquisitionResult,
+			cause:  ErrDurableIdentityConflict,
+		}
+	}
+	switch batchRecord.Status {
+	case AcquisitionBatchCompleted:
+		if batchRecord.CallAuthorized {
+			return result, &fatalOperationError{
+				reason: ReasonAcquisitionResult,
+				cause:  ErrDurableIdentityConflict,
+			}
+		}
+		result.offers, err = s.completedAcquisitionOffers(
+			guarded.Context(),
+			ordered,
+			batchRecord,
+		)
+		return result, err
+	case AcquisitionBatchBegun:
+		if !batchRecord.CallAuthorized {
+			return result, &fatalOperationError{
+				reason: ReasonAcquisitionResult,
+				cause:  ErrAckUncertain,
+			}
+		}
+	case AcquisitionBatchAmbiguous:
+		return result, &fatalOperationError{
+			reason: ReasonAcquisitionResult,
+			cause:  ErrAckUncertain,
+		}
+	default:
+		return result, &fatalOperationError{
+			reason: ReasonAcquisitionResult,
+			cause:  ErrDurableIdentityConflict,
+		}
+	}
+
+	if err := guarded.Revalidate(); err != nil {
+		finishCtx, finishCancel := context.WithTimeout(
+			context.Background(),
+			s.durableFinishTimeout,
+		)
+		_, abortErr := s.state.AbortAcquisitionBeforeCall(
+			finishCtx,
+			fleet.RepositoryAlias,
+			messageID,
+			s.now(),
+		)
+		finishCancel()
+		if abortErr != nil {
+			return result, &fatalOperationError{
+				reason: ReasonAcquisitionResult,
+				cause:  errors.Join(err, abortErr),
+			}
+		}
+		return result, fmt.Errorf(
+			"%w: pre-effect acquire authority: %w",
+			ErrPollCycle,
+			err,
+		)
 	}
 
 	requestIDs := make([]int64, len(keys))
 	for i, key := range keys {
 		requestIDs[i] = key.RunnerRequestID
 	}
+	finishCtx, finishCancel := context.WithTimeout(
+		context.Background(),
+		s.durableFinishTimeout,
+	)
+	defer finishCancel()
 	acquiredIDs, pending, callErr, cancelErr := runTrackedCall(
-		guarded.operation.Context(),
+		guarded.Context(),
 		s.transitionJoinTimeout,
 		func(callCtx context.Context) ([]int64, error) {
 			return session.Acquire(callCtx, requestIDs)
@@ -2264,7 +2557,8 @@ func (s *Service) acquireLocalOffers(
 			messageID,
 		)
 		closeGuardedAfter(guarded, pending)
-		return nil, &fatalOperationError{
+		result.guarded = nil
+		return result, &fatalOperationError{
 			reason: ReasonAcquisitionJoin,
 			cause: errors.Join(
 				ErrAcquisitionOperationUnjoinable,
@@ -2273,15 +2567,14 @@ func (s *Service) acquireLocalOffers(
 			),
 		}
 	}
-	if callErr != nil {
+	if callErr != nil || cancelErr != nil {
 		finishErr := s.markAcquisitionAmbiguous(
 			fleet.RepositoryAlias,
 			messageID,
 		)
-		closeErr := guarded.Close()
-		return nil, &fatalOperationError{
+		return result, &fatalOperationError{
 			reason: ReasonAcquisitionResult,
-			cause:  errors.Join(callErr, cancelErr, finishErr, closeErr),
+			cause:  errors.Join(callErr, cancelErr, finishErr),
 		}
 	}
 	acquiredKeys, validationErr := validateAcquiredIDs(
@@ -2294,16 +2587,12 @@ func (s *Service) acquireLocalOffers(
 			fleet.RepositoryAlias,
 			messageID,
 		)
-		closeErr := guarded.Close()
-		return nil, &fatalOperationError{
+		return result, &fatalOperationError{
 			reason: ReasonAcquisitionResult,
-			cause:  errors.Join(validationErr, cancelErr, finishErr, closeErr),
+			cause:  errors.Join(validationErr, cancelErr, finishErr),
 		}
 	}
-	finishCtx, finishCancel := context.WithTimeout(
-		context.Background(),
-		s.durableFinishTimeout,
-	)
+	postEffectErr := guarded.Revalidate()
 	completed, completeErr := s.state.CompleteAcquisition(
 		finishCtx,
 		fleet.RepositoryAlias,
@@ -2311,7 +2600,6 @@ func (s *Service) acquireLocalOffers(
 		acquiredKeys,
 		s.now(),
 	)
-	finishCancel()
 	if completeErr != nil ||
 		completed.Status != AcquisitionBatchCompleted ||
 		completed.AcquiredCount != len(acquiredKeys) ||
@@ -2320,32 +2608,23 @@ func (s *Service) acquireLocalOffers(
 			fleet.RepositoryAlias,
 			messageID,
 		)
-		closeErr := guarded.Close()
-		return nil, &fatalOperationError{
+		return result, &fatalOperationError{
 			reason: ReasonAcquisitionResult,
 			cause: errors.Join(
 				ErrDurableIdentityConflict,
 				completeErr,
 				ambiguousErr,
-				closeErr,
 			),
 		}
 	}
-	if closeErr := guarded.Close(); closeErr != nil {
-		return nil, &fatalOperationError{
+	if postEffectErr != nil {
+		return result, &fatalOperationError{
 			reason: ReasonAcquisitionResult,
-			cause:  closeErr,
+			cause:  postEffectErr,
 		}
 	}
-	acquired := selectAcquiredOffers(ordered, acquiredKeys)
-	if cancelErr != nil {
-		return nil, fmt.Errorf(
-			"%w: acquisition completed after epoch cancellation: %w",
-			ErrPollCycle,
-			cancelErr,
-		)
-	}
-	return acquired, nil
+	result.offers = selectAcquiredOffers(ordered, acquiredKeys)
+	return result, nil
 }
 
 func (s *Service) completedAcquisitionOffers(
