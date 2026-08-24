@@ -926,6 +926,100 @@ func TestAcquireExplicitResultUsesCancellationIndependentDurableFinish(t *testin
 	)
 }
 
+func TestAcquireDurableFinishTimeoutStartsAfterExplicitResult(t *testing.T) {
+	now := time.Date(2026, 7, 28, 22, 48, 0, 0, time.UTC)
+	offer := githubscale.Offer{JobRef: githubscale.JobRef{
+		RunnerRequestID: 8591,
+		RepositoryName:  "owner/repository",
+		QueueTime:       now.Add(-time.Minute),
+	}}
+	key := AssignmentKey{RepositoryAlias: "repo-a", RunnerRequestID: offer.RunnerRequestID}
+	trace := &callTrace{}
+	state := &fakeDurableState{
+		trace: trace,
+		completeContextCheck: func(ctx context.Context) error {
+			return ctx.Err()
+		},
+	}
+	broker := &fakeAdmissionBroker{
+		trace: trace,
+		lease: PollLease{
+			RepositoryAlias: "repo-a",
+			Epoch:           9,
+			Reserved:        1,
+			PollCapacity:    1,
+			ExpiresAt:       now.Add(time.Minute),
+		},
+		ensureRefs: []AdmissionReference{{
+			Key:   key,
+			Offer: offer,
+			Phase: AdmissionQueued,
+		}},
+	}
+	acquireEntered := make(chan struct{})
+	acquireRelease := make(chan struct{})
+	session := &fakeSession{
+		trace: trace,
+		batch: githubscale.Batch{
+			MessageID:  859,
+			Statistics: githubscale.Statistics{TotalAssignedJobs: 1},
+			Offers:     []githubscale.Offer{offer},
+		},
+		acquiredIDs:    []int64{offer.RunnerRequestID},
+		acquireEntered: acquireEntered,
+		acquireRelease: acquireRelease,
+	}
+	service, _ := startPollService(
+		t,
+		now,
+		trace,
+		state,
+		broker,
+		&fakeEventRecorder{trace: trace},
+	)
+	const finishTimeout = 20 * time.Millisecond
+	service.durableFinishTimeout = finishTimeout
+	trace.Reset()
+
+	result := make(chan error, 1)
+	go func() {
+		result <- service.PollOnce(
+			context.Background(),
+			githubscale.Fleet{
+				RepositoryAlias: "repo-a",
+				ScaleSetName:    "portable-ghar",
+			},
+			session,
+		)
+	}()
+	select {
+	case <-acquireEntered:
+	case <-time.After(time.Second):
+		t.Fatal("Acquire did not start")
+	}
+	timer := time.NewTimer(3 * finishTimeout)
+	<-timer.C
+	close(acquireRelease)
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("PollOnce: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("PollOnce did not finish")
+	}
+	state.mu.Lock()
+	status := state.acquisitionBatches[859].Status
+	state.mu.Unlock()
+	if status != AcquisitionBatchCompleted {
+		t.Fatalf("acquisition status = %v, want completed", status)
+	}
+	if session.AckCount() != 1 {
+		t.Fatalf("Ack calls = %d, want one", session.AckCount())
+	}
+}
+
 func TestPollPermitFailureAbortsBeforeAcquireAndLeavesServiceReady(t *testing.T) {
 	t.Parallel()
 

@@ -7,7 +7,6 @@ import {
 import { dispatchFleetRequest, fleetIdFromBody } from "./gateway";
 import {
   ADMIN_COMMAND_PATH,
-  ADMIN_STATUS_PATH,
   bytesToHex,
   HEARTBEAT_PATH,
   MAC_HEADER,
@@ -52,8 +51,7 @@ export async function handleWorkerFetch(
     request.method !== "POST" ||
     (url.pathname !== SESSION_PATH &&
       url.pathname !== HEARTBEAT_PATH &&
-      url.pathname !== ADMIN_COMMAND_PATH &&
-      url.pathname !== ADMIN_STATUS_PATH)
+      url.pathname !== ADMIN_COMMAND_PATH)
   ) {
     return rejected();
   }

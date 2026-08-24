@@ -114,6 +114,83 @@ test("GitHub classification and hosted read-back are required for success", asyn
     executionOptions,
   );
   expect(store.fleet.routingState).toBe("HOSTED");
+  expect(store.transitions).toEqual([
+    { epoch: 1, from: "UNINITIALIZED", to: "HOSTED" },
+  ]);
+});
+
+test("hosted read-back records the terminal drain transition", async () => {
+  const store = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  store.fleet.routingState = "DRAINING_TO_HOSTED";
+  store.fleet.leaseGeneration = 2;
+  store.transitions.push({
+    epoch: 1,
+    from: "PORTABLE",
+    to: "DRAINING_TO_HOSTED",
+  });
+  prepareRepository(store);
+  store.enqueue({
+    id: "route-2-repo-a",
+    kind: "github-mutate-route",
+    dueAt: "2026-01-01T00:00:00.000Z",
+    claimId: null,
+    claimExpiresAt: null,
+    attempts: 0,
+    status: "ready",
+    payload: {
+      effectKey: "route-2-repo-a",
+      repositoryAlias: "repo-a",
+      name: "PORTABLE_GHAR_ROUTE",
+      configurationRevision: "0",
+      transitionRevision: "2",
+      value: "hosted",
+    },
+  });
+
+  await executeDueWork(
+    store,
+    githubClient("hosted"),
+    store.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000),
+    undefined,
+    executionOptions,
+  );
+
+  expect(store.fleet.routingState).toBe("HOSTED");
+  expect(store.transitions).toEqual([
+    { epoch: 1, from: "PORTABLE", to: "DRAINING_TO_HOSTED" },
+    { epoch: 2, from: "DRAINING_TO_HOSTED", to: "HOSTED" },
+  ]);
+});
+
+test("hosted read-back does not duplicate a pre-recorded terminal transition", async () => {
+  const store = new MemoryFleetStore("example-fleet", {
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  store.fleet.routingState = "DRAINING_TO_HOSTED";
+  store.fleet.leaseGeneration = 1;
+  store.transitions.push({
+    epoch: 1,
+    from: "PORTABLE",
+    to: "DRAINING_TO_HOSTED",
+  });
+  prepareRepository(store);
+  persistHostedTransition(store, "2026-01-01T00:00:00.000Z");
+
+  await executeDueWork(
+    store,
+    githubClient("hosted"),
+    store.claimReady("2026-01-01T00:00:00.000Z", 8, 5_000),
+    undefined,
+    executionOptions,
+  );
+
+  expect(store.fleet.routingState).toBe("HOSTED");
+  expect(store.transitions).toEqual([
+    { epoch: 1, from: "PORTABLE", to: "DRAINING_TO_HOSTED" },
+    { epoch: 2, from: "DRAINING_TO_HOSTED", to: "HOSTED" },
+  ]);
 });
 
 test("unknown-effect mutation becomes uncertain and is never replayed", async () => {

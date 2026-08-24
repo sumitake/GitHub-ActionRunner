@@ -2874,6 +2874,8 @@ type fakeSession struct {
 	lastPollCapacity  int
 	acquiredIDs       []int64
 	acquireErr        error
+	acquireEntered    chan struct{}
+	acquireRelease    <-chan struct{}
 	acquireRequests   [][]int64
 	statisticsMissing bool
 }
@@ -2938,9 +2940,17 @@ func (f *fakeSession) Acquire(_ context.Context, requestIDs []int64) ([]int64, e
 		acquired = requestIDs
 	}
 	err := f.acquireErr
+	entered := f.acquireEntered
+	release := f.acquireRelease
 	f.mu.Unlock()
 	if f.trace != nil {
 		f.trace.Add("session:acquire")
+	}
+	if entered != nil {
+		close(entered)
+	}
+	if release != nil {
+		<-release
 	}
 	return append([]int64(nil), acquired...), err
 }

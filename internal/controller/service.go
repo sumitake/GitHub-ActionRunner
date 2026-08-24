@@ -2539,11 +2539,6 @@ func (s *Service) acquireLocalOffers(
 	for i, key := range keys {
 		requestIDs[i] = key.RunnerRequestID
 	}
-	finishCtx, finishCancel := context.WithTimeout(
-		context.Background(),
-		s.durableFinishTimeout,
-	)
-	defer finishCancel()
 	acquiredIDs, pending, callErr, cancelErr := runTrackedCall(
 		guarded.Context(),
 		s.transitionJoinTimeout,
@@ -2593,6 +2588,10 @@ func (s *Service) acquireLocalOffers(
 		}
 	}
 	postEffectErr := guarded.Revalidate()
+	finishCtx, finishCancel := context.WithTimeout(
+		context.Background(),
+		s.durableFinishTimeout,
+	)
 	completed, completeErr := s.state.CompleteAcquisition(
 		finishCtx,
 		fleet.RepositoryAlias,
@@ -2600,6 +2599,7 @@ func (s *Service) acquireLocalOffers(
 		acquiredKeys,
 		s.now(),
 	)
+	finishCancel()
 	if completeErr != nil ||
 		completed.Status != AcquisitionBatchCompleted ||
 		completed.AcquiredCount != len(acquiredKeys) ||

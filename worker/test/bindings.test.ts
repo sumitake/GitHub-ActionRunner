@@ -3,6 +3,7 @@ import { expect, test } from "vitest";
 import { parseCronBindings, parseWorkerBindings } from "../src/bindings";
 import { handleWorkerFetch } from "../src/runtime";
 import {
+  ADMIN_STATUS_PATH,
   hexToBytes,
   MAC_HEADER,
   signCanonical,
@@ -242,6 +243,32 @@ test("gateway bounds an undeclared streamed body before protocol parsing", async
   const response = await handleWorkerFetch(request, validEnv(), () => store);
   expect(response.status).toBe(401);
   expect(store.fleet.sessionId).toBeNull();
+});
+
+test("outer runtime rejects unimplemented admin status without dispatch", async () => {
+  const request = new Request(`https://worker.example${ADMIN_STATUS_PATH}`, {
+    method: "POST",
+    body: "{}",
+  });
+  let urlReads = 0;
+  Object.defineProperty(request, "url", {
+    configurable: true,
+    get() {
+      urlReads += 1;
+      return `https://worker.example${ADMIN_STATUS_PATH}`;
+    },
+  });
+  let storeLookups = 0;
+
+  const response = await handleWorkerFetch(request, validEnv(), () => {
+    storeLookups += 1;
+    return undefined;
+  });
+
+  expect(response.status).toBe(401);
+  expect(urlReads).toBe(1);
+  expect(request.bodyUsed).toBe(false);
+  expect(storeLookups).toBe(0);
 });
 
 test("production fetch stays fail-closed without a fleet Durable Object", async () => {

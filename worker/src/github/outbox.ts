@@ -1580,6 +1580,14 @@ function completeHosted(
     (from === "UNINITIALIZED" || from === "DRAINING_TO_HOSTED") &&
     allRepositoriesReady(store, options)
   ) {
+    const tail = store.transitions.at(-1);
+    if (
+      from === "DRAINING_TO_HOSTED" &&
+      (tail?.from !== from || tail.to !== "HOSTED")
+    ) {
+      assertTransition(from, "HOSTED");
+      store.transitions.push(nextTransitionRecord(store, from, "HOSTED"));
+    }
     store.fleet.routingState = "HOSTED";
   }
 }
