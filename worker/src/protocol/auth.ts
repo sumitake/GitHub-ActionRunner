@@ -63,15 +63,13 @@ export async function signCronRequest(
   timestamp: string,
   canonicalBody: string,
 ): Promise<string> {
-  return signInput(
+  return signDomainSeparatedCanonical(
     key,
-    taggedMacInput(
-      CRON_REQUEST_MAC_DOMAIN,
-      method,
-      path,
-      timestamp,
-      canonicalBody,
-    ),
+    CRON_REQUEST_MAC_DOMAIN,
+    method,
+    path,
+    timestamp,
+    canonicalBody,
   );
 }
 
@@ -82,15 +80,27 @@ export async function signCronResponse(
   timestamp: string,
   canonicalBody: string,
 ): Promise<string> {
+  return signDomainSeparatedCanonical(
+    key,
+    CRON_RESPONSE_MAC_DOMAIN,
+    method,
+    path,
+    timestamp,
+    canonicalBody,
+  );
+}
+
+export async function signDomainSeparatedCanonical(
+  key: Uint8Array,
+  domain: string,
+  method: string,
+  path: string,
+  timestamp: string,
+  canonicalBody: string,
+): Promise<string> {
   return signInput(
     key,
-    taggedMacInput(
-      CRON_RESPONSE_MAC_DOMAIN,
-      method,
-      path,
-      timestamp,
-      canonicalBody,
-    ),
+    taggedMacInput(domain, method, path, timestamp, canonicalBody),
   );
 }
 
@@ -150,6 +160,28 @@ export async function verifyCronResponse(
 ): Promise<void> {
   const expected = await signCronResponse(
     key,
+    method,
+    path,
+    timestamp,
+    canonicalBody,
+  );
+  if (!constantTimeEqualHex(expected, presentedMacHex)) {
+    throw new ProtocolAuthError("mac mismatch");
+  }
+}
+
+export async function verifyDomainSeparatedCanonical(
+  key: Uint8Array,
+  domain: string,
+  method: string,
+  path: string,
+  timestamp: string,
+  canonicalBody: string,
+  presentedMacHex: string,
+): Promise<void> {
+  const expected = await signDomainSeparatedCanonical(
+    key,
+    domain,
     method,
     path,
     timestamp,
