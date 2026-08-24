@@ -343,7 +343,7 @@ func TestRuntimeGateContainsToolFailureAndCleansPrivateLogs(t *testing.T) {
 		summary.LinuxDocker != "not_run" {
 		t.Fatalf("unexpected failure summary: %#v", summary)
 	}
-	if stderr.String() != "gofmt\n" {
+	if stderr.String() != "gofmt:command-failed\ngofmt\n" {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	entries, err := os.ReadDir(tmpRoot)
@@ -603,16 +603,19 @@ func TestRuntimeGateRejectsMissingFocusedTestEvidence(t *testing.T) {
 		name        string
 		mode        string
 		failedStage string
+		reason      string
 	}{
 		{
 			name:        "network authority",
 			mode:        "missing-network",
 			failedStage: "network-authority",
+			reason:      "evidence-empty",
 		},
 		{
 			name:        "chaos source",
 			mode:        "missing-chaos-source",
 			failedStage: "chaos-source",
+			reason:      "evidence-empty",
 		},
 	}
 	for _, test := range tests {
@@ -625,7 +628,8 @@ func TestRuntimeGateRejectsMissingFocusedTestEvidence(t *testing.T) {
 				*summary.FailedStage != test.failedStage {
 				t.Fatalf("unexpected summary: %#v", summary)
 			}
-			if stderr != test.failedStage+"\n" {
+			if stderr != test.failedStage+":"+test.reason+"\n"+
+				test.failedStage+"\n" {
 				t.Fatalf("stderr = %q", stderr)
 			}
 		})
@@ -644,7 +648,12 @@ func TestRuntimeGateRejectsTaggedSkipOrEmptyRunEvidence(t *testing.T) {
 				*summary.FailedStage != "integration-authority" {
 				t.Fatalf("unexpected summary: %#v", summary)
 			}
-			if stderr != "integration-authority\n" {
+			reason := "evidence-empty"
+			if mode == "tagged-skip" {
+				reason = "evidence-skip"
+			}
+			if stderr != "integration-authority:"+reason+"\n"+
+				"integration-authority\n" {
 				t.Fatalf("stderr = %q", stderr)
 			}
 		})

@@ -41,6 +41,7 @@ teardown() {
 make_failing_gofmt() {
   cat >"$FAKE_BIN/gofmt" <<'EOF'
 #!/bin/sh
+printf '%s\n' 'FAKE_GOFMT_PRIVATE_OUTPUT' >&2
 exit 1
 EOF
   chmod +x "$FAKE_BIN/gofmt"
@@ -138,7 +139,12 @@ case " $* " in
   ;;
 *" -tags=chaos ./tests/chaos -v -count=10 "*)
   [ "${PGHAR_CHAOS_IMAGE:-}" = "$FAKE_IMAGE_ID" ] || exit 98
-  [ "${FAKE_CHAOS_FAIL:-0}" != 1 ] || exit 99
+  if [ "${FAKE_CHAOS_FAIL:-0}" = 1 ]; then
+    printf '%s\n' \
+      'FAKE_CHAOS_PRIVATE_OUTPUT' \
+      '--- FAIL: TestFleetFenceRaceAndObserverRecovery (0.00s)' >&2
+    exit 99
+  fi
   for _iteration in 1 2 3 4 5 6 7 8 9 10; do
     for name in \
       TestChaosSourceOptInBoundary \
@@ -202,6 +208,7 @@ EOF
   run env PATH="$FAKE_BIN:$PATH" bash "$SCRIPT" --release
 
   [ "$status" -eq 1 ]
+  gate_output=$output
   summary=${lines[0]}
   run jq -e '
     .mode == "release" and
@@ -209,6 +216,10 @@ EOF
     .failed_stage == "gofmt"
   ' <<<"$summary"
   [ "$status" -eq 0 ]
+  if [[ "$gate_output" != *"gofmt:command-failed"* ]] ||
+    [[ "$gate_output" == *"FAKE_GOFMT_PRIVATE_OUTPUT"* ]]; then
+    return 1
+  fi
 }
 
 @test "the ambiguous full mode is rejected before any gate stage" {
@@ -288,6 +299,7 @@ EOF
     bash "$SCRIPT" --docker
 
   [ "$status" -eq 1 ]
+  gate_output=$output
   summary=${lines[0]}
   run jq -e '
     .mode == "docker" and
@@ -297,5 +309,9 @@ EOF
     any(.stages[]; .id == "source-integrity-docker-exit" and .status == "pass")
   ' <<<"$summary"
   [ "$status" -eq 0 ]
+  if [[ "$gate_output" != *"chaos:test-failed:TestFleetFenceRaceAndObserverRecovery"* ]] ||
+    [[ "$gate_output" == *"FAKE_CHAOS_PRIVATE_OUTPUT"* ]]; then
+    return 1
+  fi
   [ ! -s "$FAKE_DOCKER_STATE" ]
 }

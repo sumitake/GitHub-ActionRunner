@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: MPL-2.0
 #
 # Non-mutating controller-runtime release gate. Subordinate output stays in a
-# private temporary directory; callers receive only one closed JSON summary.
+# private temporary directory. Callers receive one closed JSON summary on
+# stdout and, only on failure, a closed diagnostic for the first failed stage
+# on stderr. Raw subordinate output never crosses the gate boundary.
 # Stage functions are invoked through the fixed identifier/function table.
 # The release modes are self-contained and never claim operator-gated target
 # conformance, which remains a separate prerequisite for nonzero acquisition.
@@ -46,6 +48,7 @@ docker_ready=0
 docker_containers_fingerprint=
 docker_networks_fingerprint=
 docker_volumes_fingerprint=
+failure_diagnostic=
 
 private_mode() {
   local path=$1
@@ -95,6 +98,28 @@ record_failure() {
   fi
 }
 
+capture_failure_diagnostic() {
+  local identifier=$1
+  local log_path=$2
+  local reason=$3
+  local test_name=
+  [ -z "$failure_diagnostic" ] || return 0
+  if [ "$reason" = command-failed ]; then
+    test_name="$(
+      awk '/^--- FAIL: Test[A-Za-z0-9_]+([[:space:]]|$)/ {
+        print $3
+        exit
+      }' "$log_path"
+    )" || test_name=
+    if [ "${#test_name}" -le 128 ] &&
+      [[ "$test_name" =~ ^Test[A-Za-z0-9_]+$ ]]; then
+      failure_diagnostic="${identifier}:test-failed:${test_name}"
+      return 0
+    fi
+  fi
+  failure_diagnostic="${identifier}:${reason}"
+}
+
 run_stage() {
   local identifier=$1
   shift
@@ -103,6 +128,7 @@ run_stage() {
     append_stage "$identifier" pass
     return 0
   fi
+  capture_failure_diagnostic "$identifier" "$log_path" command-failed
   append_stage "$identifier" fail
   record_failure "$identifier"
   return 1
@@ -118,12 +144,19 @@ run_verified_go_test_stage() {
   local package_count
   local pass_count
   if ! "$@" >"$log_path" 2>&1; then
+    capture_failure_diagnostic "$identifier" "$log_path" command-failed
     append_stage "$identifier" fail
     record_failure "$identifier"
     return 1
   fi
-  if [ ! -s "$log_path" ] ||
-    grep -Eq -- '(^|[[:space:]])--- SKIP:|\[no tests to run\]|SKIP unsupported host profile' "$log_path"; then
+  if [ ! -s "$log_path" ] || grep -Eq -- '\[no tests to run\]' "$log_path"; then
+    capture_failure_diagnostic "$identifier" "$log_path" evidence-empty
+    append_stage "$identifier" fail
+    record_failure "$identifier"
+    return 1
+  fi
+  if grep -Eq -- '(^|[[:space:]])--- SKIP:|SKIP unsupported host profile' "$log_path"; then
+    capture_failure_diagnostic "$identifier" "$log_path" evidence-skip
     append_stage "$identifier" fail
     record_failure "$identifier"
     return 1
@@ -145,6 +178,7 @@ run_verified_go_test_stage() {
   }
   if [ "$package_count" -ne "$expected_packages" ] ||
     [ "$pass_count" -ne "$expected_passes" ]; then
+    capture_failure_diagnostic "$identifier" "$log_path" evidence-count
     append_stage "$identifier" fail
     record_failure "$identifier"
     return 1
@@ -610,6 +644,10 @@ fi
 
 cleanup_private_state || true
 emit_summary
+
+if [ -n "$failure_diagnostic" ]; then
+  printf '%s\n' "$failure_diagnostic" >&2
+fi
 
 if [ "$gate_status" = pass ]; then
   exit 0
