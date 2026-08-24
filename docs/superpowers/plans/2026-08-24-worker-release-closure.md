@@ -104,7 +104,7 @@
 - Create: `worker/test/deployment/addressability-verifier.test.ts`
 
 1. Add RED tests for three-fleet success, partial preservation, stale receipt/version, identity mismatch, nonce rejection, exact-deadline equality, overall timeout, and at-most-one request per fleet per natural Cron boundary.
-2. Implement signed status polling with a lifecycle-owned abort/deadline and deterministic waiter cleanup. It must never trigger or replay Cron.
+2. Implement signed status polling after a per-boundary delay derived from the Cron tick budget and timestamp window, with a lifecycle-owned abort/deadline and deterministic waiter cleanup. It must never trigger or replay Cron.
 3. Emit one mode-`0600` sanitized evidence file that contains no secret/MAC/request body.
 4. Re-run focused tests with fake time and deterministic cancellation/join assertions.
 

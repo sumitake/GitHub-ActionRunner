@@ -110,6 +110,7 @@ function input(deadlineAt = "2026-01-01T00:03:00.000Z") {
     inventoryRevision: "1",
     inventoryDigest,
     cronHmacKeyHex: keyHex,
+    cronTickBudgetMs: 35_000,
     timestampWindowMs: 5_000,
     versionId: "version-123",
     versionCreatedAt,
@@ -130,9 +131,11 @@ function harness(
   let activeWaiters = 0;
   const attempts = new Map<string, number>();
   const calls: Array<{ fleetId: string; boundaryMs: number }> = [];
+  const waitTargets: number[] = [];
   const abort = new AbortController();
   return {
     calls,
+    waitTargets,
     closeCount: () => closeCount,
     activeWaiters: () => activeWaiters,
     dependencies: {
@@ -147,6 +150,7 @@ function harness(
           if (signal.aborted) {
             throw new Error("aborted");
           }
+          waitTargets.push(targetMs);
           nowMs = targetMs;
         } finally {
           activeWaiters -= 1;
@@ -184,8 +188,8 @@ function harness(
 
 describe("natural-Cron addressability verifier", () => {
   test("rejects an unbounded overall verification window", async () => {
-    const testHarness = harness((request, boundaryMs) =>
-      signedResponse(request, new Date(boundaryMs).toISOString()),
+    const testHarness = harness((request) =>
+      signedResponse(request, request.requestTime),
     );
 
     await expect(
@@ -197,9 +201,23 @@ describe("natural-Cron addressability verifier", () => {
     expect(testHarness.calls).toEqual([]);
   });
 
+  test("rejects a delayed poll window that can cross the next natural boundary", async () => {
+    const testHarness = harness((request) =>
+      signedResponse(request, request.requestTime),
+    );
+
+    await expect(
+      verifyWorkerAddressability(
+        { ...input(), cronTickBudgetMs: 50_000 },
+        testHarness.dependencies,
+      ),
+    ).rejects.toThrow("verification input rejected");
+    expect(testHarness.calls).toEqual([]);
+  });
+
   test("accepts one signed inert receipt for every fleet after one natural boundary", async () => {
-    const testHarness = harness((request, boundaryMs) =>
-      signedResponse(request, new Date(boundaryMs).toISOString()),
+    const testHarness = harness((request) =>
+      signedResponse(request, request.requestTime),
     );
 
     const evidence = await verifyWorkerAddressability(
@@ -216,6 +234,9 @@ describe("natural-Cron addressability verifier", () => {
       { fleetId: "beta", boundaryMs: Date.parse("2026-01-01T00:01:00.000Z") },
       { fleetId: "gamma", boundaryMs: Date.parse("2026-01-01T00:01:00.000Z") },
     ]);
+    expect(testHarness.waitTargets).toEqual([
+      Date.parse("2026-01-01T00:01:40.000Z"),
+    ]);
     expect(testHarness.activeWaiters()).toBe(0);
     expect(testHarness.closeCount()).toBe(1);
     expect(JSON.stringify(evidence)).not.toContain(keyHex);
@@ -224,9 +245,9 @@ describe("natural-Cron addressability verifier", () => {
   });
 
   test("preserves partial success and never polls a fleet twice in one boundary", async () => {
-    const testHarness = harness((request, boundaryMs, attempt) => {
+    const testHarness = harness((request, _boundaryMs, attempt) => {
       if (request.fleetId === "alpha" || attempt > 1) {
-        return signedResponse(request, new Date(boundaryMs).toISOString());
+        return signedResponse(request, request.requestTime);
       }
       return new Response('{"error":"rejected"}', { status: 401 });
     });
@@ -255,10 +276,10 @@ describe("natural-Cron addressability verifier", () => {
   test.each([
     [
       "stale version receipt",
-      (request: StatusRequest, boundaryMs: number, attempt: number) =>
+      (request: StatusRequest, _boundaryMs: number, attempt: number) =>
         signedResponse(
           request,
-          new Date(boundaryMs).toISOString(),
+          request.requestTime,
           attempt === 1
             ? {
                 tickTimestamp: versionCreatedAt,
@@ -269,26 +290,26 @@ describe("natural-Cron addressability verifier", () => {
     ],
     [
       "response identity mismatch",
-      (request: StatusRequest, boundaryMs: number, attempt: number) =>
+      (request: StatusRequest, _boundaryMs: number, attempt: number) =>
         signedResponse(
           request,
-          new Date(boundaryMs).toISOString(),
+          request.requestTime,
           attempt === 1 ? { fleetId: "foreign" } : {},
         ),
     ],
     [
       "response nonce mismatch",
-      (request: StatusRequest, boundaryMs: number, attempt: number) =>
+      (request: StatusRequest, _boundaryMs: number, attempt: number) =>
         signedResponse(
           request,
-          new Date(boundaryMs).toISOString(),
+          request.requestTime,
           attempt === 1 ? { nonce: "f".repeat(64) } : {},
         ),
     ],
   ])("retries only at the next boundary after %s", async (_name, responder) => {
     const testHarness = harness((request, boundaryMs, attempt) => {
       if (request.fleetId !== "alpha") {
-        return signedResponse(request, new Date(boundaryMs).toISOString());
+        return signedResponse(request, request.requestTime);
       }
       return responder(request, boundaryMs, attempt);
     });
@@ -308,14 +329,14 @@ describe("natural-Cron addressability verifier", () => {
     ]);
   });
 
-  test("treats a new boundary exactly at the overall deadline as unavailable", async () => {
-    const testHarness = harness((request, boundaryMs) =>
-      signedResponse(request, new Date(boundaryMs).toISOString()),
+  test("treats the delayed poll exactly at the overall deadline as unavailable", async () => {
+    const testHarness = harness((request) =>
+      signedResponse(request, request.requestTime),
     );
 
     await expect(
       verifyWorkerAddressability(
-        input("2026-01-01T00:01:00.000Z"),
+        input("2026-01-01T00:01:40.000Z"),
         testHarness.dependencies,
       ),
     ).rejects.toBeInstanceOf(AddressabilityUnavailableError);
@@ -325,7 +346,7 @@ describe("natural-Cron addressability verifier", () => {
   });
 
   test("treats a response completing exactly at the overall deadline as unavailable", async () => {
-    const deadlineAt = "2026-01-01T00:01:05.000Z";
+    const deadlineAt = "2026-01-01T00:01:45.000Z";
     const deadlineMs = Date.parse(deadlineAt);
     const testHarness = harness((request, _boundaryMs, _attempt, setNow) => {
       setNow(deadlineMs);
@@ -341,9 +362,9 @@ describe("natural-Cron addressability verifier", () => {
   });
 
   test("returns sanitized partial evidence when the overall deadline expires", async () => {
-    const testHarness = harness((request, boundaryMs) => {
+    const testHarness = harness((request) => {
       if (request.fleetId === "alpha") {
-        return signedResponse(request, new Date(boundaryMs).toISOString());
+        return signedResponse(request, request.requestTime);
       }
       return new Response('{"error":"rejected"}', { status: 401 });
     });
@@ -351,7 +372,7 @@ describe("natural-Cron addressability verifier", () => {
     let failure: AddressabilityUnavailableError | undefined;
     try {
       await verifyWorkerAddressability(
-        input("2026-01-01T00:01:30.000Z"),
+        input("2026-01-01T00:02:00.000Z"),
         testHarness.dependencies,
       );
     } catch (error) {
@@ -389,8 +410,8 @@ test("deadline and boundary waiters close idempotently without timer leaks", asy
 });
 
 test("sanitized evidence is written atomically as a private regular file", async () => {
-  const testHarness = harness((request, boundaryMs) =>
-    signedResponse(request, new Date(boundaryMs).toISOString()),
+  const testHarness = harness((request) =>
+    signedResponse(request, request.requestTime),
   );
   const evidence = await verifyWorkerAddressability(
     input(),

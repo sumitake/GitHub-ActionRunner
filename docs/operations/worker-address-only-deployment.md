@@ -189,12 +189,14 @@ node scripts/ops/verify-worker-addressability.mjs \
   --output "$PRIVATE_ROOT/addressability-evidence.json"
 ```
 
-The verifier waits for natural UTC minute boundaries, attempts each unresolved
-fleet at most once per boundary, and preserves partial evidence. Green requires
-exactly three successful fleets, no pending fleets, the fixed inventory digest,
-receipt times strictly after the deployed version creation time, positive
-persistence generations, and an inert authority/read-only state for each
-Durable Object.
+The verifier waits until the configured Cron tick budget plus one timestamp
+window has elapsed after each natural UTC minute boundary. This lets the bounded
+Cron invocation finish before status polling without adding another attempt in
+that minute. It attempts each unresolved fleet at most once per boundary and
+preserves partial evidence. Green requires exactly three successful fleets, no
+pending fleets, the fixed inventory digest, receipt times strictly after the
+deployed version creation time, positive persistence generations, and an inert
+authority/read-only state for each Durable Object.
 
 Cloudflare Cron configuration can take time to propagate. The bounded verifier
 allows that delay, but missing, partial, stale, malformed, or timed-out signed

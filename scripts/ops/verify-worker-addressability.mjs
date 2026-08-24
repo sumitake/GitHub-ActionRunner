@@ -139,10 +139,12 @@ export async function verifyWorkerAddressability(rawInput, overrides = {}) {
       }
       const nowMs = dependencies.now();
       const boundaryMs = nextNaturalMinute(nowMs);
+      const pollMs = boundaryMs + input.pollOffsetMs;
       if (
+        !Number.isSafeInteger(pollMs) ||
         scope.signal.aborted ||
         nowMs >= deadlineMs ||
-        boundaryMs >= deadlineMs
+        pollMs >= deadlineMs
       ) {
         throw new AddressabilityUnavailableError(
           buildEvidence(
@@ -154,7 +156,7 @@ export async function verifyWorkerAddressability(rawInput, overrides = {}) {
         );
       }
       try {
-        await dependencies.waitUntil(boundaryMs, scope.signal);
+        await dependencies.waitUntil(pollMs, scope.signal);
       } catch {
         throw new AddressabilityUnavailableError(
           buildEvidence(
@@ -428,6 +430,7 @@ async function readBoundedResponse(response, signal) {
 function validateInput(value) {
   const input = record(value);
   exactKeys(input, [
+    "cronTickBudgetMs",
     "cronHmacKeyHex",
     "deadlineAt",
     "endpoint",
@@ -468,6 +471,9 @@ function validateInput(value) {
     !/^[0-9a-f]+$/.test(input.cronHmacKeyHex) ||
     input.cronHmacKeyHex.length < 64 ||
     input.cronHmacKeyHex.length % 2 !== 0 ||
+    typeof input.cronTickBudgetMs !== "number" ||
+    !Number.isSafeInteger(input.cronTickBudgetMs) ||
+    input.cronTickBudgetMs <= 0 ||
     typeof input.timestampWindowMs !== "number" ||
     !Number.isSafeInteger(input.timestampWindowMs) ||
     input.timestampWindowMs <= 0 ||
@@ -478,6 +484,13 @@ function validateInput(value) {
     typeof input.deadlineAt !== "string" ||
     !isTimestamp(input.deadlineAt) ||
     input.deadlineAt <= input.versionCreatedAt
+  ) {
+    throw new Error("verification input rejected");
+  }
+  const pollOffsetMs = input.cronTickBudgetMs + input.timestampWindowMs;
+  if (
+    !Number.isSafeInteger(pollOffsetMs) ||
+    pollOffsetMs + input.timestampWindowMs >= 60_000
   ) {
     throw new Error("verification input rejected");
   }
@@ -496,6 +509,7 @@ function validateInput(value) {
     ...input,
     endpoint: endpoint.href,
     fleetIds: [...input.fleetIds],
+    pollOffsetMs,
   };
 }
 
@@ -719,6 +733,7 @@ async function main() {
     inventoryRevision: descriptor.inventoryRevision,
     inventoryDigest: descriptor.inventoryDigest,
     cronHmacKeyHex: secrets.CRON_HMAC_KEY,
+    cronTickBudgetMs: descriptor.cronTickBudgetMs,
     timestampWindowMs: descriptor.timestampWindowMs,
     versionId: args["version-id"],
     versionCreatedAt: args["version-created-at"],
