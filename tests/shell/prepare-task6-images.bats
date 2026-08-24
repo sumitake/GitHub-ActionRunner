@@ -103,7 +103,7 @@ setup() {
       cut -d: -f1
   )"
   ci_image_line="$(
-    grep -nF 'scripts/ci/check-images.sh' \
+    grep -nF 'scripts/test-controller-runtime.sh --docker' \
       "$REPO_ROOT/.github/workflows/ci.yml" |
       cut -d: -f1
   )"
@@ -119,7 +119,7 @@ setup() {
       cut -d: -f1
   )"
   rehearsal_gate_line="$(
-    grep -nF '"scripts/test-controller-runtime.sh", "--full"' \
+    grep -nF '"scripts/test-controller-runtime.sh", "--release"' \
       "$REPO_ROOT/scripts/release/rehearse-runtime.sh" |
       cut -d: -f1
   )"
