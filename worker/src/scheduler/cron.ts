@@ -1,4 +1,9 @@
-import type { DueWorkRecord, MemoryFleetStore } from "../state/memory";
+import { ensureUncertainMutationReadbacks } from "../github/outbox";
+import {
+  isExternalEffectWork,
+  type DueWorkRecord,
+  type MemoryFleetStore,
+} from "../state/memory";
 
 export type FleetInventory = {
   revision: string;
@@ -105,12 +110,13 @@ function failUnjoinedClaims(
 ): void {
   for (const row of batch) {
     if (row.status === "claimed") {
-      row.status = "failed";
+      row.status = isExternalEffectWork(row.kind) ? "uncertain" : "ready";
       row.claimId = null;
       row.claimExpiresAt = null;
-      store.recordAudit(`due-work-unjoined:${row.id}`);
+      store.recordAudit(`due-work-unjoined:${row.id}:${row.status}`);
     }
   }
+  ensureUncertainMutationReadbacks(store);
 }
 
 async function withDeadline<T>(

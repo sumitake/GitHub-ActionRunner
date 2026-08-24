@@ -423,11 +423,50 @@ func DefaultHostCommandDependencies(
 func LoadPrivateOverlayFile(
 	path string,
 ) (hostruntime.PrivateOverlay, string, error) {
-	document, err := readBoundedFile(path, maxPrivateOverlayBytes)
+	document, err := readPrivateOverlayDocument(path, maxPrivateOverlayBytes)
 	if err != nil {
 		return hostruntime.PrivateOverlay{}, "", ErrHostCommandFailed
 	}
-	return hostruntime.ParsePrivateOverlay(document, maxPrivateOverlayBytes)
+	overlay, revision, err := hostruntime.ParsePrivateOverlay(
+		document,
+		maxPrivateOverlayBytes,
+	)
+	if err != nil || !privateOverlayControlFilesUnderRoot(path, overlay) {
+		return hostruntime.PrivateOverlay{}, "", ErrHostCommandFailed
+	}
+	return overlay, revision, nil
+}
+
+func privateOverlayControlFilesUnderRoot(
+	overlayPath string,
+	overlay hostruntime.PrivateOverlay,
+) bool {
+	if !canonicalHostPath(overlayPath) {
+		return false
+	}
+	root := filepath.Dir(overlayPath)
+	credentialPath := ""
+	for _, secret := range overlay.Secrets {
+		if secret.Name == overlay.ManagementTransport.CredentialName {
+			if credentialPath != "" || secret.Ref.Source != "file" {
+				return false
+			}
+			credentialPath = secret.Ref.Ref
+		}
+	}
+	return credentialPath != "" &&
+		privateTreeContains(root, credentialPath) &&
+		privateTreeContains(root, overlay.ManagementTransport.KnownHostsFile)
+}
+
+func privateTreeContains(root string, path string) bool {
+	if !canonicalHostPath(root) || !canonicalHostPath(path) || root == path {
+		return false
+	}
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != "." && relative != ".." &&
+		!filepath.IsAbs(relative) &&
+		!strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func LoadRuntimeManifestFile(

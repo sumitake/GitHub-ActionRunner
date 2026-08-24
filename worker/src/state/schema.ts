@@ -16,7 +16,14 @@ CREATE TABLE IF NOT EXISTS fleet_state (
   policy_digest TEXT,
   max_capacity INTEGER NOT NULL,
   canary_scale_set TEXT,
-  canary_passed INTEGER NOT NULL
+  canary_passed INTEGER NOT NULL,
+  canary_evidence TEXT,
+  cron_inventory_revision TEXT,
+  cron_inventory_digest TEXT,
+  cron_tick_timestamp TEXT,
+  cron_tick_nonce TEXT,
+  cron_addressed_at TEXT,
+  persistence_generation INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS request_nonces (
   digest TEXT PRIMARY KEY,
@@ -27,9 +34,14 @@ CREATE TABLE IF NOT EXISTS repositories (
   expected_route TEXT NOT NULL,
   confirmed_route TEXT,
   archive_latched INTEGER NOT NULL,
+  archive_policy_revision INTEGER,
   archive_observed_at TEXT,
   archived INTEGER NOT NULL,
   selector_evidence_at TEXT,
+  expected_scale_set TEXT,
+  confirmed_scale_set TEXT,
+  expected_legacy_label TEXT,
+  confirmed_legacy_label TEXT,
   open_queue_risk TEXT
 );
 CREATE TABLE IF NOT EXISTS transitions (
@@ -52,6 +64,63 @@ CREATE TABLE IF NOT EXISTS audit_events (
   event TEXT NOT NULL
 );
 `;
+
+export const ADD_PERSISTENCE_GENERATION_SQL =
+  "ALTER TABLE fleet_state ADD COLUMN persistence_generation INTEGER NOT NULL DEFAULT 1";
+
+export const FLEET_STATE_COLUMN_MIGRATIONS = [
+  {
+    name: "canary_evidence",
+    sql: "ALTER TABLE fleet_state ADD COLUMN canary_evidence TEXT",
+  },
+  {
+    name: "cron_inventory_revision",
+    sql: "ALTER TABLE fleet_state ADD COLUMN cron_inventory_revision TEXT",
+  },
+  {
+    name: "cron_inventory_digest",
+    sql: "ALTER TABLE fleet_state ADD COLUMN cron_inventory_digest TEXT",
+  },
+  {
+    name: "cron_tick_timestamp",
+    sql: "ALTER TABLE fleet_state ADD COLUMN cron_tick_timestamp TEXT",
+  },
+  {
+    name: "cron_tick_nonce",
+    sql: "ALTER TABLE fleet_state ADD COLUMN cron_tick_nonce TEXT",
+  },
+  {
+    name: "cron_addressed_at",
+    sql: "ALTER TABLE fleet_state ADD COLUMN cron_addressed_at TEXT",
+  },
+  {
+    name: "persistence_generation",
+    sql: ADD_PERSISTENCE_GENERATION_SQL,
+  },
+] as const;
+
+export const REPOSITORY_COLUMN_MIGRATIONS = [
+  {
+    name: "archive_policy_revision",
+    sql: "ALTER TABLE repositories ADD COLUMN archive_policy_revision INTEGER",
+  },
+  {
+    name: "expected_scale_set",
+    sql: "ALTER TABLE repositories ADD COLUMN expected_scale_set TEXT",
+  },
+  {
+    name: "confirmed_scale_set",
+    sql: "ALTER TABLE repositories ADD COLUMN confirmed_scale_set TEXT",
+  },
+  {
+    name: "expected_legacy_label",
+    sql: "ALTER TABLE repositories ADD COLUMN expected_legacy_label TEXT",
+  },
+  {
+    name: "confirmed_legacy_label",
+    sql: "ALTER TABLE repositories ADD COLUMN confirmed_legacy_label TEXT",
+  },
+] as const;
 
 export const TABLE_NAMES = [
   "fleet_state",

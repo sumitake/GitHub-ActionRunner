@@ -109,6 +109,7 @@ func TestHistoryStartupRestoresExactProjectionBeforeReady(t *testing.T) {
 	broker := &fakeAdmissionBroker{trace: trace}
 	transitions := newFakeTransitioner(trace, testDesiredPolicy())
 	terminator := &fakeTerminator{}
+	permits := newTask5InvalidatingPermitProvider(nil, nil)
 	service, err := NewService(ServiceConfig{
 		State:                 state,
 		Broker:                broker,
@@ -120,7 +121,7 @@ func TestHistoryStartupRestoresExactProjectionBeforeReady(t *testing.T) {
 		Replay:                &fakeReplayVerifier{result: ReplayCurrent},
 		Hosted:                &fakeHostedRouter{},
 		FleetGuards:           canonicalFleetGuardProviderStub{},
-		Permits:               canonicalPermitProviderStub{},
+		Permits:               permits,
 		Conformance:           testPassingAcquisitionConformance(),
 		HostCapacity:          testNormalHostCapacityProvider{},
 		HostCapacityMaxAge:    48 * time.Hour,
@@ -165,6 +166,9 @@ func TestHistoryStartupRestoresExactProjectionBeforeReady(t *testing.T) {
 	}
 	if terminator.Count() != 0 {
 		t.Fatalf("terminator called %d times on successful startup", terminator.Count())
+	}
+	if permits.Invalidations() != 1 {
+		t.Fatalf("startup permit invalidations = %d, want 1", permits.Invalidations())
 	}
 
 	gotTransitions := transitions.Transitions()
@@ -2027,6 +2031,8 @@ type fakeDurableState struct {
 	acquisitionAbortErr     error
 	acquisitionCompleteErr  error
 	acquisitionAmbiguousErr error
+	receiptContextCheck     func(context.Context) error
+	completeContextCheck    func(context.Context) error
 }
 
 type fakeReservation struct {
@@ -2036,10 +2042,15 @@ type fakeReservation struct {
 }
 
 func (f *fakeDurableState) RecordMessageReceipt(
-	_ context.Context,
+	ctx context.Context,
 	envelope MessageEnvelope,
 	_ time.Time,
 ) (MessageReceiptRecord, error) {
+	if f.receiptContextCheck != nil {
+		if err := f.receiptContextCheck(ctx); err != nil {
+			return MessageReceiptRecord{}, err
+		}
+	}
 	if f.trace != nil {
 		f.trace.Add("state:receipt")
 	}
@@ -2170,7 +2181,7 @@ func (f *fakeDurableState) AbortAcquisitionBeforeCall(
 	return record, nil
 }
 func (f *fakeDurableState) CompleteAcquisition(
-	_ context.Context,
+	ctx context.Context,
 	alias string,
 	messageID int,
 	acquired []AssignmentKey,
@@ -2178,6 +2189,11 @@ func (f *fakeDurableState) CompleteAcquisition(
 ) (AcquisitionBatchRecord, error) {
 	if f.trace != nil {
 		f.trace.Add("state:complete-acquisition")
+	}
+	if f.completeContextCheck != nil {
+		if err := f.completeContextCheck(ctx); err != nil {
+			return AcquisitionBatchRecord{}, err
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -2858,6 +2874,8 @@ type fakeSession struct {
 	lastPollCapacity  int
 	acquiredIDs       []int64
 	acquireErr        error
+	acquireEntered    chan struct{}
+	acquireRelease    <-chan struct{}
 	acquireRequests   [][]int64
 	statisticsMissing bool
 }
@@ -2922,9 +2940,17 @@ func (f *fakeSession) Acquire(_ context.Context, requestIDs []int64) ([]int64, e
 		acquired = requestIDs
 	}
 	err := f.acquireErr
+	entered := f.acquireEntered
+	release := f.acquireRelease
 	f.mu.Unlock()
 	if f.trace != nil {
 		f.trace.Add("session:acquire")
+	}
+	if entered != nil {
+		close(entered)
+	}
+	if release != nil {
+		<-release
 	}
 	return append([]int64(nil), acquired...), err
 }

@@ -238,3 +238,41 @@ func TestServiceReconcileOnceJITFatalPersistsFatalBeforeTermination(t *testing.T
 		t.Fatal("fatal reconciliation published a heartbeat")
 	}
 }
+
+func TestServiceReconcilePermitAuthorityFailurePersistsZeroWithoutKillingRunningJobs(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	fixture := newReconcileServiceFixture(t)
+	originalEpoch := fixture.service.Policy().Epoch
+	fixture.reconciler.err = errors.Join(
+		ErrReconciliation,
+		ErrAcquisitionPermitAuthority,
+	)
+	receipt, err := fixture.service.ReconcileOnce(context.Background())
+	if !errors.Is(err, ErrReconciliation) ||
+		!errors.Is(err, ErrAcquisitionPermitAuthority) {
+		t.Fatalf("ReconcileOnce = (%+v, %v), want typed permit-authority failure", receipt, err)
+	}
+	if receipt != (CycleReceipt{}) {
+		t.Fatalf("permit failure receipt = %+v", receipt)
+	}
+	policy := fixture.service.Policy()
+	if policy.Mode != AcquisitionDisabled ||
+		policy.MaxCapacity != 0 ||
+		policy.Epoch != originalEpoch+1 {
+		t.Fatalf("permit failure policy = %+v, want disabled zero next epoch", policy)
+	}
+	if fixture.terminator.Count() != 0 ||
+		fixture.service.runningCanceler.(*fakeRunningCanceler).Calls() != 0 {
+		t.Fatalf(
+			"permit zeroing terminated/canceled running jobs = (%d,%d)",
+			fixture.terminator.Count(),
+			fixture.service.runningCanceler.(*fakeRunningCanceler).Calls(),
+		)
+	}
+	if len(fixture.publisher.Snapshots()) != 0 {
+		t.Fatal("permit-authority reconciliation failure published heartbeat")
+	}
+}

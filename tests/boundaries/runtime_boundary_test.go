@@ -52,6 +52,7 @@ var publicNetworkSurfaceFiles = map[string]struct{}{
 	"cmd/portable-ghar-network-verifier/probe.go":                {},
 	"cmd/portable-ghar-runner-gate/socket.go":                    {},
 	"cmd/portable-ghar-task11-listener/proxy.go":                 {},
+	"internal/failoverclient/client.go":                          {},
 	"internal/githubscale/client.go":                             {},
 	"internal/networkjail/broker_parser.go":                      {},
 	"internal/networkjail/doh.go":                                {},

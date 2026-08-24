@@ -7,6 +7,9 @@ export const ADMIN_STATUS_PATH = "/v1/admin/status";
 export const TIMESTAMP_HEADER = "x-portable-ghar-timestamp";
 export const MAC_HEADER = "x-portable-ghar-mac";
 
+const CRON_REQUEST_MAC_DOMAIN = "portable-ghar-cron-request-v1";
+const CRON_RESPONSE_MAC_DOMAIN = "portable-ghar-cron-response-v1";
+
 const HEX = /^[0-9a-f]+$/;
 
 export class ProtocolAuthError extends Error {
@@ -22,6 +25,17 @@ export function macInput(
   timestamp: string,
   canonicalBody: string,
 ): Uint8Array {
+  return new TextEncoder().encode(
+    macInputText(method, path, timestamp, canonicalBody),
+  );
+}
+
+function macInputText(
+  method: string,
+  path: string,
+  timestamp: string,
+  canonicalBody: string,
+): string {
   if (
     method !== "POST" ||
     !path.startsWith("/v1/") ||
@@ -29,9 +43,7 @@ export function macInput(
   ) {
     throw new ProtocolAuthError("mac input is invalid");
   }
-  return new TextEncoder().encode(
-    `${method}\n${path}\n${timestamp}\n${canonicalBody}`,
-  );
+  return `${method}\n${path}\n${timestamp}\n${canonicalBody}`;
 }
 
 export async function signCanonical(
@@ -41,12 +53,50 @@ export async function signCanonical(
   timestamp: string,
   canonicalBody: string,
 ): Promise<string> {
-  const cryptoKey = await importHmacKey(key);
-  const mac = await crypto.subtle.sign(
-    "HMAC",
-    cryptoKey,
-    macInput(method, path, timestamp, canonicalBody),
+  return signInput(key, macInput(method, path, timestamp, canonicalBody));
+}
+
+export async function signCronRequest(
+  key: Uint8Array,
+  method: string,
+  path: string,
+  timestamp: string,
+  canonicalBody: string,
+): Promise<string> {
+  return signInput(
+    key,
+    taggedMacInput(
+      CRON_REQUEST_MAC_DOMAIN,
+      method,
+      path,
+      timestamp,
+      canonicalBody,
+    ),
   );
+}
+
+export async function signCronResponse(
+  key: Uint8Array,
+  method: string,
+  path: string,
+  timestamp: string,
+  canonicalBody: string,
+): Promise<string> {
+  return signInput(
+    key,
+    taggedMacInput(
+      CRON_RESPONSE_MAC_DOMAIN,
+      method,
+      path,
+      timestamp,
+      canonicalBody,
+    ),
+  );
+}
+
+async function signInput(key: Uint8Array, input: Uint8Array): Promise<string> {
+  const cryptoKey = await importHmacKey(key);
+  const mac = await crypto.subtle.sign("HMAC", cryptoKey, ownedBytes(input));
   return bytesToHex(new Uint8Array(mac));
 }
 
@@ -68,6 +118,58 @@ export async function verifyCanonical(
   if (!constantTimeEqualHex(expected, presentedMacHex)) {
     throw new ProtocolAuthError("mac mismatch");
   }
+}
+
+export async function verifyCronRequest(
+  key: Uint8Array,
+  method: string,
+  path: string,
+  timestamp: string,
+  canonicalBody: string,
+  presentedMacHex: string,
+): Promise<void> {
+  const expected = await signCronRequest(
+    key,
+    method,
+    path,
+    timestamp,
+    canonicalBody,
+  );
+  if (!constantTimeEqualHex(expected, presentedMacHex)) {
+    throw new ProtocolAuthError("mac mismatch");
+  }
+}
+
+export async function verifyCronResponse(
+  key: Uint8Array,
+  method: string,
+  path: string,
+  timestamp: string,
+  canonicalBody: string,
+  presentedMacHex: string,
+): Promise<void> {
+  const expected = await signCronResponse(
+    key,
+    method,
+    path,
+    timestamp,
+    canonicalBody,
+  );
+  if (!constantTimeEqualHex(expected, presentedMacHex)) {
+    throw new ProtocolAuthError("mac mismatch");
+  }
+}
+
+function taggedMacInput(
+  domain: string,
+  method: string,
+  path: string,
+  timestamp: string,
+  canonicalBody: string,
+): Uint8Array {
+  return new TextEncoder().encode(
+    `${domain}\n${macInputText(method, path, timestamp, canonicalBody)}`,
+  );
 }
 
 export function assertTimestampWindow(
@@ -98,7 +200,11 @@ export function encodeSignedBody(value: unknown): string {
 }
 
 export function isRfc3339MsZ(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+    return false;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
 }
 
 export function hexToBytes(hex: string): Uint8Array {
@@ -135,9 +241,15 @@ async function importHmacKey(key: Uint8Array): Promise<CryptoKey> {
   }
   return crypto.subtle.importKey(
     "raw",
-    key,
+    ownedBytes(key),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign", "verify"],
   );
+}
+
+function ownedBytes(value: Uint8Array): Uint8Array<ArrayBuffer> {
+  const owned = new Uint8Array(new ArrayBuffer(value.byteLength));
+  owned.set(value);
+  return owned;
 }

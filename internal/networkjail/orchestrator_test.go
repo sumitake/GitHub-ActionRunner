@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
@@ -224,6 +225,7 @@ type fakeLifecycleJournal struct {
 	events   *[]string
 	failAt   string
 	replayAt SetupStage
+	digest   [sha256.Size]byte
 }
 
 func (j *fakeLifecycleJournal) Before(_ context.Context, _ controller.AssignmentKey, stage SetupStage) error {
@@ -249,6 +251,31 @@ func (j *fakeLifecycleJournal) Complete(_ context.Context, _ controller.Assignme
 		return errors.New("injected journal failure")
 	}
 	return nil
+}
+
+func (j *fakeLifecycleJournal) BeforeListenerRelease(
+	_ context.Context,
+	_ controller.AssignmentKey,
+	digest [sha256.Size]byte,
+) error {
+	j.digest = digest
+	return j.Before(context.Background(), controller.AssignmentKey{}, StageListenerRelease)
+}
+
+func (j *fakeLifecycleJournal) CompleteListenerRelease(
+	_ context.Context,
+	_ controller.AssignmentKey,
+	digest [sha256.Size]byte,
+) error {
+	if digest == ([sha256.Size]byte{}) || digest != j.digest {
+		return ErrSetupInput
+	}
+	return j.Complete(
+		context.Background(),
+		controller.AssignmentKey{},
+		StageListenerRelease,
+		JournalResult{},
+	)
 }
 
 func (j *fakeLifecycleJournal) Advance(_ context.Context, _ controller.AssignmentKey, next controller.State) error {
@@ -311,6 +338,55 @@ func validSetupRequest(t *testing.T) SetupRequest {
 	}
 }
 
+type releasePermitStub struct {
+	events  *[]string
+	binding controller.AcquisitionPermitBinding
+}
+
+func (permit *releasePermitStub) Context() context.Context { return context.Background() }
+func (permit *releasePermitStub) Binding() controller.AcquisitionPermitBinding {
+	return permit.binding
+}
+func (*releasePermitStub) ValidateBinding(
+	context.Context,
+	controller.AcquisitionPermitBinding,
+) error {
+	return nil
+}
+func (permit *releasePermitStub) Revalidate() error {
+	*permit.events = append(*permit.events, "permit:revalidate")
+	return nil
+}
+func (permit *releasePermitStub) Admit() error {
+	*permit.events = append(*permit.events, "permit:admit")
+	return nil
+}
+func (*releasePermitStub) Close() error { return nil }
+
+func validReleasePermit(events *[]string) controller.AcquisitionPermitGuard {
+	return &releasePermitStub{
+		events: events,
+		binding: controller.AcquisitionPermitBinding{
+			AuthorityRevision:        1,
+			AuthorityKey:             "{\"authority\":\"listener-test\"}",
+			FenceGeneration:          2,
+			ServerEpoch:              3,
+			SessionID:                strings.Repeat("a", 64),
+			LeaseGeneration:          4,
+			OperationID:              "listener-operation",
+			RepositoryAlias:          "repo-a",
+			ScaleSetName:             "portable-ghar",
+			OperationKind:            "jit",
+			PolicyDigest:             strings.Repeat("b", 64),
+			PolicyEpoch:              5,
+			PolicyMode:               controller.AcquisitionEnabled,
+			MaxCapacity:              6,
+			RepositoryPolicyRevision: 7,
+			OriginalLocalDeadline:    time.Date(1970, 1, 1, 0, 10, 0, 0, time.FixedZone("CLOCK_BOOTTIME", 0)),
+		},
+	}
+}
+
 func TestOrchestratorPersistsExactOrderAndAuditsBeforeArm(t *testing.T) {
 	var events []string
 	runtime := &fakeSetupRuntime{events: &events}
@@ -321,7 +397,11 @@ func TestOrchestratorPersistsExactOrderAndAuditsBeforeArm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOrchestrator: %v", err)
 	}
-	live, err := orchestrator.Configure(context.Background(), validSetupRequest(t))
+	live, err := orchestrator.Configure(
+		context.Background(),
+		validSetupRequest(t),
+		validReleasePermit(&events),
+	)
 	if err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
@@ -338,6 +418,10 @@ func TestOrchestratorPersistsExactOrderAndAuditsBeforeArm(t *testing.T) {
 	assertEventBefore(t, events, "runtime:audit-held-runner", "verify:final-audit")
 	assertEventBefore(t, events, "runtime:authorize-runner", "journal:advance:RELEASE_ARMED")
 	assertEventBefore(t, events, "journal:advance:RELEASE_ARMED", "runtime:release-listener")
+	assertEventBefore(t, events, "journal:before:runner-listener-release", "permit:revalidate")
+	assertEventBefore(t, events, "permit:revalidate", "runtime:release-listener")
+	assertEventBefore(t, events, "runtime:release-listener", "permit:admit")
+	assertEventBefore(t, events, "permit:admit", "journal:complete:runner-listener-release:success")
 	assertEventBefore(t, events, "runtime:release-listener", "journal:advance:LISTENER_RELEASED")
 	for _, state := range []controller.State{
 		controller.StateAdapterCreated,
@@ -511,7 +595,12 @@ func TestOrchestratorDestroyLiveRemovesResourcesWithoutDurableTransition(t *test
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	live, err := orchestrator.Release(context.Background(), held, jit)
+	live, err := orchestrator.Release(
+		context.Background(),
+		held,
+		jit,
+		validReleasePermit(&events),
+	)
 	if err != nil {
 		t.Fatalf("Release: %v", err)
 	}
@@ -566,7 +655,12 @@ func TestOrchestratorReleaseInvocationFailureRemainsAmbiguousWithoutCleanup(t *t
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	if _, err := orchestrator.Release(context.Background(), held, jit); !errors.Is(err, ErrListenerAmbiguous) {
+	if _, err := orchestrator.Release(
+		context.Background(),
+		held,
+		jit,
+		validReleasePermit(&events),
+	); !errors.Is(err, ErrListenerAmbiguous) {
 		t.Fatalf("Release error = %v, want ErrListenerAmbiguous", err)
 	}
 	if !slices.Contains(events, "journal:before:runner-listener-release") {
@@ -670,7 +764,11 @@ func TestOrchestratorFaultInjectionNeverArmsEarlyAndCleansReverseOwnership(t *te
 				t.Fatalf("newOrchestrator: %v", err)
 			}
 			request := validSetupRequest(t)
-			if _, err := orchestrator.Configure(context.Background(), request); err == nil {
+			if _, err := orchestrator.Configure(
+				context.Background(),
+				request,
+				validReleasePermit(&events),
+			); err == nil {
 				t.Fatal("Configure accepted injected failure")
 			}
 			if slices.Contains(events, "journal:advance:LISTENER_RELEASED") {
@@ -704,7 +802,11 @@ func TestOrchestratorListenerCheckpointFailureMarksAmbiguousWithoutCleanup(t *te
 	if err != nil {
 		t.Fatalf("newOrchestrator: %v", err)
 	}
-	if _, err := orchestrator.Configure(context.Background(), validSetupRequest(t)); !errors.Is(err, ErrListenerAmbiguous) {
+	if _, err := orchestrator.Configure(
+		context.Background(),
+		validSetupRequest(t),
+		validReleasePermit(&events),
+	); !errors.Is(err, ErrListenerAmbiguous) {
 		t.Fatalf("Configure error = %v, want ErrListenerAmbiguous", err)
 	}
 	if !slices.Contains(events, "journal:ambiguous") {
@@ -756,6 +858,7 @@ func TestOrchestratorRejectsCorruptRuntimeAndVerifierProofs(t *testing.T) {
 			if _, err := orchestrator.Configure(
 				context.Background(),
 				validSetupRequest(t),
+				validReleasePermit(&events),
 			); !errors.Is(err, ErrSetupFailed) {
 				t.Fatalf("Configure error = %v, want ErrSetupFailed", err)
 			}
@@ -791,6 +894,7 @@ func TestOrchestratorJournalIntentAndCompletionFailuresFailClosed(t *testing.T) 
 				_, configureErr := orchestrator.Configure(
 					context.Background(),
 					validSetupRequest(t),
+					validReleasePermit(&events),
 				)
 				if stage == StageListenerRelease && point == "complete" {
 					if !errors.Is(configureErr, ErrListenerAmbiguous) {
@@ -862,6 +966,7 @@ func TestOrchestratorCheckpointFailuresBeforeReleaseCleanUp(t *testing.T) {
 			if _, err := orchestrator.Configure(
 				context.Background(),
 				validSetupRequest(t),
+				validReleasePermit(&events),
 			); !errors.Is(err, ErrSetupFailed) {
 				t.Fatalf("Configure error = %v, want ErrSetupFailed", err)
 			}
@@ -893,6 +998,7 @@ func TestOrchestratorReplayDoesNotRepeatExternalEffect(t *testing.T) {
 			if _, err := orchestrator.Configure(
 				context.Background(),
 				request,
+				validReleasePermit(&events),
 			); !errors.Is(err, ErrSetupReplay) {
 				t.Fatalf("Configure error = %v, want ErrSetupReplay", err)
 			}
@@ -929,6 +1035,7 @@ func TestOrchestratorCleanupFailureAttemptsRemainingOwnersAndStaysRecoverable(t 
 	if _, err := orchestrator.Configure(
 		context.Background(),
 		validSetupRequest(t),
+		validReleasePermit(&events),
 	); !errors.Is(err, ErrSetupCleanup) {
 		t.Fatalf("Configure error = %v, want ErrSetupCleanup", err)
 	}

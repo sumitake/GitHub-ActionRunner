@@ -241,6 +241,12 @@ type Store interface {
 	// actually (re)perform the external effect.
 	BeginEffect(ctx context.Context, key controller.AssignmentKey, idempotencyKey, kind string) (began bool, err error)
 
+	// BeginListenerReleaseEffect is the sole listener-release intent path. The
+	// nonzero digest is the exact immutable acquisition-permit binding and is
+	// persisted as the effect's idempotency key. A changed binding for the same
+	// assignment conflicts instead of authorizing a second release.
+	BeginListenerReleaseEffect(ctx context.Context, key controller.AssignmentKey, bindingDigest [sha256.Size]byte) (began bool, err error)
+
 	// CompleteEffect durably records the result of the effect previously
 	// begun under idempotencyKey: the reason code on failure, or the
 	// opaque result identity on success, copied into the RunnerSlot column
@@ -282,9 +288,10 @@ type Store interface {
 	// It succeeds only while no listener-release effect exists.
 	AdvancePreReleaseDestroyed(ctx context.Context, key controller.AssignmentKey) error
 
-	// ApplyRunnerObservation atomically establishes the exact runner binding,
-	// proves the listener-release boundary, clears stale ambiguity, and
-	// advances to JOB_RUNNING or JOB_FINISHED.
+	// ApplyRunnerObservation atomically denies revoked pre-running work,
+	// establishes the exact runner binding, proves the listener-release
+	// boundary, clears stale ambiguity, and advances to JOB_RUNNING or
+	// JOB_FINISHED. A job already in JOB_RUNNING remains allowed to finish.
 	ApplyRunnerObservation(ctx context.Context, key controller.AssignmentKey, observation RunnerObservation) error
 
 	// ResolvePostRelease records a nonzero, closed evidence digest and resolves

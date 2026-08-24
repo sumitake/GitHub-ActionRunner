@@ -1,8 +1,6 @@
 package failoverclient
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -15,6 +13,11 @@ var (
 	hex64Pattern   = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	fleetIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 	aliasPattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+)
+
+const (
+	maxJavaScriptSafeInteger        uint64 = 1<<53 - 1
+	maxProtocolDurationMilliseconds int64  = 9_223_372_036_854
 )
 
 type LeaseHolder string
@@ -59,19 +62,9 @@ type HeartbeatBudget struct {
 }
 
 func ParseLeaseV1(raw []byte) (AcquisitionLeaseV1, error) {
-	parsed, err := ParseCanonicalJSON(raw)
-	if err != nil {
-		return AcquisitionLeaseV1{}, err
-	}
-	encoded, err := json.Marshal(parsed)
-	if err != nil {
-		return AcquisitionLeaseV1{}, fmt.Errorf("%w: shape", ErrLease)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(encoded))
-	decoder.DisallowUnknownFields()
 	var lease AcquisitionLeaseV1
-	if err := decoder.Decode(&lease); err != nil || decoder.More() {
-		return AcquisitionLeaseV1{}, fmt.Errorf("%w: fields", ErrLease)
+	if _, err := decodeExactMessage(raw, leaseFields, &lease, "canaryScaleSet"); err != nil {
+		return AcquisitionLeaseV1{}, err
 	}
 	if err := lease.validate(); err != nil {
 		return AcquisitionLeaseV1{}, err
@@ -86,7 +79,18 @@ func (lease AcquisitionLeaseV1) validate() error {
 		!hex64Pattern.MatchString(lease.SessionID) ||
 		!hex64Pattern.MatchString(lease.PolicyDigest) ||
 		lease.DurationMs <= 0 ||
-		!rfc3339MsZ.MatchString(lease.Expiry) {
+		lease.DurationMs > maxProtocolDurationMilliseconds ||
+		uint64(lease.DurationMs) > maxJavaScriptSafeInteger ||
+		lease.ServerEpoch > maxJavaScriptSafeInteger ||
+		lease.LeaseGeneration == 0 ||
+		lease.LeaseGeneration > maxJavaScriptSafeInteger ||
+		lease.RepositoryPolicyRevision > maxJavaScriptSafeInteger ||
+		lease.LocalPolicyEpoch > maxJavaScriptSafeInteger ||
+		lease.MaxCapacity < 0 ||
+		uint64(lease.MaxCapacity) > maxJavaScriptSafeInteger {
+		return fmt.Errorf("%w: identity", ErrLease)
+	}
+	if _, err := parseProtocolTimestamp(lease.Expiry); err != nil {
 		return fmt.Errorf("%w: identity", ErrLease)
 	}
 	if err := validateAliasSet(lease.ArchivedDisabledAliases); err != nil {
@@ -146,9 +150,23 @@ func (budget HeartbeatBudget) Validate() error {
 		budget.LostRenewals < 1 {
 		return fmt.Errorf("%w: incomplete", ErrLeaseBudget)
 	}
-	right := time.Duration(budget.LostRenewals+1)*budget.MaxAttemptInterval +
-		budget.Deadline +
-		budget.ShorteningMargin
+	if budget.LostRenewals == ^uint(0) {
+		return fmt.Errorf("%w: overflow", ErrLeaseBudget)
+	}
+	const maxDuration = time.Duration(1<<63 - 1)
+	renewalCount := uint64(budget.LostRenewals) + 1
+	if renewalCount > uint64(maxDuration/budget.MaxAttemptInterval) {
+		return fmt.Errorf("%w: overflow", ErrLeaseBudget)
+	}
+	right := time.Duration(renewalCount) * budget.MaxAttemptInterval
+	if right > maxDuration-budget.Deadline {
+		return fmt.Errorf("%w: overflow", ErrLeaseBudget)
+	}
+	right += budget.Deadline
+	if right > maxDuration-budget.ShorteningMargin {
+		return fmt.Errorf("%w: overflow", ErrLeaseBudget)
+	}
+	right += budget.ShorteningMargin
 	if !(budget.LeaseDuration > right) {
 		return fmt.Errorf("%w: inequality", ErrLeaseBudget)
 	}

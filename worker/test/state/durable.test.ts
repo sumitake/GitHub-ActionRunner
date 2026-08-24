@@ -4,18 +4,28 @@ import { expect, test } from "vitest";
 import {
   hexToBytes,
   MAC_HEADER,
+  signCronRequest,
   signCanonical,
   TIMESTAMP_HEADER,
+  verifyCronResponse,
 } from "../../src/protocol/auth";
 import { canonicalize } from "../../src/protocol/canonical";
+import {
+  CRON_ADDRESS_PROTOCOL_VERSION,
+  CRON_PATH,
+  parseCronAddressResponse,
+} from "../../src/protocol/cron";
 import { FleetDurableObject } from "../../src/state/durable";
 import { MemoryFleetStore } from "../../src/state/memory";
 import { saveFleetStore, type FleetSql } from "../../src/state/persist";
-import { FLEET_SCHEMA_SQL } from "../../src/state/schema";
+import { FLEET_SCHEMA_SQL, TABLE_NAMES } from "../../src/state/schema";
 
 const keyHex = "0b".repeat(32);
 const digest = "a".repeat(64);
 const session = "c".repeat(64);
+const cronKeyHex = "0c".repeat(32);
+const cronDigest =
+  "6a9aedffdae5b07550af1921963f6aa007cf4d6425762e0b30afa8ac7cbed91d";
 
 function validEnv(): Record<string, string> {
   return {
@@ -27,6 +37,20 @@ function validEnv(): Record<string, string> {
     ARCHIVE_EVIDENCE_MAX_AGE_MS: "60000",
     SELECTOR_EVIDENCE_MAX_AGE_MS: "60000",
     HOSTED_TRANSITION_SAFETY_MARGIN_MS: "1000",
+  };
+}
+
+function validCronEnv(): Record<string, string> {
+  return {
+    ...validEnv(),
+    CRON_HMAC_KEY: cronKeyHex,
+    FLEET_IDS: "alpha,beta",
+    MAX_FLEETS: "2",
+    PER_FLEET_DEADLINE_MS: "25",
+    CRON_BUDGET_OVERHEAD_MS: "25",
+    CRON_TICK_BUDGET_MS: "75",
+    FLEET_INVENTORY_REVISION: "1",
+    FLEET_INVENTORY_DIGEST: cronDigest,
   };
 }
 
@@ -46,6 +70,7 @@ function sqliteTransaction(db: DatabaseSync, work: () => void): void {
 }
 
 function sharedSql(): {
+  db: DatabaseSync;
   sql: {
     exec(
       query: string,
@@ -78,12 +103,13 @@ function sharedSql(): {
     },
   };
   return {
+    db,
     sql: {
       exec(query: string, ...binds: unknown[]) {
         if (/^(BEGIN|COMMIT|ROLLBACK)\b/i.test(query.trim())) {
           throw new Error("SQL transaction control is unsupported");
         }
-        const isSelect = /^\s*SELECT/i.test(query);
+        const isSelect = /^\s*(?:SELECT|PRAGMA)/i.test(query);
         if (binds.length === 0) {
           if (isSelect) {
             return {
@@ -113,8 +139,47 @@ function sharedSql(): {
   };
 }
 
-test("overlapping same-sequence heartbeats issue only one lease", async () => {
-  const { sql, persist, transactionSync, transactionCalls } = sharedSql();
+function durableSnapshot(db: DatabaseSync): Record<string, unknown[]> {
+  return Object.fromEntries(
+    TABLE_NAMES.map((table) => [
+      table,
+      db.prepare(`SELECT * FROM ${table} ORDER BY 1`).all(),
+    ]),
+  );
+}
+
+async function cronRequest(
+  overrides: Partial<Record<string, unknown>> = {},
+): Promise<Request> {
+  const tickTimestamp = "2026-01-01T00:00:00.000Z";
+  const value = {
+    protocolVersion: CRON_ADDRESS_PROTOCOL_VERSION,
+    fleetId: "alpha",
+    fleetIds: ["alpha", "beta"],
+    revision: "1",
+    inventoryDigest: cronDigest,
+    nonce: "1".repeat(64),
+    tickTimestamp,
+    deadline: "2026-01-01T00:00:00.025Z",
+    ...overrides,
+  };
+  const body = canonicalize(value);
+  const mac = await signCronRequest(
+    hexToBytes(cronKeyHex),
+    "POST",
+    CRON_PATH,
+    tickTimestamp,
+    body,
+  );
+  return new Request(`https://fleet.internal${CRON_PATH}`, {
+    method: "POST",
+    headers: { [TIMESTAMP_HEADER]: tickTimestamp, [MAC_HEADER]: mac },
+    body,
+  });
+}
+
+test("address-only Durable Object rejects direct heartbeat authority without mutation", async () => {
+  const { db, sql, persist, transactionSync } = sharedSql();
   const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");
   const store = new MemoryFleetStore("example-fleet", { now: () => timestamp });
   store.fleet.inventoried = true;
@@ -131,16 +196,22 @@ test("overlapping same-sequence heartbeats issue only one lease", async () => {
     alias: "repo-a",
     expectedRoute: "self-hosted",
     confirmedRoute: "self-hosted",
-    archiveLatched: false,
+    archiveEligibility: "active",
+    archivePolicyRevision: null,
     archiveObservedAt: timestamp,
     archived: false,
     selectorEvidenceAt: timestamp,
     openQueueRisk: null,
   });
   saveFleetStore(persist, store);
+  const before = durableSnapshot(db);
 
   const durable = new FleetDurableObject(
-    { storage: { sql, transactionSync }, id: { name: "example-fleet" } },
+    {
+      storage: { sql, transactionSync },
+      id: { name: "example-fleet" },
+      blockConcurrencyWhile: async (work) => work(),
+    },
     validEnv(),
   );
   const body = canonicalize({
@@ -179,9 +250,141 @@ test("overlapping same-sequence heartbeats issue only one lease", async () => {
   ]);
   const statuses = [first.status, second.status].sort();
   const bodies = [await first.text(), await second.text()];
-  expect(statuses).toEqual([200, 401]);
+  expect(statuses).toEqual([401, 401]);
+  expect(bodies.every((bodyText) => !bodyText.includes("lease"))).toBe(true);
+  expect(durableSnapshot(db)).toEqual(before);
+});
+
+test("internal Cron address persists a signed inert receipt only", async () => {
+  const { db, sql, transactionSync } = sharedSql();
+  const durable = new FleetDurableObject(
+    {
+      storage: { sql, transactionSync },
+      id: { name: "alpha" },
+      blockConcurrencyWhile: async (work) => work(),
+    },
+    validCronEnv(),
+    () => "2026-01-01T00:00:00.010Z",
+  );
+
+  const response = await durable.fetch(await cronRequest());
+
+  expect(response.status).toBe(200);
+  const responseTimestamp = response.headers.get(TIMESTAMP_HEADER) ?? "";
+  const responseMac = response.headers.get(MAC_HEADER) ?? "";
+  const responseBody = await response.text();
+  await verifyCronResponse(
+    hexToBytes(cronKeyHex),
+    "POST",
+    CRON_PATH,
+    responseTimestamp,
+    responseBody,
+    responseMac,
+  );
+  expect(parseCronAddressResponse(responseBody)).toMatchObject({
+    fleetId: "alpha",
+    revision: "1",
+    inventoryDigest: cronDigest,
+    nonce: "1".repeat(64),
+    tickTimestamp: "2026-01-01T00:00:00.000Z",
+    deadline: "2026-01-01T00:00:00.025Z",
+    receiptTime: "2026-01-01T00:00:00.010Z",
+    persistenceGeneration: 1,
+  });
   expect(
-    bodies.filter((bodyText) => bodyText.includes('"mode":"enabled"')),
-  ).toHaveLength(1);
-  expect(transactionCalls.count).toBeGreaterThan(0);
+    db
+      .prepare(
+        `SELECT fleet_id, inventoried, holder, routing_state, max_capacity,
+          cron_inventory_revision, cron_inventory_digest,
+          cron_tick_timestamp, cron_tick_nonce, cron_addressed_at,
+          persistence_generation FROM fleet_state`,
+      )
+      .get(),
+  ).toEqual({
+    fleet_id: "alpha",
+    inventoried: 0,
+    holder: "none",
+    routing_state: "UNINITIALIZED",
+    max_capacity: 0,
+    cron_inventory_revision: "1",
+    cron_inventory_digest: cronDigest,
+    cron_tick_timestamp: "2026-01-01T00:00:00.000Z",
+    cron_tick_nonce: "1".repeat(64),
+    cron_addressed_at: "2026-01-01T00:00:00.010Z",
+    persistence_generation: 1,
+  });
+  for (const table of [
+    "repositories",
+    "transitions",
+    "due_work",
+    "audit_events",
+  ]) {
+    expect(db.prepare(`SELECT * FROM ${table}`).all()).toEqual([]);
+  }
+});
+
+test("internal Cron rejects replay, object mismatch, and stale deadline without writes", async () => {
+  for (const scenario of [
+    {
+      name: "object mismatch",
+      objectName: "beta",
+      clock: () => "2026-01-01T00:00:00.010Z",
+    },
+    {
+      name: "stale deadline",
+      objectName: "alpha",
+      clock: () => "2026-01-01T00:00:00.026Z",
+    },
+  ]) {
+    const { db, sql, transactionSync } = sharedSql();
+    const durable = new FleetDurableObject(
+      {
+        storage: { sql, transactionSync },
+        id: { name: scenario.objectName },
+        blockConcurrencyWhile: async (work) => work(),
+      },
+      validCronEnv(),
+      scenario.clock,
+    );
+    const response = await durable.fetch(await cronRequest());
+    expect(response.status, scenario.name).toBe(401);
+    expect(db.prepare("SELECT * FROM fleet_state").all()).toEqual([]);
+    expect(db.prepare("SELECT * FROM request_nonces").all()).toEqual([]);
+  }
+
+  const { db, sql, transactionSync } = sharedSql();
+  const durable = new FleetDurableObject(
+    {
+      storage: { sql, transactionSync },
+      id: { name: "alpha" },
+      blockConcurrencyWhile: async (work) => work(),
+    },
+    validCronEnv(),
+    () => "2026-01-01T00:00:00.010Z",
+  );
+  expect((await durable.fetch(await cronRequest())).status).toBe(200);
+  expect((await durable.fetch(await cronRequest())).status).toBe(401);
+  expect(
+    db.prepare("SELECT persistence_generation FROM fleet_state").get(),
+  ).toEqual({ persistence_generation: 1 });
+});
+
+test("internal Cron rechecks deadline immediately before receipt transaction", async () => {
+  const { db, sql, transactionSync } = sharedSql();
+  const times = ["2026-01-01T00:00:00.010Z", "2026-01-01T00:00:00.026Z"];
+  const durable = new FleetDurableObject(
+    {
+      storage: { sql, transactionSync },
+      id: { name: "alpha" },
+      blockConcurrencyWhile: async (work) => work(),
+    },
+    validCronEnv(),
+    () => times.shift() ?? "2026-01-01T00:00:00.026Z",
+  );
+
+  const response = await durable.fetch(await cronRequest());
+
+  expect(response.status).toBe(401);
+  expect(db.prepare("SELECT * FROM fleet_state").all()).toEqual([]);
+  expect(db.prepare("SELECT * FROM request_nonces").all()).toEqual([]);
 });

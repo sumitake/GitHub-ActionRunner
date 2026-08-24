@@ -119,19 +119,25 @@ func (j *sqliteLifecycleJail) Release(
 	ctx context.Context,
 	_ networkjail.HeldJail,
 	jit *redaction.Secret,
+	permit controller.AcquisitionPermitGuard,
 ) (networkjail.LiveJail, error) {
 	defer jit.Destroy()
+	if permit == nil || permit.Context() != ctx {
+		return networkjail.LiveJail{}, fmt.Errorf("integration permit unavailable")
+	}
 	records, err := j.store.ListRecoverable(ctx)
 	if err != nil || len(records) != 1 {
 		return networkjail.LiveJail{}, fmt.Errorf("integration release record unavailable")
 	}
 	key := records[0].Key
-	const idempotencyKey = "sqlite-lifecycle-listener-release"
-	began, err := j.store.BeginEffect(
+	bindingDigest, err := controller.AcquisitionPermitBindingDigest(permit.Binding())
+	if err != nil {
+		return networkjail.LiveJail{}, err
+	}
+	began, err := j.store.BeginListenerReleaseEffect(
 		ctx,
 		key,
-		idempotencyKey,
-		state.LifecycleEffectListenerRelease,
+		bindingDigest,
 	)
 	if err != nil || !began {
 		return networkjail.LiveJail{}, fmt.Errorf(
@@ -140,6 +146,13 @@ func (j *sqliteLifecycleJail) Release(
 			err,
 		)
 	}
+	if err := permit.Revalidate(); err != nil {
+		return networkjail.LiveJail{}, err
+	}
+	if err := permit.Admit(); err != nil {
+		return networkjail.LiveJail{}, err
+	}
+	idempotencyKey := fmt.Sprintf("%x", bindingDigest)
 	if err := j.store.CompleteEffect(
 		ctx,
 		idempotencyKey,
@@ -258,7 +271,7 @@ func TestServiceRunsOneJobLifecycleAgainstSQLiteAttemptZero(t *testing.T) {
 	service, err := NewService(
 		store,
 		&fakeSessionProvider{session: session},
-		&fakeJITAuthorizer{},
+		&fakeJITAuthorizer{permit: newFakeLifecyclePermit(assignment)},
 		builder,
 		jail,
 		&fakeManagedRecovery{},

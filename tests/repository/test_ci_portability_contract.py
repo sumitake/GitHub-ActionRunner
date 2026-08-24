@@ -34,6 +34,14 @@ GITLEAKS_FINGERPRINTS = (
         "cafa5cbaf5123c8e46028b535997f32e45db972e:"
         "tests/sanitization/test_sanitize_public.py:generic-api-key:788"
     ),
+    (
+        "e2d3059198a160ecfb0a65b06cf607678692e625:"
+        "internal/state/sqlite_test.go:generic-api-key:1042"
+    ),
+    (
+        "e2d3059198a160ecfb0a65b06cf607678692e625:"
+        "internal/state/sqlite_test.go:generic-api-key:1070"
+    ),
 )
 
 

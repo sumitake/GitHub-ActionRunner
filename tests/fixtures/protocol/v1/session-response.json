@@ -1,0 +1,11 @@
+{
+  "epoch": 1,
+  "fleetId": "example-fleet",
+  "leaseGeneration": 1,
+  "leaseNotBefore": "2026-01-01T00:00:00.000Z",
+  "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "protocolVersion": 1,
+  "receiptTime": "2026-01-01T00:00:00.000Z",
+  "sequence": 0,
+  "sessionId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}
