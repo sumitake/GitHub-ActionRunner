@@ -1624,7 +1624,7 @@ def main():
         gate_env["PGHAR_INTEGRATION_DOCKER"] = "1"
         gate_env["PGHAR_CHAOS_DOCKER"] = "1"
         gate_raw = capture(
-            ["scripts/test-controller-runtime.sh", "--full"],
+            ["scripts/test-controller-runtime.sh", "--release"],
             cwd=clone,
             env=gate_env,
             log=log,
@@ -1635,7 +1635,7 @@ def main():
             not isinstance(gate, dict)
             or gate.get("schema_version") != 1
             or gate.get("gate") != "portable-ghar-controller-runtime"
-            or gate.get("mode") != "full"
+            or gate.get("mode") != "release"
             or gate.get("status") != "pass"
             or gate.get("failed_stage") is not None
             or gate.get("linux_docker") != "ready"

@@ -51,7 +51,7 @@ teardown() {
   grep -F '!build/portable-ghar-runner-gate' "$context/.dockerignore"
 }
 
-@test "image manifest and release rehearsal include Task 11 before the full gate" {
+@test "image manifest and release rehearsal include Task 11 before the release gate" {
   run jq -r '.images[].name' "$REPO_ROOT/images/manifest.json"
   [ "$status" -eq 0 ]
   [ "$output" = $'network-adapter\nnetwork-broker-dialer\nnetwork-broker-parser\nnetwork-helper\nnetwork-verifier\nrunner\nsynthetic-listener' ]
@@ -62,7 +62,7 @@ teardown() {
       cut -d: -f1
   )"
   ci_image_line="$(
-    grep -nF 'scripts/ci/check-images.sh' \
+    grep -nF 'scripts/test-controller-runtime.sh --docker' \
       "$REPO_ROOT/.github/workflows/ci.yml" |
       cut -d: -f1
   )"
@@ -78,7 +78,7 @@ teardown() {
       cut -d: -f1
   )"
   rehearsal_gate_line="$(
-    grep -nF '"scripts/test-controller-runtime.sh", "--full"' \
+    grep -nF '"scripts/test-controller-runtime.sh", "--release"' \
       "$REPO_ROOT/scripts/release/rehearse-runtime.sh" |
       cut -d: -f1
   )"

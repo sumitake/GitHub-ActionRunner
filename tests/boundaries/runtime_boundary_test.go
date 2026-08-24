@@ -274,7 +274,7 @@ func TestRuntimeGateRejectsInvalidArguments(t *testing.T) {
 	}{
 		{name: "missing"},
 		{name: "unknown", args: []string{"--other"}},
-		{name: "extra", args: []string{"--unit", "--full"}},
+		{name: "extra", args: []string{"--unit", "--release"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			command := exec.Command(script, test.args...)
@@ -343,7 +343,7 @@ func TestRuntimeGateContainsToolFailureAndCleansPrivateLogs(t *testing.T) {
 		summary.LinuxDocker != "not_run" {
 		t.Fatalf("unexpected failure summary: %#v", summary)
 	}
-	if stderr.String() != "gofmt\n" {
+	if stderr.String() != "gofmt:command-failed\ngofmt\n" {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	entries, err := os.ReadDir(tmpRoot)
@@ -509,7 +509,7 @@ exit 0
 	}
 }
 
-func TestRuntimeGateFullModeStopsBeforeDockerOnUnsupportedHost(t *testing.T) {
+func TestRuntimeGateDockerModeStopsBeforeDockerOnUnsupportedHost(t *testing.T) {
 	root := repositoryRoot(t)
 	script := filepath.Join(root, gateRelativePath)
 	requireExecutable(t, script)
@@ -563,7 +563,7 @@ exit 0
 		t.Fatal(err)
 	}
 
-	command := exec.Command(script, "--full")
+	command := exec.Command(script, "--docker")
 	command.Dir = root
 	command.Env = append(
 		os.Environ(),
@@ -578,13 +578,13 @@ exit 0
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err == nil {
-		t.Fatal("unsupported full-mode host returned success")
+		t.Fatal("unsupported docker-mode host returned success")
 	}
 	summary := decodeSummary(t, stdout.Bytes())
 	if summary.Status != "fail" || summary.LinuxDocker != "failed" ||
 		summary.FailedStage == nil ||
 		*summary.FailedStage != "linux-docker-preflight" {
-		t.Fatalf("unexpected full-mode summary: %#v", summary)
+		t.Fatalf("unexpected docker-mode summary: %#v", summary)
 	}
 	if _, err := os.Stat(dockerSentinel); !os.IsNotExist(err) {
 		t.Fatalf("Docker was invoked before host rejection: %v", err)
@@ -603,16 +603,19 @@ func TestRuntimeGateRejectsMissingFocusedTestEvidence(t *testing.T) {
 		name        string
 		mode        string
 		failedStage string
+		reason      string
 	}{
 		{
 			name:        "network authority",
 			mode:        "missing-network",
 			failedStage: "network-authority",
+			reason:      "evidence-empty",
 		},
 		{
 			name:        "chaos source",
 			mode:        "missing-chaos-source",
 			failedStage: "chaos-source",
+			reason:      "evidence-empty",
 		},
 	}
 	for _, test := range tests {
@@ -625,7 +628,8 @@ func TestRuntimeGateRejectsMissingFocusedTestEvidence(t *testing.T) {
 				*summary.FailedStage != test.failedStage {
 				t.Fatalf("unexpected summary: %#v", summary)
 			}
-			if stderr != test.failedStage+"\n" {
+			if stderr != test.failedStage+":"+test.reason+"\n"+
+				test.failedStage+"\n" {
 				t.Fatalf("stderr = %q", stderr)
 			}
 		})
@@ -635,7 +639,7 @@ func TestRuntimeGateRejectsMissingFocusedTestEvidence(t *testing.T) {
 func TestRuntimeGateRejectsTaggedSkipOrEmptyRunEvidence(t *testing.T) {
 	for _, mode := range []string{"tagged-skip", "tagged-empty"} {
 		t.Run(mode, func(t *testing.T) {
-			summary, stderr, err := runSyntheticGate(t, "--full", mode)
+			summary, stderr, err := runSyntheticGate(t, "--docker", mode)
 			if err == nil {
 				t.Fatal("invalid tagged evidence returned success")
 			}
@@ -644,7 +648,12 @@ func TestRuntimeGateRejectsTaggedSkipOrEmptyRunEvidence(t *testing.T) {
 				*summary.FailedStage != "integration-authority" {
 				t.Fatalf("unexpected summary: %#v", summary)
 			}
-			if stderr != "integration-authority\n" {
+			reason := "evidence-empty"
+			if mode == "tagged-skip" {
+				reason = "evidence-skip"
+			}
+			if stderr != "integration-authority:"+reason+"\n"+
+				"integration-authority\n" {
 				t.Fatalf("stderr = %q", stderr)
 			}
 		})
@@ -711,16 +720,6 @@ tagged-empty)
   ;;
 esac
 if [ "$1" = "test" ]; then
-  case "$arguments" in
-  *" ./tests/integration ./tests/conformance "*)
-    printf '%s\n' \
-      '--- PASS: TestPortableGHARConformance (0.00s)' \
-      '--- PASS: TestPublicEvidenceTypesExposeNoCompositeAuthority (0.00s)'
-    printf 'ok\tfake/integration\t0.001s\n'
-    printf 'ok\tfake/conformance\t0.001s\n'
-    exit 0
-    ;;
-  esac
   printf '%s\n' \
     '--- PASS: TestBrokerDialerRevalidatesThenPermitsEveryLiteralAttempt (0.00s)' \
     '--- PASS: TestBrokerDialerLiteralSkipsResolverAndRequiresPermit (0.00s)' \
@@ -1781,7 +1780,8 @@ func checkGateSource(t *testing.T, root string) {
 		"--- SKIP:",
 		`\[no tests to run\]`,
 		"--unit",
-		"--full",
+		"--docker",
+		"--release",
 		"mktemp -d",
 		"source-integrity-entry",
 		"gofmt",
@@ -1805,10 +1805,10 @@ func checkGateSource(t *testing.T, root string) {
 		"linux-docker-preflight",
 		"image-reproducibility",
 		"integration-authority",
-		"conformance",
 		"chaos",
 		"docker-state-exit",
-		"source-integrity-full-exit",
+		"source-integrity-docker-exit",
+		"PGHAR_CHAOS_IMAGE",
 		`"schema_version":1`,
 		`"portable-ghar-controller-runtime"`,
 	} {
@@ -1860,7 +1860,8 @@ func decodeSummary(t *testing.T, raw []byte) gateSummary {
 	}
 	if summary.SchemaVersion != 1 ||
 		summary.Gate != "portable-ghar-controller-runtime" ||
-		(summary.Mode != "unit" && summary.Mode != "full") ||
+		(summary.Mode != "unit" && summary.Mode != "docker" &&
+			summary.Mode != "release") ||
 		(summary.Status != "pass" && summary.Status != "fail") ||
 		(summary.LinuxDocker != "not_run" &&
 			summary.LinuxDocker != "ready" &&

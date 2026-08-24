@@ -15,6 +15,15 @@ described here. The repository has not yet cleared its deferred
 Linux/Docker operational, sizing, cutover, or live-activation gates, so
 this page is not a claim that any state or procedure below is live today.
 
+Release qualification uses the self-contained controller-runtime release
+gate: source checks, reproducible image builds, Linux integration authority,
+and Docker chaos with a temporary immutable runner image. It deliberately does
+not fabricate or claim the separately operator-authorized target-conformance
+proof. A zero-capacity, acquisition-disabled dark observer does not consume
+that proof; canary-only or enabled acquisition remains denied until target
+conformance and its later actual GitHub transport case pass against the same
+immutable bindings.
+
 ## Persisted controller states
 
 Each job assignment the controller accepts is tracked through a persisted

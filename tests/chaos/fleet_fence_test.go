@@ -228,7 +228,7 @@ func TestFleetFenceRaceAndObserverRecovery(t *testing.T) {
 	}
 	staleWatchdog := fleetfence.HandoffRequest{
 		From:               fleetfence.FleetLegacy,
-		To:                 fleetfence.FleetPortable,
+		To:                 fleetfence.FleetNone,
 		ExpectedGeneration: legacy.header.Generation,
 	}
 	staleWatchdog.OperationID = fleetfence.HandoffOperationID(
