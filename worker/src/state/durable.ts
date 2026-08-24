@@ -5,7 +5,12 @@ import {
   parseWorkerBindings,
   type WorkerEnv,
 } from "../bindings";
-import { dispatchFleetRequest, fleetIdFromBody } from "../gateway";
+import { parseAddressStatusBindings } from "../config/address-status-bindings";
+import {
+  dispatchFleetRequest,
+  fleetIdFromBody,
+  readBoundedBody,
+} from "../gateway";
 import {
   assertTimestampWindow,
   MAC_HEADER,
@@ -13,6 +18,12 @@ import {
   TIMESTAMP_HEADER,
   verifyCronRequest,
 } from "../protocol/auth";
+import {
+  ADDRESS_STATUS_PATH,
+  ADDRESS_STATUS_PROTOCOL_VERSION,
+  signAddressStatusResponse,
+  verifyAddressStatusRequest,
+} from "../protocol/address-status";
 import { canonicalize } from "../protocol/canonical";
 import {
   ADDRESS_ONLY_AUTHORITY_DISABLED,
@@ -22,6 +33,7 @@ import {
   parseCronAddressRequest,
 } from "../protocol/cron";
 import { persistCronAddressReceipt } from "./cron-receipt";
+import { readAddressStatus } from "./address-status";
 import { loadFleetStore, saveFleetStore, type FleetSql } from "./persist";
 import {
   FLEET_SCHEMA_SQL,
@@ -159,6 +171,13 @@ export class FleetDurableObject extends DurableObject<WorkerEnv> {
 
   private async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === ADDRESS_STATUS_PATH) {
+      try {
+        return await this.handleAddressStatus(request, url);
+      } catch {
+        return rejected();
+      }
+    }
     if (url.pathname === CRON_PATH) {
       try {
         return await this.handleCron(request, url);
@@ -188,6 +207,88 @@ export class FleetDurableObject extends DurableObject<WorkerEnv> {
     });
     saveFleetStore(this.sql, store);
     return response;
+  }
+
+  private async handleAddressStatus(
+    request: Request,
+    url: URL,
+  ): Promise<Response> {
+    const serializerHeadTime = this.now();
+    const bindings = parseAddressStatusBindings(this.workerEnv);
+    if (
+      bindings === null ||
+      request.method !== "POST" ||
+      url.search !== "" ||
+      this.objectName === undefined ||
+      !bindings.inventoriedFleetIds.includes(this.objectName)
+    ) {
+      throw new Error("address-status request is rejected");
+    }
+    const environmentDigest = await inventoryDigest(
+      bindings.inventoryRevision,
+      bindings.inventoriedFleetIds,
+    );
+    if (environmentDigest !== bindings.inventoryDigest) {
+      throw new Error("address-status inventory is rejected");
+    }
+    const timestamp = request.headers.get(TIMESTAMP_HEADER) ?? "";
+    const mac = request.headers.get(MAC_HEADER) ?? "";
+    const body = await readBoundedBody(request);
+    if (body === null) {
+      throw new Error("address-status body is rejected");
+    }
+    const value = await verifyAddressStatusRequest({
+      key: bindings.cronHmacKey,
+      body,
+      headerTimestamp: timestamp,
+      macHex: mac,
+      observedAt: serializerHeadTime,
+      timestampWindowMs: bindings.timestampWindowMs,
+      expected: {
+        fleetId: this.objectName,
+        inventoryRevision: bindings.inventoryRevision,
+        inventoryDigest: bindings.inventoryDigest,
+      },
+    });
+    const responseTime = this.now();
+    assertTimestampWindow(
+      responseTime,
+      value.requestTime,
+      bindings.timestampWindowMs,
+    );
+    const snapshot = readAddressStatus(this.sql, {
+      fleetId: value.fleetId,
+      inventoryRevision: value.inventoryRevision,
+      inventoryDigest: value.inventoryDigest,
+      nonce: value.nonce,
+      requestTime: value.requestTime,
+      responseTime,
+      nonceTtlMs: bindings.nonceTtlMs,
+    });
+    const responseBody = canonicalize({
+      protocolVersion: ADDRESS_STATUS_PROTOCOL_VERSION,
+      status: "inert-receipt",
+      fleetId: value.fleetId,
+      nonce: value.nonce,
+      requestTime: value.requestTime,
+      responseTime,
+      inventoryRevision: value.inventoryRevision,
+      inventoryDigest: value.inventoryDigest,
+      ...snapshot,
+    });
+    const responseMac = await signAddressStatusResponse(
+      bindings.cronHmacKey,
+      responseTime,
+      responseBody,
+    );
+    return new Response(responseBody, {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        [TIMESTAMP_HEADER]: responseTime,
+        [MAC_HEADER]: responseMac,
+      },
+    });
   }
 
   private async handleCron(request: Request, url: URL): Promise<Response> {

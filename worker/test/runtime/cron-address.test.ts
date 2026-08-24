@@ -343,3 +343,138 @@ test("per-fleet timeout includes response body and signature validation", async 
   expect(aborted).toBe(true);
   expect(cancelled).toBe(true);
 });
+
+test("scheduled success emits one closed receipt diagnostic", async () => {
+  const records: unknown[] = [];
+  const env = cronEnv();
+  let generation = 3;
+  env.FLEET = {
+    getByName() {
+      return {
+        fetch(request: Request) {
+          generation += 1;
+          return acceptedResponse(request, generation);
+        },
+      };
+    },
+  } satisfies FleetNamespace;
+  let nonce = 0;
+
+  const result = await handleWorkerScheduled(controller(), env, {
+    now: () => timestamp,
+    nonce: () => String((nonce += 1)).padStart(64, "0"),
+    log: (record) => records.push(record),
+  });
+
+  expect(result).toEqual({ addressed: ["alpha", "beta"], failed: [] });
+  expect(records).toEqual([
+    {
+      schemaVersion: 1,
+      event: "cron-address",
+      inventoryRevision: "1",
+      inventoryDigest: digestByFleets["alpha,beta"],
+      scheduledTimestamp: timestamp,
+      addressedFleetIds: ["alpha", "beta"],
+      failedFleetIds: [],
+      receipts: [
+        {
+          fleetId: "alpha",
+          persistenceGeneration: 4,
+          receiptTime: timestamp,
+        },
+        {
+          fleetId: "beta",
+          persistenceGeneration: 5,
+          receiptTime: timestamp,
+        },
+      ],
+      status: "success",
+    },
+  ]);
+  const encoded = JSON.stringify(records);
+  expect(encoded).not.toContain(workerKeyHex);
+  expect(encoded).not.toContain(cronKeyHex);
+  expect(encoded).not.toContain(
+    "0000000000000000000000000000000000000000000000000000000000000001",
+  );
+});
+
+test("scheduled partial failure logs the complete closed partition before rethrow", async () => {
+  const records: unknown[] = [];
+  const env = cronEnv("alpha,beta,gamma");
+  env.FLEET = {
+    getByName(name: string) {
+      return {
+        fetch(request: Request) {
+          if (name === "beta") {
+            return Promise.reject(
+              new Error("private-provider-diagnostic-must-not-escape"),
+            );
+          }
+          return acceptedResponse(request, name === "alpha" ? 8 : 9);
+        },
+      };
+    },
+  } satisfies FleetNamespace;
+  let nonce = 0;
+
+  const failure = await handleWorkerScheduled(controller(), env, {
+    now: () => timestamp,
+    nonce: () => String((nonce += 1)).padStart(64, "0"),
+    log: (record) => records.push(record),
+  }).catch((error: unknown) => error);
+
+  expect(failure).toBeInstanceOf(CronAddressRunError);
+  expect(failure).toMatchObject({
+    result: { addressed: ["alpha", "gamma"], failed: ["beta"] },
+  });
+  expect(records).toEqual([
+    {
+      schemaVersion: 1,
+      event: "cron-address",
+      inventoryRevision: "1",
+      inventoryDigest: digestByFleets["alpha,beta,gamma"],
+      scheduledTimestamp: timestamp,
+      addressedFleetIds: ["alpha", "gamma"],
+      failedFleetIds: ["beta"],
+      receipts: [
+        {
+          fleetId: "alpha",
+          persistenceGeneration: 8,
+          receiptTime: timestamp,
+        },
+        {
+          fleetId: "gamma",
+          persistenceGeneration: 9,
+          receiptTime: timestamp,
+        },
+      ],
+      status: "partial",
+    },
+  ]);
+  expect(JSON.stringify(records)).not.toContain("private-provider-diagnostic");
+});
+
+test("invalid scheduled configuration emits only a closed rejection", async () => {
+  const records: unknown[] = [];
+
+  await expect(
+    handleWorkerScheduled(
+      controller(),
+      {},
+      {
+        now: () => "private-invalid-clock",
+        log: (record) => records.push(record),
+      },
+    ),
+  ).rejects.toThrow();
+
+  expect(records).toEqual([
+    {
+      schemaVersion: 1,
+      event: "cron-address",
+      status: "configuration-rejected",
+    },
+  ]);
+  expect(JSON.stringify(records)).not.toContain("private-invalid-clock");
+});

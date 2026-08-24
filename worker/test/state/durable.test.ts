@@ -11,6 +11,14 @@ import {
 } from "../../src/protocol/auth";
 import { canonicalize } from "../../src/protocol/canonical";
 import {
+  ADDRESS_STATUS_PATH,
+  ADDRESS_STATUS_PROTOCOL_VERSION,
+  parseAddressStatusResponse,
+  signAddressStatusRequest,
+  verifyAddressStatusResponse,
+  type AddressStatusRequestV1,
+} from "../../src/protocol/address-status";
+import {
   CRON_ADDRESS_PROTOCOL_VERSION,
   CRON_PATH,
   parseCronAddressResponse,
@@ -176,6 +184,34 @@ async function cronRequest(
     headers: { [TIMESTAMP_HEADER]: tickTimestamp, [MAC_HEADER]: mac },
     body,
   });
+}
+
+async function statusRequest(
+  overrides: Partial<AddressStatusRequestV1> = {},
+): Promise<{ request: Request; value: AddressStatusRequestV1 }> {
+  const value: AddressStatusRequestV1 = {
+    protocolVersion: ADDRESS_STATUS_PROTOCOL_VERSION,
+    fleetId: "alpha",
+    nonce: "2".repeat(64),
+    requestTime: "2026-01-01T00:00:00.020Z",
+    inventoryRevision: "1",
+    inventoryDigest: cronDigest,
+    ...overrides,
+  };
+  const body = canonicalize(value);
+  const mac = await signAddressStatusRequest(
+    hexToBytes(cronKeyHex),
+    value.requestTime,
+    body,
+  );
+  return {
+    value,
+    request: new Request(`https://fleet.internal${ADDRESS_STATUS_PATH}`, {
+      method: "POST",
+      headers: { [TIMESTAMP_HEADER]: value.requestTime, [MAC_HEADER]: mac },
+      body,
+    }),
+  };
 }
 
 test("address-only Durable Object rejects direct heartbeat authority without mutation", async () => {
@@ -387,4 +423,110 @@ test("internal Cron rechecks deadline immediately before receipt transaction", a
   expect(response.status).toBe(401);
   expect(db.prepare("SELECT * FROM fleet_state").all()).toEqual([]);
   expect(db.prepare("SELECT * FROM request_nonces").all()).toEqual([]);
+});
+
+test("signed address-status reads the committed inert Cron receipt", async () => {
+  const { db, sql, transactionSync, transactionCalls } = sharedSql();
+  let now = "2026-01-01T00:00:00.010Z";
+  const env = {
+    ...validCronEnv(),
+    LEASE_DURATION_MS: "invalid",
+    ARCHIVE_EVIDENCE_MAX_AGE_MS: "invalid",
+    SELECTOR_EVIDENCE_MAX_AGE_MS: "invalid",
+    HOSTED_TRANSITION_SAFETY_MARGIN_MS: "invalid",
+  };
+  const durable = new FleetDurableObject(
+    {
+      storage: { sql, transactionSync },
+      id: { name: "alpha" },
+      blockConcurrencyWhile: async (work) => work(),
+    },
+    env,
+    () => now,
+  );
+  expect((await durable.fetch(await cronRequest())).status).toBe(200);
+  const beforeGeneration = db
+    .prepare("SELECT persistence_generation FROM fleet_state")
+    .get();
+  const beforeTransactions = transactionCalls.count;
+  now = "2026-01-01T00:00:00.020Z";
+  const signed = await statusRequest();
+
+  const response = await durable.fetch(signed.request);
+
+  expect(response.status).toBe(200);
+  const responseTimestamp = response.headers.get(TIMESTAMP_HEADER) ?? "";
+  const responseMac = response.headers.get(MAC_HEADER) ?? "";
+  const body = await response.text();
+  const parsed = await verifyAddressStatusResponse({
+    key: hexToBytes(cronKeyHex),
+    body,
+    headerTimestamp: responseTimestamp,
+    macHex: responseMac,
+    observedAt: now,
+    timestampWindowMs: 5_000,
+    request: signed.value,
+  });
+  expect(parseAddressStatusResponse(body)).toEqual(parsed);
+  expect(parsed).toMatchObject({
+    status: "inert-receipt",
+    fleetId: "alpha",
+    inventoryRevision: "1",
+    inventoryDigest: cronDigest,
+    tickTimestamp: "2026-01-01T00:00:00.000Z",
+    receiptTime: "2026-01-01T00:00:00.010Z",
+    persistenceGeneration: 1,
+    inventoried: false,
+    holder: "none",
+    maxCapacity: 0,
+    routingState: "UNINITIALIZED",
+  });
+  expect(transactionCalls.count).toBe(beforeTransactions + 1);
+  expect(
+    db.prepare("SELECT persistence_generation FROM fleet_state").get(),
+  ).toEqual(beforeGeneration);
+});
+
+test("address-status replay and widened request semantics fail closed", async () => {
+  const { db, sql, transactionSync } = sharedSql();
+  let now = "2026-01-01T00:00:00.010Z";
+  const durable = new FleetDurableObject(
+    {
+      storage: { sql, transactionSync },
+      id: { name: "alpha" },
+      blockConcurrencyWhile: async (work) => work(),
+    },
+    validCronEnv(),
+    () => now,
+  );
+  expect((await durable.fetch(await cronRequest())).status).toBe(200);
+  now = "2026-01-01T00:00:00.020Z";
+  const first = await statusRequest();
+  expect((await durable.fetch(first.request)).status).toBe(200);
+  const afterSuccess = durableSnapshot(db);
+
+  const replay = await statusRequest();
+  expect((await durable.fetch(replay.request)).status).toBe(401);
+  expect(durableSnapshot(db)).toEqual(afterSuccess);
+
+  for (const request of [
+    new Request(`https://fleet.internal${ADDRESS_STATUS_PATH}?query=1`, {
+      method: "POST",
+      body: "{}",
+    }),
+    new Request(`https://fleet.internal${ADDRESS_STATUS_PATH}`, {
+      method: "GET",
+    }),
+    new Request(`https://fleet.internal${ADDRESS_STATUS_PATH}`, {
+      method: "POST",
+      headers: {
+        [TIMESTAMP_HEADER]: now,
+        [MAC_HEADER]: "0".repeat(64),
+      },
+      body: "x".repeat(65_537),
+    }),
+  ]) {
+    expect((await durable.fetch(request)).status).toBe(401);
+    expect(durableSnapshot(db)).toEqual(afterSuccess);
+  }
 });

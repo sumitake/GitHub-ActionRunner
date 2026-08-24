@@ -98,7 +98,9 @@ export async function dispatchFleetRequest(
   });
 }
 
-async function readBoundedBody(request: Request): Promise<string | null> {
+export async function readBoundedBody(
+  request: Request,
+): Promise<string | null> {
   const declaredLength = request.headers.get("content-length");
   if (declaredLength !== null) {
     if (!/^\d+$/.test(declaredLength)) {

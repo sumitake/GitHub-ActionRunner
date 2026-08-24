@@ -245,7 +245,7 @@ test("gateway bounds an undeclared streamed body before protocol parsing", async
   expect(store.fleet.sessionId).toBeNull();
 });
 
-test("outer runtime rejects unimplemented admin status without dispatch", async () => {
+test("outer runtime rejects admin status when address bindings are missing", async () => {
   const request = new Request(`https://worker.example${ADMIN_STATUS_PATH}`, {
     method: "POST",
     body: "{}",
