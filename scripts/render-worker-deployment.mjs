@@ -166,7 +166,12 @@ function validateDescriptor(descriptor) {
   const requiredBudget =
     BigInt(maxFleets) * BigInt(perFleetDeadlineMs) +
     BigInt(cronBudgetOverheadMs);
-  if (requiredBudget > BigInt(cronTickBudgetMs)) {
+  const verificationWindow =
+    BigInt(cronTickBudgetMs) + 2n * BigInt(timestampWindowMs);
+  if (
+    requiredBudget > BigInt(cronTickBudgetMs) ||
+    verificationWindow >= 60_000n
+  ) {
     throw new Error("budget rejected");
   }
   if (

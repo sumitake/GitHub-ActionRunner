@@ -214,6 +214,7 @@ test("renderer rejects invalid inventory and budget terms", () => {
     ["zero term", { ...validDescriptor(), timestampWindowMs: 0 }],
     ["fractional term", { ...validDescriptor(), nonceTtlMs: 1.5 }],
     ["budget", { ...validDescriptor(), cronTickBudgetMs: 34_999 }],
+    ["verification window", { ...validDescriptor(), cronTickBudgetMs: 50_000 }],
     ["platform maximum", { ...validDescriptor(), cronTickBudgetMs: 900_001 }],
   ];
 
