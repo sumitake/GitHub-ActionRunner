@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "snapshot": {
+    "observed_at": "2026-01-01T00:00:00.000Z",
+    "fleet_alias": "example-fleet",
+    "acquisition_mode": "disabled",
+    "policy_epoch": 1,
+    "policy_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "repository_policy_revision": 1,
+    "capacity": {
+      "configured": 0,
+      "effective": 0,
+      "occupied": 0,
+      "available": 0,
+      "queued": 0
+    },
+    "assigned_jobs": 0,
+    "running_jobs": 0,
+    "oldest_live_assignment_age": 0,
+    "unassigned_released_listeners": 0,
+    "host_profile_id": "strict-linux-v1",
+    "degraded": false,
+    "build_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}

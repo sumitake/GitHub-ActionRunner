@@ -33,6 +33,8 @@ var (
 
 const runnerWorkFolder = "_work"
 
+const lifecycleFinalizeTimeout = 30 * time.Second
+
 var opaqueSlotPattern = regexp.MustCompile(`^pghar-slot-([0-9a-f]{32})$`)
 
 // Service is the canonical lifecycle command surface.
@@ -87,7 +89,12 @@ type SetupBuilder interface {
 
 type JailOrchestrator interface {
 	Prepare(context.Context, networkjail.PreparedSetupRequest) (networkjail.HeldJail, error)
-	Release(context.Context, networkjail.HeldJail, *redaction.Secret) (networkjail.LiveJail, error)
+	Release(
+		context.Context,
+		networkjail.HeldJail,
+		*redaction.Secret,
+		controller.AcquisitionPermitGuard,
+	) (networkjail.LiveJail, error)
 	DestroyHeld(context.Context, networkjail.HeldJail) error
 	DestroyLive(context.Context, networkjail.LiveJail) error
 }
@@ -117,6 +124,8 @@ type liveEntry struct {
 	assignment controller.Assignment
 	recovery   hostruntime.RecoverySpec
 	jail       networkjail.LiveJail
+	permit     controller.AcquisitionPermitGuard
+	binding    controller.AcquisitionPermitBinding
 }
 
 func NewService(
@@ -225,7 +234,7 @@ func (s *service) Release(
 func (s *service) releaseLocked(
 	ctx context.Context,
 	key controller.AssignmentKey,
-) error {
+) (resultErr error) {
 	record, err := s.record(ctx, key)
 	if err != nil {
 		return err
@@ -258,7 +267,7 @@ func (s *service) releaseLocked(
 		RunnerName: entry.assignment.Slot.OpaqueName,
 		WorkFolder: runnerWorkFolder,
 	}
-	config, err := s.jit.GenerateJITAuthorized(
+	authorization, err := s.jit.GenerateJITAuthorized(
 		ctx,
 		controller.JITAuthorizationRequest{
 			Assignment:   entry.assignment,
@@ -275,22 +284,41 @@ func (s *service) releaseLocked(
 		}
 		return fmt.Errorf("%w: generate JIT", ErrReleaseFailed)
 	}
+	config := authorization.Config
 	if config.Encoded != nil {
 		defer config.Encoded.Destroy()
 	}
+	permit := authorization.Permit
+	if permit != nil {
+		defer s.finishReleasePermit(ctx, key, permit, &resultErr)
+	}
+	binding := controller.AcquisitionPermitBinding{}
+	bindingErr := error(nil)
+	if permit == nil {
+		bindingErr = errors.New("permit unavailable")
+	} else {
+		binding = permit.Binding()
+		_, bindingErr = controller.AcquisitionPermitBindingDigest(binding)
+	}
 	if config.Encoded == nil ||
 		config.Runner.ID <= 0 ||
-		config.Runner.Name != entry.assignment.Slot.OpaqueName {
+		config.Runner.Name != entry.assignment.Slot.OpaqueName ||
+		bindingErr != nil {
 		if config.Runner.ID > 0 {
 			if cleanupErr := removeRunnerAndProve(ctx, session, config.Runner); cleanupErr != nil {
 				_ = s.state.MarkAmbiguous(ctx, key, "upstream-cleanup-uncertain")
 				return fmt.Errorf("%w: %w", ErrReleaseAmbiguous, cleanupErr)
 			}
 		}
-		return fmt.Errorf("%w: generated runner identity", ErrReleaseFailed)
+		return fmt.Errorf("%w: generated runner identity or permit binding", ErrReleaseFailed)
 	}
 
-	live, releaseErr := s.jails.Release(ctx, entry.jail, config.Encoded)
+	live, releaseErr := s.jails.Release(
+		permit.Context(),
+		entry.jail,
+		config.Encoded,
+		permit,
+	)
 	if releaseErr != nil {
 		if errors.Is(releaseErr, networkjail.ErrListenerAmbiguous) ||
 			errors.Is(releaseErr, networkjail.ErrSetupReplay) {
@@ -318,9 +346,44 @@ func (s *service) releaseLocked(
 		assignment: entry.assignment,
 		recovery:   entry.recovery,
 		jail:       live,
+		permit:     permit,
+		binding:    binding,
 	}
 	s.cacheMu.Unlock()
 	return nil
+}
+
+func (s *service) finishReleasePermit(
+	ctx context.Context,
+	key controller.AssignmentKey,
+	permit controller.AcquisitionPermitGuard,
+	resultErr *error,
+) {
+	closeErr := permit.Close()
+	if closeErr == nil {
+		return
+	}
+	s.cacheMu.Lock()
+	delete(s.live, key)
+	s.cacheMu.Unlock()
+
+	finishCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		lifecycleFinalizeTimeout,
+	)
+	defer cancel()
+	markErr := s.state.MarkAmbiguous(
+		finishCtx,
+		key,
+		"acquisition-permit-close",
+	)
+	*resultErr = errors.Join(
+		*resultErr,
+		ErrReleaseAmbiguous,
+		controller.ErrAcquisitionGuardClose,
+		closeErr,
+		markErr,
+	)
 }
 
 func assignmentScaleSet(assignment controller.Assignment) (string, error) {
@@ -671,14 +734,14 @@ func (s *service) revokePreRunningLocked(
 		record.State != controller.StateListenerReleased {
 		return ErrReleaseAmbiguous
 	}
-	return s.destroyRevokedPostReleaseLocked(
+	return s.destroyPreRunningPostReleaseLocked(
 		ctx,
 		record,
 		githubscale.RunnerRef{},
 	)
 }
 
-func (s *service) destroyRevokedPostReleaseLocked(
+func (s *service) destroyPreRunningPostReleaseLocked(
 	ctx context.Context,
 	record state.RecoverableAssignment,
 	expected githubscale.RunnerRef,
@@ -969,7 +1032,7 @@ func (s *service) observeRunnerLocked(
 				listener.State != state.EffectCompleted) {
 			return errors.Join(ErrInvalidState, err)
 		}
-		return s.destroyRevokedPostReleaseLocked(
+		return s.destroyPreRunningPostReleaseLocked(
 			ctx,
 			current,
 			githubscale.RunnerRef{
@@ -978,6 +1041,35 @@ func (s *service) observeRunnerLocked(
 			},
 		)
 	}
+	if current.State != controller.StateJobRunning {
+		listener, err := s.state.LookupAssignmentEffect(
+			ctx,
+			key,
+			state.LifecycleEffectListenerRelease,
+		)
+		if err != nil {
+			return fmt.Errorf("%w: listener effect read", ErrLifecycle)
+		}
+		if listener.State == state.EffectAbsent {
+			return ErrInvalidState
+		}
+		if current.State != controller.StateListenerReleased ||
+			listener.State != state.EffectCompleted ||
+			!s.listenerBindingCurrent(ctx, key) {
+			cleanupErr := s.destroyPreRunningPostReleaseLocked(
+				ctx,
+				current,
+				githubscale.RunnerRef{
+					ID:   event.RunnerID(),
+					Name: event.RunnerName(),
+				},
+			)
+			if cleanupErr != nil {
+				_ = s.state.MarkAmbiguous(ctx, key, "listener-binding-invalid")
+			}
+			return cleanupErr
+		}
+	}
 	return s.state.ApplyRunnerObservation(ctx, key, state.RunnerObservation{
 		UpstreamRunnerID:  event.RunnerID(),
 		BoundRequestID:    job.RunnerRequestID,
@@ -985,6 +1077,27 @@ func (s *service) observeRunnerLocked(
 		Finished:          event.Kind() == githubscale.EventCompleted,
 		ObservedAt:        observedAt,
 	})
+}
+
+func (s *service) listenerBindingCurrent(
+	ctx context.Context,
+	key controller.AssignmentKey,
+) bool {
+	s.cacheMu.Lock()
+	live, ok := s.live[key]
+	s.cacheMu.Unlock()
+	if !ok || live.permit == nil || live.assignment.Key != key {
+		return false
+	}
+	persistedDigest, err := controller.AcquisitionPermitBindingDigest(live.binding)
+	if err != nil {
+		return false
+	}
+	currentDigest, err := controller.AcquisitionPermitBindingDigest(live.permit.Binding())
+	if err != nil || currentDigest != persistedDigest {
+		return false
+	}
+	return live.permit.ValidateBinding(ctx, live.binding) == nil
 }
 
 func (s *service) observeAssignedLocked(

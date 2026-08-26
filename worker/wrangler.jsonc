@@ -1,0 +1,19 @@
+{
+  "name": "portable-ghar-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-08",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "FLEET",
+        "class_name": "FleetDurableObject",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["FleetDurableObject"],
+    },
+  ],
+}

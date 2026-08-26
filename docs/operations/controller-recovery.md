@@ -68,7 +68,8 @@ When no complete portable authority exists, or a legacy controller state
 cannot prove the current Worker maintenance tuple, recover only as a
 zero-capacity observer. Normalize the local policy through the canonical admin
 boundary to `disabled` at a new monotonic epoch, then read it back. Do not
-inherit capacity, acquisition mode, or a release permit from legacy files.
+inherit capacity, acquisition mode, a signed acquisition lease, or a
+maintenance directive from legacy files.
 
 Dark observer recovery may publish bounded health and runner-release status,
 reconcile journals, inspect the fleet fence, and request new external

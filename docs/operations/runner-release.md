@@ -81,7 +81,7 @@ The six ordered response phases are:
 5. `enable-permitted`: enter full capacity only after the governed canary is
    observed successful and every policy binding is fresh; and
 6. `complete`: close the exact transition only after enabled-policy and
-   permit-generation read-back match the directive.
+   acquisition-authority-generation read-back match the directive.
 
 `candidate-rejected` is a runner-release status, not a seventh maintenance
 phase. It cannot authorize staging, replacement, selection, canary, enable, or
@@ -89,7 +89,8 @@ cleanup.
 
 Every phase binds the Worker enrollment epoch, session, request control
 sequence, observed release, selected and candidate manifests, configuration
-revision, transition epoch, policy digests, permit generation, and expiry.
+revision, transition epoch, policy digests, acquisition-authority generation,
+and expiry.
 One reconciliation call performs at most one adjacent external phase.
 
 ## Retry and operator hold
@@ -113,7 +114,8 @@ directive; the controller requires a fresh response.
 
 Retries are idempotent for one exact request and phase. Reusing a request
 across a different release, candidate, selection, policy, configuration,
-transition, or permit generation is rejected rather than normalized.
+transition, or acquisition-authority generation is rejected rather than
+normalized.
 
 ## Forced-version-bump continuity
 

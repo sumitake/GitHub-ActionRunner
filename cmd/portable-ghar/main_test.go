@@ -59,6 +59,92 @@ func TestCommandEmitsOneClosedSuccessDocument(t *testing.T) {
 	}
 }
 
+func TestCommandEmitsPrivateOverlayValidationReceipt(t *testing.T) {
+	t.Parallel()
+
+	revision := strings.Repeat("a", 64)
+	dependencies := commandDependencies{
+		RunValidatePrivateOverlay: func(
+			context.Context,
+			[]string,
+		) (cli.PrivateOverlayValidationReceipt, error) {
+			return cli.PrivateOverlayValidationReceipt{
+				SchemaVersion:               1,
+				PrivateOverlaySchemaVersion: 1,
+				PrivateOverlayRevision:      revision,
+				Mode:                        "disabled-observer",
+				TargetOS:                    "linux",
+				TargetArchitecture:          "amd64",
+				ProfileID:                   "qts-capless-root",
+			}, nil
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	exit := run(
+		context.Background(),
+		[]string{
+			"validate-private-overlay",
+			"--private",
+			"/private/controller-runtime.json",
+		},
+		bytes.NewReader(nil),
+		&stdout,
+		&stderr,
+		false,
+		dependencies,
+	)
+	if exit != 0 || stderr.Len() != 0 || stdout.String() !=
+		`{"schema_version":1,"private_overlay_schema_version":1,`+
+			`"private_overlay_revision":"`+revision+`",`+
+			`"mode":"disabled-observer","target_os":"linux",`+
+			`"target_architecture":"amd64",`+
+			`"profile_id":"qts-capless-root"}`+"\n" {
+		t.Fatalf(
+			"run() = exit %d stdout=%q stderr=%q",
+			exit,
+			stdout.String(),
+			stderr.String(),
+		)
+	}
+}
+
+func TestCommandSanitizesPrivateOverlayValidationFailure(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	exit := run(
+		context.Background(),
+		[]string{
+			"validate-private-overlay",
+			"--private",
+			"/secret/private/controller-runtime.json",
+		},
+		bytes.NewReader(nil),
+		&stdout,
+		&stderr,
+		false,
+		commandDependencies{
+			RunValidatePrivateOverlay: func(
+				context.Context,
+				[]string,
+			) (cli.PrivateOverlayValidationReceipt, error) {
+				return cli.PrivateOverlayValidationReceipt{},
+					errors.New("secret github_pat_value")
+			},
+		},
+	)
+	if exit != 1 || stdout.Len() != 0 ||
+		stderr.String() !=
+			"portable-ghar: private overlay validation failed\n" {
+		t.Fatalf(
+			"run() = exit %d stdout=%q stderr=%q",
+			exit,
+			stdout.String(),
+			stderr.String(),
+		)
+	}
+}
+
 func TestCommandSeparatesUsageFromSanitizedFailure(t *testing.T) {
 	t.Parallel()
 
@@ -72,7 +158,7 @@ func TestCommandSeparatesUsageFromSanitizedFailure(t *testing.T) {
 			"usage",
 			cli.ErrHostUsage,
 			2,
-			"usage: portable-ghar deploy|verify|suspend|resume host [exact arguments]\n",
+			"usage: portable-ghar validate-private-overlay|deploy|verify|suspend|resume [exact arguments]\n",
 		},
 		{
 			"failure",

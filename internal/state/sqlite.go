@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2446,7 +2447,8 @@ func (s *SQLiteStore) Reserve(ctx context.Context, key controller.AssignmentKey,
 // BeginEffect implements Store.
 func (s *SQLiteStore) BeginEffect(ctx context.Context, key controller.AssignmentKey, idempotencyKey, kind string) (bool, error) {
 	if idempotencyKey == "" || len(idempotencyKey) > maxIdempotencyKeyBytes ||
-		kind == "" || len(kind) > maxEffectKindBytes {
+		kind == "" || len(kind) > maxEffectKindBytes ||
+		kind == LifecycleEffectListenerRelease {
 		return false, ErrIdentityConflict
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -2501,6 +2503,87 @@ func (s *SQLiteStore) BeginEffect(ctx context.Context, key controller.Assignment
 		return false, fmt.Errorf("state: begin effect: commit: %w", err)
 	}
 	return n == 1, nil
+}
+
+// BeginListenerReleaseEffect implements Store. The SQLiteStore's immediate
+// write transaction makes the assignment/kind check and insert one atomic CAS.
+func (s *SQLiteStore) BeginListenerReleaseEffect(
+	ctx context.Context,
+	key controller.AssignmentKey,
+	bindingDigest [sha256.Size]byte,
+) (bool, error) {
+	if bindingDigest == ([sha256.Size]byte{}) {
+		return false, ErrIdentityConflict
+	}
+	idempotencyKey := hex.EncodeToString(bindingDigest[:])
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("state: begin listener release: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	assignmentID, _, err := lookupAssignmentTx(ctx, tx, key)
+	if err != nil {
+		return false, err
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT idempotency_key
+		FROM effects
+		WHERE assignment_id = ? AND kind = ?
+		ORDER BY id
+	`, assignmentID, LifecycleEffectListenerRelease)
+	if err != nil {
+		return false, fmt.Errorf("state: begin listener release: inspect: %w", err)
+	}
+	var existing []string
+	for rows.Next() {
+		var candidate string
+		if err := rows.Scan(&candidate); err != nil {
+			_ = rows.Close()
+			return false, fmt.Errorf("state: begin listener release: scan: %w", err)
+		}
+		existing = append(existing, candidate)
+		if len(existing) > 1 {
+			_ = rows.Close()
+			return false, ErrIdentityConflict
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, fmt.Errorf("state: begin listener release: rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("state: begin listener release: close rows: %w", err)
+	}
+	if len(existing) == 1 {
+		if existing[0] != idempotencyKey {
+			return false, ErrIdentityConflict
+		}
+		if err := tx.Commit(); err != nil {
+			return false, fmt.Errorf("state: begin listener release: commit replay: %w", err)
+		}
+		return false, nil
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO effects (assignment_id, idempotency_key, kind, began_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (idempotency_key) DO NOTHING
+	`, assignmentID, idempotencyKey, LifecycleEffectListenerRelease, now())
+	if err != nil {
+		return false, fmt.Errorf("state: begin listener release: insert: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("state: begin listener release: rows affected: %w", err)
+	}
+	if inserted != 1 {
+		return false, ErrIdentityConflict
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("state: begin listener release: commit: %w", err)
+	}
+	return true, nil
 }
 
 // LookupEffect returns the exact state for an immutable
@@ -2987,6 +3070,25 @@ func (s *SQLiteStore) ApplyRunnerObservation(
 	assignmentID, current, err := lookupAssignmentTx(ctx, tx, key)
 	if err != nil {
 		return err
+	}
+	var revokedEpoch sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT pre_running_revoked_epoch
+		FROM assignments
+		WHERE id = ?
+	`, assignmentID).Scan(&revokedEpoch); err != nil {
+		return fmt.Errorf("state: apply runner observation: read revocation: %w", err)
+	}
+	if revokedEpoch.Valid {
+		if revokedEpoch.Int64 <= 0 {
+			return ErrIdentityConflict
+		}
+		// BEGIN IMMEDIATE serializes this check with MarkPreRunningRevoked:
+		// revocation that commits first denies initial admission, while a job
+		// already admitted before revocation remains allowed to finish.
+		if current != controller.StateJobRunning && current != controller.StateJobFinished {
+			return ErrIdentityConflict
+		}
 	}
 	switch current {
 	case controller.StateReleaseArmed:

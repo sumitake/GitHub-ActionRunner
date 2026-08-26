@@ -29,7 +29,7 @@ strict barrier, not a best-effort handoff:
 5. prove zero listeners, runners, adapters, brokers, helpers, verifiers,
    per-job sockets, and pending dials remain -- retained ledger state
    stays retained, not reused, until its retention window expires;
-6. while local acquisition remains zero, clear every open queue-risk row
+6. while local acquisition remains zero, clear every open queue-risk record
    through authenticated GitHub read-back and selective recovery;
 7. only then flip the host-local fleet-generation fence from the disabled
    state to the captured legacy generation, and only after that flip
@@ -51,14 +51,14 @@ failover state, persists hosted transition intent, and blocks recovery
 until every configured repository reads back hosted. Releasing it starts
 a new recovery epoch; because routing was already hosted throughout the
 hold, releasing it does not itself re-block acquisition or insert a new
-queue-risk row.
+queue-risk record.
 
 ## Positive read-back gates
 
 No step in this runbook advances on an assumption. Every gate is a
 **positive read-back**, not a fire-and-forget mutation: a hosted-hold
 transition is only confirmed once every repository's routing variable
-resolves to hosted, a queue-risk row is only cleared once GitHub state has
+resolves to hosted, a queue-risk record is only cleared once GitHub state has
 actually been re-read for that repository at the same epoch, and a
 recovery canary is only accepted if it observed
 `runner.environment=self-hosted` at the exact expected workflow revision.

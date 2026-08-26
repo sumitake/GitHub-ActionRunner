@@ -54,8 +54,18 @@ CREATE_APP_TOKEN_ACTION = (
     "actions/create-github-app-token@"
     "bcd2ba49218906704ab6c1aa796996da409d3eb1"
 )
+# Scheduled vulnerability-watch jobs: not PR status checks and not release
+# jobs; they run on a weekly schedule (plus manual dispatch) and alert by
+# failing when the release-gate policy would newly fire.
+EXPECTED_SCHEDULED_WATCH_CONTEXTS = {
+    "source-full-policy",
+    "base-image-fixable",
+}
 EXPECTED_ALL_CONTEXTS = (
-    EXPECTED_STABLE_CONTEXTS | {"codeql"} | EXPECTED_RUNTIME_RELEASE_CONTEXTS
+    EXPECTED_STABLE_CONTEXTS
+    | {"codeql"}
+    | EXPECTED_RUNTIME_RELEASE_CONTEXTS
+    | EXPECTED_SCHEDULED_WATCH_CONTEXTS
 )
 
 # A minimal workflow that should pass every check cleanly. Each negative

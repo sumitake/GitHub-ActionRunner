@@ -15,13 +15,32 @@ behavior below is live against a deployed Worker today.
 
 The Durable Object, not the host, owns a fleet's enrollment epoch. A
 controller instance enrolls with a random nonce and a timestamped,
-HMAC-authenticated challenge/response exchange; the Durable Object
-atomically consumes the challenge once, increments its own server-owned
-epoch, invalidates the prior session, and returns the new epoch and
-session identifiers. Local controller-state loss -- a wiped disk, a fresh
-install -- causes a new authenticated enrollment, never a permanent
-lockout, because the host never has to remember or reconstruct the epoch
-itself.
+HMAC-authenticated `POST /v1/session`; the Durable Object atomically rejects a
+reused nonce digest, increments its own server-owned epoch and lease generation,
+invalidates the prior session, carries forward the fleet's lease-drain
+restriction, and returns a signed response bound to the request nonce and
+`leaseNotBefore`. Local controller-state loss -- a wiped disk, a fresh install
+-- causes a new authenticated enrollment, never a permanent lockout, because
+the host never has to remember or reconstruct the epoch itself.
+
+Invalidating the old session rejects its later traffic but cannot erase its
+cached lease. The enrollment transaction therefore carries one
+`leaseNotBefore` restriction in the existing fleet state through the
+fleet-global monotonic maximum expiry of every issued lease plus the
+hosted-transition safety margin. Issuing a lease and advancing that maximum are
+one transaction. The replacement can reconcile and send heartbeats immediately,
+but those responses explicitly grant no lease until Worker receipt time reaches
+that boundary. They prove controller liveness only: the closed
+`predecessor-lease-draining` reason stays visible in status and audit, is not
+acquisition-ready health, failback evidence, hosted success, or zero-listener
+quiescence evidence, and local-routed work may queue for the bounded remainder.
+Quiescence proof is accepted only from the exact enrollment session and lease
+generation whose listener set is being drained. A replacement cannot report
+zero for its predecessor; if supersession occurs before that exact proof, the
+governed local transition stays incomplete under hosted-safe routing and
+alerts. A first enrollment has no predecessor delay, and repeated enrollments
+cannot shorten an existing drain. No positive response from the old controller
+is required merely to expire its cached lease.
 
 ## Heartbeat replay and ordering
 
@@ -32,6 +51,33 @@ not the client's claimed time, as the freshness signal, and it
 **rejects** any heartbeat that is a duplicate, **reordered**, from a
 superseded epoch, or a **replay** of an earlier message. A late canary
 result from an obsolete epoch is likewise ignored rather than accepted.
+
+The accepted heartbeat response carries the only remote acquisition authority:
+one short-lived signed lease binding the fleet holder, session, generation,
+local acquisition-policy epoch/digest, mode, maximum capacity, and a bounded
+signed set of Worker-latched archived-disabled repository aliases. Portable and
+governed legacy rollback use the same lease type. The controller installs and
+uses a lease only while the existing epoch gate is open and its authenticated
+local epoch/digest remains exact. One injected authority clock supplies both
+heartbeat-send observations and absolute deadline waits; Linux/QTS uses
+`CLOCK_BOOTTIME`, and missing target proof leaves acquisition disabled. It
+derives its shorter suspend-aware deadline from heartbeat send time, rejects a
+late response, and gives each poll/acquire/JIT call an earlier cancellation
+deadline that reserves the bounded termination tail. Deadline cancellation and
+admission are serialized with short pre/post checks while the handler remains
+armed through one at-most-once effect attempt. The listener gate enforces its
+captured local lease deadline at the actual release point; Ack is
+non-authorizing. A late or ambiguous result cannot release a runner or trigger
+a retry. Missing, stale, mismatched, or expired leases stop new local acquisition
+while running jobs
+drain; a signed repository disable stops only that alias. Archive evidence has
+an approved maximum age and missing or stale evidence is restrictive. A cached
+pre-restriction lease remains bounded by its existing local deadline. A
+restrictive replacement stops new controller acquisition but cannot rewrite a
+listener already released under the prior lease, so repository-wide convergence
+uses that original deadline. The documented worst case is evidence age plus
+remaining lease, not an instantaneous remote revocation claim. Administrative
+status and maintenance commands never grant authority.
 
 ## Transition, outbox, and read-back
 
@@ -44,18 +90,50 @@ read-back, and idempotent reconciliation rather than a blind retry or a
 silently dropped mutation. No external routing write is ever attempted
 from state that was not first durably persisted.
 
+One Cloudflare Cron Trigger is the sole durable scheduler for this due work.
+Because Durable Object namespaces are not enumerable, each tick validates one
+canonical bounded private fleet-ID inventory, directly addresses every listed
+object with an enforced deadline and bounded concurrency, and asks each object
+to claim a bounded batch. An invalid or absent inventory prevents enrollment
+and lease renewal; addition requires Cron-addressability read-back, and removal
+requires hosted, zero-lease, empty-due-work proof. Expired claims return to the
+queue and all retries and retained history are capped. Request handlers may
+opportunistically execute newly persisted work, but recovery never depends on
+another request. Durable Object alarms and private runtime-storage behavior are
+deliberately not a second recovery path or fleet registry.
+
+With Cron functioning, the operator-approved hosted-transition completion
+budget covers the last lease window, safety margin, one Cron period, bounded
+delivery jitter, and one due-work execution/read-back attempt. If that budget
+is exceeded, or Cron is unavailable, the transition remains incomplete and
+visible; it is never reported as hosted success.
+
+The routing state machine stays small: hosted, draining-to-hosted, Portable
+canary, Portable, legacy canary, and legacy. API calls, canary outcomes,
+read-backs, queue-risk clearance, and notifications are transition evidence,
+not additional authority states. Bootstrap issues no lease and enters hosted
+only after exact read-back. A failed canary advances the lease generation,
+stops renewal, and reuses draining-to-hosted until the issued-lease maximum plus
+margin. Routing never left hosted, and shorter local listener authority has
+ended by that boundary, so no route mutation, queue-risk row, or later
+controller drain report is needed; the cached lease is bounded rather than
+described as asynchronously revoked.
+
 ## Canary-gated failback
 
 Routing never fails back to self-hosted runners on health alone. Recovery
-requires, in order: every open queue-risk row from the latest hosted
+requires, in order: every open queue-risk record from the latest hosted
 transition cleared by authenticated GitHub read-back; a canary run tied
 to the current transition epoch that observes
 `runner.environment=self-hosted` at the exact expected workflow revision;
-local acquisition then enabled; and, without the Worker's transition epoch
-changing in between, a newer-sequence heartbeat from the same enrollment
-session proving the expected acquisition-policy digest and full
-configured capacity. Only that combination can create self-hosted routing
-intent. If the canary cannot pass, hosted routing is the safe state that
+local enabled intent; and, without the Worker's transition epoch changing in
+between, a newer-sequence heartbeat from the same enrollment session proving
+the expected acquisition-policy digest and full configured capacity. That
+heartbeat is route-readiness evidence only and grants no enabled lease while
+routing remains hosted. The Worker may then create self-hosted routing intent;
+only exact read-back enters `PORTABLE`, after which a subsequent matching
+heartbeat may return the enabled lease that starts local acquisition. If the
+canary cannot pass, hosted routing is the safe state that
 remains in effect -- there is no automatic bypass of a failed canary.
 
 ## Independent notification retries
@@ -72,3 +150,9 @@ failed or delayed email, webhook, or downstream relay never delays,
 reverses, or otherwise gates a hosted-hold, failover, or failback
 transition. Routing correctness and operator notification are
 deliberately decoupled failure domains.
+
+If both the Worker and Cron path are unavailable while GitHub still routes a
+repository locally, the short lease expires and new local acquisition stops.
+Already evaluated jobs may queue until the control plane recovers. This is an
+explicit availability degradation, never evidence that hosted failover was
+confirmed.

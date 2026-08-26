@@ -224,6 +224,14 @@ teardown() {
   [ "$output" -eq 0 ]
 }
 
+@test "--apply-foundation on EOF stdin without --yes is refused" {
+  run bash -c 'exec <&-; exec bash "$1" --apply-foundation owner/repository' bash "$SCRIPT"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"confirm"* ]]
+  run grep -c -- "--method" "$GH_CALLS"
+  [ "$output" -eq 0 ]
+}
+
 @test "--apply-foundation without admin access fails closed" {
   STUB_ADMIN=false run bash "$SCRIPT" --apply-foundation owner/repository --yes
   [ "$status" -ne 0 ]

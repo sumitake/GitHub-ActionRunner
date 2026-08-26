@@ -1,0 +1,25 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "panels": [
+    {
+      "id": 1,
+      "title": "portable_ghar_health assigned jobs",
+      "type": "stat",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.defaultBucket) |> range(start: v.timeRangeStart) |> filter(fn: (r) => r._measurement == \"portable_ghar_health\")"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["portable-ghar", "projection"],
+  "title": "Portable GHAR health projection",
+  "uid": "portable-ghar-health",
+  "version": 1
+}

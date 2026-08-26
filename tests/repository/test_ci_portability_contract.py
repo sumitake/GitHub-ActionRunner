@@ -9,9 +9,39 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-GITLEAKS_FINGERPRINT = (
-    "cf2fef5c4c8a156f6303311b040428620a2bbc95:"
-    "internal/hostruntime/operation_receipt_test.go:generic-api-key:13"
+GITLEAKS_FINGERPRINTS = (
+    (
+        "cf2fef5c4c8a156f6303311b040428620a2bbc95:"
+        "internal/hostruntime/operation_receipt_test.go:generic-api-key:13"
+    ),
+    (
+        "8075e44d05b02bcdd117e60f057d624b37a0dcab:"
+        "internal/hostruntime/operation_receipt_test.go:generic-api-key:13"
+    ),
+    (
+        "cafa5cbaf5123c8e46028b535997f32e45db972e:"
+        "tests/config/schema-validation.test.mjs:github-pat:89"
+    ),
+    (
+        "cafa5cbaf5123c8e46028b535997f32e45db972e:"
+        "tests/sanitization/test_sanitize_public.py:generic-api-key:361"
+    ),
+    (
+        "cafa5cbaf5123c8e46028b535997f32e45db972e:"
+        "tests/sanitization/test_sanitize_public.py:generic-api-key:580"
+    ),
+    (
+        "cafa5cbaf5123c8e46028b535997f32e45db972e:"
+        "tests/sanitization/test_sanitize_public.py:generic-api-key:788"
+    ),
+    (
+        "e2d3059198a160ecfb0a65b06cf607678692e625:"
+        "internal/state/sqlite_test.go:generic-api-key:1042"
+    ),
+    (
+        "e2d3059198a160ecfb0a65b06cf607678692e625:"
+        "internal/state/sqlite_test.go:generic-api-key:1070"
+    ),
 )
 
 
@@ -65,12 +95,12 @@ class HostedCIPortabilityContractTest(unittest.TestCase):
             ),
         )
 
-    def test_gitleaks_exception_is_one_exact_historical_fingerprint(self) -> None:
+    def test_gitleaks_exceptions_are_exact_historical_fingerprints(self) -> None:
         ignore = REPO_ROOT / ".gitleaksignore"
         self.assertTrue(ignore.is_file())
         self.assertEqual(
             ignore.read_text(encoding="utf-8").splitlines(),
-            [GITLEAKS_FINGERPRINT],
+            list(GITLEAKS_FINGERPRINTS),
         )
         self.assertEqual(
             (REPO_ROOT / ".gitleaks.toml").read_text(encoding="utf-8"),

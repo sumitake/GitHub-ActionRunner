@@ -27,6 +27,14 @@ func (fake *task11SyntheticRestartJournalFake) Before(
 	return nil
 }
 
+func (*task11SyntheticRestartJournalFake) BeforeListenerRelease(
+	context.Context,
+	controller.AssignmentKey,
+	[32]byte,
+) error {
+	return errors.New("unexpected listener release")
+}
+
 func (fake *task11SyntheticRestartJournalFake) Complete(
 	_ context.Context,
 	_ controller.AssignmentKey,
@@ -42,6 +50,14 @@ func (fake *task11SyntheticRestartJournalFake) Complete(
 		ResultIdentity: result.Identity,
 	}
 	return nil
+}
+
+func (*task11SyntheticRestartJournalFake) CompleteListenerRelease(
+	context.Context,
+	controller.AssignmentKey,
+	[32]byte,
+) error {
+	return errors.New("unexpected listener release")
 }
 
 func (fake *task11SyntheticRestartJournalFake) Advance(

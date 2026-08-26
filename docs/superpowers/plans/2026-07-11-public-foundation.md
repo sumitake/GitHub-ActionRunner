@@ -8,7 +8,7 @@
 
 **Architecture:** Phase 1 contains no live runner controller, host integration, Worker deployment, or routing writer. Go and TypeScript create only build/protocol seams; JSON Schema defines portable public inputs and sanitized outputs; repository policy, hosted CI, release gates, and GitHub settings fail closed before later runtime phases add privileged code.
 
-**Tech Stack:** Go 1.26.5; Node.js 24.18.0 and npm 12.0.1; TypeScript 6.0.3; Ajv 8.20.0; Vitest 4.1.10; Python 3 standard library; ShellCheck, shfmt 3.13.1, and Bats; GitHub Actions on <code>ubuntu-24.04</code>; CodeQL; Gitleaks; Trivy; Syft/Anchore SBOM; GitHub artifact attestations.
+**Tech Stack:** Go 1.26.6; Node.js 24.18.0 and npm 12.0.1; TypeScript 6.0.3; Ajv 8.20.0; Vitest 4.1.10; Python 3 standard library; ShellCheck, shfmt 3.13.1, and Bats; GitHub Actions on <code>ubuntu-24.04</code>; CodeQL; Gitleaks; Trivy; Syft/Anchore SBOM; GitHub artifact attestations.
 
 ## Global Constraints
 
@@ -70,7 +70,7 @@ if got := Info(); got.Version != "dev" || got.Commit != "unknown" { t.Fatalf("%#
 expect(HEARTBEAT_PROTOCOL_VERSION).toBe(1);
 ~~~
 - [ ] Run <code>go test ./internal/buildinfo</code> and <code>npm test --workspace worker</code>. Expected: both fail because implementations are absent.
-- [ ] Set module <code>github.com/sumitake/portable-ghar</code>, <code>go 1.26.0</code>, toolchain <code>go1.26.5</code>; add tools actionlint v1.7.12, govulncheck v1.6.0, staticcheck v0.7.0, shfmt v3.13.1.
+- [ ] Set module <code>github.com/sumitake/portable-ghar</code>, <code>go 1.26.0</code>, toolchain <code>go1.26.6</code>; add tools actionlint v1.7.12, govulncheck v1.6.0, staticcheck v0.7.0, shfmt v3.13.1.
 - [ ] Implement immutable <code>BuildInfo</code> defaults and the protocol constant. The root package owns the only lockfile and declares exactly one npm workspace, <code>worker</code>; no nested lockfile is allowed. Pin Node/npm and exact dependencies: Ajv 8.20.0, ajv-formats 3.0.1, ESLint 10.7.0, typescript-eslint 8.63.0, TypeScript 6.0.3, Vitest 4.1.10, Prettier 3.9.5, markdownlint-cli2 0.23.0, yaml 2.9.0, Wrangler 4.110.0, Workers types 5.20260708.1. Assert the published peer ranges are satisfied before locking. Configure Markdown lint to allow long plan lines, inline HTML, and Go tabs inside code blocks while retaining structural rules.
 - [ ] Ignore environment/key/private-overlay/state/database/dist/cache paths. Image and deploy READMEs must say real paths, identities, schedules, networks, and Dockerfiles are deferred.
 - [ ] Run <code>unformatted="$(find internal/buildinfo -type f -name '*.go' -print0 | xargs -0 gofmt -l)"; test -z "$unformatted" && go test ./internal/buildinfo && npm ci --ignore-scripts && npm run worker:lint && npm run worker:typecheck && npm run worker:test</code>. Expected: no unformatted path, Go <code>ok</code>, one Vitest pass, all checks exit 0 without rewriting source.

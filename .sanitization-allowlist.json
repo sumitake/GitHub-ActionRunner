@@ -2114,6 +2114,13 @@
     "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
   },
   {
+    "path": "tests/config/schema-validation.test.mjs@761c041e75b853bccb7b1a6bee8890376a6d9d55",
+    "line": 89,
+    "rule": "SECRET_TOKEN",
+    "sha256": "2ebfae6629d50448ab2c0e92a5d512d32b9481afe16b0552ad3bac222678722a",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
     "path": "images/runner/Dockerfile@66a109250097898e48ac2514a6d269d9b2a9cd3d",
     "line": 42,
     "rule": "PATH001",
@@ -2588,5 +2595,26 @@
     "rule": "PATH001",
     "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
     "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/githubscale/adapter_contract_test.go@644188a10cdf504e611c7ab4300870fc7c3c6f15",
+    "line": 886,
+    "rule": "IP001",
+    "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",
+    "reason": "Immutable public-history instance of an inspected synthetic RFC 3849 URL-normalization fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/prepare-task6-images.sh@eb2f6962db5539c9aedd2908e5645e489dc4c1ff",
+    "line": 47,
+    "rule": "PATH001",
+    "sha256": "0ecfd98650200ab3ab2cd69efb05deeb046552b940e1403002f22907500a2830",
+    "reason": "Immutable public-history instance of an inspected container-internal build-path fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/prepare-task6-images.sh@eb2f6962db5539c9aedd2908e5645e489dc4c1ff",
+    "line": 48,
+    "rule": "PATH001",
+    "sha256": "205e96057328302f581bc2634a14a8160d7584223184ccce43696ddc434259fa",
+    "reason": "Immutable public-history instance of an inspected container-internal build-path fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
   }
 ]

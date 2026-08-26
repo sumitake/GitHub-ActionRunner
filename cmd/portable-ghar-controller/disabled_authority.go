@@ -273,8 +273,12 @@ func newUnavailableExternalGraph() unavailableExternalGraph {
 func (unavailableExternalGraph) Acquire(
 	context.Context,
 	controller.AcquisitionPermitRequest,
-) (controller.AcquisitionGuard, error) {
+) (controller.AcquisitionPermitGuard, error) {
 	return nil, errDisabledExternalUnavailable
+}
+
+func (unavailableExternalGraph) Invalidate(context.Context) error {
+	return errDisabledExternalUnavailable
 }
 
 func (unavailableExternalGraph) VerifyCurrentOffer(

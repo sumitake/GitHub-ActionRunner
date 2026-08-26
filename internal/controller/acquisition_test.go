@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 type canonicalTransitionerStub struct{}
@@ -27,6 +28,49 @@ type canonicalGuardStub struct{}
 
 func (canonicalGuardStub) Close() error { return nil }
 
+type countingGuardStub struct {
+	closeCalls int
+}
+
+func (guard *countingGuardStub) Close() error {
+	guard.closeCalls++
+	return nil
+}
+
+type countingPermitGuardStub struct {
+	countingGuardStub
+}
+
+func (*countingPermitGuardStub) Context() context.Context { return context.Background() }
+func (*countingPermitGuardStub) Binding() AcquisitionPermitBinding {
+	return AcquisitionPermitBinding{}
+}
+func (*countingPermitGuardStub) ValidateBinding(context.Context, AcquisitionPermitBinding) error {
+	return nil
+}
+func (*countingPermitGuardStub) Revalidate() error { return nil }
+func (*countingPermitGuardStub) Admit() error      { return nil }
+
+type canonicalPermitGuardStub struct {
+	canonicalGuardStub
+	ctx context.Context
+}
+
+func (guard canonicalPermitGuardStub) Context() context.Context {
+	if guard.ctx != nil {
+		return guard.ctx
+	}
+	return context.Background()
+}
+func (canonicalPermitGuardStub) Binding() AcquisitionPermitBinding {
+	return AcquisitionPermitBinding{}
+}
+func (canonicalPermitGuardStub) ValidateBinding(context.Context, AcquisitionPermitBinding) error {
+	return nil
+}
+func (canonicalPermitGuardStub) Revalidate() error { return nil }
+func (canonicalPermitGuardStub) Admit() error      { return nil }
+
 type canonicalFleetGuardProviderStub struct{}
 
 func (canonicalFleetGuardProviderStub) AcquirePortable(context.Context) (AcquisitionGuard, error) {
@@ -36,18 +80,131 @@ func (canonicalFleetGuardProviderStub) AcquirePortable(context.Context) (Acquisi
 type canonicalPermitProviderStub struct{}
 
 func (canonicalPermitProviderStub) Acquire(
-	context.Context,
-	AcquisitionPermitRequest,
-) (AcquisitionGuard, error) {
-	return canonicalGuardStub{}, nil
+	ctx context.Context,
+	_ AcquisitionPermitRequest,
+) (AcquisitionPermitGuard, error) {
+	return canonicalPermitGuardStub{ctx: ctx}, nil
 }
+
+func (canonicalPermitProviderStub) Invalidate(context.Context) error { return nil }
 
 var (
 	_ AcquisitionTransitioner   = canonicalTransitionerStub{}
 	_ AcquisitionGuard          = canonicalGuardStub{}
+	_ AcquisitionPermitGuard    = canonicalPermitGuardStub{}
 	_ FleetGuardProvider        = canonicalFleetGuardProviderStub{}
 	_ AcquisitionPermitProvider = canonicalPermitProviderStub{}
 )
+
+func TestGuardedAcquisitionOperationCloseIsIdempotent(t *testing.T) {
+	barrier, err := newAcquisitionBarrier(testDesiredPolicy(), true)
+	if err != nil {
+		t.Fatalf("newAcquisitionBarrier: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	operation, err := barrier.beginOperation(ctx, "poll", "repo-a", "portable-ghar")
+	if err != nil {
+		t.Fatalf("beginOperation: %v", err)
+	}
+	permit := &countingPermitGuardStub{}
+	host := &countingGuardStub{}
+	cancelCalls := 0
+	guarded := &guardedAcquisitionOperation{
+		operation:       operation,
+		operationCancel: func() { cancelCalls++ },
+		permit:          permit,
+		host:            host,
+	}
+
+	if err := guarded.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := guarded.Close(); err != nil {
+		t.Fatalf("Close second: %v", err)
+	}
+	if permit.closeCalls != 1 || host.closeCalls != 1 || cancelCalls != 1 {
+		t.Fatalf(
+			"close counts = permit:%d host:%d cancel:%d, want one each",
+			permit.closeCalls,
+			host.closeCalls,
+			cancelCalls,
+		)
+	}
+}
+
+func TestAcquisitionPermitBindingDigestIsClosedAndDeterministic(t *testing.T) {
+	binding := AcquisitionPermitBinding{
+		AuthorityRevision:        11,
+		AuthorityKey:             "{\"fleetId\":\"example-fleet\",\"mode\":\"enabled\"}",
+		FenceGeneration:          12,
+		ServerEpoch:              13,
+		SessionID:                strings.Repeat("a", 64),
+		LeaseGeneration:          14,
+		OperationID:              "operation-15",
+		RepositoryAlias:          "repo-a",
+		ScaleSetName:             "portable-ghar",
+		OperationKind:            "jit",
+		PolicyDigest:             strings.Repeat("b", 64),
+		PolicyEpoch:              16,
+		PolicyMode:               AcquisitionEnabled,
+		MaxCapacity:              17,
+		RepositoryPolicyRevision: 18,
+		OriginalLocalDeadline:    time.Date(1970, 1, 1, 0, 2, 3, 456, time.FixedZone("CLOCK_BOOTTIME", 0)),
+	}
+	digest, err := AcquisitionPermitBindingDigest(binding)
+	if err != nil {
+		t.Fatalf("AcquisitionPermitBindingDigest: %v", err)
+	}
+	if digest == ([32]byte{}) {
+		t.Fatal("binding digest is zero")
+	}
+	second, err := AcquisitionPermitBindingDigest(binding)
+	if err != nil || second != digest {
+		t.Fatalf("binding digest replay = (%x, %v), want %x", second, err, digest)
+	}
+
+	mutations := []func(*AcquisitionPermitBinding){
+		func(value *AcquisitionPermitBinding) { value.AuthorityRevision++ },
+		func(value *AcquisitionPermitBinding) { value.AuthorityKey += " " },
+		func(value *AcquisitionPermitBinding) { value.FenceGeneration++ },
+		func(value *AcquisitionPermitBinding) { value.ServerEpoch++ },
+		func(value *AcquisitionPermitBinding) { value.SessionID = strings.Repeat("c", 64) },
+		func(value *AcquisitionPermitBinding) { value.LeaseGeneration++ },
+		func(value *AcquisitionPermitBinding) { value.OperationID += "-changed" },
+		func(value *AcquisitionPermitBinding) { value.RepositoryAlias = "repo-b" },
+		func(value *AcquisitionPermitBinding) { value.ScaleSetName = "other-set" },
+		func(value *AcquisitionPermitBinding) { value.OperationKind = "poll" },
+		func(value *AcquisitionPermitBinding) { value.PolicyDigest = strings.Repeat("d", 64) },
+		func(value *AcquisitionPermitBinding) { value.PolicyEpoch++ },
+		func(value *AcquisitionPermitBinding) {
+			value.PolicyMode = AcquisitionCanaryOnly
+			value.MaxCapacity = 1
+		},
+		func(value *AcquisitionPermitBinding) { value.MaxCapacity++ },
+		func(value *AcquisitionPermitBinding) { value.RepositoryPolicyRevision++ },
+		func(value *AcquisitionPermitBinding) {
+			value.OriginalLocalDeadline = value.OriginalLocalDeadline.Add(time.Nanosecond)
+		},
+		func(value *AcquisitionPermitBinding) {
+			value.OriginalLocalDeadline = value.OriginalLocalDeadline.In(time.FixedZone("OTHER_CLOCK", 0))
+		},
+	}
+	for index, mutate := range mutations {
+		changed := binding
+		mutate(&changed)
+		changedDigest, err := AcquisitionPermitBindingDigest(changed)
+		if err != nil {
+			t.Fatalf("mutation %d digest: %v", index, err)
+		}
+		if changedDigest == digest {
+			t.Fatalf("mutation %d did not change digest", index)
+		}
+	}
+	if _, err := AcquisitionPermitBindingDigest(AcquisitionPermitBinding{}); err == nil {
+		t.Fatal("zero binding was digestible")
+	}
+}
 
 func TestAcquisitionPolicyCanonicalBytesAndDigest(t *testing.T) {
 	t.Parallel()

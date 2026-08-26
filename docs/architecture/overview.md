@@ -47,7 +47,9 @@ for the source-ready lifecycle contracts.
   controller and report local health; it has no routing authority.
 - **Cloudflare Worker and Durable Object** -- the external failover control
   plane: one Durable Object per fleet owns the fleet's enrollment epoch,
-  heartbeat state, and GitHub routing-variable outbox.
+  heartbeat state, short-lived signed acquisition lease, and GitHub
+  routing-variable outbox. One Cloudflare Cron Trigger is the sole durable
+  scheduler for persisted due work.
 - **Transactional email and optional signed webhook** -- the two
   notification channels the Worker drives on a routing transition.
 
@@ -67,6 +69,7 @@ flowchart LR
     Watchdog["Host watchdog"]
     Worker["Cloudflare Worker"]
     State["Durable Object per fleet"]
+    Scheduler["Cloudflare Cron Trigger"]
     Email["Transactional email"]
     Webhook["Optional signed webhook"]
 
@@ -83,7 +86,9 @@ flowchart LR
     Controller --> DialAuthority
     DialAuthority --> Ledger
     Watchdog --> Controller
-    Controller -- "signed outbound heartbeat" --> Worker
+    Controller -- "signed heartbeat" --> Worker
+    Worker -- "signed bounded lease" --> Controller
+    Scheduler --> Worker
     Worker <--> State
     Worker <--> GitHub
     Worker --> Email
@@ -114,7 +119,9 @@ The **Cloudflare Worker, together with exactly one Durable Object per
 fleet, is the sole automatic writer of GitHub workflow routing state**. No
 process on the Docker host -- controller, watchdog, or otherwise -- can
 change which runners a repository's workflows target. The host only
-publishes a signed heartbeat; the Worker decides, and writes, routing.
+publishes a signed heartbeat; the Worker decides and writes routing and returns
+one short-lived signed acquisition lease. If that lease cannot be renewed, new
+local acquisition stops while already-running jobs drain.
 
 ## Capacity and fairness
 
@@ -139,9 +146,11 @@ peaks.
 Every acquisition-relevant change -- mode, eligibility, capacity, or
 repository policy -- goes through one bounded epoch barrier: stale
 in-flight operations are joined or cancelled before the new state takes
-effect, and an operation that cannot be joined in time makes the
-controller fail closed (persist a fatal state and stop) rather than risk a
-stale operation acquiring capacity under an old policy.
+effect. The barrier rejects new acquisition sections and lease installation
+while closed, atomically advances the epoch and discards cached authority, and
+reopens only after the old sections join. An operation that cannot be joined in
+time makes the controller fail closed (persist a fatal state and stop) rather
+than risk overlapping epochs.
 
 ## Persisted lifecycle
 
@@ -184,11 +193,71 @@ only after a successful controller reconciliation cycle, is authenticated,
 and is rejected by the Worker if it is duplicate, reordered, from an old
 epoch, or replayed.
 
+Re-enrollment rejects the predecessor session immediately but cannot revoke a
+lease that process already cached. The same `fleet_state` row therefore carries
+one server-owned `leaseNotBefore` restriction through the fleet-global maximum
+expiry of every issued lease plus the hosted-transition safety margin. Lease
+issuance and monotonic advancement of that maximum are one transaction. The
+replacement may reconcile and report liveness during that bounded drain, but
+every accepted heartbeat returns the observable no-authority reason
+`predecessor-lease-draining`; it is not acquisition-ready health, failback
+evidence, hosted success, or zero-listener quiescence evidence, and work on an
+existing local route may queue. Zero-listener proof is bound to the exact
+enrollment session and lease generation whose listeners are being drained; a
+replacement cannot attest for its predecessor. If that session is superseded
+before it proves zero, the governed local transition remains incomplete under
+hosted-safe routing and alerts. Repeated enrollments cannot shorten the
+deadline. This avoids both dual acquisition and a crash-sensitive
+controller-to-controller handoff protocol.
+
+The same accepted heartbeat returns the only remote acquisition authority: a
+short-lived signed lease binding fleet holder, session, lease generation,
+local acquisition-policy epoch/digest, mode, capacity, and a bounded restrictive
+set of Worker-latched archived-disabled repository aliases. Portable and
+governed legacy rollback use the same lease type. Lease installation and use
+require exact current local epoch/digest equality, preventing policy ABA. The
+controller anchors its shorter local deadline at heartbeat send time, rejects
+a response that arrives too late, and bounds every poll/acquire/JIT admission by
+an earlier cancellation deadline that reserves the existing termination tail.
+A per-operation mutex makes deadline cancellation mutually exclusive with its
+two-way admitted/dropped decision. The handler remains armed through one
+journal-authorized at-most-once effect attempt, with short whole-entry checks
+immediately before and after it and no mutex held across I/O. The listener gate
+enforces its captured local lease deadline at the actual release point; Ack is
+non-authorizing, and late or ambiguous results cannot release a runner or cause
+a retry. This assigns authority where it is enforceable instead of pretending a
+userspace clock check can be atomic with a remote send. One injected authority
+clock supplies both observations and
+absolute deadline waits; Linux/QTS uses suspend-aware `CLOCK_BOOTTIME`, while a
+target without positive clock/waiter proof remains acquisition-disabled. Host
+sleep therefore consumes cached lease, operation, and listener lifetime without
+trusting wall time. Lease caches and derived deadlines are process-memory-only;
+restart/reboot starts with no authority. Archive evidence has a bounded maximum
+age; missing or stale evidence is restrictive, and revocation converges within
+that evidence-age bound plus the remaining local lease rather than pretending a
+cached lease can be erased asynchronously.
+One Cron Trigger validates one bounded private fleet-ID inventory, directly
+addresses every listed deterministic Durable Object, and claims bounded batches
+from each durable outbox; Durable Object alarms, namespace enumeration, and
+private runtime storage contracts are not a second scheduler or registry.
+
 Routing changes only follow a documented sequence of positive read-backs:
 a hosted-hold transition is confirmed only once every configured
 repository reads back on GitHub-hosted runners, and a self-hosted
-transition is confirmed only after a current-epoch canary succeeds and a
-fresh heartbeat proves the expected acquisition policy and full capacity.
+transition is confirmed only after a current-epoch canary succeeds, a fresh
+heartbeat proves the expected acquisition policy and full capacity as
+route-readiness evidence without granting an enabled lease, and self-hosted
+routing is read back. Only then may a subsequent matching heartbeat return the
+enabled lease that starts local acquisition. The persisted routing model has six authority states:
+hosted, draining-to-hosted, Portable canary, Portable, legacy canary, and
+legacy. Implementation checkpoints remain transition outcomes rather than
+expanding the state graph. Fail-closed bootstrap persists hosted only after
+read-back. A failed canary advances the lease generation and reuses
+draining-to-hosted through the issued-lease maximum plus margin before
+persisting hosted. Routing itself never left hosted, and every local listener
+deadline is strictly earlier than that boundary, so this adds no route mutation,
+queue-risk row, or positive controller-drain dependency and does not pretend to
+revoke a cached lease.
 See [Failover and notifications](../operations/failover-and-notifications.md)
 for the full failover state machine.
 
