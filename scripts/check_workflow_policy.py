@@ -70,19 +70,19 @@ from typing import Optional, Union
 # not need to change again when those workflows are added.
 # ---------------------------------------------------------------------------
 REVIEWED_ACTION_PINS: dict[str, tuple[str, str]] = {
-    "actions/checkout": ("9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", "v7.0.0"),
+    "actions/checkout": ("3d3c42e5aac5ba805825da76410c181273ba90b1", "v7.0.1"),
     "actions/setup-go": ("924ae3a1cded613372ab5595356fb5720e22ba16", "v6.5.0"),
     "actions/setup-node": ("48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e", "v6.4.0"),
     "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "v7.0.1"),
     "docker/setup-buildx-action": ("8d2750c68a42422c14e847fe6c8ac0403b4cbd6f", "v3"),
     "aquasecurity/trivy-action": ("ed142fd0673e97e23eac54620cfb913e5ce36c25", "v0.36.0"),
-    "github/codeql-action": ("99df26d4f13ea111d4ec1a7dddef6063f76b97e9", "v4.37.0"),
+    "github/codeql-action": ("5595ccaf912efad79be6eef63a5619ff05969be3", "v4.37.6"),
     "actions/dependency-review-action": (
         "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
         "v5.0.0",
     ),
     "gitleaks/gitleaks-action": ("e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e", "v3.0.0"),
-    "actions/attest": ("a1948c3f048ba23858d222213b7c278aabede763", "v4.1.1"),
+    "actions/attest": ("1e69f48acb82d1966a394da916b4c1698aa569d6", "v4.2.2"),
     "actions/create-github-app-token": (
         "bcd2ba49218906704ab6c1aa796996da409d3eb1",
         "v3.2.0",
