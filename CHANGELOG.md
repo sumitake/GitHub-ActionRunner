@@ -44,6 +44,8 @@ Nothing in this section has shipped as a tagged release.
 
 ### Changed
 
+- Reviewed-pin `actions/setup-go` to v7.0.0 (`b7ad1dad…`) and `actions/setup-node` to v7.0.0 (`82076278…`) in workflows and `REVIEWED_ACTION_PINS`.
+
 - Made operational reliability, practical simplicity, and clear boundaries
   blocking design criteria; simplified the planned external control plane to
   one signed heartbeat lease, one Cron scheduler, six routing states, and
