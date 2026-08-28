@@ -7,8 +7,10 @@ import (
 	"errors"
 	"os/exec"
 	"syscall"
+	"time"
 
 	"github.com/sumitake/portable-ghar/internal/controller"
+	"github.com/sumitake/portable-ghar/internal/hostruntime"
 )
 
 const maximumControllerProbeBytes = 4096
@@ -37,6 +39,7 @@ type SystemDisabledControllerProbe struct {
 	binary       string
 	binaryDigest string
 	privatePath  string
+	reapTimeout  time.Duration
 }
 
 func NewSystemDisabledControllerProbe(
@@ -180,14 +183,20 @@ func (probe *SystemDisabledControllerProbe) run(
 		waited <- command.Wait()
 	}()
 	var waitErr error
+	canceled := false
 	select {
 	case waitErr = <-waited:
 	case <-ctx.Done():
-		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-		waitErr = <-waited
+		canceled = true
+		waitErr, _ = hostruntime.FinishOwnedProcess(
+			command.Process.Pid,
+			waited,
+			probe.reapTimeout,
+		)
 	}
 	afterDigest, digestErr := digestPinnedExecutable(probe.binary)
-	if waitErr != nil ||
+	if canceled ||
+		waitErr != nil ||
 		digestErr != nil ||
 		afterDigest != probe.binaryDigest ||
 		command.ProcessState == nil ||

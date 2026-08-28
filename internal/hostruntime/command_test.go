@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
@@ -79,6 +80,71 @@ func TestExecCommandRunnerRejectsCanceledContextBeforeStart(t *testing.T) {
 	)
 	if err == nil || err.Error() != "hostruntime: command canceled" {
 		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestExecCommandRunnerCancellationDoesNotBlockWhenChildIgnoresKill(t *testing.T) {
+	previousKill := killOwnedProcessGroup
+	killOwnedProcessGroup = func(int) error { return nil }
+	t.Cleanup(func() { killOwnedProcessGroup = previousKill })
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer readPipe.Close()
+	defer writePipe.Close()
+
+	runner := NewExecCommandRunner()
+	runner.ReapTimeout = 40 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	type outcome struct {
+		result Result
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, runErr := runner.Run(
+			ctx,
+			[]string{executable, "-test.run=^TestHostruntimeCommandHelper$", "--", "ignore-term"},
+			[]*os.File{writePipe},
+			nil,
+		)
+		done <- outcome{result: result, err: runErr}
+	}()
+
+	_ = readPipe.SetReadDeadline(time.Now().Add(2 * time.Second))
+	line, err := bufio.NewReader(readPipe).ReadString('\n')
+	if err != nil {
+		cancel()
+		t.Fatalf("read helper pid: %v", err)
+	}
+	helperPID, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || helperPID <= 0 {
+		cancel()
+		t.Fatalf("helper pid = %q: %v", line, err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(helperPID, syscall.SIGKILL)
+	})
+
+	cancel()
+	select {
+	case got := <-done:
+		if got.err == nil || got.err.Error() != "hostruntime: command cleanup failed" {
+			t.Fatalf("hung-child error = %v, want cleanup failure", got.err)
+		}
+		if got.result.ExitCode == 0 && !got.result.Signaled {
+			t.Fatalf("cleanup failure must not report success: %+v", got.result)
+		}
+	case <-time.After(400 * time.Millisecond):
+		t.Fatal("Run blocked after kill deadline for a child that ignored termination")
 	}
 }
 
@@ -164,6 +230,18 @@ func TestHostruntimeCommandHelper(t *testing.T) {
 	}
 
 	switch os.Args[separator+1] {
+	case "ignore-term":
+		signal.Ignore(syscall.SIGTERM)
+		signal.Ignore(syscall.SIGINT)
+		pidPipe := os.NewFile(3, "helper-pid")
+		if pidPipe == nil {
+			os.Exit(93)
+		}
+		_, _ = fmt.Fprintf(pidPipe, "%d\n", os.Getpid())
+		_ = pidPipe.Close()
+		for {
+			time.Sleep(time.Hour)
+		}
 	case "emit":
 		_, _ = os.Stdout.WriteString("stdout-secret")
 		_, _ = os.Stderr.WriteString("stderr-secret")

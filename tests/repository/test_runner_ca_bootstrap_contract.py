@@ -153,7 +153,9 @@ class RunnerCABootstrapContractTest(unittest.TestCase):
     def test_ci_and_rehearsal_prepare_task6_before_task5(self) -> None:
         ci_task6 = self.workflow.index("scripts/prepare-task6-images.sh")
         ci_task5 = self.workflow.index("scripts/prepare-task5-images.sh")
-        ci_gate = self.workflow.index("scripts/ci/check-images.sh")
+        ci_gate = self.workflow.index(
+            "scripts/test-controller-runtime.sh --docker"
+        )
         self.assertLess(ci_task6, ci_task5)
         self.assertLess(ci_task5, ci_gate)
         self.assertIn('repository="$(pwd -P)"', self.workflow)
@@ -169,7 +171,7 @@ class RunnerCABootstrapContractTest(unittest.TestCase):
             '"scripts/prepare-task5-images.sh"'
         )
         rehearsal_gate = self.rehearsal.index(
-            '"scripts/test-controller-runtime.sh", "--full"'
+            '"scripts/test-controller-runtime.sh", "--release"'
         )
         self.assertLess(rehearsal_task6, rehearsal_task5)
         self.assertLess(rehearsal_task5, rehearsal_gate)

@@ -14,10 +14,10 @@ jobs:
       group: ${{ github.workflow }}-go-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.5
+      GOTOOLCHAIN: go1.26.6
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set up Go
@@ -47,7 +47,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set up Node
@@ -72,10 +72,10 @@ jobs:
       group: ${{ github.workflow }}-shell-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.5
+      GOTOOLCHAIN: go1.26.6
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set up Go
@@ -100,10 +100,10 @@ jobs:
       group: ${{ github.workflow }}-repository-metadata-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.5
+      GOTOOLCHAIN: go1.26.6
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set up Node
@@ -146,10 +146,10 @@ jobs:
       group: ${{ github.workflow }}-container-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.5
+      GOTOOLCHAIN: go1.26.6
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set up Go
@@ -164,8 +164,11 @@ jobs:
         run: 'repository="$(pwd -P)"; scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID" --ca-bundle "$repository/images/trust/build/ca-bundle.pem"'
       - name: Prepare Task 11 image context
         run: scripts/prepare-task11-images.sh --generation "$GITHUB_RUN_ID"
-      - name: Check image manifest
-        run: bash scripts/ci/check-images.sh
+      - name: Run Linux and Docker release gate
+        env:
+          PGHAR_CHAOS_DOCKER: "1"
+          PGHAR_INTEGRATION_DOCKER: "1"
+        run: scripts/test-controller-runtime.sh --docker
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

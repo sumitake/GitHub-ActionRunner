@@ -5,6 +5,12 @@
 > `superpowers:executing-plans` to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 
+**Phase 3 authority amendment:** This completed Phase 2 release plan keeps its
+journal, immutable-candidate, hosted-continuity, and read-back guarantees.
+Future directives bind the shared acquisition-lease generation; they do not
+revive remote per-operation permits or a separate legacy process lease.
+Platform-design §9 and the failover plan are normative.
+
 **Goal:** Add a crash-resumable, fail-closed controller-side runner release
 observer and externally authorized immutable-candidate replacement state
 machine, plus source-ready chaos coverage and operator recovery runbooks,

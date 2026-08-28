@@ -17,9 +17,10 @@ import (
 )
 
 type commandDependencies struct {
-	RunHost      func(context.Context, []string) (cli.PublicHostResult, error)
-	RunTarget    func(context.Context, []string) (hostruntime.HostActionResult, error)
-	RunTransport func(context.Context, io.Reader, io.Writer, bool) error
+	RunHost                   func(context.Context, []string) (cli.PublicHostResult, error)
+	RunTarget                 func(context.Context, []string) (hostruntime.HostActionResult, error)
+	RunTransport              func(context.Context, io.Reader, io.Writer, bool) error
+	RunValidatePrivateOverlay func(context.Context, []string) (cli.PrivateOverlayValidationReceipt, error)
 }
 
 func productionCommandDependencies() commandDependencies {
@@ -68,6 +69,19 @@ func productionCommandDependencies() commandDependencies {
 				targetHandler,
 			)
 		},
+		RunValidatePrivateOverlay: func(
+			ctx context.Context,
+			args []string,
+		) (cli.PrivateOverlayValidationReceipt, error) {
+			if ctx == nil || ctx.Err() != nil {
+				return cli.PrivateOverlayValidationReceipt{},
+					cli.ErrHostCommandFailed
+			}
+			return cli.RunPrivateOverlayValidation(
+				args,
+				cli.LoadPrivateOverlayFile,
+			)
+		},
 	}
 }
 
@@ -102,6 +116,27 @@ func run(
 			stderr,
 			dependencies.RunTarget,
 		)
+	}
+	if args[0] == "validate-private-overlay" {
+		if dependencies.RunValidatePrivateOverlay == nil {
+			return writeUsage(stderr)
+		}
+		result, err := dependencies.RunValidatePrivateOverlay(ctx, args)
+		if errors.Is(err, cli.ErrHostUsage) {
+			return writeUsage(stderr)
+		}
+		if err != nil {
+			_, _ = io.WriteString(
+				stderr,
+				"portable-ghar: private overlay validation failed\n",
+			)
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(result); err != nil {
+			_, _ = io.WriteString(stderr, "portable-ghar: output failed\n")
+			return 1
+		}
+		return 0
 	}
 	if dependencies.RunHost == nil {
 		return writeUsage(stderr)
@@ -171,7 +206,7 @@ func runTarget(
 func writeUsage(stderr io.Writer) int {
 	_, _ = io.WriteString(
 		stderr,
-		"usage: portable-ghar deploy|verify|suspend|resume host [exact arguments]\n",
+		"usage: portable-ghar validate-private-overlay|deploy|verify|suspend|resume [exact arguments]\n",
 	)
 	return 2
 }

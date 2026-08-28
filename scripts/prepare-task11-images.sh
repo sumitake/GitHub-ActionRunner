@@ -93,13 +93,13 @@ listener="$work/portable-ghar-task11-listener"
 runner_gate="$work/portable-ghar-runner-gate"
 (
   cd "$repository"
-  GOTOOLCHAIN=go1.26.5 \
+  GOTOOLCHAIN=go1.26.6 \
     go build -trimpath -buildvcs=false \
     -o "$native_runtime_lock" ./cmd/portable-ghar-runtime-lock
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.5 \
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 \
     go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" \
     -o "$listener" ./cmd/portable-ghar-task11-listener
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.5 \
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 \
     go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" \
     -o "$runner_gate" ./cmd/portable-ghar-runner-gate
 ) || die

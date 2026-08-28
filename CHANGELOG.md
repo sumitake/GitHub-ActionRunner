@@ -44,6 +44,37 @@ Nothing in this section has shipped as a tagged release.
 
 ### Changed
 
+- Made operational reliability, practical simplicity, and clear boundaries
+  blocking design criteria; simplified the planned external control plane to
+  one signed heartbeat lease, one Cron scheduler, six routing states, and
+  authoritative receipt-based cutover verification. Heartbeat lease renewal
+  now independently enforces the bounded selector-evidence age, so missed Cron
+  delivery cannot extend local authority indefinitely or require a second
+  scheduler.
+- Made archive restriction honestly lease-bounded and fail-closed on stale
+  evidence; already-released listeners remain bounded by their original local
+  lease deadline rather than an impossible replacement-response revocation.
+  The single Cron scheduler also has an explicit bounded fleet inventory so
+  every per-fleet Durable Object is discoverable without a second registry.
+- Bound cached leases to the local acquisition-policy epoch and bounded each
+  poll/acquire/JIT admission inside the lease lifetime with serialized
+  cancellation. A closed admission-authority key now survives routine heartbeat
+  renewal without starving long polls while every real policy, fence, holder,
+  generation, capacity, archive, or duration change still drops admission. This
+  closes policy ABA and post-expiry completion without adding a revocation
+  service or parallel state machine. The same deadline remains armed through
+  each at-most-once Ack or listener-release attempt; short pre/post barriers and
+  the held listener's own point-of-release deadline check close suspend gaps
+  without holding a mutex across I/O. Ack remains non-authorizing, and ambiguous
+  effects use the existing journal/read-back path without retry. Failed canaries
+  likewise reuse the existing
+  draining-to-hosted lease boundary instead of claiming instant cached-lease
+  revocation without adding a controller-drain dependency. Linux/QTS authority
+  deadlines use one suspend-aware `CLOCK_BOOTTIME` adapter for both time and
+  waits, so host sleep cannot preserve expired acquisition authority;
+  restart/reboot begins with an empty cache.
+- Advanced the exact Go toolchain pin from 1.26.5 to 1.26.6 after the required
+  vulnerability gate identified four reachable standard-library advisories.
 - Clarified the standalone product boundary: consumer repositories and
   development-time collaboration or review tools are optional integrations,
   never Portable GHAR build, test, release, deployment, or runtime
@@ -55,5 +86,16 @@ Nothing in this section has shipped as a tagged release.
   disabled start so replaced lock identity cannot authorize a later mutation.
 - Limit the systemd watchdog oneshot to reaping its own process; controller
   termination remains bound to the watchdog's process-identity authority.
+
+- Scoped the release-admission Trivy image scans to fixable findings
+  (`--ignore-unfixed`): the pinned Debian base permanently carries
+  HIGH/CRITICAL entries with no published vendor fix, which left the gate
+  with no achievable green state and blocked every release. The source
+  filesystem scan still blocks on unfixed findings, secret scanning is
+  unchanged, and all package versions remain recorded in the release SBOMs.
+- Added a weekly `Vulnerability Watch` workflow that re-runs the full
+  release-gate policy against default-branch source and turns red the week
+  any previously unfixable HIGH/CRITICAL finding in the pinned runner base
+  image gains an upstream fix, prompting a deliberate base-image bump.
 
 [Unreleased]: https://github.com/sumitake/portable-ghar/compare/main...HEAD

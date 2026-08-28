@@ -1,5 +1,10 @@
 # Portable GHAR
 
+[![ci](https://github.com/sumitake/Portable-GHAR/actions/workflows/ci.yml/badge.svg)](https://github.com/sumitake/Portable-GHAR/actions/workflows/ci.yml)
+[![codeql](https://github.com/sumitake/Portable-GHAR/actions/workflows/codeql.yml/badge.svg)](https://github.com/sumitake/Portable-GHAR/actions/workflows/codeql.yml)
+[![sanitization](https://github.com/sumitake/Portable-GHAR/actions/workflows/sanitization.yml/badge.svg)](https://github.com/sumitake/Portable-GHAR/actions/workflows/sanitization.yml)
+[![License: MPL-2.0](https://img.shields.io/badge/License-MPL--2.0-blue.svg)](LICENSE)
+
 ## Status
 
 **Pre-deployment. Experimental. Public-preview upstream dependency.**
@@ -53,6 +58,16 @@ replaceable development aids, and consumer repositories are optional workload
 integrations selected from a deployment's live inventory; neither is part of
 the Portable GHAR product or a prerequisite for Phase 2 source completeness.
 
+### Engineering baseline
+
+Correctness, security, operational reliability, practical simplicity, and
+clear boundaries are co-equal acceptance criteria. External work is bounded,
+external effects are read back, failure degrades to a named safe state, and
+retries and resource growth are capped. The design uses one lifecycle engine,
+one external routing writer, one durable due-work scheduler, and one signed
+acquisition-lease protocol. New machinery is accepted only when a current
+requirement cannot be met safely by an existing proven primitive.
+
 ## Architecture
 
 ```mermaid
@@ -69,6 +84,7 @@ flowchart LR
     Watchdog["Host watchdog"]
     Worker["Cloudflare Worker"]
     State["Durable Object per fleet"]
+    Scheduler["Cloudflare Cron Trigger"]
     Email["Transactional email"]
     Webhook["Optional signed webhook"]
 
@@ -85,7 +101,9 @@ flowchart LR
     Controller --> DialAuthority
     DialAuthority --> Ledger
     Watchdog --> Controller
-    Controller -- "signed outbound heartbeat" --> Worker
+    Controller -- "signed heartbeat" --> Worker
+    Worker -- "signed bounded lease" --> Controller
+    Scheduler --> Worker
     Worker <--> State
     Worker <--> GitHub
     Worker --> Email
@@ -131,12 +149,24 @@ GitHub or Docker state rather than an assumption. Full detail is in
 ## Failover and notifications design
 
 Cloudflare Worker enrollment epochs are server-owned, not host-chosen;
-replayed and reordered heartbeats are rejected; every GitHub-facing
-routing mutation is staged through a durable outbox before it is
-attempted; and failback to self-hosted routing is gated on a current-epoch
-canary followed by a fresh full-capacity heartbeat. Email and webhook
-notifications retry independently of each other, and notification failure
-never blocks routing safety. Full detail is in
+replayed and reordered heartbeats are rejected; a replacement session receives
+no lease until the fleet's last recorded authority has drained; zero-listener
+proof is accepted only from the exact session and lease generation being
+drained, never from a replacement's liveness-only heartbeat; every GitHub-facing
+routing mutation is staged through a durable outbox before it is attempted; one
+Cron Trigger addresses every object in a bounded validated private fleet
+inventory and recovers due work; and failback to self-hosted routing is gated on
+a current-epoch canary followed by a fresh full-capacity route-readiness
+heartbeat, exact self-hosted read-back, and only then a subsequent matching
+heartbeat with a signed enabled lease before local acquisition. The lease also
+authenticates the local policy epoch, and every poll/acquire/JIT admission must
+finish before its lease-derived cancellation deadline. That deadline remains
+armed through any at-most-once effect attempt, and the listener enforces its
+captured deadline again at the actual release point; policy ABA, late success,
+and ambiguous completion fail closed without a second authority mechanism.
+Email and
+webhook notifications retry independently of each other, and notification
+failure never blocks routing safety. Full detail is in
 [docs/operations/failover-and-notifications.md](docs/operations/failover-and-notifications.md).
 
 ## Workflow migration plan
@@ -181,7 +211,7 @@ uses only synthetic values -- `owner/repository`, `example-fleet`, and
 
 ## Development and CI
 
-Toolchains are pinned: Go 1.26.5, Node.js 24.18.0, npm 12.0.1, and
+Toolchains are pinned: Go 1.26.6, Node.js 24.18.0, npm 12.0.1, and
 TypeScript 6.0.3. Every pull request is required to pass hosted checks
 covering Go (format, vet, tests, race, static analysis, vulnerability
 scan), the Worker (lint, typecheck, Vitest), shell (ShellCheck, Bats),

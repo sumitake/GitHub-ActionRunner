@@ -1,5 +1,11 @@
 # Portable-GHAR Task 10 disabled-observer admin/readiness design review
 
+> Historical Phase 2 review artifact. Its Worker-permit references name the
+> local unavailable interface reviewed for the disabled observer. Phase 3 uses
+> that local seam with one cached signed heartbeat lease and adds no remote
+> per-operation permit or close path. Platform-design §9 and the failover plan
+> are normative.
+
 You are the distinct-family adversarial architecture reviewer. Review this
 source-only plan for the Portable-GHAR Task 10 disabled controller observer.
 Do not edit files, run commands, browse, invoke subagents, or propose host

@@ -1,0 +1,33 @@
+{
+  "epoch": 1,
+  "fenceGeneration": 1,
+  "fleetId": "example-fleet",
+  "holder": "portable",
+  "protocolVersion": 1,
+  "sequence": 1,
+  "sessionId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "snapshot": {
+    "acquisitionMode": "enabled",
+    "assignedJobs": 1,
+    "buildId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "capacity": {
+      "available": 1,
+      "configured": 2,
+      "effective": 2,
+      "occupied": 1,
+      "queued": 0
+    },
+    "degraded": false,
+    "fleetAlias": "example-fleet",
+    "hostProfileId": "strict-linux-v1",
+    "lastTerminalAt": "2026-01-01T00:00:00.000Z",
+    "observedAt": "2026-01-01T00:00:01.000Z",
+    "oldestLiveAssignmentAgeMs": 1000,
+    "policyDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "policyEpoch": 1,
+    "repositoryPolicyRevision": 1,
+    "runningJobs": 1,
+    "unassignedReleasedListeners": 0
+  },
+  "timestamp": "2026-01-01T00:00:01.000Z"
+}

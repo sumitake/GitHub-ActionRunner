@@ -446,6 +446,59 @@ PY
   [ -x "$COMPARE" ]
 }
 
+@test "rehearsal stages form a closed diagnostic allowlist" {
+  run python3 -B - "$REHEARSE" <<'PY'
+import ast
+import pathlib
+import sys
+
+script = pathlib.Path(sys.argv[1])
+source = script.read_text(encoding="utf-8")
+payload = source.split("<<'PY'\n", 1)[1].rsplit("\nPY\n", 1)[0]
+tree = ast.parse(payload, filename=str(script))
+assert isinstance(tree.body[-1], ast.Try)
+tree.body = tree.body[:-1]
+namespace = {}
+exec(compile(tree, str(script), "exec"), namespace)
+stage_type = namespace["RehearsalStage"]
+expected_values = (
+    "source",
+    "runner",
+    "build",
+    "security",
+    "sbom",
+    "authority",
+    "compare",
+    "cleanup",
+)
+assert tuple(stage.value for stage in stage_type) == expected_values
+for stage, value in zip(stage_type, expected_values, strict=True):
+    namespace["set_stage"](stage)
+    assert namespace["unavailable_message"](stage) == (
+        f"rehearse-runtime: unavailable stage={value}"
+    )
+assert namespace["unavailable_message"]("private diagnostic") == (
+    "rehearse-runtime: unavailable stage=source"
+)
+PY
+  [ "$status" -eq 0 ]
+}
+
+@test "rehearsal failure exposes only its closed stage" {
+  local sentinel=private-rehearsal-diagnostic-must-not-escape
+  printf '{"detail":"%s"}\n' "$sentinel" >"$WORK/$sentinel.json"
+
+  run "$REHEARSE" \
+    --release-kind candidate \
+    --version diagnostic-fixture \
+    --runner-manifest "$WORK/$sentinel.json" \
+    --output "$WORK/$sentinel-output"
+  [ "$status" -eq 1 ]
+  [ "$output" = "rehearse-runtime: unavailable stage=source" ]
+  [[ "$output" != *"$sentinel"* ]]
+  [[ "$output" != *"rehearsal.log"* ]]
+}
+
 @test "release manifest registers one closed Linux amd64 runtime" {
   run jq -e '
     .version == 1 and
@@ -551,7 +604,7 @@ PY
   mkdir -m 700 "$WORK/bin"
 
   run bash -c '
-    exec env GOTOOLCHAIN=go1.26.5 \
+    exec env GOTOOLCHAIN=go1.26.6 \
       go run ./internal/buildinfo/cmd/portable-ghar-build-identity \
       "$1" "$2" 2>"$3"
   ' _ "$version" "$commit" "$WORK/build-identity.stderr"
@@ -562,7 +615,7 @@ PY
   run env \
     PGHAR_EXPECTED_BUILD_VERSION="$version" \
     PGHAR_EXPECTED_BUILD_COMMIT="$commit" \
-    GOTOOLCHAIN=go1.26.5 \
+    GOTOOLCHAIN=go1.26.6 \
     go test \
     -run '^TestLinkedIdentity$' \
     -count=1 \
@@ -574,7 +627,7 @@ PY
   run env \
     PGHAR_EXPECTED_BUILD_VERSION="$version" \
     PGHAR_EXPECTED_BUILD_COMMIT="$commit" \
-    GOTOOLCHAIN=go1.26.5 \
+    GOTOOLCHAIN=go1.26.6 \
     go test \
     -run '^TestLinkedIdentity$' \
     -count=1 \
@@ -584,7 +637,7 @@ PY
 
   while IFS="$(printf '\t')" read -r name package; do
     run bash -c '
-      exec env GOTOOLCHAIN=go1.26.5 \
+      exec env GOTOOLCHAIN=go1.26.6 \
         go list -json "$1" 2>"$2"
     ' _ "$package" "$WORK/go-list.stderr"
     [ "$status" -eq 0 ]
@@ -599,7 +652,7 @@ PY
       CGO_ENABLED=0 \
       GOOS=linux \
       GOARCH=amd64 \
-      GOTOOLCHAIN=go1.26.5 \
+      GOTOOLCHAIN=go1.26.6 \
       go build \
       -trimpath \
       -buildvcs=false \

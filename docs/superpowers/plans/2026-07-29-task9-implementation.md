@@ -6,6 +6,14 @@
 > separate operator sign-off. Tests use synthetic values, including the
 > incident anchors, solely to prove rejection and checked arithmetic.
 
+**Phase 3 authority amendment:** The host-local fence and same-fleet guards
+defined here remain load-bearing. Future Portable and legacy holders use the
+same signed heartbeat lease type; no separate legacy remote authority protocol
+is added. References below to an independent Worker permit mean the existing
+local `AcquisitionPermitProvider` seam, which Phase 3 satisfies from the cached
+signed lease without a remote per-operation request or close path.
+Platform-design §9 and the failover plan are normative.
+
 **Goal:** Add fail-closed host-profile qualification and one host-local
 portable/legacy generation authority without allowing unsupported hosts,
 unapproved resource envelopes, malformed private state, stale processes, or
@@ -616,9 +624,11 @@ Renewal failure is retained and makes `Close` fail even if the external effect
 already returned. The adapter exposes no handoff, legacy, mutation, reset, or
 Worker-permit method.
 
-The controller continues to acquire the independent Worker permit after the
-host guard and before each outbound effect. Neither authority substitutes for
-the other.
+The controller continues to require independent external acquisition authority
+after the host guard and before each outbound effect. Under the Phase 3
+amendment, the local provider derives that operation proof from the current
+cached signed lease and makes no remote per-operation call. Neither authority
+substitutes for the other.
 
 ## Legacy-Owned Force-Disabled Observer
 

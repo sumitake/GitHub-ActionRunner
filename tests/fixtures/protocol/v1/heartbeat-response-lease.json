@@ -1,0 +1,33 @@
+{
+  "fleetId": "example-fleet",
+  "lease": {
+    "archivedDisabledAliases": [
+      "repo-a"
+    ],
+    "canaryScaleSet": null,
+    "durationMs": 20000,
+    "expiry": "2026-01-01T00:00:21.000Z",
+    "fleetId": "example-fleet",
+    "holder": "portable",
+    "leaseGeneration": 1,
+    "localPolicyEpoch": 1,
+    "maxCapacity": 2,
+    "mode": "enabled",
+    "policyDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "protocolVersion": 1,
+    "repositoryPolicyRevision": 1,
+    "serverEpoch": 1,
+    "sessionId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "maintenance": {
+    "kind": "none",
+    "leaseGeneration": 1,
+    "sessionId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "noLeaseReason": null,
+  "protocolVersion": 1,
+  "receiptTime": "2026-01-01T00:00:01.000Z",
+  "routingState": "PORTABLE",
+  "sequence": 1,
+  "sessionId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}
