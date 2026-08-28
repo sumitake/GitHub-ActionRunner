@@ -1365,6 +1365,27 @@
     "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
   },
   {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@99d55b0de82a227bcfd52f4b9ca64130db9c4338",
+    "line": 43,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@99d55b0de82a227bcfd52f4b9ca64130db9c4338",
+    "line": 53,
+    "rule": "URI001",
+    "sha256": "5e037138d3d5a8ce0c020abf12cb3e4cb477a71f32e9e681c982059b19cb1dbe",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@99d55b0de82a227bcfd52f4b9ca64130db9c4338",
+    "line": 74,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
     "path": "images/network-broker-dialer/Dockerfile@8b1f84f55e0ca93eb850359f2f8195a95e007e5b",
     "line": 22,
     "rule": "PATH001",

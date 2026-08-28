@@ -1008,6 +1008,18 @@ PUBLIC_HISTORY_METADATA_LINES = frozenset(
         ),
         "".join(
             (
+                "Cursor Agent <cursoragent",
+                "@cursor.com>",
+            )
+        ),
+        "".join(
+            (
+                "Co-authored-by: John Osumi <sumitake",
+                "@users.noreply.github.com>",
+            )
+        ),
+        "".join(
+            (
                 "dependabot[bot] <49699333+dependabot[bot]",
                 "@users.noreply.github.com>",
             )
