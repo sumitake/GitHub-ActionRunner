@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -242,29 +243,138 @@ type fakeSessionProvider struct {
 }
 
 type fakeJITAuthorizer struct {
-	mu    sync.Mutex
-	calls []controller.JITAuthorizationRequest
-	err   error
+	mu     sync.Mutex
+	calls  []controller.JITAuthorizationRequest
+	permit *fakeLifecyclePermit
+	err    error
 }
 
 func (f *fakeJITAuthorizer) GenerateJITAuthorized(
 	ctx context.Context,
 	request controller.JITAuthorizationRequest,
-) (githubscale.JITConfig, error) {
+) (controller.JITAuthorizationResult, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, request)
 	err := f.err
+	permit := f.permit
+	if permit == nil {
+		permit = newFakeLifecyclePermit(request.Assignment)
+		f.permit = permit
+	}
 	f.mu.Unlock()
 	if err != nil {
-		return githubscale.JITConfig{}, err
+		return controller.JITAuthorizationResult{}, err
 	}
-	return request.Session.GenerateJIT(ctx, request.Request)
+	config, err := request.Session.GenerateJIT(ctx, request.Request)
+	return controller.JITAuthorizationResult{
+		Config: config,
+		Permit: permit,
+	}, err
 }
 
 func (f *fakeJITAuthorizer) Calls() []controller.JITAuthorizationRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]controller.JITAuthorizationRequest(nil), f.calls...)
+}
+
+type fakeLifecyclePermit struct {
+	mu              sync.Mutex
+	ctx             context.Context
+	binding         controller.AcquisitionPermitBinding
+	validateErr     error
+	revalidateErr   error
+	admitErr        error
+	closeErr        error
+	validateCalls   int
+	revalidateCalls int
+	admitCalls      int
+	closeCalls      int
+}
+
+func newFakeLifecyclePermit(
+	assignment controller.Assignment,
+) *fakeLifecyclePermit {
+	return &fakeLifecyclePermit{
+		ctx: context.Background(),
+		binding: controller.AcquisitionPermitBinding{
+			AuthorityRevision:        1,
+			AuthorityKey:             "authority-key-a",
+			FenceGeneration:          2,
+			ServerEpoch:              3,
+			SessionID:                "session-a",
+			LeaseGeneration:          4,
+			OperationID:              "jit-operation-a",
+			RepositoryAlias:          assignment.Key.RepositoryAlias,
+			ScaleSetName:             assignment.Offer.RequestLabels[0],
+			OperationKind:            "jit",
+			PolicyDigest:             "policy-digest-a",
+			PolicyEpoch:              5,
+			PolicyMode:               controller.AcquisitionEnabled,
+			MaxCapacity:              1,
+			RepositoryPolicyRevision: 6,
+			OriginalLocalDeadline:    time.Unix(2_000_000_000, 123).UTC(),
+		},
+	}
+}
+
+func (p *fakeLifecyclePermit) Context() context.Context {
+	if p == nil || p.ctx == nil {
+		return context.Background()
+	}
+	return p.ctx
+}
+
+func (p *fakeLifecyclePermit) Binding() controller.AcquisitionPermitBinding {
+	if p == nil {
+		return controller.AcquisitionPermitBinding{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.binding
+}
+
+func (p *fakeLifecyclePermit) ValidateBinding(
+	_ context.Context,
+	binding controller.AcquisitionPermitBinding,
+) error {
+	if p == nil {
+		return errors.New("missing permit")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.validateCalls++
+	if binding != p.binding {
+		return errors.New("binding mismatch")
+	}
+	return p.validateErr
+}
+
+func (p *fakeLifecyclePermit) Revalidate() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.revalidateCalls++
+	return p.revalidateErr
+}
+
+func (p *fakeLifecyclePermit) Admit() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.admitCalls++
+	return p.admitErr
+}
+
+func (p *fakeLifecyclePermit) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closeCalls++
+	return p.closeErr
+}
+
+func (p *fakeLifecyclePermit) counts() (int, int, int, int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.validateCalls, p.revalidateCalls, p.admitCalls, p.closeCalls
 }
 
 func (f *fakeSessionProvider) Session(
@@ -375,14 +485,15 @@ func (f *fakeSetupBuilder) Build(
 }
 
 type fakeJailOrchestrator struct {
-	state        *fakeLifecycleState
-	prepareCalls int
-	releaseCalls int
-	destroyHeld  int
-	destroyLive  int
-	releaseErr   error
-	releaseStart chan struct{}
-	releaseGo    chan struct{}
+	state         *fakeLifecycleState
+	prepareCalls  int
+	releaseCalls  int
+	destroyHeld   int
+	destroyLive   int
+	releaseErr    error
+	releaseStart  chan struct{}
+	releaseGo     chan struct{}
+	releasePermit controller.AcquisitionPermitGuard
 }
 
 func (f *fakeJailOrchestrator) Prepare(
@@ -400,11 +511,16 @@ func (f *fakeJailOrchestrator) Prepare(
 }
 
 func (f *fakeJailOrchestrator) Release(
-	_ context.Context,
+	ctx context.Context,
 	_ networkjail.HeldJail,
 	_ *redaction.Secret,
+	permit controller.AcquisitionPermitGuard,
 ) (networkjail.LiveJail, error) {
 	f.releaseCalls++
+	f.releasePermit = permit
+	if permit == nil || permit.Context() != ctx {
+		return networkjail.LiveJail{}, networkjail.ErrSetupInput
+	}
 	if f.releaseStart != nil {
 		select {
 		case f.releaseStart <- struct{}{}:
@@ -423,11 +539,24 @@ func (f *fakeJailOrchestrator) Release(
 		}
 		return networkjail.LiveJail{}, f.releaseErr
 	}
+	bindingDigest, err := controller.AcquisitionPermitBindingDigest(permit.Binding())
+	if err != nil {
+		return networkjail.LiveJail{}, networkjail.ErrSetupInput
+	}
+	if err := permit.Revalidate(); err != nil {
+		return networkjail.LiveJail{}, networkjail.ErrListenerAmbiguous
+	}
+	if err := permit.Admit(); err != nil {
+		return networkjail.LiveJail{}, networkjail.ErrListenerAmbiguous
+	}
 	f.state.mu.Lock()
 	f.state.record.State = controller.StateListenerReleased
 	f.state.record.Released = true
 	f.state.effects[state.LifecycleEffectListenerRelease] =
-		state.EffectRecord{State: state.EffectCompleted}
+		state.EffectRecord{
+			State:          state.EffectCompleted,
+			ResultIdentity: fmt.Sprintf("%x", bindingDigest),
+		}
 	f.state.mu.Unlock()
 	return networkjail.LiveJail{}, nil
 }
@@ -536,6 +665,19 @@ func TestServiceReleaseRemovesStaleRegistrationBeforeOneJIT(t *testing.T) {
 		t.Fatalf("release calls = generate=%d removed=%v jail=%d",
 			fixture.session.generateCalls, fixture.session.removeCalls, fixture.jails.releaseCalls)
 	}
+	if fixture.jails.releasePermit != fixture.jit.permit {
+		t.Fatal("listener release did not receive the JIT operation permit")
+	}
+	validateCalls, revalidateCalls, admitCalls, closeCalls := fixture.jit.permit.counts()
+	if validateCalls != 0 || revalidateCalls != 1 || admitCalls != 1 || closeCalls != 1 {
+		t.Fatalf(
+			"permit calls after release = validate %d revalidate %d admit %d close %d, want 0/1/1/1",
+			validateCalls,
+			revalidateCalls,
+			admitCalls,
+			closeCalls,
+		)
+	}
 	jitCalls := fixture.jit.Calls()
 	if len(jitCalls) != 1 ||
 		jitCalls[0].Assignment.Key != fixture.assignment.Key ||
@@ -555,6 +697,204 @@ func TestServiceReleaseRemovesStaleRegistrationBeforeOneJIT(t *testing.T) {
 	if fixture.session.generateCalls != 1 || fixture.jails.releaseCalls != 1 {
 		t.Fatalf("duplicate Release repeated effects: generate=%d release=%d",
 			fixture.session.generateCalls, fixture.jails.releaseCalls)
+	}
+}
+
+func TestServiceReleasePermitCloseFailureIsAmbiguousAndUncached(t *testing.T) {
+	fixture := newLifecycleFixture(t)
+	fixture.jit.permit.closeErr = errors.New("injected close failure")
+	if _, err := fixture.service.Prepare(context.Background(), fixture.assignment); err != nil {
+		t.Fatalf("Prepare() = %v", err)
+	}
+
+	err := fixture.service.Release(context.Background(), fixture.assignment.Key)
+	if !errors.Is(err, ErrReleaseAmbiguous) ||
+		!errors.Is(err, controller.ErrAcquisitionGuardClose) {
+		t.Fatalf("Release(close failure) = %v, want release and guard-close ambiguity", err)
+	}
+	if !fixture.state.record.Ambiguous ||
+		fixture.state.record.AmbiguousReason != "acquisition-permit-close" {
+		t.Fatalf("close failure ambiguity = %+v", fixture.state.record)
+	}
+	service := fixture.service.(*service)
+	service.cacheMu.Lock()
+	_, live := service.live[fixture.assignment.Key]
+	service.cacheMu.Unlock()
+	if live {
+		t.Fatal("close failure left listener admitted in the live cache")
+	}
+	_, _, _, closeCalls := fixture.jit.permit.counts()
+	if closeCalls != 1 {
+		t.Fatalf("permit Close calls = %d, want exactly one", closeCalls)
+	}
+}
+
+func TestServiceFirstRunnerObservationRequiresCurrentListenerBinding(t *testing.T) {
+	tests := []struct {
+		name  string
+		event func(*testing.T, lifecycleFixture, githubscale.RunnerRef) githubscale.Event
+	}{
+		{
+			name: "started",
+			event: func(t *testing.T, fixture lifecycleFixture, runner githubscale.RunnerRef) githubscale.Event {
+				t.Helper()
+				event, err := githubscale.NewStartedEvent(githubscale.StartedEvent{
+					JobRef: githubscale.JobRef{
+						RunnerRequestID:  fixture.assignment.Key.RunnerRequestID,
+						JobID:            fixture.assignment.Offer.JobID,
+						RunnerAssignTime: time.Now().Add(-time.Second),
+					},
+					RunnerID:   runner.ID,
+					RunnerName: runner.Name,
+				})
+				if err != nil {
+					t.Fatalf("NewStartedEvent() = %v", err)
+				}
+				return event
+			},
+		},
+		{
+			name: "completed",
+			event: func(t *testing.T, fixture lifecycleFixture, runner githubscale.RunnerRef) githubscale.Event {
+				t.Helper()
+				event, err := githubscale.NewCompletedEvent(githubscale.CompletedEvent{
+					JobRef: githubscale.JobRef{
+						RunnerRequestID: fixture.assignment.Key.RunnerRequestID,
+						JobID:           fixture.assignment.Offer.JobID,
+						FinishTime:      time.Now().Add(-time.Second),
+					},
+					Result:     "Succeeded",
+					RunnerID:   runner.ID,
+					RunnerName: runner.Name,
+				})
+				if err != nil {
+					t.Fatalf("NewCompletedEvent() = %v", err)
+				}
+				return event
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name+" superseded", func(t *testing.T) {
+			fixture := newLifecycleFixture(t)
+			if _, err := fixture.service.Prepare(context.Background(), fixture.assignment); err != nil {
+				t.Fatalf("Prepare() = %v", err)
+			}
+			if err := fixture.service.Release(context.Background(), fixture.assignment.Key); err != nil {
+				t.Fatalf("Release() = %v", err)
+			}
+			runner := fixture.session.runners[fixture.assignment.Slot.OpaqueName]
+			fixture.jit.permit.validateErr = errors.New("superseded binding")
+
+			if err := fixture.service.Observe(
+				context.Background(),
+				test.event(t, fixture, runner),
+			); err != nil {
+				t.Fatalf("Observe(%s superseded) = %v", test.name, err)
+			}
+			if fixture.state.record.State != controller.StateDestroyed ||
+				fixture.state.record.Slot.UpstreamRunnerID != 0 ||
+				fixture.jails.destroyLive != 1 ||
+				len(fixture.session.removeCalls) != 1 {
+				t.Fatalf(
+					"superseded %s = state %s slot %+v destroyLive %d removals %v",
+					test.name,
+					fixture.state.record.State,
+					fixture.state.record.Slot,
+					fixture.jails.destroyLive,
+					fixture.session.removeCalls,
+				)
+			}
+			validateCalls, _, _, _ := fixture.jit.permit.counts()
+			if validateCalls != 1 {
+				t.Fatalf("binding validations = %d, want one", validateCalls)
+			}
+		})
+
+		t.Run(test.name+" after restart", func(t *testing.T) {
+			fixture := newLifecycleFixture(t)
+			if _, err := fixture.service.Prepare(context.Background(), fixture.assignment); err != nil {
+				t.Fatalf("Prepare() = %v", err)
+			}
+			if err := fixture.service.Release(context.Background(), fixture.assignment.Key); err != nil {
+				t.Fatalf("Release() = %v", err)
+			}
+			runner := fixture.session.runners[fixture.assignment.Slot.OpaqueName]
+			fixture.service.(*service).dropCache(fixture.assignment.Key)
+
+			if err := fixture.service.Observe(
+				context.Background(),
+				test.event(t, fixture, runner),
+			); err != nil {
+				t.Fatalf("Observe(%s after restart) = %v", test.name, err)
+			}
+			if fixture.state.record.State != controller.StateDestroyed ||
+				fixture.state.record.Slot.UpstreamRunnerID != 0 ||
+				fixture.jails.destroyLive != 0 ||
+				fixture.recovery.removeCalls != 1 ||
+				len(fixture.session.removeCalls) != 1 {
+				t.Fatalf(
+					"restart %s = state %s slot %+v destroyLive %d recovery %d removals %v",
+					test.name,
+					fixture.state.record.State,
+					fixture.state.record.Slot,
+					fixture.jails.destroyLive,
+					fixture.recovery.removeCalls,
+					fixture.session.removeCalls,
+				)
+			}
+		})
+	}
+}
+
+func TestServiceRunningJobDrainsAfterListenerBindingExpires(t *testing.T) {
+	fixture := newLifecycleFixture(t)
+	if _, err := fixture.service.Prepare(context.Background(), fixture.assignment); err != nil {
+		t.Fatalf("Prepare() = %v", err)
+	}
+	if err := fixture.service.Release(context.Background(), fixture.assignment.Key); err != nil {
+		t.Fatalf("Release() = %v", err)
+	}
+	runner := fixture.session.runners[fixture.assignment.Slot.OpaqueName]
+	started, err := githubscale.NewStartedEvent(githubscale.StartedEvent{
+		JobRef: githubscale.JobRef{
+			RunnerRequestID:  fixture.assignment.Key.RunnerRequestID,
+			JobID:            fixture.assignment.Offer.JobID,
+			RunnerAssignTime: time.Now().Add(-time.Second),
+		},
+		RunnerID:   runner.ID,
+		RunnerName: runner.Name,
+	})
+	if err != nil {
+		t.Fatalf("NewStartedEvent() = %v", err)
+	}
+	if err := fixture.service.Observe(context.Background(), started); err != nil {
+		t.Fatalf("Observe(started) = %v", err)
+	}
+	fixture.jit.permit.validateErr = errors.New("expired after admission")
+	completed, err := githubscale.NewCompletedEvent(githubscale.CompletedEvent{
+		JobRef: githubscale.JobRef{
+			RunnerRequestID: fixture.assignment.Key.RunnerRequestID,
+			JobID:           fixture.assignment.Offer.JobID,
+			FinishTime:      time.Now().Add(-time.Second),
+		},
+		Result:     "Succeeded",
+		RunnerID:   runner.ID,
+		RunnerName: runner.Name,
+	})
+	if err != nil {
+		t.Fatalf("NewCompletedEvent() = %v", err)
+	}
+	if err := fixture.service.Observe(context.Background(), completed); err != nil {
+		t.Fatalf("Observe(completed after expiry) = %v", err)
+	}
+	if fixture.state.record.State != controller.StateJobFinished {
+		t.Fatalf("completed state = %s, want JOB_FINISHED", fixture.state.record.State)
+	}
+	validateCalls, _, _, _ := fixture.jit.permit.counts()
+	if validateCalls != 1 {
+		t.Fatalf("binding validations = %d, want only pre-running admission", validateCalls)
 	}
 }
 
@@ -1202,6 +1542,8 @@ func TestServiceRecordBatchLocksEveryAffectedKeyBeforeApplying(t *testing.T) {
 	other.Slot.CapacitySlotID++
 	other.Slot.RunnerContainerID = "runner-b"
 	fixture.state.extra = []state.RecoverableAssignment{other}
+	installLiveBinding(t, fixture, fixture.state.record)
+	installLiveBinding(t, fixture, other)
 
 	implementation := fixture.service.(*service)
 	unlockOther := implementation.locks.lock(other.Key)
@@ -1293,6 +1635,7 @@ func TestServiceRecordBatchRunnerEvidenceProtectsSameBatchFromRetirement(t *test
 	fixture.state.record.Released = true
 	fixture.state.record.Offer.ScaleSetAssignTime = time.Now().Add(-2 * time.Minute)
 	fixture.state.record.Slot.RunnerContainerID = "runner-a"
+	installLiveBinding(t, fixture, fixture.state.record)
 
 	if err := fixture.service.RecordBatch(context.Background(), controller.MessageEnvelope{
 		RepositoryAlias: fixture.assignment.Key.RepositoryAlias,
@@ -1344,6 +1687,8 @@ func TestServiceRecordBatchBindsTwoRunnersInObservedOppositeOrder(t *testing.T) 
 	other.Slot.CapacitySlotID++
 	other.Slot.RunnerContainerID = "runner-b"
 	fixture.state.extra = []state.RecoverableAssignment{other}
+	installLiveBinding(t, fixture, fixture.state.record)
+	installLiveBinding(t, fixture, other)
 
 	if err := fixture.service.RecordBatch(context.Background(), controller.MessageEnvelope{
 		RepositoryAlias: fixture.assignment.Key.RepositoryAlias,
@@ -1722,6 +2067,32 @@ func (fixture lifecycleFixture) builderCalls() int {
 	return fixture.service.(*service).builder.(*fakeSetupBuilder).calls
 }
 
+func installLiveBinding(
+	t *testing.T,
+	fixture lifecycleFixture,
+	record state.RecoverableAssignment,
+) *fakeLifecyclePermit {
+	t.Helper()
+	assignment, err := assignmentFromRecord(record)
+	if err != nil {
+		t.Fatalf("assignmentFromRecord() = %v", err)
+	}
+	permit := newFakeLifecyclePermit(assignment)
+	service := fixture.service.(*service)
+	service.cacheMu.Lock()
+	service.live[record.Key] = liveEntry{
+		assignment: assignment,
+		permit:     permit,
+		binding:    permit.Binding(),
+	}
+	service.cacheMu.Unlock()
+	fixture.state.mu.Lock()
+	fixture.state.effects[state.LifecycleEffectListenerRelease] =
+		state.EffectRecord{State: state.EffectCompleted}
+	fixture.state.mu.Unlock()
+	return permit
+}
+
 func newLifecycleFixture(t *testing.T) lifecycleFixture {
 	t.Helper()
 	key := controller.AssignmentKey{
@@ -1769,7 +2140,7 @@ func newLifecycleFixture(t *testing.T) lifecycleFixture {
 		nextRunnerID: 100,
 	}
 	sessions := &fakeSessionProvider{session: session}
-	jit := &fakeJITAuthorizer{}
+	jit := &fakeJITAuthorizer{permit: newFakeLifecyclePermit(assignment)}
 	adapterName, brokerName, runnerName, err := componentNames(slot.OpaqueName)
 	if err != nil {
 		t.Fatalf("componentNames() = %v", err)

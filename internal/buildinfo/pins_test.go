@@ -12,7 +12,7 @@ import (
 func TestPinsExactValues(t *testing.T) {
 	want := Manifest{
 		GoLanguageVersion: "1.26.0",
-		GoToolchain:       "go1.26.5",
+		GoToolchain:       "go1.26.6",
 		Scaleset: ModulePin{
 			Path:    "github.com/actions/scaleset",
 			Version: "v0.4.0",
@@ -64,7 +64,7 @@ func TestPinsFieldTable(t *testing.T) {
 		want string
 	}{
 		{"go language version", p.GoLanguageVersion, "1.26.0"},
-		{"go toolchain", p.GoToolchain, "go1.26.5"},
+		{"go toolchain", p.GoToolchain, "go1.26.6"},
 		{"scaleset module path", p.Scaleset.Path, "github.com/actions/scaleset"},
 		{"scaleset version", p.Scaleset.Version, "v0.4.0"},
 		{"scaleset commit", p.Scaleset.Commit, "6ce025902cd964747a078c2aabe7340ebc667eca"},

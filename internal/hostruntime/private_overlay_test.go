@@ -209,6 +209,12 @@ func TestParsePrivateOverlayRejectsUnknownWhitespaceAndNullSection(t *testing.T)
 			`"management_transport":{"unknown":0,"mode":`,
 			1,
 		)),
+		"inline secret value": []byte(strings.Replace(
+			string(encoded),
+			`"ref":"/run/secrets/github"`,
+			`"ref":"not-a-file-secret-reference"`,
+			1,
+		)),
 		"malformed swap configured": []byte(strings.Replace(
 			string(encoded),
 			`"helper":{"configured":true`,

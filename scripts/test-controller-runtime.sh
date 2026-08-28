@@ -2,12 +2,18 @@
 # SPDX-License-Identifier: MPL-2.0
 #
 # Non-mutating controller-runtime release gate. Subordinate output stays in a
-# private temporary directory; callers receive only one closed JSON summary.
+# private temporary directory. Callers receive one closed JSON summary on
+# stdout and, only on failure, a closed diagnostic for the first failed stage
+# on stderr. Raw subordinate output never crosses the gate boundary.
 # Stage functions are invoked through the fixed identifier/function table.
+# The release modes are self-contained and never claim operator-gated target
+# conformance, which remains a separate prerequisite for nonzero acquisition.
 # shellcheck disable=SC2329
 
 set -euo pipefail
 umask 077
+# CI and agent invocations must never block on a terminal prompt.
+exec </dev/null
 
 if [ "$#" -ne 1 ]; then
   printf '%s\n' arguments >&2
@@ -16,7 +22,8 @@ fi
 
 case "$1" in
 --unit) mode=unit ;;
---full) mode=full ;;
+--docker) mode=docker ;;
+--release) mode=release ;;
 *)
   printf '%s\n' arguments >&2
   exit 2
@@ -27,7 +34,7 @@ script_directory="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
 repository_root="$(CDPATH='' cd -- "$script_directory/.." && pwd -P)"
 cd "$repository_root"
 
-export GOTOOLCHAIN=go1.26.5
+export GOTOOLCHAIN=go1.26.6
 
 log_directory="$(mktemp -d "${TMPDIR:-/tmp}/portable-ghar-runtime-gate.XXXXXX")"
 stages_json=
@@ -41,6 +48,7 @@ docker_ready=0
 docker_containers_fingerprint=
 docker_networks_fingerprint=
 docker_volumes_fingerprint=
+failure_diagnostic=
 
 private_mode() {
   local path=$1
@@ -90,6 +98,28 @@ record_failure() {
   fi
 }
 
+capture_failure_diagnostic() {
+  local identifier=$1
+  local log_path=$2
+  local reason=$3
+  local test_name=
+  [ -z "$failure_diagnostic" ] || return 0
+  if [ "$reason" = command-failed ]; then
+    test_name="$(
+      awk '/^--- FAIL: Test[A-Za-z0-9_]+([[:space:]]|$)/ {
+        print $3
+        exit
+      }' "$log_path"
+    )" || test_name=
+    if [ "${#test_name}" -le 128 ] &&
+      [[ "$test_name" =~ ^Test[A-Za-z0-9_]+$ ]]; then
+      failure_diagnostic="${identifier}:test-failed:${test_name}"
+      return 0
+    fi
+  fi
+  failure_diagnostic="${identifier}:${reason}"
+}
+
 run_stage() {
   local identifier=$1
   shift
@@ -98,6 +128,7 @@ run_stage() {
     append_stage "$identifier" pass
     return 0
   fi
+  capture_failure_diagnostic "$identifier" "$log_path" command-failed
   append_stage "$identifier" fail
   record_failure "$identifier"
   return 1
@@ -113,12 +144,19 @@ run_verified_go_test_stage() {
   local package_count
   local pass_count
   if ! "$@" >"$log_path" 2>&1; then
+    capture_failure_diagnostic "$identifier" "$log_path" command-failed
     append_stage "$identifier" fail
     record_failure "$identifier"
     return 1
   fi
-  if [ ! -s "$log_path" ] ||
-    grep -Eq -- '(^|[[:space:]])--- SKIP:|\[no tests to run\]|SKIP unsupported host profile' "$log_path"; then
+  if [ ! -s "$log_path" ] || grep -Eq -- '\[no tests to run\]' "$log_path"; then
+    capture_failure_diagnostic "$identifier" "$log_path" evidence-empty
+    append_stage "$identifier" fail
+    record_failure "$identifier"
+    return 1
+  fi
+  if grep -Eq -- '(^|[[:space:]])--- SKIP:|SKIP unsupported host profile' "$log_path"; then
+    capture_failure_diagnostic "$identifier" "$log_path" evidence-skip
     append_stage "$identifier" fail
     record_failure "$identifier"
     return 1
@@ -140,6 +178,7 @@ run_verified_go_test_stage() {
   }
   if [ "$package_count" -ne "$expected_packages" ] ||
     [ "$pass_count" -ne "$expected_passes" ]; then
+    capture_failure_diagnostic "$identifier" "$log_path" evidence-count
     append_stage "$identifier" fail
     record_failure "$identifier"
     return 1
@@ -402,12 +441,52 @@ stage_integration_authority() {
   run_go_test -tags=integration ./internal/networkjail -v -count=1
 }
 
-stage_conformance() {
-  run_go_test -tags=integration ./tests/integration ./tests/conformance -v -count=1
-}
-
 stage_chaos() {
-  run_go_test -tags=chaos ./tests/chaos -v -count=10
+  local image_id=
+  local source_epoch
+  local stage_status=0
+  local cleanup_status=0
+  local tag=portable-ghar-check-images:chaos-runner
+  local tags
+
+  source_epoch="$(git show -s --format=%ct HEAD)" || stage_status=1
+  case "$source_epoch" in
+  "" | *[!0-9]* | 0) stage_status=1 ;;
+  esac
+
+  if [ "$stage_status" -eq 0 ] && ! SOURCE_DATE_EPOCH="$source_epoch" \
+    docker buildx build \
+    --platform linux/amd64 \
+    --no-cache \
+    --provenance=false \
+    --sbom=false \
+    --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
+    --output "type=docker,name=$tag,rewrite-timestamp=true" \
+    -f images/runner/Dockerfile images/runner; then
+    stage_status=1
+  fi
+
+  if [ "$stage_status" -eq 0 ]; then
+    image_id="$(
+      docker image inspect --format '{{.Id}}' "$tag"
+    )" || stage_status=1
+    if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      stage_status=1
+    fi
+  fi
+
+  if [ "$stage_status" -eq 0 ] && ! PGHAR_CHAOS_IMAGE="$image_id" \
+    run_go_test -tags=chaos ./tests/chaos -v -count=10; then
+    stage_status=1
+  fi
+
+  docker image rm -f "$tag" >/dev/null 2>&1 || true
+  tags="$(fixed_check_image_tags)" || cleanup_status=1
+  if printf '%s\n' "$tags" | grep -Fxq -- "$tag"; then
+    cleanup_status=1
+  fi
+
+  [ "$stage_status" -eq 0 ] && [ "$cleanup_status" -eq 0 ]
 }
 
 stage_docker_state_exit() {
@@ -488,83 +567,87 @@ run_unit_verified_stage() {
   fi
 }
 
-run_unit_stage source-integrity-entry stage_source_integrity_entry
-run_unit_stage gofmt stage_gofmt
-run_unit_stage vet stage_vet
-run_unit_stage unit stage_unit
-run_unit_stage race stage_race
-run_unit_verified_stage \
-  network-authority 1 4 \
-  '^--- PASS: (TestBrokerDialerRevalidatesThenPermitsEveryLiteralAttempt|TestBrokerDialerLiteralSkipsResolverAndRequiresPermit|TestBrokerDialerPermitFailurePreventsKernelDial|TestDoHResolverUsesOnePermittedLockedPersistentConnection)([[:space:]]|$)' \
-  stage_network_authority
-run_unit_verified_stage \
-  acquisition-authority 1 4 \
-  '^--- PASS: (TestPollPermitFailureAbortsBeforeAcquireAndLeavesServiceReady|TestServiceTransitionCancelsAndJoinsOldOperationBeforeOpen|TestServiceDisabledTransitionRequiresListenerQuiescence|TestServiceTransitionJoinTimeoutPersistsFatalBeforeTermination)([[:space:]]|$)' \
-  stage_acquisition_authority
-run_unit_verified_stage \
-  routing-authority 1 2 \
-  '^--- PASS: (TestReplayHostedExplicitRouteFailureIsDurableAndNeverAcknowledged|TestReplayHostedEmptyOwnershipProofIsDurableFailure)([[:space:]]|$)' \
-  stage_routing_authority
-run_unit_stage boundary stage_boundary
-run_unit_stage staticcheck stage_staticcheck
-run_unit_stage module stage_module
-run_unit_stage runner-debian-snapshot stage_runner_debian_snapshot
-run_unit_stage shellcheck stage_shellcheck
-run_unit_stage shfmt stage_shfmt
-run_unit_stage bats stage_bats
-run_unit_stage python-contract stage_python_contract
-run_unit_stage workflow-policy stage_workflow_policy
-run_unit_stage repository-metadata stage_repository_metadata
-run_unit_stage public-sanitizer stage_public_sanitizer
-run_unit_verified_stage \
-  chaos-source \
-  1 1 \
-  '^--- PASS: TestChaosSourceOptInBoundary([[:space:]]|$)' \
-  stage_chaos_source
+run_stage source-integrity-entry stage_source_integrity_entry || unit_failed=1
 
-if [ "$entry_fingerprint_ready" -eq 1 ]; then
-  run_stage source-integrity-exit stage_source_integrity_exit || unit_failed=1
+if [ "$mode" != docker ]; then
+  run_unit_stage gofmt stage_gofmt
+  run_unit_stage vet stage_vet
+  run_unit_stage unit stage_unit
+  run_unit_stage race stage_race
+  run_unit_verified_stage \
+    network-authority 1 4 \
+    '^--- PASS: (TestBrokerDialerRevalidatesThenPermitsEveryLiteralAttempt|TestBrokerDialerLiteralSkipsResolverAndRequiresPermit|TestBrokerDialerPermitFailurePreventsKernelDial|TestDoHResolverUsesOnePermittedLockedPersistentConnection)([[:space:]]|$)' \
+    stage_network_authority
+  run_unit_verified_stage \
+    acquisition-authority 1 4 \
+    '^--- PASS: (TestPollPermitFailureAbortsBeforeAcquireAndLeavesServiceReady|TestServiceTransitionCancelsAndJoinsOldOperationBeforeOpen|TestServiceDisabledTransitionRequiresListenerQuiescence|TestServiceTransitionJoinTimeoutPersistsFatalBeforeTermination)([[:space:]]|$)' \
+    stage_acquisition_authority
+  run_unit_verified_stage \
+    routing-authority 1 2 \
+    '^--- PASS: (TestReplayHostedExplicitRouteFailureIsDurableAndNeverAcknowledged|TestReplayHostedEmptyOwnershipProofIsDurableFailure)([[:space:]]|$)' \
+    stage_routing_authority
+  run_unit_stage boundary stage_boundary
+  run_unit_stage staticcheck stage_staticcheck
+  run_unit_stage module stage_module
+  run_unit_stage runner-debian-snapshot stage_runner_debian_snapshot
+  run_unit_stage shellcheck stage_shellcheck
+  run_unit_stage shfmt stage_shfmt
+  run_unit_stage bats stage_bats
+  run_unit_stage python-contract stage_python_contract
+  run_unit_stage workflow-policy stage_workflow_policy
+  run_unit_stage repository-metadata stage_repository_metadata
+  run_unit_stage public-sanitizer stage_public_sanitizer
+  run_unit_verified_stage \
+    chaos-source \
+    1 1 \
+    '^--- PASS: TestChaosSourceOptInBoundary([[:space:]]|$)' \
+    stage_chaos_source
+
+  if [ "$entry_fingerprint_ready" -eq 1 ]; then
+    run_stage source-integrity-exit stage_source_integrity_exit || unit_failed=1
+  fi
 fi
 
-full_failed=0
-if [ "$unit_failed" -eq 0 ] && [ "$mode" = full ]; then
+docker_failed=0
+if [ "$unit_failed" -eq 0 ] &&
+  { [ "$mode" = docker ] || [ "$mode" = release ]; }; then
   if ! run_stage linux-docker-preflight stage_linux_docker_preflight; then
-    full_failed=1
+    docker_failed=1
   else
     if ! run_stage image-reproducibility stage_image_reproducibility; then
-      full_failed=1
+      docker_failed=1
     fi
-    if [ "$full_failed" -eq 0 ] &&
+    if [ "$docker_failed" -eq 0 ] &&
       ! run_verified_go_test_stage \
         integration-authority 1 5 \
         '^--- PASS: (TestShutdownIntegrationAuthorityStopsOnlyExactTuple|TestShutdownIntegrationAuthorityAcceptsExactInactiveAbsence|TestProveIntegrationAuthorityAbsentIsReadOnly|TestShutdownIntegrationAuthorityRejectsPartialOrAmbiguousClaim|TestShutdownIntegrationAuthorityRejectsOpenInputs)([[:space:]]|$)' \
         stage_integration_authority; then
-      full_failed=1
+      docker_failed=1
     fi
-    if [ "$full_failed" -eq 0 ] &&
-      ! run_verified_go_test_stage \
-        conformance 2 2 \
-        '^--- PASS: (TestPortableGHARConformance|TestPublicEvidenceTypesExposeNoCompositeAuthority)([[:space:]]|$)' \
-        stage_conformance; then
-      full_failed=1
-    fi
-    if [ "$full_failed" -eq 0 ] &&
+    if [ "$docker_failed" -eq 0 ] &&
       ! run_verified_go_test_stage \
         chaos 1 90 \
         '^--- PASS: (TestChaosSourceOptInBoundary|TestChaosOperationalGate|TestControllerStateRestartTable|TestDockerComponentFailureCleanup|TestFleetFenceRaceAndObserverRecovery|TestJailPermitFailuresNeverReachKernelDial|TestJailRaceNarrowingAndCancellationRemainClosed|TestQTSLifecycleEveryJournalEffectResumesAfterRestart|TestQTSShellLifecycleFailureRemainsClosed)([[:space:]]|$)' \
         stage_chaos; then
-      full_failed=1
+      docker_failed=1
     fi
   fi
 
   if [ "$docker_ready" -eq 1 ]; then
-    run_stage docker-state-exit stage_docker_state_exit || full_failed=1
+    run_stage docker-state-exit stage_docker_state_exit || docker_failed=1
   fi
-  run_stage source-integrity-full-exit stage_source_integrity_exit || full_failed=1
+  if [ "$entry_fingerprint_ready" -eq 1 ]; then
+    run_stage source-integrity-docker-exit stage_source_integrity_exit ||
+      docker_failed=1
+  fi
 fi
 
 cleanup_private_state || true
 emit_summary
+
+if [ -n "$failure_diagnostic" ]; then
+  printf '%s\n' "$failure_diagnostic" >&2
+fi
 
 if [ "$gate_status" = pass ]; then
   exit 0

@@ -8,8 +8,8 @@
 //
 // CLI usage:
 //   node scripts/validate-config.mjs
-// Validates all four schema/example pairs below. On success, prints exactly
-// "validated 4 synthetic examples" and exits 0. On any failure, prints the
+// Validates all public schema/example pairs below. On success, prints
+// "validated N synthetic examples" and exits 0. On any failure, prints the
 // Ajv errors for each failing pair and exits 1.
 
 import { readFileSync } from "node:fs";
@@ -65,6 +65,10 @@ const PAIRS = [
   [
     "config/schema/notification-event.schema.json",
     "config/examples/notification-event.example.json",
+  ],
+  [
+    "config/schema/health-snapshot.schema.json",
+    "config/examples/health-snapshot.example.json",
   ],
 ];
 

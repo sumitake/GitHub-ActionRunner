@@ -23,7 +23,7 @@ jobs:
       tag_object: ${{ steps.identity.outputs.tag_object }}
     steps:
       - name: Checkout exact tag
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -57,13 +57,13 @@ jobs:
     outputs:
       tree_tar_sha256: ${{ steps.package.outputs.tree_tar_sha256 }}
     env:
-      GOTOOLCHAIN: go1.26.5
+      GOTOOLCHAIN: go1.26.6
       SOURCE_COMMIT: ${{ needs.release-admission.outputs.source_commit }}
       SOURCE_TREE: ${{ needs.release-admission.outputs.source_tree }}
       RELEASE_VERSION: ${{ needs.release-admission.outputs.version }}
     steps:
       - name: Checkout exact source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ needs.release-admission.outputs.source_commit }}
@@ -106,13 +106,13 @@ jobs:
     outputs:
       tree_tar_sha256: ${{ steps.package.outputs.tree_tar_sha256 }}
     env:
-      GOTOOLCHAIN: go1.26.5
+      GOTOOLCHAIN: go1.26.6
       SOURCE_COMMIT: ${{ needs.release-admission.outputs.source_commit }}
       SOURCE_TREE: ${{ needs.release-admission.outputs.source_tree }}
       RELEASE_VERSION: ${{ needs.release-admission.outputs.version }}
     steps:
       - name: Checkout exact source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ needs.release-admission.outputs.source_commit }}
@@ -166,7 +166,7 @@ jobs:
       REBUILD_B_SHA256: ${{ needs.release-build-b.outputs.tree_tar_sha256 }}
     steps:
       - name: Checkout exact source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ needs.release-admission.outputs.source_commit }}
@@ -180,7 +180,7 @@ jobs:
         id: compare
         run: 'set -euo pipefail; test "$(sha256sum "$RUNNER_TEMP/rebuild-a/publication-tree.tar" | awk ''{print $1}'')" = "$REBUILD_A_SHA256"; test "$(sha256sum "$RUNNER_TEMP/rebuild-b/publication-tree.tar" | awk ''{print $1}'')" = "$REBUILD_B_SHA256"; test "$REBUILD_A_SHA256" = "$REBUILD_B_SHA256"; python3 -c "import pathlib,sys,tarfile; t=tarfile.open(sys.argv[1],''r:''); m=t.getmembers(); n=[x.name for x in m]; assert m and len(n)==len(set(n)); assert all(x.isfile() or x.isdir() for x in m); assert all(not pathlib.PurePosixPath(x).is_absolute() and ''..'' not in pathlib.PurePosixPath(x).parts for x in n)" "$RUNNER_TEMP/rebuild-a/publication-tree.tar"; python3 -c "import pathlib,sys,tarfile; t=tarfile.open(sys.argv[1],''r:''); m=t.getmembers(); n=[x.name for x in m]; assert m and len(n)==len(set(n)); assert all(x.isfile() or x.isdir() for x in m); assert all(not pathlib.PurePosixPath(x).is_absolute() and ''..'' not in pathlib.PurePosixPath(x).parts for x in n)" "$RUNNER_TEMP/rebuild-b/publication-tree.tar"; mkdir -m 700 "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"; tar -xf "$RUNNER_TEMP/rebuild-a/publication-tree.tar" -C "$RUNNER_TEMP/a" --no-same-owner; tar -xf "$RUNNER_TEMP/rebuild-b/publication-tree.tar" -C "$RUNNER_TEMP/b" --no-same-owner; scripts/release/compare-runtime-rebuilds.sh "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"; cp "$RUNNER_TEMP/rebuild-a/publication-tree.tar" "$RUNNER_TEMP/publication-bundle.tar"; test "$(sha256sum "$RUNNER_TEMP/publication-bundle.tar" | awk ''{print $1}'')" = "$REBUILD_A_SHA256"; (cd "$RUNNER_TEMP" && jq -r ''.subjects[] | "\(.sha256)  \(.path)"'' a/provenance-subjects.json >attestation-checksums.txt && printf "%s  provenance-subjects.json\n" "$(sha256sum a/provenance-subjects.json | awk ''{print $1}'')" >>attestation-checksums.txt && LC_ALL=C sort -k2,2 -o attestation-checksums.txt attestation-checksums.txt); printf "publication_bundle_sha256=%s\n" "$REBUILD_A_SHA256" >>"$GITHUB_OUTPUT"'
       - name: Attest exact runtime provenance subjects
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-checksums: ${{ runner.temp }}/attestation-checksums.txt
           show-summary: true
@@ -214,7 +214,7 @@ jobs:
       PUBLICATION_BUNDLE_SHA256: ${{ needs.release-compare-attest.outputs.publication_bundle_sha256 }}
     steps:
       - name: Checkout exact source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0

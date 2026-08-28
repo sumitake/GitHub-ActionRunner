@@ -49,18 +49,26 @@ func newOrchestrator(
 // Configure preserves the Task-6 one-call surface while delegating to the
 // Task-7 split transaction. The JIT remains caller-owned until Release and is
 // destroyed on every terminal path.
-func (o *Orchestrator) Configure(ctx context.Context, request SetupRequest) (LiveJail, error) {
+func (o *Orchestrator) Configure(
+	ctx context.Context,
+	request SetupRequest,
+	permit controller.AcquisitionPermitGuard,
+) (LiveJail, error) {
 	if request.JIT != nil {
 		defer request.JIT.Destroy()
 	}
-	if o == nil || ctx == nil || validateSetupRequest(request) != nil {
+	if o == nil || ctx == nil || permit == nil ||
+		validateSetupRequest(request) != nil {
+		return LiveJail{}, ErrSetupInput
+	}
+	if _, err := controller.AcquisitionPermitBindingDigest(permit.Binding()); err != nil {
 		return LiveJail{}, ErrSetupInput
 	}
 	held, err := o.Prepare(ctx, preparedSetupRequest(request))
 	if err != nil {
 		return LiveJail{}, err
 	}
-	return o.Release(ctx, held, request.JIT)
+	return o.Release(ctx, held, request.JIT, permit)
 }
 
 // Prepare executes the exact held-adapter, held-broker, authority, runner, and
@@ -382,11 +390,12 @@ func (o *Orchestrator) Release(
 	ctx context.Context,
 	held HeldJail,
 	jit *redaction.Secret,
+	permit controller.AcquisitionPermitGuard,
 ) (LiveJail, error) {
 	if jit != nil {
 		defer jit.Destroy()
 	}
-	if o == nil || ctx == nil || jit == nil ||
+	if o == nil || ctx == nil || jit == nil || permit == nil ||
 		held.key.RepositoryAlias == "" ||
 		held.key.RunnerRequestID <= 0 ||
 		!held.resources.adapter.valid ||
@@ -397,8 +406,21 @@ func (o *Orchestrator) Release(
 		ValidateProbeReport(held.report) != nil {
 		return LiveJail{}, ErrSetupInput
 	}
+	binding := permit.Binding()
+	bindingDigest, err := controller.AcquisitionPermitBindingDigest(binding)
+	if err != nil {
+		return LiveJail{}, ErrSetupInput
+	}
+	releaseCtx := permit.Context()
+	if releaseCtx == nil {
+		return LiveJail{}, ErrSetupInput
+	}
 
-	if err := o.journal.Before(ctx, held.key, StageListenerRelease); err != nil {
+	if err := o.journal.BeforeListenerRelease(
+		releaseCtx,
+		held.key,
+		bindingDigest,
+	); err != nil {
 		if errors.Is(err, ErrSetupReplay) {
 			return LiveJail{}, ErrSetupReplay
 		}
@@ -407,31 +429,40 @@ func (o *Orchestrator) Release(
 		}
 		return LiveJail{}, ErrSetupFailed
 	}
+	if err := permit.Revalidate(); err != nil {
+		o.markListenerAmbiguous(releaseCtx, held.key)
+		return LiveJail{}, ErrListenerAmbiguous
+	}
 	if err := o.runtime.ReleaseRunner(
-		ctx,
+		releaseCtx,
 		held.resources.runner,
 		held.authorization,
 		jit,
 	); err != nil {
-		o.markListenerAmbiguous(ctx, held.key)
+		o.markListenerAmbiguous(releaseCtx, held.key)
+		return LiveJail{}, ErrListenerAmbiguous
+	}
+	if err := permit.Admit(); err != nil {
+		o.markListenerAmbiguous(releaseCtx, held.key)
 		return LiveJail{}, ErrListenerAmbiguous
 	}
 
-	if err := o.journal.Complete(
-		ctx,
+	finishCtx, finishCancel := setupRecoveryContext(releaseCtx)
+	defer finishCancel()
+	if err := o.journal.CompleteListenerRelease(
+		finishCtx,
 		held.key,
-		StageListenerRelease,
-		JournalResult{},
+		bindingDigest,
 	); err != nil {
-		o.markListenerAmbiguous(ctx, held.key)
+		o.markListenerAmbiguous(finishCtx, held.key)
 		return LiveJail{}, ErrListenerAmbiguous
 	}
 	if err := o.journal.Advance(
-		ctx,
+		finishCtx,
 		held.key,
 		controller.StateListenerReleased,
 	); err != nil {
-		o.markListenerAmbiguous(ctx, held.key)
+		o.markListenerAmbiguous(finishCtx, held.key)
 		return LiveJail{}, ErrListenerAmbiguous
 	}
 

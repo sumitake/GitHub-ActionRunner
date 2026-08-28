@@ -9,6 +9,12 @@
 > log, concurrency, or rebuild-cadence value. Those numeric choices and every
 > target-host action remain separate operator-signoff gates.
 
+**Phase 3 authority amendment:** This completed Phase 2 plan's Worker-permit
+names are local interface terminology only. Phase 3 satisfies that seam from
+one cached signed heartbeat lease and adds no remote per-operation permit,
+close path, or separate legacy authority protocol. Platform-design §9 and the
+failover plan are normative for future integration.
+
 **Goal:** Add a strictly typed, crash-resumable host lifecycle for installing,
 verifying, suspending, resuming, rolling back, uninstalling, and supervising a
 Portable GHAR controller while keeping acquisition disabled, preserving the

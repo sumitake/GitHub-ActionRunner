@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://portable-ghar.example.invalid/schema/health-snapshot.schema.json",
+  "title": "Portable GHAR closed health snapshot export",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "snapshot"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at",
+        "fleet_alias",
+        "acquisition_mode",
+        "policy_epoch",
+        "policy_digest",
+        "repository_policy_revision",
+        "capacity",
+        "assigned_jobs",
+        "running_jobs",
+        "oldest_live_assignment_age",
+        "unassigned_released_listeners",
+        "host_profile_id",
+        "degraded",
+        "build_id"
+      ],
+      "properties": {
+        "observed_at": { "type": "string", "format": "date-time" },
+        "fleet_alias": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "acquisition_mode": {
+          "enum": ["disabled", "canary-only", "enabled", "fatal"]
+        },
+        "policy_epoch": { "type": "integer", "minimum": 1 },
+        "policy_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "repository_policy_revision": { "type": "integer", "minimum": 1 },
+        "capacity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "configured",
+            "effective",
+            "occupied",
+            "available",
+            "queued"
+          ],
+          "properties": {
+            "configured": { "type": "integer", "minimum": 0 },
+            "effective": { "type": "integer", "minimum": 0 },
+            "occupied": { "type": "integer", "minimum": 0 },
+            "available": { "type": "integer", "minimum": 0 },
+            "queued": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "assigned_jobs": { "type": "integer", "minimum": 0 },
+        "running_jobs": { "type": "integer", "minimum": 0 },
+        "oldest_live_assignment_age": { "type": "integer", "minimum": 0 },
+        "unassigned_released_listeners": { "type": "integer", "minimum": 0 },
+        "last_terminal_at": { "type": "string", "format": "date-time" },
+        "host_profile_id": { "enum": ["strict-linux-v1", "qts-capless-root"] },
+        "degraded": { "type": "boolean" },
+        "build_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

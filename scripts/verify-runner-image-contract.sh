@@ -14,7 +14,7 @@ repository_root=$(
 cd "$repository_root"
 
 : "${GOCACHE:=/private/tmp/portable-ghar-runner-image-go-cache}"
-: "${GOTOOLCHAIN:=go1.26.5}"
+: "${GOTOOLCHAIN:=go1.26.6}"
 export GOCACHE GOTOOLCHAIN
 
 go test -race \

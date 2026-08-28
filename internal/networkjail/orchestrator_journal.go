@@ -102,7 +102,9 @@ type JournalResult struct {
 // result before the next checkpoint. A false replay is never silently rerun.
 type LifecycleJournal interface {
 	Before(context.Context, controller.AssignmentKey, SetupStage) error
+	BeforeListenerRelease(context.Context, controller.AssignmentKey, [sha256.Size]byte) error
 	Complete(context.Context, controller.AssignmentKey, SetupStage, JournalResult) error
+	CompleteListenerRelease(context.Context, controller.AssignmentKey, [sha256.Size]byte) error
 	Advance(context.Context, controller.AssignmentKey, controller.State) error
 	MarkAmbiguous(context.Context, controller.AssignmentKey) error
 }
@@ -123,7 +125,7 @@ func (j *StateLifecycleJournal) Before(
 	key controller.AssignmentKey,
 	stage SetupStage,
 ) error {
-	if stage.String() == "" {
+	if stage.String() == "" || stage == StageListenerRelease {
 		return ErrSetupInput
 	}
 	began, err := j.store.BeginEffect(
@@ -141,17 +143,47 @@ func (j *StateLifecycleJournal) Before(
 	return nil
 }
 
+func (j *StateLifecycleJournal) BeforeListenerRelease(
+	ctx context.Context,
+	key controller.AssignmentKey,
+	bindingDigest [sha256.Size]byte,
+) error {
+	began, err := j.store.BeginListenerReleaseEffect(ctx, key, bindingDigest)
+	if errors.Is(err, state.ErrIdentityConflict) || (err == nil && !began) {
+		return ErrSetupReplay
+	}
+	return err
+}
+
 func (j *StateLifecycleJournal) Complete(
 	ctx context.Context,
 	key controller.AssignmentKey,
 	stage SetupStage,
 	result JournalResult,
 ) error {
+	if stage == StageListenerRelease {
+		return ErrSetupInput
+	}
 	native, err := stateJournalResult(result)
 	if err != nil {
 		return err
 	}
 	return j.store.CompleteEffect(ctx, setupEffectKey(key, stage), native)
+}
+
+func (j *StateLifecycleJournal) CompleteListenerRelease(
+	ctx context.Context,
+	_ controller.AssignmentKey,
+	bindingDigest [sha256.Size]byte,
+) error {
+	if bindingDigest == ([sha256.Size]byte{}) {
+		return ErrSetupInput
+	}
+	return j.store.CompleteEffect(
+		ctx,
+		hex.EncodeToString(bindingDigest[:]),
+		state.EffectResult{Column: state.IdentityNone},
+	)
 }
 
 func (j *StateLifecycleJournal) Advance(

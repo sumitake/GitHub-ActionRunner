@@ -58,10 +58,19 @@ func TestGenerateJITAuthorizedBindsCurrentAcquiredReservation(t *testing.T) {
 	t.Parallel()
 
 	service, request, session, _, _ := newTask8JITFixture(t)
-	config, err := service.GenerateJITAuthorized(context.Background(), request)
+	result, err := service.GenerateJITAuthorized(context.Background(), request)
 	if err != nil {
 		t.Fatalf("GenerateJITAuthorized: %v", err)
 	}
+	if result.Permit == nil {
+		t.Fatal("GenerateJITAuthorized omitted active permit")
+	}
+	defer func() {
+		if err := result.Permit.Close(); err != nil {
+			t.Errorf("permit Close: %v", err)
+		}
+	}()
+	config := result.Config
 	if config.Runner.ID != 71 || config.Runner.Name != request.RunnerName ||
 		config.Encoded == nil {
 		t.Fatalf("config = %+v", config)
@@ -150,10 +159,13 @@ func TestGenerateJITAuthorizedRejectsEveryStaleDurableBindingBeforeCall(t *testi
 			t.Parallel()
 			service, request, session, state, broker := newTask8JITFixture(t)
 			test.mutate(&request, state, broker)
-			config, err := service.GenerateJITAuthorized(context.Background(), request)
+			result, err := service.GenerateJITAuthorized(context.Background(), request)
 			if err == nil {
-				if config.Encoded != nil {
-					config.Encoded.Destroy()
+				if result.Config.Encoded != nil {
+					result.Config.Encoded.Destroy()
+				}
+				if result.Permit != nil {
+					_ = result.Permit.Close()
 				}
 				t.Fatal("GenerateJITAuthorized succeeded")
 			}
@@ -166,6 +178,25 @@ func TestGenerateJITAuthorizedRejectsEveryStaleDurableBindingBeforeCall(t *testi
 
 func TestGenerateJITAuthorizedMarksPostBoundaryFailuresAmbiguous(t *testing.T) {
 	t.Parallel()
+
+	t.Run("pre-effect authority", func(t *testing.T) {
+		service, request, session, _, _ := newTask8JITFixture(t)
+		permit := &task8RecordingGuard{
+			name:          "jit-permit",
+			revalidateErr: errors.New("authority changed before effect"),
+		}
+		service.permits = &task8PermitProvider{guard: permit}
+		_, err := service.GenerateJITAuthorized(context.Background(), request)
+		if !errors.Is(err, ErrJITAuthorization) || errors.Is(err, ErrJITMayHaveActed) {
+			t.Fatalf("err = %v, want pre-effect authorization failure", err)
+		}
+		if len(session.Calls()) != 0 {
+			t.Fatalf("GenerateJIT calls = %d, want zero", len(session.Calls()))
+		}
+		if session.config.Encoded != nil {
+			session.config.Encoded.Destroy()
+		}
+	})
 
 	t.Run("provider error", func(t *testing.T) {
 		service, request, session, _, _ := newTask8JITFixture(t)
@@ -180,22 +211,47 @@ func TestGenerateJITAuthorizedMarksPostBoundaryFailuresAmbiguous(t *testing.T) {
 	})
 
 	t.Run("authority close", func(t *testing.T) {
-		service, request, session, _, _ := newTask8JITFixture(t)
+		service, request, _, _, _ := newTask8JITFixture(t)
 		permit := &task8RecordingGuard{err: errors.New("close failed")}
 		service.permits = &task8PermitProvider{guard: permit}
+		result, err := service.GenerateJITAuthorized(context.Background(), request)
+		if err != nil {
+			t.Fatalf("GenerateJITAuthorized: %v", err)
+		}
+		if closeErr := result.Permit.Close(); !errors.Is(closeErr, ErrAcquisitionGuardClose) {
+			t.Fatalf("permit Close = %v, want guard close failure", closeErr)
+		}
+		if result.Config.Encoded == nil {
+			t.Fatal("successful JIT result omitted secret")
+		}
+		result.Config.Encoded.Destroy()
+	})
+
+	t.Run("post-effect authority", func(t *testing.T) {
+		service, request, session, _, _ := newTask8JITFixture(t)
+		permit := &task8RecordingGuard{
+			name: "jit-permit",
+			revalidateFn: func(call int) error {
+				if call == 2 {
+					return errors.New("authority changed after effect")
+				}
+				return nil
+			},
+		}
+		service.permits = &task8PermitProvider{guard: permit}
 		_, err := service.GenerateJITAuthorized(context.Background(), request)
-		if !errors.Is(err, ErrJITMayHaveActed) ||
-			!errors.Is(err, ErrAcquisitionGuardClose) {
-			t.Fatalf("err = %v, want ambiguous close failure", err)
+		if !errors.Is(err, ErrJITMayHaveActed) {
+			t.Fatalf("err = %v, want ambiguous post-effect authority failure", err)
+		}
+		if len(session.Calls()) != 1 {
+			t.Fatalf("GenerateJIT calls = %d, want 1", len(session.Calls()))
 		}
 		if session.config.Encoded == nil ||
 			!errors.Is(
-				session.config.Encoded.Use(func(_ io.Reader) error {
-					return nil
-				}),
+				session.config.Encoded.Use(func(_ io.Reader) error { return nil }),
 				redaction.ErrSecretScopeClosed,
 			) {
-			t.Fatal("secret was not destroyed after post-call authority failure")
+			t.Fatal("secret was not destroyed after admission failure")
 		}
 	})
 }

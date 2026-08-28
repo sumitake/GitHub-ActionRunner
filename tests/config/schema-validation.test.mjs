@@ -166,3 +166,11 @@ test("notification-event: free-form notes field is rejected", () => {
   const result = validateFile(SCHEMA.notificationEvent, path);
   assert.equal(result.valid, false);
 });
+
+test("health-snapshot.example.json validates against health-snapshot.schema.json", () => {
+  const result = validateFile(
+    "config/schema/health-snapshot.schema.json",
+    "config/examples/health-snapshot.example.json",
+  );
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
