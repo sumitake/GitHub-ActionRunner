@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,12 +75,11 @@ func recordTestOffer(
 	return receipt.Key
 }
 
-var slotCounter uint32
+var slotCounter atomic.Uint32
 
 func nextCapacitySlotID(t *testing.T) uint32 {
 	t.Helper()
-	slotCounter++
-	return slotCounter
+	return slotCounter.Add(1)
 }
 
 // checkpointStep is one entry of the happy-path walk used by advanceTo.
