@@ -1014,6 +1014,12 @@ PUBLIC_HISTORY_METADATA_LINES = frozenset(
         ),
         "".join(
             (
+                "Co-authored-by: Cursor Agent <cursoragent",
+                "@cursor.com>",
+            )
+        ),
+        "".join(
+            (
                 "Co-authored-by: John Osumi <sumitake",
                 "@users.noreply.github.com>",
             )

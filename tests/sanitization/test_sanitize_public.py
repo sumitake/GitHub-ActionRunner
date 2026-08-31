@@ -565,6 +565,11 @@ class H10History(unittest.TestCase):
         self.assertTrue(any(f.rule == "HISTORY_META" and "subject" in f.path for f in findings), findings)
 
     def test_public_history_metadata_allowance_is_literal_and_closed(self):
+        cursor_trailer = "Co-authored-by: Cursor Agent <cursoragent@cursor.com>"
+        self.assertEqual(
+            [],
+            sp._scan_public_history_metadata(cursor_trailer, "<commit>#body"),
+        )
         for allowed in sp.PUBLIC_HISTORY_METADATA_LINES:
             with self.subTest(allowed=allowed):
                 self.assertEqual(
@@ -572,6 +577,7 @@ class H10History(unittest.TestCase):
                     sp._scan_public_history_metadata(allowed, "<commit>#body"),
                 )
         near_misses = (
+            "Co-authored-by: Cursor Agent <cursoragent@cursor.com> extra",
             "john Osumi <931193+sumitake@users.noreply.github.com>",
             "John Osumi <931193+sumitake@users.noreply.github.com> intruder@corp.invalid",
             "Conduct, changelog, CODEOWNERS (* @sumitake-extra),",
