@@ -33,6 +33,39 @@ func TestNewRunnerLockBindsPinsTreeAndExactListener(t *testing.T) {
 	}
 }
 
+func TestNewSourceRunnerLockBindsSourceTreeAndBuiltPayload(t *testing.T) {
+	const payloadSHA = "45f6a3449c950e6f89f29045d7b0e53e25a888206191dff8d7a887eefb8fc4e7"
+	lock, err := NewSourceRunnerLock(verifiedRunnerTree(t), "bin/Runner.Listener", payloadSHA)
+	if err != nil {
+		t.Fatalf("NewSourceRunnerLock: %v", err)
+	}
+	if lock.SchemaVersion != 2 || lock.RunnerArchiveSHA256 != "" ||
+		lock.RunnerPayloadSHA256 != payloadSHA ||
+		lock.RunnerSourceTree != "3789e2e60ae52fc9c45b78e0d7f436ee2526b6d5" ||
+		lock.RunnerReleaseEvidence != "cfd5c4acaa59579ff850aaad8d4e3f614afc6f80853e870a5271de7db516ba7b" {
+		t.Fatalf("source lock = %+v", lock)
+	}
+	encoded, err := Encode(lock)
+	if err != nil {
+		t.Fatalf("Encode source lock: %v", err)
+	}
+	if strings.Contains(string(encoded), "runner_archive_sha256") {
+		t.Fatalf("source lock retained archive authority: %s", encoded)
+	}
+	loaded, err := Load(strings.NewReader(string(encoded)))
+	if err != nil || loaded != lock {
+		t.Fatalf("source lock round trip got=%+v err=%v want=%+v", loaded, err, lock)
+	}
+}
+
+func TestNewSourceRunnerLockRejectsUnboundPayloadIdentity(t *testing.T) {
+	for _, digest := range []string{"", "bad", strings.Repeat("A", 64)} {
+		if _, err := NewSourceRunnerLock(verifiedRunnerTree(t), "bin/Runner.Listener", digest); err == nil {
+			t.Fatalf("NewSourceRunnerLock accepted digest %q", digest)
+		}
+	}
+}
+
 func TestLoadRejectsDuplicateUnknownOrPinDrift(t *testing.T) {
 	lock, err := NewRunnerLock(verifiedRunnerTree(t), "bin/Runner.Listener")
 	if err != nil {

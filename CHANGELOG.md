@@ -26,7 +26,7 @@ Nothing in this section has shipped as a tagged release.
   checklist, and structured GitHub issue forms.
 - A persisted, crash-reconciling controller with pinned scale-set
   integration, bounded admission, one-job lifecycle, fleet fencing,
-  watchdog, and force-disabled dark-observer startup.
+  watchdog, and force-disabled fail-closed startup and rollback primitives.
 - Per-job runner, adapter, broker, helper, verifier, and held-listener
   components with durable dial authority and fail-closed egress gates.
 - QTS and systemd host-lifecycle seams, conformance and chaos harnesses,
@@ -46,7 +46,12 @@ Nothing in this section has shipped as a tagged release.
 
 - Reviewed-pin `actions/setup-go` to v7.0.0 (`b7ad1dad…`) and `actions/setup-node` to v7.0.0 (`82076278…`) in workflows and `REVIEWED_ACTION_PINS`.
 - Reviewed-pin `github/codeql-action` to v4.37.9 (`cdf488f5…`) and `docker/setup-buildx-action` to v4.3.0 (`37fe6310…`) in workflows and `REVIEWED_ACTION_PINS`.
-
+- Replaced the persistent dark-observer deployment dependency with a bounded,
+  disjoint RhoNAS canary and a source-backed runner payload pinned to the exact
+  official runner tag, source commit, .NET SDK/runtime, Node externals, and
+  seven NuGet graphs. Candidate and release builds require isolated A/B byte
+  equality while retaining the existing SBOM, provenance, compatibility, and
+  HIGH/CRITICAL vulnerability gates.
 - Made operational reliability, practical simplicity, and clear boundaries
   blocking design criteria; simplified the planned external control plane to
   one signed heartbeat lease, one Cron scheduler, six routing states, and

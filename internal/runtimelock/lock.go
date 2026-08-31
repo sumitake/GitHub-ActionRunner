@@ -34,8 +34,11 @@ type Listener struct {
 type Lock struct {
 	SchemaVersion         uint32   `json:"schema_version"`
 	RunnerVersion         string   `json:"runner_version"`
-	RunnerArchiveSHA256   string   `json:"runner_archive_sha256"`
+	RunnerArchiveSHA256   string   `json:"runner_archive_sha256,omitempty"`
+	RunnerPayloadSHA256   string   `json:"runner_payload_sha256,omitempty"`
 	RunnerSourceCommit    string   `json:"runner_source_commit"`
+	RunnerSourceTree      string   `json:"runner_source_tree,omitempty"`
+	RunnerReleaseEvidence string   `json:"runner_release_evidence,omitempty"`
 	CommandSettingsSHA256 string   `json:"command_settings_sha256"`
 	RunnerBaseImage       string   `json:"runner_base_image"`
 	ManifestSHA256        string   `json:"manifest_sha256"`
@@ -45,6 +48,19 @@ type Lock struct {
 }
 
 func NewRunnerLock(verified seedarchive.VerifiedRunnerDirectory, listenerRelative string) (Lock, error) {
+	return newRunnerLock(verified, listenerRelative, "")
+}
+
+// NewSourceRunnerLock binds a product-owned deterministic payload to the same
+// verified runner-tree authority used by the historical upstream archive.
+func NewSourceRunnerLock(verified seedarchive.VerifiedRunnerDirectory, listenerRelative, payloadSHA256 string) (Lock, error) {
+	if !hex64.MatchString(payloadSHA256) {
+		return Lock{}, errors.New("runtimelock: source payload identity invalid")
+	}
+	return newRunnerLock(verified, listenerRelative, payloadSHA256)
+}
+
+func newRunnerLock(verified seedarchive.VerifiedRunnerDirectory, listenerRelative, payloadSHA256 string) (Lock, error) {
 	if listenerRelative != "bin/Runner.Listener" || verified.Generation() == 0 || !hex64.MatchString(verified.ManifestDigest()) || !hex64.MatchString(verified.TreeLockDigest()) {
 		return Lock{}, errors.New("runtimelock: verified runner authority required")
 	}
@@ -71,6 +87,13 @@ func NewRunnerLock(verified seedarchive.VerifiedRunnerDirectory, listenerRelativ
 			UID:    0,
 			GID:    0,
 		},
+	}
+	if payloadSHA256 != "" {
+		lock.SchemaVersion = 2
+		lock.RunnerArchiveSHA256 = ""
+		lock.RunnerPayloadSHA256 = payloadSHA256
+		lock.RunnerSourceTree = pins.UpstreamRunner.SourceTree
+		lock.RunnerReleaseEvidence = pins.UpstreamRunner.SourceReleaseEvidence
 	}
 	if err := validate(lock); err != nil {
 		return Lock{}, err
@@ -118,17 +141,34 @@ func Load(reader io.Reader) (Lock, error) {
 
 func validate(lock Lock) error {
 	pins := buildinfo.Pins()
-	if lock.SchemaVersion != 1 || lock.RunnerVersion != pins.UpstreamRunner.Version ||
-		lock.RunnerArchiveSHA256 != pins.UpstreamRunner.LinuxX64SHA256 ||
+	if lock.RunnerVersion != pins.UpstreamRunner.Version ||
 		lock.RunnerSourceCommit != pins.UpstreamRunner.SourceCommit ||
 		lock.CommandSettingsSHA256 != pins.UpstreamRunner.CommandSettingsSHA256 ||
 		lock.RunnerBaseImage != pins.RunnerBaseImage || lock.EvidenceGeneration == 0 ||
-		!hex40.MatchString(lock.RunnerSourceCommit) || !hex64.MatchString(lock.RunnerArchiveSHA256) ||
+		!hex40.MatchString(lock.RunnerSourceCommit) ||
 		!hex64.MatchString(lock.CommandSettingsSHA256) || !hex64.MatchString(lock.ManifestSHA256) ||
 		!hex64.MatchString(lock.TreeLockSHA256) || lock.Listener.Path != runtimeListenerPath ||
 		!hex64.MatchString(lock.Listener.SHA256) || lock.Listener.Size == 0 || lock.Listener.Mode != 0o555 ||
 		lock.Listener.UID != 0 || lock.Listener.GID != 0 {
 		return errors.New("runtimelock: lock identity invalid")
+	}
+	switch lock.SchemaVersion {
+	case 1:
+		if lock.RunnerArchiveSHA256 != pins.UpstreamRunner.LinuxX64SHA256 ||
+			!hex64.MatchString(lock.RunnerArchiveSHA256) || lock.RunnerPayloadSHA256 != "" ||
+			lock.RunnerSourceTree != "" || lock.RunnerReleaseEvidence != "" {
+			return errors.New("runtimelock: archive identity invalid")
+		}
+	case 2:
+		if lock.RunnerArchiveSHA256 != "" || !hex64.MatchString(lock.RunnerPayloadSHA256) ||
+			lock.RunnerSourceTree != pins.UpstreamRunner.SourceTree ||
+			!hex40.MatchString(lock.RunnerSourceTree) ||
+			lock.RunnerReleaseEvidence != pins.UpstreamRunner.SourceReleaseEvidence ||
+			!hex64.MatchString(lock.RunnerReleaseEvidence) {
+			return errors.New("runtimelock: source identity invalid")
+		}
+	default:
+		return errors.New("runtimelock: lock schema invalid")
 	}
 	return nil
 }

@@ -31,7 +31,6 @@ import io
 import json
 import os
 import pathlib
-import struct
 import sys
 import tarfile
 
@@ -60,22 +59,18 @@ def put(path, raw, mode=0o444):
     path.chmod(mode)
 
 
-def framed_evidence(value):
-    h = hashlib.sha256()
-    fields = (
-        value["version"],
-        value["tag_ref_sha"],
-        value["source_commit_sha"],
-        value["linux_x64_asset_name"],
-        value["linux_x64_asset_size"],
-        value["linux_x64_asset_digest"],
-        value["published_at"],
+def runner_evidence(value):
+    admitted = {
+        key: item for key, item in value.items() if key != "observation_evidence"
+    }
+    return digest(
+        canonical(
+            {
+                "protocol": "portable-ghar-runner-source-release-v2",
+                "runner_release": admitted,
+            }
+        )
     )
-    for item in ("portable-ghar-runner-release-observation-v1", *fields):
-        raw = str(item).encode()
-        h.update(struct.pack(">Q", len(raw)))
-        h.update(raw)
-    return h.hexdigest()
 
 
 def make_oci(path):
@@ -168,18 +163,91 @@ put(
     root / "notices/THIRD-PARTY-NOTICES.txt",
     b"Portable-GHAR Third-Party Notices\n",
 )
+nuget_files = [
+    {"path": path, "sha256": str(index) * 64}
+    for index, path in enumerate(
+        (
+            "Runner.Common/packages.lock.json",
+            "Runner.Listener/packages.lock.json",
+            "Runner.PluginHost/packages.lock.json",
+            "Runner.Plugins/packages.lock.json",
+            "Runner.Sdk/packages.lock.json",
+            "Runner.Worker/packages.lock.json",
+            "Sdk/packages.lock.json",
+        ),
+        start=1,
+    )
+]
 runner = {
+    "build": {
+        "dotnet_sdk": {
+            "asset_name": "dotnet-sdk-8.0.424-linux-x64.tar.gz",
+            "rid": "linux-x64",
+            "runtime_version": "8.0.30",
+            "sha512": "a" * 128,
+            "source_url": (
+                "https://builds.dotnet.microsoft.com/dotnet/Sdk/8.0.424/"
+                "dotnet-sdk-8.0.424-linux-x64.tar.gz"
+            ),
+            "version": "8.0.424",
+        },
+        "expected_listener_version": "2.336.0",
+        "externals": [
+            {
+                "asset_name": "node-v20.20.2-linux-x64.tar.gz",
+                "layout": "node20",
+                "sha256": "8" * 64,
+                "source_url": (
+                    "https://nodejs.org/dist/v20.20.2/"
+                    "node-v20.20.2-linux-x64.tar.gz"
+                ),
+                "version": "20.20.2",
+            },
+            {
+                "asset_name": "node-v20.20.2-alpine-x64.tar.gz",
+                "layout": "node20_alpine",
+                "sha256": "9" * 64,
+                "source_url": (
+                    "https://github.com/actions/alpine_nodejs/releases/download/"
+                    "v20.20.2/node-v20.20.2-alpine-x64.tar.gz"
+                ),
+                "version": "20.20.2",
+            },
+            {
+                "asset_name": "node-v24.18.0-linux-x64.tar.gz",
+                "layout": "node24",
+                "sha256": "b" * 64,
+                "source_url": (
+                    "https://nodejs.org/dist/v24.18.0/"
+                    "node-v24.18.0-linux-x64.tar.gz"
+                ),
+                "version": "24.18.0",
+            },
+            {
+                "asset_name": "node-v24.18.0-alpine-x64.tar.gz",
+                "layout": "node24_alpine",
+                "sha256": "c" * 64,
+                "source_url": (
+                    "https://github.com/actions/alpine_nodejs/releases/download/"
+                    "v24.18.0/node-v24.18.0-alpine-x64.tar.gz"
+                ),
+                "version": "24.18.0",
+            },
+        ],
+        "nuget_locks": {
+            "aggregate_sha256": digest(canonical({"files": nuget_files})),
+            "files": nuget_files,
+        },
+    },
     "command_settings_sha256": "4" * 64,
-    "linux_x64_asset_digest": "sha256:" + "3" * 64,
-    "linux_x64_asset_name": "actions-runner-linux-x64-2.336.0.tar.gz",
-    "linux_x64_asset_size": 1,
     "published_at": "2026-07-20T17:45:55Z",
-    "schema_version": 1,
+    "schema_version": 2,
     "source_commit_sha": "2" * 40,
+    "source_tree_sha": "3" * 40,
     "tag_ref_sha": "1" * 40,
     "version": "v2.336.0",
 }
-runner["observation_evidence"] = framed_evidence(runner)
+runner["observation_evidence"] = runner_evidence(runner)
 put(root / "runner-release.json", canonical(runner))
 
 subjects = []
@@ -316,15 +384,17 @@ exec(compile(tree, str(script), "exec"), namespace)
 
 old = {
     "version_bare": "2.336.0",
-    "linux_x64_sha256": "1" * 64,
     "source_commit": "2" * 40,
-    "command_settings_sha256": "3" * 64,
+    "source_tree": "3" * 40,
+    "runner_release_evidence": "4" * 64,
+    "command_settings_sha256": "5" * 64,
 }
 new = {
     "version_bare": "2.338.0",
-    "linux_x64_sha256": "4" * 64,
-    "source_commit": "5" * 40,
-    "command_settings_sha256": "6" * 64,
+    "source_commit": "6" * 40,
+    "source_tree": "7" * 40,
+    "runner_release_evidence": "8" * 64,
+    "command_settings_sha256": "9" * 64,
 }
 
 
@@ -360,7 +430,13 @@ def inventory_digest(path):
 (root / "release").mkdir()
 (root / "scripts").mkdir()
 (root / "internal/pins.go").write_text(
-    f'const runnerVersion = "{old["version_bare"]}"\n',
+    (
+        f'const runnerVersion = "{old["version_bare"]}"\n'
+        f'const runnerCommit = "{old["source_commit"]}"\n'
+        f'const runnerTree = "{old["source_tree"]}"\n'
+        f'const runnerEvidence = "{old["runner_release_evidence"]}"\n'
+        f'const commandSettings = "{old["command_settings_sha256"]}"\n'
+    ),
     encoding="ascii",
 )
 (root / "release/manifest.json").write_text(
@@ -403,17 +479,25 @@ subprocess.run(
 runtime = {
     "runner_release": {
         "version": f'v{old["version_bare"]}',
-        "linux_x64_asset_digest": f'sha256:{old["linux_x64_sha256"]}',
         "source_commit_sha": old["source_commit"],
+        "source_tree_sha": old["source_tree"],
+        "observation_evidence": old["runner_release_evidence"],
         "command_settings_sha256": old["command_settings_sha256"],
     },
     "candidate_substitutions": [
         {
             "path": "internal/pins.go",
-            "token": "version_bare",
+            "token": token,
             "count": 1,
             "replace": True,
         }
+        for token in (
+            "version_bare",
+            "source_commit",
+            "source_tree",
+            "runner_release_evidence",
+            "command_settings_sha256",
+        )
     ],
     "candidate_protected_files": [
         {
@@ -424,8 +508,9 @@ runtime = {
 }
 candidate = {
     "version": "v3.0.0" if case_name == "major-upgrade" else f'v{new["version_bare"]}',
-    "linux_x64_asset_digest": f'sha256:{new["linux_x64_sha256"]}',
     "source_commit_sha": new["source_commit"],
+    "source_tree_sha": new["source_tree"],
+    "observation_evidence": new["runner_release_evidence"],
     "command_settings_sha256": new["command_settings_sha256"],
 }
 
@@ -480,6 +565,45 @@ for stage, value in zip(stage_type, expected_values, strict=True):
 assert namespace["unavailable_message"]("private diagnostic") == (
     "rehearse-runtime: unavailable stage=source"
 )
+PY
+  [ "$status" -eq 0 ]
+}
+
+@test "candidate and product rehearsals admit only the exact checked-in runner" {
+  run python3 -B - "$REHEARSE" <<'PY'
+import ast
+import pathlib
+import sys
+
+script = pathlib.Path(sys.argv[1])
+source = script.read_text(encoding="utf-8")
+payload = source.split("<<'PY'\n", 1)[1].rsplit("\nPY\n", 1)[0]
+tree = ast.parse(payload, filename=str(script))
+assert isinstance(tree.body[-1], ast.Try)
+tree.body = tree.body[:-1]
+namespace = {}
+exec(compile(tree, str(script), "exec"), namespace)
+
+baseline = {"version": "v2.336.0", "identity": "exact"}
+for release_kind in ("candidate", "product"):
+    namespace["validate_runner_identity"](
+        release_kind, dict(baseline), baseline
+    )
+    for changed in (
+        {"version": "v2.337.0", "identity": "newer"},
+        {"version": "v2.336.0", "identity": "drift"},
+        {"version": "v2.335.0", "identity": "older"},
+    ):
+        try:
+            namespace["validate_runner_identity"](
+                release_kind, changed, baseline
+            )
+        except namespace["RehearsalError"]:
+            pass
+        else:
+            raise AssertionError(
+                f"{release_kind} admitted a non-baseline runner: {changed}"
+            )
 PY
   [ "$status" -eq 0 ]
 }
@@ -547,10 +671,23 @@ PY
     all(.runtime.candidate_substitutions[];
       (keys == ["count", "path", "replace", "token"]) and
       (.path | type == "string" and length > 0) and
-      (.token | IN("version_bare", "linux_x64_sha256", "source_commit", "command_settings_sha256")) and
+      (.token | IN(
+        "version_bare",
+        "source_commit",
+        "source_tree",
+        "runner_release_evidence",
+        "command_settings_sha256"
+      )) and
       (.count | type == "number" and . > 0 and floor == .) and
       (.replace | type == "boolean")
     ) and
+    ([.runtime.candidate_substitutions[].token] | unique) == [
+      "command_settings_sha256",
+      "runner_release_evidence",
+      "source_commit",
+      "source_tree",
+      "version_bare"
+    ] and
     (.runtime.candidate_protected_files | length) > 0 and
     all(.runtime.candidate_protected_files[];
       (keys == ["identity_inventory_sha256", "path"]) and
@@ -558,17 +695,58 @@ PY
       (.identity_inventory_sha256 | test("^[0-9a-f]{64}$"))
     ) and
     (.runtime.runner_release | keys) == [
+      "build",
       "command_settings_sha256",
-      "linux_x64_asset_digest",
-      "linux_x64_asset_name",
-      "linux_x64_asset_size",
       "observation_evidence",
       "published_at",
       "schema_version",
       "source_commit_sha",
+      "source_tree_sha",
       "tag_ref_sha",
       "version"
-    ]
+    ] and
+    .runtime.runner_release.schema_version == 2 and
+    (.runtime.runner_release.build | keys) == [
+      "dotnet_sdk",
+      "expected_listener_version",
+      "externals",
+      "nuget_locks"
+    ] and
+    (.runtime.runner_release.build.dotnet_sdk | keys) == [
+      "asset_name",
+      "rid",
+      "runtime_version",
+      "sha512",
+      "source_url",
+      "version"
+    ] and
+    .runtime.runner_release.build.expected_listener_version ==
+      (.runtime.runner_release.version | ltrimstr("v")) and
+    [.runtime.runner_release.build.externals[].layout] == [
+      "node20",
+      "node20_alpine",
+      "node24",
+      "node24_alpine"
+    ] and
+    all(.runtime.runner_release.build.externals[];
+      keys == ["asset_name", "layout", "sha256", "source_url", "version"]
+    ) and
+    (.runtime.runner_release.build.nuget_locks | keys) == [
+      "aggregate_sha256",
+      "files"
+    ] and
+    [.runtime.runner_release.build.nuget_locks.files[].path] == [
+      "Runner.Common/packages.lock.json",
+      "Runner.Listener/packages.lock.json",
+      "Runner.PluginHost/packages.lock.json",
+      "Runner.Plugins/packages.lock.json",
+      "Runner.Sdk/packages.lock.json",
+      "Runner.Worker/packages.lock.json",
+      "Sdk/packages.lock.json"
+    ] and
+    all(.runtime.runner_release.build.nuget_locks.files[];
+      keys == ["path", "sha256"]
+    )
   ' "$MANIFEST"
   [ "$status" -eq 0 ]
 }
@@ -742,8 +920,9 @@ runtime = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))["run
 baseline = runtime["runner_release"]
 old = {
     "version_bare": baseline["version"][1:],
-    "linux_x64_sha256": baseline["linux_x64_asset_digest"].removeprefix("sha256:"),
     "source_commit": baseline["source_commit_sha"],
+    "source_tree": baseline["source_tree_sha"],
+    "runner_release_evidence": baseline["observation_evidence"],
     "command_settings_sha256": baseline["command_settings_sha256"],
 }
 matcher = re.compile(
@@ -795,17 +974,39 @@ PY
   [ "$status" -eq 0 ]
 }
 
-@test "runner bytes are verified before overlay and authority commits atomically" {
+@test "rehearsal source-builds the runner before image preparation and commits authority atomically" {
   run python3 -B - "$REHEARSE" <<'PY'
 import pathlib
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 main = text[text.index("def main():") :]
-assert main.index("curl_download(") < main.index("apply_candidate_overlay(")
-assert main.index('runner_archive.stat().st_size') < main.index(
-    "apply_candidate_overlay("
-)
+overlay = main.index("apply_candidate_overlay(")
+source_build = main.index('"scripts/release/build-runner-from-source.py"')
+build_stage = main.index("set_stage(RehearsalStage.BUILD)")
+prepare_runner = main.index('"scripts/prepare-task5-images.sh"')
+runner_runtime = main.index('"--runner-runtime"', prepare_runner)
+runner_manifest = main.index('"--runner-manifest"', prepare_runner)
+assert overlay < source_build < build_stage < prepare_runner < runner_runtime
+source_build_call = main[source_build:build_stage]
+assert '"--runner-manifest"' in source_build_call
+assert "os.fspath(runner_path)" in source_build_call
+assert '"--output"' in source_build_call
+assert "os.fspath(runner_runtime)" in source_build_call
+assert '"--work-root"' in source_build_call
+prepare_call = main[prepare_runner:main.index('set_stage(RehearsalStage.SECURITY)', prepare_runner)]
+assert runner_runtime < runner_manifest
+assert "os.fspath(runner_path)" in prepare_call
+assert "run_source_builder(" in main[source_build - 100:build_stage]
+assert "build-runner-from-source: unavailable reason=" in text
+for forbidden in (
+    "actions-runner-linux-x64-",
+    "linux_x64_asset_",
+    "runner_archive",
+    '"--runner-archive"',
+    '"scripts/fetch-runner.sh"',
+):
+    assert forbidden not in main
 assert main.index("write_authority_files(") < main.index(
     "comparator = clone"
 )
@@ -951,7 +1152,7 @@ PY
 }
 
 @test "rehearsal rejects malformed candidate identity before Docker" {
-  printf '{"schema_version":1,"version":"v2.336.0"}\n' >"$WORK/runner.json"
+  printf '{"schema_version":2,"version":"v2.336.0"}\n' >"$WORK/runner.json"
   run "$REHEARSE" \
     --release-kind candidate \
     --version 0.1.0 \

@@ -1,9 +1,6 @@
 name: Runner Release Candidate
 on:
   workflow_dispatch:
-  repository_dispatch:
-    types:
-      - observe-runner-release
 permissions: {}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,28 +15,27 @@ jobs:
       group: ${{ github.workflow }}-runner-candidate-admission-${{ github.ref }}-${{ github.run_id }}
       cancel-in-progress: true
     outputs:
-      candidate: ${{ steps.observe.outputs.candidate }}
-      runner_version: ${{ steps.observe.outputs.runner_version }}
-      evidence: ${{ steps.observe.outputs.evidence }}
-      artifact_version: ${{ steps.observe.outputs.artifact_version }}
-      source_commit: ${{ steps.observe.outputs.source_commit }}
-      source_tree: ${{ steps.observe.outputs.source_tree }}
+      candidate: ${{ steps.candidate.outputs.candidate }}
+      runner_version: ${{ steps.candidate.outputs.runner_version }}
+      evidence: ${{ steps.candidate.outputs.evidence }}
+      artifact_version: ${{ steps.candidate.outputs.artifact_version }}
+      source_commit: ${{ steps.candidate.outputs.source_commit }}
+      source_tree: ${{ steps.candidate.outputs.source_tree }}
     steps:
-      - name: Validate trusted dispatch
+      - name: Validate trusted manual dispatch
         env:
           PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR: ${{ vars.PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR }}
-          PORTABLE_GHAR_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: 'set -euo pipefail; test -n "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; test "$GITHUB_ACTOR" = "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; test -n "$PORTABLE_GHAR_DEFAULT_BRANCH"; test "$GITHUB_REF" = "refs/heads/$PORTABLE_GHAR_DEFAULT_BRANCH"; python3 -B -c ''import json,os,pathlib,stat; fail=lambda:(_ for _ in ()).throw(ValueError("event")); path=pathlib.Path(os.environ["GITHUB_EVENT_PATH"]); info=path.lstat(); raw=path.read_bytes(); (stat.S_ISREG(info.st_mode) and not path.is_symlink() and info.st_nlink == 1 and 0 < len(raw) <= 1048576) or fail(); hook=lambda pairs:dict(pairs) if len(pairs) == len({key for key,_value in pairs}) else fail(); event=json.loads(raw.decode("utf-8","strict"),object_pairs_hook=hook,parse_constant=lambda _value:fail()); type(event) is dict or fail(); name=os.environ["GITHUB_EVENT_NAME"]; repository_dispatch=name == "repository_dispatch" and event.get("action") == "observe-runner-release" and type(event.get("client_payload")) is dict and len(event["client_payload"]) == 0; workflow_dispatch=name == "workflow_dispatch" and "action" not in event and "client_payload" not in event and ("inputs" not in event or event["inputs"] is None or type(event["inputs"]) is dict and len(event["inputs"]) == 0); (repository_dispatch or workflow_dispatch) or fail()'''
-      - name: Checkout exact default-branch source
+        run: 'set -euo pipefail; test -n "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; test "$GITHUB_ACTOR" = "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; case "$GITHUB_REF" in refs/heads/*) ;; *) exit 1 ;; esac; python3 -B -c ''import json,os,pathlib,stat; fail=lambda:(_ for _ in ()).throw(ValueError("event")); path=pathlib.Path(os.environ["GITHUB_EVENT_PATH"]); info=path.lstat(); raw=path.read_bytes(); (stat.S_ISREG(info.st_mode) and not path.is_symlink() and info.st_nlink == 1 and 0 < len(raw) <= 1048576) or fail(); hook=lambda pairs:dict(pairs) if len(pairs) == len({key for key,_value in pairs}) else fail(); event=json.loads(raw.decode("utf-8","strict"),object_pairs_hook=hook,parse_constant=lambda _value:fail()); type(event) is dict or fail(); os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch" or fail(); "action" not in event and "client_payload" not in event or fail(); ("inputs" not in event or event["inputs"] is None or type(event["inputs"]) is dict and len(event["inputs"]) == 0) or fail()'''
+      - name: Checkout exact dispatched source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
-      - name: Observe exact official runner release
-        id: observe
-        run: 'set -euo pipefail; source_commit="$(git rev-parse HEAD)"; source_tree="$(git rev-parse "HEAD^{tree}")"; test "$source_commit" = "$GITHUB_SHA"; mkdir -m 700 "$RUNNER_TEMP/runner-candidate"; set +e; scripts/release/observe-runner-release.sh --current-manifest release/manifest.json --output "$RUNNER_TEMP/runner-candidate/runner-release.json"; observer_rc=$?; set -e; if [ "$observer_rc" -eq 3 ]; then printf "candidate=false\nsource_commit=%s\nsource_tree=%s\n" "$source_commit" "$source_tree" >>"$GITHUB_OUTPUT"; exit 0; fi; test "$observer_rc" -eq 0; test -f "$RUNNER_TEMP/runner-candidate/runner-release.json"; runner_version="$(jq -er ''.version'' "$RUNNER_TEMP/runner-candidate/runner-release.json")"; evidence="$(jq -er ''.observation_evidence'' "$RUNNER_TEMP/runner-candidate/runner-release.json")"; [[ "$runner_version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; [[ "$evidence" =~ ^[0-9a-f]{64}$ ]]; artifact_version="${runner_version#v}-runner.${evidence}"; printf "candidate=true\nrunner_version=%s\nevidence=%s\nartifact_version=%s\nsource_commit=%s\nsource_tree=%s\n" "$runner_version" "$evidence" "$artifact_version" "$source_commit" "$source_tree" >>"$GITHUB_OUTPUT"'
+      - name: Freeze exact reviewed source runner candidate
+        id: candidate
+        run: 'set -euo pipefail; source_commit="$(git rev-parse HEAD)"; source_tree="$(git rev-parse "HEAD^{tree}")"; test "$source_commit" = "$GITHUB_SHA"; mkdir -m 700 "$RUNNER_TEMP/runner-candidate"; jq -cS ''.runtime.runner_release'' release/manifest.json >"$RUNNER_TEMP/runner-candidate/runner-release.json"; test "$(wc -l <"$RUNNER_TEMP/runner-candidate/runner-release.json")" -eq 1; jq -e ''.schema_version == 2'' "$RUNNER_TEMP/runner-candidate/runner-release.json" >/dev/null; runner_version="$(jq -er ''.version'' "$RUNNER_TEMP/runner-candidate/runner-release.json")"; evidence="$(jq -er ''.observation_evidence'' "$RUNNER_TEMP/runner-candidate/runner-release.json")"; [[ "$runner_version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; [[ "$evidence" =~ ^[0-9a-f]{64}$ ]]; artifact_version="${runner_version#v}-runner.${evidence}"; printf "candidate=true\nrunner_version=%s\nevidence=%s\nartifact_version=%s\nsource_commit=%s\nsource_tree=%s\n" "$runner_version" "$evidence" "$artifact_version" "$source_commit" "$source_tree" >>"$GITHUB_OUTPUT"'
       - name: Upload exact candidate manifest
-        if: steps.observe.outputs.candidate == 'true'
+        if: steps.candidate.outputs.candidate == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runner-candidate-manifest
@@ -82,6 +78,13 @@ jobs:
           go-version-file: go.mod
       - name: Install Bats
         uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+        with:
+          bats-version: "1.11.0"
+          github-token: ${{ github.token }}
+          support-install: "false"
+          assert-install: "false"
+          detik-install: "false"
+          file-install: "false"
       - name: Download exact candidate manifest
         env:
           GH_TOKEN: ${{ github.token }}
@@ -132,6 +135,13 @@ jobs:
           go-version-file: go.mod
       - name: Install Bats
         uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+        with:
+          bats-version: "1.11.0"
+          github-token: ${{ github.token }}
+          support-install: "false"
+          assert-install: "false"
+          detik-install: "false"
+          file-install: "false"
       - name: Download exact candidate manifest
         env:
           GH_TOKEN: ${{ github.token }}

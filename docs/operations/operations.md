@@ -32,11 +32,12 @@ The watchdog may **never**:
 - run as a Docker container on a host whose Docker daemon it is expected
   to recover.
 
-When a prior (legacy) fleet owns the host-local fence, the watchdog may
-restart Portable GHAR only as a force-disabled, zero-capacity observer;
-any nonzero poll, acquisition, or JIT generation still requires a current,
-correctly-fenced guard, regardless of what the watchdog itself observes
-locally.
+When a prior (legacy) fleet owns the host-local fence, any lifecycle recovery
+that uses the watchdog may restart Portable GHAR only in its force-disabled,
+zero-authority state; nonzero poll, acquisition, or JIT generation still
+requires a current, correctly fenced guard. The bounded RhoNAS live canary
+does not install a watchdog or cron and does not turn this rollback primitive
+into a persistent observer.
 
 ## Incident evidence
 

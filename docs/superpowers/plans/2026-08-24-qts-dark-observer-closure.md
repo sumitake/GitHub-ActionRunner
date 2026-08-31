@@ -1,5 +1,12 @@
 # QTS Dark-Observer Closure Implementation Plan
 
+**Status:** superseded on 2026-08-25. This plan and its recorded OCI probe
+remain historical evidence; its persistent observer outcome and Tasks 1-10
+are not active roadmap phases or completion gates. Continue from
+[QTS Live Source-Built Runner Implementation Plan](2026-08-25-qts-live-source-runner.md).
+Transient force-disabled and zero-authority code remains available only as a
+fail-closed startup/rollback primitive.
+
 > **Execution contract:** begin with the empirical OCI identity probe. If QTS Docker cannot produce the immutable `RepoDigests` required by the existing verifier from a release-format archive, stop the QTS implementation/deployment leg without weakening identity admission or adding a registry. The Worker leg remains independent.
 
 **Goal:** mechanically assemble and install a force-disabled, zero-capacity Portable observer beside the active legacy QTS fleet while preserving the exact legacy fence generation, holders, launchers, watchdog, and rollback material.

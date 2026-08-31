@@ -150,13 +150,7 @@ func TestFenceWorkloadSubprocess(t *testing.T) {
 		}
 		defer grandchild.Wait()
 	}
-	if err := os.WriteFile(
-		os.Getenv(fenceHelperMarkerEnv),
-		[]byte(strconv.Itoa(os.Getpid())),
-		0o600,
-	); err != nil {
-		t.Fatalf("write marker: %v", err)
-	}
+	writeFenceHelperPID(t, os.Getenv(fenceHelperMarkerEnv))
 	time.Sleep(duration)
 }
 
@@ -172,14 +166,26 @@ func TestFenceGrandchildSubprocess(t *testing.T) {
 	if err != nil || duration <= 0 {
 		t.Fatalf("duration invalid: %v", err)
 	}
+	writeFenceHelperPID(t, os.Getenv(fenceHelperMarkerEnv))
+	time.Sleep(duration)
+}
+
+func writeFenceHelperPID(t *testing.T, marker string) {
+	t.Helper()
+	if marker == "" {
+		t.Fatal("PID marker path empty")
+	}
+	temporary := marker + ".tmp"
 	if err := os.WriteFile(
-		os.Getenv(fenceHelperMarkerEnv),
+		temporary,
 		[]byte(strconv.Itoa(os.Getpid())),
 		0o600,
 	); err != nil {
-		t.Fatalf("write grandchild marker: %v", err)
+		t.Fatalf("write PID marker temporary: %v", err)
 	}
-	time.Sleep(duration)
+	if err := os.Rename(temporary, marker); err != nil {
+		t.Fatalf("publish PID marker: %v", err)
+	}
 }
 
 func bootstrapPortableFence(

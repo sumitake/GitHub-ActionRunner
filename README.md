@@ -130,11 +130,12 @@ including the egress barrier and the shared-kernel boundary, is in
 
 Once deployed, each job assignment moves through a persisted state
 machine so a controller restart can reconcile in-flight work without
-duplicating it, and a new install always starts as a force-disabled,
-zero-capacity dark-deployment observer under an existing fleet's fence
-before it is ever handed live acquisition. Upgrades pass through
-host-profile conformance probes before acquisition resumes. Full detail
-is in
+duplicating it. A new install starts force-disabled and at zero capacity under
+the existing fleet's fence; that is a transient fail-closed staging and
+rollback state, not a resident observer. Live acquisition starts only after
+exact identity, host-conformance, and bounded canary gates pass. Upgrades pass
+through the same host-profile conformance probes before acquisition resumes.
+Full detail is in
 [docs/operations/production-lifecycle.md](docs/operations/production-lifecycle.md).
 
 ## Deployment and rollback gates

@@ -2,7 +2,16 @@
 
 **Date:** 2026-08-24
 
-**Status:** Approved architecture, implementation pending
+**Status:** Historical closure design; QTS observer outcome superseded
+
+> **2026-08-25 amendment:** the persistent QTS dark-observer outcome, its
+> watchdog/cron soak, and the upstream prebuilt-runner-archive release
+> dependency are no longer active gates. The address-only Worker leg is
+> complete and must not be replayed. The active QTS/release design is
+> [QTS Live Source-Built Runner Deployment Amendment](2026-08-25-qts-live-source-runner-amendment.md).
+> Sections 5-7 below are retained as historical rationale and as documentation
+> of transient fail-closed/rollback primitives; they do not authorize or
+> require a persistent observer deployment.
 
 **Qualified source baseline:** `f41abb21274b6f9fe709d8f32edd21123d037faa`
 **Scope:** close only the production seams required for an address-only Worker deployment and a QTS zero-capacity observer deployment. Preserve the existing authority, lifecycle, receipt, fence, and rollback machinery.

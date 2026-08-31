@@ -86,17 +86,43 @@ RUNNER_VERSION = re.compile(
 )
 SAFE_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 RUNNER_KEYS = {
+    "build",
+    "command_settings_sha256",
+    "observation_evidence",
+    "published_at",
     "schema_version",
     "version",
     "tag_ref_sha",
     "source_commit_sha",
-    "linux_x64_asset_name",
-    "linux_x64_asset_size",
-    "linux_x64_asset_digest",
-    "published_at",
-    "command_settings_sha256",
-    "observation_evidence",
+    "source_tree_sha",
 }
+RUNNER_BUILD_KEYS = {
+    "dotnet_sdk",
+    "expected_listener_version",
+    "externals",
+    "nuget_locks",
+}
+DOTNET_SDK_KEYS = {
+    "asset_name",
+    "rid",
+    "runtime_version",
+    "sha512",
+    "source_url",
+    "version",
+}
+NUGET_LOCK_KEYS = {"aggregate_sha256", "files"}
+NUGET_LOCK_FILE_KEYS = {"path", "sha256"}
+EXTERNAL_KEYS = {"asset_name", "layout", "sha256", "source_url", "version"}
+NUGET_LOCK_PATHS = (
+    "Runner.Common/packages.lock.json",
+    "Runner.Listener/packages.lock.json",
+    "Runner.PluginHost/packages.lock.json",
+    "Runner.Plugins/packages.lock.json",
+    "Runner.Sdk/packages.lock.json",
+    "Runner.Worker/packages.lock.json",
+    "Sdk/packages.lock.json",
+)
+EXTERNAL_LAYOUTS = ("node20", "node20_alpine", "node24", "node24_alpine")
 RUNTIME_MANIFEST_KEYS = {
     "schema_version",
     "platform",
@@ -111,8 +137,9 @@ RUNTIME_MANIFEST_KEYS = {
 }
 TOKEN_NAMES = {
     "version_bare",
-    "linux_x64_sha256",
     "source_commit",
+    "source_tree",
+    "runner_release_evidence",
     "command_settings_sha256",
 }
 MAX_JSON = 32 * 1024 * 1024
@@ -252,46 +279,110 @@ def version_tuple(value):
 
 
 def evidence_digest(value):
-    digest = hashlib.sha256()
-    fields = (
-        value["version"],
-        value["tag_ref_sha"],
-        value["source_commit_sha"],
-        value["linux_x64_asset_name"],
-        value["linux_x64_asset_size"],
-        value["linux_x64_asset_digest"],
-        value["published_at"],
+    admitted = {
+        key: item for key, item in value.items() if key != "observation_evidence"
+    }
+    return sha256_bytes(
+        canonical_json(
+            {
+                "protocol": "portable-ghar-runner-source-release-v2",
+                "runner_release": admitted,
+            }
+        )
     )
-    for item in ("portable-ghar-runner-release-observation-v1", *fields):
-        raw = str(item).encode("utf-8")
-        digest.update(struct.pack(">Q", len(raw)))
-        digest.update(raw)
-    return digest.hexdigest()
+
+
+def validate_dotnet_sdk(value):
+    if not isinstance(value, dict) or set(value) != DOTNET_SDK_KEYS:
+        reject("runner dotnet schema")
+    version = value["version"]
+    runtime = value["runtime_version"]
+    if (
+        not isinstance(version, str)
+        or re.fullmatch(r"[1-9][0-9]*\.[0-9]+\.[0-9]+", version) is None
+        or not isinstance(runtime, str)
+        or re.fullmatch(r"[1-9][0-9]*\.[0-9]+\.[0-9]+", runtime) is None
+        or value["rid"] != "linux-x64"
+    ):
+        reject("runner dotnet version")
+    expected_name = f"dotnet-sdk-{version}-linux-x64.tar.gz"
+    expected_url = f"https://builds.dotnet.microsoft.com/dotnet/Sdk/{version}/{expected_name}"
+    if value["asset_name"] != expected_name or value["source_url"] != expected_url:
+        reject("runner dotnet asset")
+    if not isinstance(value["sha512"], str) or re.fullmatch(
+        r"[0-9a-f]{128}", value["sha512"]
+    ) is None:
+        reject("runner dotnet digest")
+
+
+def validate_nuget_locks(value):
+    if not isinstance(value, dict) or set(value) != NUGET_LOCK_KEYS:
+        reject("runner nuget schema")
+    files = value["files"]
+    if not isinstance(files, list) or len(files) != len(NUGET_LOCK_PATHS):
+        reject("runner nuget files")
+    paths = []
+    for item in files:
+        if (
+            not isinstance(item, dict)
+            or set(item) != NUGET_LOCK_FILE_KEYS
+            or not isinstance(item["path"], str)
+            or not isinstance(item["sha256"], str)
+            or HEX64.fullmatch(item["sha256"]) is None
+        ):
+            reject("runner nuget file")
+        paths.append(item["path"])
+    if tuple(paths) != NUGET_LOCK_PATHS:
+        reject("runner nuget paths")
+    expected = sha256_bytes(canonical_json({"files": files}))
+    if value["aggregate_sha256"] != expected:
+        reject("runner nuget aggregate")
+
+
+def validate_externals(value):
+    if not isinstance(value, list) or len(value) != len(EXTERNAL_LAYOUTS):
+        reject("runner externals schema")
+    layouts = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != EXTERNAL_KEYS:
+            reject("runner external schema")
+        layout = item["layout"]
+        version = item["version"]
+        if (
+            layout not in EXTERNAL_LAYOUTS
+            or not isinstance(version, str)
+            or re.fullmatch(r"[1-9][0-9]*\.[0-9]+\.[0-9]+", version) is None
+            or not isinstance(item["sha256"], str)
+            or HEX64.fullmatch(item["sha256"]) is None
+        ):
+            reject("runner external identity")
+        alpine = layout.endswith("_alpine")
+        expected_name = (
+            f"node-v{version}-alpine-x64.tar.gz"
+            if alpine
+            else f"node-v{version}-linux-x64.tar.gz"
+        )
+        expected_url = (
+            f"https://github.com/actions/alpine_nodejs/releases/download/v{version}/{expected_name}"
+            if alpine
+            else f"https://nodejs.org/dist/v{version}/{expected_name}"
+        )
+        if item["asset_name"] != expected_name or item["source_url"] != expected_url:
+            reject("runner external asset")
+        layouts.append(layout)
+    if tuple(layouts) != EXTERNAL_LAYOUTS:
+        reject("runner external ordering")
 
 
 def validate_runner(value):
     if not isinstance(value, dict) or set(value) != RUNNER_KEYS:
         reject("runner manifest schema")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 2:
         reject("runner manifest schema")
     version_tuple(value["version"])
-    for key in ("tag_ref_sha", "source_commit_sha"):
+    for key in ("tag_ref_sha", "source_commit_sha", "source_tree_sha"):
         if not isinstance(value[key], str) or HEX40.fullmatch(value[key]) is None:
             reject("runner commit")
-    expected_name = f"actions-runner-linux-x64-{value['version'][1:]}.tar.gz"
-    if value["linux_x64_asset_name"] != expected_name:
-        reject("runner asset")
-    if (
-        type(value["linux_x64_asset_size"]) is not int
-        or value["linux_x64_asset_size"] < 1
-        or value["linux_x64_asset_size"] > 1024 * 1024 * 1024
-    ):
-        reject("runner asset")
-    if (
-        not isinstance(value["linux_x64_asset_digest"], str)
-        or DIGEST.fullmatch(value["linux_x64_asset_digest"]) is None
-    ):
-        reject("runner digest")
     if (
         not isinstance(value["published_at"], str)
         or re.fullmatch(
@@ -304,9 +395,22 @@ def validate_runner(value):
     for key in ("command_settings_sha256", "observation_evidence"):
         if not isinstance(value[key], str) or HEX64.fullmatch(value[key]) is None:
             reject("runner evidence")
+    build = value["build"]
+    if not isinstance(build, dict) or set(build) != RUNNER_BUILD_KEYS:
+        reject("runner build schema")
+    validate_dotnet_sdk(build["dotnet_sdk"])
+    validate_nuget_locks(build["nuget_locks"])
+    validate_externals(build["externals"])
+    if build["expected_listener_version"] != value["version"][1:]:
+        reject("runner listener version")
     if value["observation_evidence"] != evidence_digest(value):
         reject("runner observation evidence")
     return value
+
+
+def validate_runner_identity(release_kind, runner, baseline):
+    if runner != baseline:
+        reject(f"{release_kind} runner identity")
 
 
 def validate_release_manifest(root):
@@ -485,6 +589,33 @@ def run(command, *, cwd, env, log, timeout):
         reject("subprocess failure")
     if completed.returncode != 0:
         reject("subprocess failure")
+
+
+SOURCE_BUILD_FAILURE = re.compile(
+    rb"build-runner-from-source: unavailable reason=[a-z][a-z0-9-]{0,79}\n"
+)
+
+
+def run_source_builder(command, *, cwd, env, log, timeout):
+    try:
+        start = log.stat().st_size if log.exists() else 0
+    except OSError:
+        reject("private log")
+    try:
+        run(command, cwd=cwd, env=env, log=log, timeout=timeout)
+    except RehearsalError:
+        try:
+            size = log.stat().st_size - start
+            if 0 < size <= 160:
+                with log.open("rb") as stream:
+                    stream.seek(start)
+                    receipt = stream.read(161)
+                if SOURCE_BUILD_FAILURE.fullmatch(receipt) is not None:
+                    sys.stderr.buffer.write(receipt)
+                    sys.stderr.buffer.flush()
+        except OSError:
+            pass
+        raise
 
 
 def capture(command, *, cwd, env, log, timeout, maximum=MAX_JSON):
@@ -693,18 +824,16 @@ def apply_candidate_overlay(clone, runtime, candidate):
     baseline = runtime["runner_release"]
     old = {
         "version_bare": baseline["version"][1:],
-        "linux_x64_sha256": baseline["linux_x64_asset_digest"].removeprefix(
-            "sha256:"
-        ),
         "source_commit": baseline["source_commit_sha"],
+        "source_tree": baseline["source_tree_sha"],
+        "runner_release_evidence": baseline["observation_evidence"],
         "command_settings_sha256": baseline["command_settings_sha256"],
     }
     new = {
         "version_bare": candidate["version"][1:],
-        "linux_x64_sha256": candidate["linux_x64_asset_digest"].removeprefix(
-            "sha256:"
-        ),
         "source_commit": candidate["source_commit_sha"],
+        "source_tree": candidate["source_tree_sha"],
+        "runner_release_evidence": candidate["observation_evidence"],
         "command_settings_sha256": candidate["command_settings_sha256"],
     }
     table = runtime["candidate_substitutions"]
@@ -838,8 +967,9 @@ def apply_candidate_overlay(clone, runtime, candidate):
             ).items():
                 expected_kind = {
                     "version_bare": "runner-version",
-                    "linux_x64_sha256": "hex64",
                     "source_commit": "hex40",
+                    "source_tree": "hex40",
+                    "runner_release_evidence": "hex64",
                     "command_settings_sha256": "hex64",
                 }[token]
                 if kind == expected_kind and value == old_value:
@@ -1326,13 +1456,7 @@ def main():
     release_root = load_json_bytes(release_manifest_raw)
     runtime = validate_release_manifest(release_root)
     baseline = runtime["runner_release"]
-    relation = (
-        version_tuple(runner["version"]) > version_tuple(baseline["version"])
-    )
-    if release_kind == "product" and runner != baseline:
-        reject("product runner identity")
-    if release_kind == "candidate" and (not relation or runner == baseline):
-        reject("candidate runner identity")
+    validate_runner_identity(release_kind, runner, baseline)
 
     # All cheap, non-mutating validation precedes host/tool/network admission.
     if platform.system() != "Linux" or platform.machine() not in ("x86_64", "amd64"):
@@ -1439,39 +1563,21 @@ def main():
         ):
             reject("clone identity")
 
-        # Runner transfer and independent size/hash proof happen before the
-        # candidate overlay or any archive use.
+        # The closed overlay verifier binds every duplicated runner identity to
+        # the exact checked-in source-release document. Candidate and product
+        # admission require equality, so every replacement must remain a no-op.
         set_stage(RehearsalStage.RUNNER)
-        runner_archive = downloads / runner["linux_x64_asset_name"]
-        runner_url = (
-            "https://github.com/actions/runner/releases/download/"
-            f"{runner['version']}/{runner['linux_x64_asset_name']}"
-        )
-        curl_download(
-            runner_url,
-            runner_archive,
-            runner["linux_x64_asset_digest"].removeprefix("sha256:"),
-            env,
-            log,
-            maximum=runner["linux_x64_asset_size"],
-        )
-        if runner_archive.stat().st_size != runner["linux_x64_asset_size"]:
-            reject("runner asset size")
-        os.chmod(runner_archive, 0o400)
-
         apply_candidate_overlay(clone, runtime, runner)
         validate_dockerfiles(clone, runtime)
-        if release_kind == "product":
-            if capture(
-                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
-                cwd=clone,
-                env=env,
-                log=log,
-                timeout=30,
-            ):
-                reject("product overlay")
+        if capture(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=clone,
+            env=env,
+            log=log,
+            timeout=30,
+        ):
+            reject("runner overlay")
 
-        set_stage(RehearsalStage.BUILD)
         env.update(
             {
                 "HOME": os.fspath(work / "home"),
@@ -1494,6 +1600,28 @@ def main():
             pathlib.Path(env["TRIVY_CACHE_DIR"]),
         ):
             path.mkdir(parents=True, mode=0o700)
+
+        runner_source_work = work / "runner-source-work"
+        runner_source_work.mkdir(mode=0o700)
+        runner_runtime = work / "runner-source-runtime"
+        run_source_builder(
+            [
+                sys.executable,
+                "scripts/release/build-runner-from-source.py",
+                "--runner-manifest",
+                os.fspath(runner_path),
+                "--output",
+                os.fspath(runner_runtime),
+                "--work-root",
+                os.fspath(runner_source_work),
+            ],
+            cwd=clone,
+            env=env,
+            log=log,
+            timeout=7200,
+        )
+
+        set_stage(RehearsalStage.BUILD)
 
         identity_raw = capture(
             [
@@ -1634,8 +1762,10 @@ def main():
                 "scripts/prepare-task5-images.sh",
                 "--generation",
                 "1",
-                "--runner-archive",
-                os.fspath(runner_archive),
+                "--runner-runtime",
+                os.fspath(runner_runtime),
+                "--runner-manifest",
+                os.fspath(runner_path),
                 "--ca-bundle",
                 os.fspath(resolved_ca_bundle),
             ],

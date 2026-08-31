@@ -54,6 +54,14 @@ mode_of() {
   fi
 }
 
+file_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 make_offline_preparation_fixture() {
   make_minimal_repository
   repository="$(cd -P "$repository" && pwd -P)"
@@ -147,6 +155,15 @@ EOF
   run "$SCRIPT" --generation 1 --seed-root "$WORK"
   [ "$status" -ne 0 ]
   [[ "$output" == *"prepare-task5-images: unavailable"* ]]
+
+  mkdir -p "$WORK/archive" "$WORK/runtime"
+  printf '%s\n' archive >"$WORK/archive/runner.tar.gz"
+  run "$SCRIPT" \
+    --generation 1 \
+    --runner-archive "$WORK/archive/runner.tar.gz" \
+    --runner-runtime "$WORK/runtime"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"prepare-task5-images: unavailable"* ]]
 }
 
 @test "an existing context or preparation lock is never overwritten" {
@@ -203,6 +220,8 @@ EOF
   grep -F './cmd/portable-ghar-runner-gate' "$SCRIPT"
   grep -F './cmd/portable-ghar-network-adapter' "$SCRIPT"
   grep -F 'scripts/fetch-runner.sh' "$SCRIPT"
+  grep -F -- '--runner-runtime' "$SCRIPT"
+  grep -F -- '--runner-manifest' "$SCRIPT"
   grep -F 'scripts/stage-action-tool-archive.sh' "$SCRIPT"
   grep -F 'runner.tree-manifest.json runner.tree-lock runner.runtime-lock.json' "$SCRIPT"
   ! grep -F 'cp -R "$acquisition"' "$SCRIPT"
@@ -210,6 +229,61 @@ EOF
   ! grep -F '2.336.0' "$SCRIPT"
   ! grep -F '2.336.0' "$REPO_ROOT/images/runner/Dockerfile"
   grep -F 'runner-download-spec' "$SCRIPT"
+}
+
+@test "a source-built runtime bypasses archive acquisition and preserves its lock" {
+  make_offline_preparation_fixture
+  mkdir -p "$repository/release" "$WORK/source-runtime/runner/bin" \
+    "$WORK/source-runtime/runner/externals"
+  source_runtime="$(cd -P "$WORK/source-runtime" && pwd -P)"
+  printf '%s\n' runner >"$source_runtime/runner/bin/Runner.Listener"
+  chmod 0700 "$source_runtime/runner"
+  chmod 0555 "$source_runtime/runner/bin" \
+    "$source_runtime/runner/externals" \
+    "$source_runtime/runner/bin/Runner.Listener"
+  printf '%s\n' manifest >"$source_runtime/runner.tree-manifest.json"
+  printf '%s\n' tree >"$source_runtime/runner.tree-lock"
+  manifest_sha="$(file_sha256 "$source_runtime/runner.tree-manifest.json")"
+  tree_sha="$(file_sha256 "$source_runtime/runner.tree-lock")"
+  cat >"$source_runtime/runner.runtime-lock.json" <<EOF
+{"schema_version":2,"runner_version":"v2.336.0","runner_payload_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runner_source_commit":"98aabcd429c4e8402406c56ce2d26387fed3b9ce","runner_source_tree":"3789e2e60ae52fc9c45b78e0d7f436ee2526b6d5","runner_release_evidence":"cfd5c4acaa59579ff850aaad8d4e3f614afc6f80853e870a5271de7db516ba7b","command_settings_sha256":"937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08","runner_base_image":"fixture","manifest_sha256":"$manifest_sha","tree_lock_sha256":"$tree_sha","evidence_generation":1,"listener":{"path":"/opt/actions-runner/bin/Runner.Listener","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","size":7,"mode":365,"uid":0,"gid":0}}
+EOF
+  runtime_sha="$(file_sha256 "$source_runtime/runner.runtime-lock.json")"
+  cat >"$source_runtime/READY" <<EOF
+{"schema_version":1,"runtime_lock_sha256":"$runtime_sha","tree_lock_sha256":"$tree_sha","manifest_sha256":"$manifest_sha","evidence_generation":1}
+EOF
+  chmod 0444 "$source_runtime/READY" \
+    "$source_runtime/runner.runtime-lock.json" \
+    "$source_runtime/runner.tree-manifest.json" \
+    "$source_runtime/runner.tree-lock"
+  runner_manifest="$(cd -P "$WORK" && pwd -P)/candidate-runner-release.json"
+  cat >"$runner_manifest" <<'EOF'
+{"version":"v2.336.0","source_commit_sha":"98aabcd429c4e8402406c56ce2d26387fed3b9ce","source_tree_sha":"3789e2e60ae52fc9c45b78e0d7f436ee2526b6d5","observation_evidence":"cfd5c4acaa59579ff850aaad8d4e3f614afc6f80853e870a5271de7db516ba7b","command_settings_sha256":"937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08"}
+EOF
+  cat >"$repository/release/manifest.json" <<'EOF'
+{"runtime":{"runner_release":{"version":"v9.9.9","source_commit_sha":"1111111111111111111111111111111111111111","source_tree_sha":"2222222222222222222222222222222222222222","observation_evidence":"3333333333333333333333333333333333333333333333333333333333333333","command_settings_sha256":"4444444444444444444444444444444444444444444444444444444444444444"}}}
+EOF
+
+  run env PATH="$fake_bin:$PATH" \
+    "$repository/scripts/prepare-task5-images.sh" \
+    --generation 1 \
+    --runner-runtime "$source_runtime" \
+    --ca-bundle "$repository/images/trust/build/ca-bundle.pem"
+  [ "$status" -ne 0 ]
+  assert_no_transaction
+
+  run env PATH="$fake_bin:$PATH" \
+    "$repository/scripts/prepare-task5-images.sh" \
+    --generation 1 \
+    --runner-runtime "$source_runtime" \
+    --runner-manifest "$runner_manifest" \
+    --ca-bundle "$repository/images/trust/build/ca-bundle.pem"
+  [ "$status" -eq 0 ] || {
+    printf '%s\n' "$output" >&2
+    false
+  }
+  [ -f "$repository/images/runner/build/runner.runtime-lock.json" ]
+  [ "$(file_sha256 "$repository/images/runner/build/runner.runtime-lock.json")" = "$runtime_sha" ]
 }
 
 @test "prepared runner and seed contexts preserve verified object modes" {

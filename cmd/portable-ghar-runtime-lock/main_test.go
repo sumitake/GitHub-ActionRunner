@@ -222,6 +222,56 @@ func TestRunExtractRunnerRejectsIncompleteArguments(t *testing.T) {
 	}
 }
 
+func TestExtractSourceRunnerRuntimePublishesSchemaTwoLock(t *testing.T) {
+	fixture := newRunnerTransactionFixture(t)
+	const payloadSHA = "45f6a3449c950e6f89f29045d7b0e53e25a888206191dff8d7a887eefb8fc4e7"
+	fixture.archivePath = filepath.Join(filepath.Dir(fixture.archivePath), "actions-runner-source-linux-x64-2.336.0.tar.gz")
+	originalExtractor := fixture.extractor
+	fixture.extractor = func(options seedarchive.RunnerExtractOptions) (seedarchive.VerifiedRunnerDirectory, error) {
+		if options.ExpectedSHA256 != payloadSHA {
+			return seedarchive.VerifiedRunnerDirectory{}, errors.New("fixture: source digest not bound")
+		}
+		// The archive path check in the historical fixture is intentionally
+		// replaced for this product-owned payload shape.
+		archivePath := filepath.Join(filepath.Dir(options.ArchivePath), "actions-runner-linux-x64-2.336.0.tar.gz")
+		options.ArchivePath = archivePath
+		options.ExpectedSHA256 = "04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d"
+		return originalExtractor(options)
+	}
+	defer removeRuntimeOutput(fixture.output)
+	if err := extractSourceRunnerRuntimeWith(sourceExtractOptions{
+		archivePath:        fixture.archivePath,
+		expectedSHA256:     payloadSHA,
+		evidenceGeneration: fixture.generation,
+		outputDirectory:    fixture.output,
+	}, nil, fixture.extractor); err != nil {
+		t.Fatalf("extractSourceRunnerRuntimeWith: %v", err)
+	}
+	lockBytes, err := os.ReadFile(filepath.Join(fixture.output, runtimeLockName))
+	if err != nil {
+		t.Fatalf("ReadFile source runtime lock: %v", err)
+	}
+	lock, err := runtimelock.Load(bytes.NewReader(lockBytes))
+	if err != nil {
+		t.Fatalf("Load source runtime lock: %v", err)
+	}
+	if lock.SchemaVersion != 2 || lock.RunnerPayloadSHA256 != payloadSHA || lock.RunnerArchiveSHA256 != "" {
+		t.Fatalf("source runtime lock = %+v", lock)
+	}
+}
+
+func TestRunExtractSourceRunnerRejectsIncompleteOrMalformedArguments(t *testing.T) {
+	for _, args := range [][]string{
+		{"extract-source-runner", "--generation", "1"},
+		{"extract-source-runner", "--archive", "/tmp/a", "--sha256", "bad", "--generation", "1", "--output-dir", "/tmp/o"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := run(args, &stdout, &stderr); code != 2 {
+			t.Fatalf("extract-source-runner args=%v code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestStageSeedsPublishesVerifiedNonemptyAndExplicitEmptyCaches(t *testing.T) {
 	t.Run("nonempty", func(t *testing.T) {
 		fixture := newRuntimeLockFixture(t)

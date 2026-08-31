@@ -3,9 +3,16 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      generate_runner_source_locks:
+        description: Generate and locked-revalidate exact runner NuGet locks
+        required: false
+        default: false
+        type: boolean
 permissions: {}
 jobs:
   go:
+    if: "github.event_name != 'workflow_dispatch' || !inputs.generate_runner_source_locks"
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -38,6 +45,7 @@ jobs:
         run: go tool govulncheck ./...
 
   worker:
+    if: "github.event_name != 'workflow_dispatch' || !inputs.generate_runner_source_locks"
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -64,6 +72,7 @@ jobs:
         run: npm run worker:test
 
   shell:
+    if: "github.event_name != 'workflow_dispatch' || !inputs.generate_runner_source_locks"
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -92,6 +101,7 @@ jobs:
         run: bats tests/shell/*.bats tests/shell/qts/*.bats
 
   repository-metadata:
+    if: "github.event_name != 'workflow_dispatch' || !inputs.generate_runner_source_locks"
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -138,6 +148,7 @@ jobs:
         run: python3 scripts/sanitize_public.py --tracked
 
   container:
+    if: "github.event_name != 'workflow_dispatch' || !inputs.generate_runner_source_locks"
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -192,3 +203,28 @@ jobs:
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: 1
+
+  runner-source-lock-generation:
+    if: "github.event_name == 'workflow_dispatch' && inputs.generate_runner_source_locks"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-runner-source-lock-generation-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Generate and locked-revalidate exact runner NuGet locks
+        run: 'set -euo pipefail; repository="$(pwd -P)"; work="$RUNNER_TEMP/runner-source-lock-work"; output="$RUNNER_TEMP/runner-source-lock-output"; install -d -m 700 "$work"; python3 -B "$repository/scripts/release/generate-runner-source-locks.py" --runner-manifest "$repository/release/manifest.json" --output "$output" --work-root "$work"; test -f "$output/receipt.json"; test "$(find "$output" -type f | wc -l)" -eq 8; jq -e ''.schema_version == 1 and .layout.generation_restore_locked == false and .layout.revalidation_restore_locked == true and (.nuget_locks.files | length) == 7'' "$output/receipt.json" >/dev/null'
+      - name: Upload exact generated lock graph
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runner-source-locks-${{ github.sha }}
+          path: ${{ runner.temp }}/runner-source-lock-output
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	seedarchive "github.com/sumitake/portable-ghar/internal/archive"
+	"github.com/sumitake/portable-ghar/internal/runtimelock"
 	"golang.org/x/sys/unix"
 )
 
@@ -144,6 +145,9 @@ func stageSyntheticListener(options syntheticListenerOptions, hook extractHook) 
 		published,
 		options.evidenceGeneration,
 		hook,
+		func(published seedarchive.VerifiedRunnerDirectory) (runtimelock.Lock, error) {
+			return runtimelock.NewRunnerLock(published, "bin/Runner.Listener")
+		},
 	); err != nil {
 		return err
 	}

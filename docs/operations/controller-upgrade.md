@@ -81,14 +81,15 @@ governed prebuilt image is the normal path.
 
 Qualification must positively prove:
 
-- the official `actions/runner` tag, source commit, Linux x64 asset name,
-  size, and `sha256:` digest;
+- the official `actions/runner` tag, source commit and tree, source-release
+  evidence, pinned fixed .NET SDK/runtime inputs, ordered NuGet locks, Node
+  externals, and identical two-build source payload digest;
 - the image contains exactly one `bin` and one `externals` runner payload,
   with no old-version siblings and no `_work/_update` staging;
 - in-place update is disabled and the scale-set configuration agrees;
 - `Runner.Listener --version` exactly equals the qualified release before the
   candidate can become selected;
-- runtime, archive, trust-bundle, seccomp, policy, conntrack-budget,
+- runtime, source-payload, trust-bundle, seccomp, policy, conntrack-budget,
   storage-budget, and log-policy digests all match the candidate manifest;
 - the target host profile and whole-container reclamation probes pass; and
 - the selected and retained rollback identities remain unchanged during

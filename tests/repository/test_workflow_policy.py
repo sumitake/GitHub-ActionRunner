@@ -61,11 +61,13 @@ EXPECTED_SCHEDULED_WATCH_CONTEXTS = {
     "source-full-policy",
     "base-image-fixable",
 }
+EXPECTED_MANUAL_MAINTENANCE_CONTEXTS = {"runner-source-lock-generation"}
 EXPECTED_ALL_CONTEXTS = (
     EXPECTED_STABLE_CONTEXTS
     | {"codeql"}
     | EXPECTED_RUNTIME_RELEASE_CONTEXTS
     | EXPECTED_SCHEDULED_WATCH_CONTEXTS
+    | EXPECTED_MANUAL_MAINTENANCE_CONTEXTS
 )
 
 # A minimal workflow that should pass every check cleanly. Each negative
@@ -508,14 +510,54 @@ class RealCiWorkflowTest(unittest.TestCase):
         # nothing stray.
         self.assertEqual(set(context_sources.keys()), EXPECTED_ALL_CONTEXTS)
 
+    def test_runner_source_lock_generation_is_manual_isolated_and_artifact_only(self) -> None:
+        root = self._load_real_workflow("ci.yml")
+        dispatch = root["on"]["workflow_dispatch"]
+        self.assertEqual(
+            dispatch,
+            {
+                "inputs": {
+                    "generate_runner_source_locks": {
+                        "description": "Generate and locked-revalidate exact runner NuGet locks",
+                        "required": "false",
+                        "default": "false",
+                        "type": "boolean",
+                    }
+                }
+            },
+        )
+        job = root["jobs"]["runner-source-lock-generation"]
+        self.assertEqual(
+            job["if"],
+            "github.event_name == 'workflow_dispatch' && inputs.generate_runner_source_locks",
+        )
+        self.assertEqual(job["runs-on"], "ubuntu-24.04")
+        self.assertEqual(job["permissions"], {"contents": "read"})
+        self.assertEqual(job["timeout-minutes"], "180")
+        self.assertNotIn("schedule", root["on"])
+        run_text = self._run_text(job)
+        self.assertIn("generate-runner-source-locks.py", run_text)
+        self.assertNotIn("actions/cache@", str(job))
+        uploads = [
+            step
+            for step in job["steps"]
+            if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+        ]
+        self.assertEqual(len(uploads), 1)
+        self.assertEqual(
+            uploads[0]["uses"],
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        )
+        for stable in EXPECTED_STABLE_CONTEXTS & set(root["jobs"]):
+            self.assertEqual(
+                root["jobs"][stable]["if"],
+                "github.event_name != 'workflow_dispatch' || !inputs.generate_runner_source_locks",
+            )
+
     def test_candidate_release_workflow_has_closed_triggers_and_split_authority(self) -> None:
         root = self._load_real_workflow("runner-release-candidate.yml")
         triggers = root.get("on", {})
-        self.assertEqual(set(triggers), {"workflow_dispatch", "repository_dispatch"})
-        self.assertEqual(
-            list(triggers["repository_dispatch"]["types"]),
-            ["observe-runner-release"],
-        )
+        self.assertEqual(set(triggers), {"workflow_dispatch"})
         self.assertIn(triggers["workflow_dispatch"], ({}, None))
         self.assertEqual(
             set(root["jobs"]),
@@ -530,18 +572,23 @@ class RealCiWorkflowTest(unittest.TestCase):
         self.assertEqual(root["concurrency"]["cancel-in-progress"], "false")
 
         admission = root["jobs"]["runner-candidate-admission"]
-        self.assertEqual(admission["steps"][0]["name"], "Validate trusted dispatch")
+        self.assertEqual(
+            admission["steps"][0]["name"], "Validate trusted manual dispatch"
+        )
         self.assertNotIn("uses", admission["steps"][0])
         admission_text = self._run_text(admission)
         for required in (
             "PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR",
             "GITHUB_ACTOR",
-            "PORTABLE_GHAR_DEFAULT_BRANCH",
+            "refs/heads/",
             "GITHUB_EVENT_PATH",
             "object_pairs_hook",
-            "observe-runner-release.sh",
+            ".runtime.runner_release",
+            "schema_version == 2",
         ):
             self.assertIn(required, admission_text)
+        self.assertNotIn("observe-runner-release.sh", admission_text)
+        self.assertNotIn("repository_dispatch", admission_text)
         self.assertNotIn("CLIENT_PAYLOAD", admission_text)
 
         admission_step = admission["steps"][0]
@@ -549,17 +596,10 @@ class RealCiWorkflowTest(unittest.TestCase):
             event_path = Path(tmp) / "event.json"
             base_environment = {
                 "GITHUB_ACTOR": "trusted-observer",
-                "GITHUB_REF": "refs/heads/main",
-                "PORTABLE_GHAR_DEFAULT_BRANCH": "main",
+                "GITHUB_REF": "refs/heads/dev/codex/source-candidate",
                 "PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR": "trusted-observer",
             }
-            valid_cases = (
-                (
-                    "repository_dispatch",
-                    b'{"action":"observe-runner-release","client_payload":{}}\n',
-                ),
-                ("workflow_dispatch", b'{"inputs":{}}\n'),
-            )
+            valid_cases = (("workflow_dispatch", b'{"inputs":{}}\n'),)
             for event_name, raw in valid_cases:
                 with self.subTest(event_name=event_name, validity="valid"):
                     event_path.write_bytes(raw)
@@ -580,16 +620,7 @@ class RealCiWorkflowTest(unittest.TestCase):
             invalid_cases = (
                 (
                     "repository_dispatch",
-                    b'{"action":"observe-runner-release","client_payload":{"x":1}}\n',
-                ),
-                (
-                    "repository_dispatch",
-                    b'{"action":"other","client_payload":{}}\n',
-                ),
-                (
-                    "repository_dispatch",
-                    b'{"action":"observe-runner-release",'
-                    b'"client_payload":{},"client_payload":{}}\n',
+                    b'{"action":"observe-runner-release","client_payload":{}}\n',
                 ),
                 ("workflow_dispatch", b'{"inputs":{"unexpected":"value"}}\n'),
                 ("workflow_dispatch", b'{"client_payload":{}}\n'),
@@ -603,6 +634,24 @@ class RealCiWorkflowTest(unittest.TestCase):
                         env={
                             **base_environment,
                             "GITHUB_EVENT_NAME": event_name,
+                            "GITHUB_EVENT_PATH": str(event_path),
+                        },
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+
+            event_path.write_bytes(b'{"inputs":{}}\n')
+            for changed in (
+                {"GITHUB_ACTOR": "untrusted"},
+                {"GITHUB_REF": "refs/tags/not-a-branch"},
+            ):
+                with self.subTest(changed=changed):
+                    result = subprocess.run(
+                        ["bash", "-c", admission_step["run"]],
+                        capture_output=True,
+                        env={
+                            **base_environment,
+                            **changed,
+                            "GITHUB_EVENT_NAME": "workflow_dispatch",
                             "GITHUB_EVENT_PATH": str(event_path),
                         },
                     )
@@ -843,6 +892,40 @@ class RealCiWorkflowTest(unittest.TestCase):
                     "compare-runtime-rebuilds.sh",
                     self._run_text(root["jobs"][publish_id]),
                 )
+
+    def test_release_builds_pin_and_authenticate_the_minimal_bats_install(self) -> None:
+        for workflow_name, build_ids in (
+            (
+                "release.yml",
+                ("release-build-a", "release-build-b"),
+            ),
+            (
+                "runner-release-candidate.yml",
+                ("runner-candidate-build-a", "runner-candidate-build-b"),
+            ),
+        ):
+            root = self._load_real_workflow(workflow_name)
+            for build_id in build_ids:
+                with self.subTest(workflow=workflow_name, job=build_id):
+                    steps = [
+                        step
+                        for step in root["jobs"][build_id]["steps"]
+                        if str(step.get("uses", "")).startswith(
+                            "bats-core/bats-action@"
+                        )
+                    ]
+                    self.assertEqual(len(steps), 1)
+                    self.assertEqual(
+                        steps[0]["with"],
+                        {
+                            "bats-version": "1.11.0",
+                            "github-token": "${{ github.token }}",
+                            "support-install": "false",
+                            "assert-install": "false",
+                            "detik-install": "false",
+                            "file-install": "false",
+                        },
+                    )
 
     def test_sanitization_workflow_triggers_and_job_shape(self) -> None:
         sys.path.insert(0, str(REPO_ROOT / "scripts"))

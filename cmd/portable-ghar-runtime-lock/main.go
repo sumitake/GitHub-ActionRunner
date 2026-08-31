@@ -55,6 +55,13 @@ type extractOptions struct {
 	outputDirectory    string
 }
 
+type sourceExtractOptions struct {
+	archivePath        string
+	expectedSHA256     string
+	evidenceGeneration uint64
+	outputDirectory    string
+}
+
 type extractHook func(stage string) error
 type runnerExtractor func(seedarchive.RunnerExtractOptions) (seedarchive.VerifiedRunnerDirectory, error)
 
@@ -125,6 +132,22 @@ func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 			return unavailable(stderr, 2)
 		}
 		if err := extractRunnerRuntime(options, nil); err != nil {
+			return unavailable(stderr, 1)
+		}
+		ready, err := os.ReadFile(filepath.Join(options.outputDirectory, readyName))
+		if err != nil {
+			return unavailable(stderr, 1)
+		}
+		if _, err := stdout.Write(ready); err != nil {
+			return unavailable(stderr, 1)
+		}
+		return 0
+	case "extract-source-runner":
+		options, err := parseSourceExtractOptions(args[1:])
+		if err != nil {
+			return unavailable(stderr, 2)
+		}
+		if err := extractSourceRunnerRuntime(options, nil); err != nil {
 			return unavailable(stderr, 1)
 		}
 		ready, err := os.ReadFile(filepath.Join(options.outputDirectory, readyName))
@@ -213,58 +236,144 @@ func parseExtractOptions(args []string) (extractOptions, error) {
 	}, nil
 }
 
+func parseSourceExtractOptions(args []string) (sourceExtractOptions, error) {
+	if len(args) != 8 {
+		return sourceExtractOptions{}, errors.New("runtime-lock: source extract arguments invalid")
+	}
+	values := make(map[string]string, 4)
+	for index := 0; index < len(args); index += 2 {
+		name, value := args[index], args[index+1]
+		switch name {
+		case "--archive", "--sha256", "--generation", "--output-dir":
+		default:
+			return sourceExtractOptions{}, errors.New("runtime-lock: source extract argument unknown")
+		}
+		if value == "" {
+			return sourceExtractOptions{}, errors.New("runtime-lock: source extract argument empty")
+		}
+		if _, exists := values[name]; exists {
+			return sourceExtractOptions{}, errors.New("runtime-lock: source extract argument duplicated")
+		}
+		values[name] = value
+	}
+	if len(values) != 4 || len(values["--sha256"]) != sha256.Size*2 {
+		return sourceExtractOptions{}, errors.New("runtime-lock: source extract arguments incomplete")
+	}
+	if _, err := hex.DecodeString(values["--sha256"]); err != nil || strings.ToLower(values["--sha256"]) != values["--sha256"] {
+		return sourceExtractOptions{}, errors.New("runtime-lock: source digest invalid")
+	}
+	generation, err := strconv.ParseUint(values["--generation"], 10, 64)
+	if err != nil || generation == 0 || strconv.FormatUint(generation, 10) != values["--generation"] {
+		return sourceExtractOptions{}, errors.New("runtime-lock: source generation invalid")
+	}
+	return sourceExtractOptions{
+		archivePath:        values["--archive"],
+		expectedSHA256:     values["--sha256"],
+		evidenceGeneration: generation,
+		outputDirectory:    values["--output-dir"],
+	}, nil
+}
+
 func extractRunnerRuntime(options extractOptions, hook extractHook) error {
 	return extractRunnerRuntimeWith(options, hook, seedarchive.ExtractRunnerArchive)
 }
 
 func extractRunnerRuntimeWith(options extractOptions, hook extractHook, extractor runnerExtractor) error {
-	if options.evidenceGeneration == 0 ||
-		!canonicalAbsolute(options.archivePath) ||
-		!canonicalAbsolute(options.outputDirectory) || extractor == nil {
+	pins := buildinfo.Pins()
+	expectedAsset := "actions-runner-linux-x64-" + strings.TrimPrefix(pins.UpstreamRunner.Version, "v") + ".tar.gz"
+	return extractVerifiedRunnerRuntime(
+		options.archivePath,
+		expectedAsset,
+		pins.UpstreamRunner.LinuxX64SHA256,
+		options.evidenceGeneration,
+		options.outputDirectory,
+		hook,
+		extractor,
+		func(published seedarchive.VerifiedRunnerDirectory) (runtimelock.Lock, error) {
+			return runtimelock.NewRunnerLock(published, "bin/Runner.Listener")
+		},
+	)
+}
+
+func extractSourceRunnerRuntime(options sourceExtractOptions, hook extractHook) error {
+	return extractSourceRunnerRuntimeWith(options, hook, seedarchive.ExtractRunnerArchive)
+}
+
+func extractSourceRunnerRuntimeWith(options sourceExtractOptions, hook extractHook, extractor runnerExtractor) error {
+	pins := buildinfo.Pins()
+	expectedAsset := "actions-runner-source-linux-x64-" + strings.TrimPrefix(pins.UpstreamRunner.Version, "v") + ".tar.gz"
+	return extractVerifiedRunnerRuntime(
+		options.archivePath,
+		expectedAsset,
+		options.expectedSHA256,
+		options.evidenceGeneration,
+		options.outputDirectory,
+		hook,
+		extractor,
+		func(published seedarchive.VerifiedRunnerDirectory) (runtimelock.Lock, error) {
+			return runtimelock.NewSourceRunnerLock(published, "bin/Runner.Listener", options.expectedSHA256)
+		},
+	)
+}
+
+type runnerLockBuilder func(seedarchive.VerifiedRunnerDirectory) (runtimelock.Lock, error)
+
+func extractVerifiedRunnerRuntime(
+	archivePath string,
+	expectedAsset string,
+	expectedSHA256 string,
+	evidenceGeneration uint64,
+	outputDirectory string,
+	hook extractHook,
+	extractor runnerExtractor,
+	lockBuilder runnerLockBuilder,
+) error {
+	if evidenceGeneration == 0 ||
+		!canonicalAbsolute(archivePath) ||
+		!canonicalAbsolute(outputDirectory) || extractor == nil || lockBuilder == nil {
 		return errors.New("runtime-lock: extract inputs invalid")
 	}
-	outputParent := filepath.Dir(options.outputDirectory)
+	outputParent := filepath.Dir(outputDirectory)
 	if err := validatePrivateDirectory(outputParent); err != nil {
 		return err
 	}
-	if _, err := os.Lstat(options.outputDirectory); !os.IsNotExist(err) {
+	if _, err := os.Lstat(outputDirectory); !os.IsNotExist(err) {
 		return errors.New("runtime-lock: output already exists or cannot be inspected")
 	}
 
-	if err := os.Mkdir(options.outputDirectory, 0o700); err != nil {
+	if err := os.Mkdir(outputDirectory, 0o700); err != nil {
 		return errors.New("runtime-lock: output create failed")
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			removeRuntimeOutput(options.outputDirectory)
+			removeRuntimeOutput(outputDirectory)
 		}
 	}()
-	if err := validatePrivateDirectory(options.outputDirectory); err != nil {
+	if err := validatePrivateDirectory(outputDirectory); err != nil {
 		return err
 	}
 
-	pins := buildinfo.Pins()
-	expectedAsset := "actions-runner-linux-x64-" + strings.TrimPrefix(pins.UpstreamRunner.Version, "v") + ".tar.gz"
-	if filepath.Base(options.archivePath) != expectedAsset {
+	if filepath.Base(archivePath) != expectedAsset {
 		return errors.New("runtime-lock: runner archive asset name invalid")
 	}
-	publishedRoot := filepath.Join(options.outputDirectory, "runner")
+	publishedRoot := filepath.Join(outputDirectory, "runner")
 	published, err := extractor(seedarchive.RunnerExtractOptions{
-		ArchivePath:        options.archivePath,
-		ExpectedSHA256:     pins.UpstreamRunner.LinuxX64SHA256,
-		EvidenceGeneration: options.evidenceGeneration,
+		ArchivePath:        archivePath,
+		ExpectedSHA256:     expectedSHA256,
+		EvidenceGeneration: evidenceGeneration,
 		OutputDirectory:    publishedRoot,
 	})
 	if err != nil {
 		return errors.New("runtime-lock: runner extraction failed")
 	}
 	if err := finalizeRunnerRuntime(
-		options.outputDirectory,
+		outputDirectory,
 		publishedRoot,
 		published,
-		options.evidenceGeneration,
+		evidenceGeneration,
 		hook,
+		lockBuilder,
 	); err != nil {
 		return err
 	}
@@ -278,6 +387,7 @@ func finalizeRunnerRuntime(
 	published seedarchive.VerifiedRunnerDirectory,
 	evidenceGeneration uint64,
 	hook extractHook,
+	lockBuilder runnerLockBuilder,
 ) error {
 	var manifest bytes.Buffer
 	if err := seedarchive.WriteRunnerManifest(&manifest, published); err != nil ||
@@ -297,7 +407,10 @@ func finalizeRunnerRuntime(
 		return err
 	}
 
-	lock, err := runtimelock.NewRunnerLock(published, "bin/Runner.Listener")
+	if lockBuilder == nil {
+		return errors.New("runtime-lock: runner lock builder unavailable")
+	}
+	lock, err := lockBuilder(published)
 	if err != nil {
 		return errors.New("runtime-lock: runner lock construction failed")
 	}

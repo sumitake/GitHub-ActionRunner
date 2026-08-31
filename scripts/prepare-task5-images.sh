@@ -61,11 +61,15 @@ require_untracked_if_in_repository() {
 
 generation=
 runner_archive=
+runner_runtime=
+runner_manifest=
 seed_root=
 seed_manifest=
 ca_bundle=
 seen_generation=0
 seen_archive=0
+seen_runtime=0
+seen_runner_manifest=0
 seen_seed_root=0
 seen_seed_manifest=0
 seen_ca_bundle=0
@@ -81,6 +85,16 @@ while [ "$#" -gt 0 ]; do
     [ "$seen_archive" = 0 ] || die
     runner_archive=$2
     seen_archive=1
+    ;;
+  --runner-runtime)
+    [ "$seen_runtime" = 0 ] || die
+    runner_runtime=$2
+    seen_runtime=1
+    ;;
+  --runner-manifest)
+    [ "$seen_runner_manifest" = 0 ] || die
+    runner_manifest=$2
+    seen_runner_manifest=1
     ;;
   --seed-root)
     [ "$seen_seed_root" = 0 ] || die
@@ -111,6 +125,8 @@ case "$generation" in
 esac
 [ "$seen_seed_root" = "$seen_seed_manifest" ] || die
 [ "$seen_ca_bundle" = 1 ] || die
+[ $((seen_archive + seen_runtime)) -le 1 ] || die
+[ "$seen_runtime" = "$seen_runner_manifest" ] || die
 
 for dependency in go git jq awk cp mv rm mkdir chmod dirname basename mktemp; do
   command -v "$dependency" >/dev/null 2>&1 || die
@@ -153,6 +169,44 @@ git -C "$repository" check-ignore -q --no-index -- "images/.task5-prepare.lock/p
 if [ "$seen_archive" = 1 ]; then
   canonical_existing_file "$runner_archive" || die
   require_untracked_if_in_repository "$runner_archive" "$repository" || die
+fi
+if [ "$seen_runtime" = 1 ]; then
+  canonical_existing_directory "$runner_runtime" || die
+  require_untracked_if_in_repository "$runner_runtime" "$repository" || die
+  canonical_existing_file "$runner_manifest" || die
+  require_untracked_if_in_repository "$runner_manifest" "$repository" || die
+  canonical_existing_directory "$runner_runtime/runner" || die
+  for name in READY runner.tree-manifest.json runner.tree-lock runner.runtime-lock.json; do
+    canonical_existing_file "$runner_runtime/$name" || die
+  done
+  jq -e \
+    --argjson generation "$generation" \
+    --slurpfile lock "$runner_runtime/runner.runtime-lock.json" \
+    --slurpfile release "$runner_manifest" '
+      .schema_version == 1 and
+      .evidence_generation == $generation and
+      (.runtime_lock_sha256 | test("^[0-9a-f]{64}$")) and
+      (.manifest_sha256 | test("^[0-9a-f]{64}$")) and
+      (.tree_lock_sha256 | test("^[0-9a-f]{64}$")) and
+      ($lock | length) == 1 and
+      ($release | length) == 1 and
+      ($lock[0].schema_version == 2) and
+      ($lock[0].runner_archive_sha256 == null) and
+      ($lock[0].runner_version == $release[0].version) and
+      ($lock[0].runner_source_commit == $release[0].source_commit_sha) and
+      ($lock[0].runner_source_tree == $release[0].source_tree_sha) and
+      ($lock[0].runner_release_evidence == $release[0].observation_evidence) and
+      ($lock[0].command_settings_sha256 == $release[0].command_settings_sha256) and
+      ($lock[0].runner_payload_sha256 | test("^[0-9a-f]{64}$")) and
+      ($lock[0].manifest_sha256 == .manifest_sha256) and
+      ($lock[0].tree_lock_sha256 == .tree_lock_sha256)
+    ' "$runner_runtime/READY" >/dev/null || die
+  [ "$(file_sha256 "$runner_runtime/runner.runtime-lock.json")" = \
+    "$(jq -er '.runtime_lock_sha256' "$runner_runtime/READY")" ] || die
+  [ "$(file_sha256 "$runner_runtime/runner.tree-manifest.json")" = \
+    "$(jq -er '.manifest_sha256' "$runner_runtime/READY")" ] || die
+  [ "$(file_sha256 "$runner_runtime/runner.tree-lock")" = \
+    "$(jq -er '.tree_lock_sha256' "$runner_runtime/READY")" ] || die
 fi
 if [ "$seen_seed_root" = 1 ]; then
   canonical_existing_directory "$seed_root" || die
@@ -204,7 +258,9 @@ native_runtime_lock="$work/portable-ghar-runtime-lock"
 ) || die
 chmod 500 "$native_runtime_lock" || die
 
-if [ "$seen_archive" = 1 ]; then
+if [ "$seen_runtime" = 1 ]; then
+  runtime_output=$runner_runtime
+elif [ "$seen_archive" = 1 ]; then
   runner_download_spec=$("$native_runtime_lock" runner-download-spec) || die
   expected_runner_asset=$(
     printf '%s\n' "$runner_download_spec" |

@@ -62,21 +62,23 @@ or create a second active fleet. A release that may have succeeded cannot be
 followed by a blind destroy; first prove the exact generation, holder, policy
 epoch, and component identity.
 
-## Dark observer recovery
+## Transient disabled recovery
 
 When no complete portable authority exists, or a legacy controller state
-cannot prove the current Worker maintenance tuple, recover only as a
-zero-capacity observer. Normalize the local policy through the canonical admin
-boundary to `disabled` at a new monotonic epoch, then read it back. Do not
-inherit capacity, acquisition mode, a signed acquisition lease, or a
-maintenance directive from legacy files.
+cannot prove the current Worker maintenance tuple, normalize the local policy
+through the canonical admin boundary to `disabled` at a new monotonic epoch,
+then read it back. This is a transient fail-closed recovery primitive, not a
+resident observer outcome or deployment phase. Do not inherit capacity,
+acquisition mode, a signed acquisition lease, or a maintenance directive from
+legacy files.
 
-Dark observer recovery may publish bounded health and runner-release status,
-reconcile journals, inspect the fleet fence, and request new external
+Transient disabled recovery may publish bounded health and runner-release
+status, reconcile journals, inspect the fleet fence, and request new external
 authority. It may not acquire a job, create or release a listener, select an
 image, alter routing, or infer a hosted-hold release. An unavailable Worker
 client therefore leaves the system hosted and disabled rather than activating
-a local fallback.
+a local fallback. The bounded RhoNAS canary does not install this recovery
+composition as a permanent process.
 
 The observability requirements in the
 [Grafana and InfluxDB activation gate](production-lifecycle.md#grafana-and-influxdb-activation-gate)

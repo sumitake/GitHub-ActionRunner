@@ -6,9 +6,10 @@ state-changing administration paths remain behind the production authority
 fence. The only live effect is a natural, once-per-minute Cron receipt for each
 inventoried Durable Object and an authenticated read-only status query.
 
-The QTS observer is a separate deployment leg. A missing or rejected QTS OCI
-artifact does not block this Worker deployment, and no QTS artifact is consumed
-by these steps.
+The bounded QTS live canary is a separate deployment leg. It installs no
+persistent observer, watchdog, or cron. A missing or rejected QTS OCI artifact
+does not invalidate this already-completed Worker deployment, and no QTS
+artifact is consumed by these steps.
 
 ## Private production inputs
 

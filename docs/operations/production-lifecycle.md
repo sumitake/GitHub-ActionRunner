@@ -2,8 +2,8 @@
 
 This runbook describes the intended production lifecycle of a Portable
 GHAR deployment: the controller's persisted states, its safe-upgrade
-sequence, the host-profile probes a deployment must pass, and the
-zero-capacity dark-deployment step every install starts from. It assumes
+sequence, the host-profile probes a deployment must pass, and the bounded
+live-canary step used before routing expansion. It assumes
 the components in [Architecture overview](../architecture/overview.md)
 and the boundaries in [Trust boundaries](../security/trust-boundaries.md).
 All commands shown here are synthetic and illustrative -- they describe
@@ -19,10 +19,11 @@ Release qualification uses the self-contained controller-runtime release
 gate: source checks, reproducible image builds, Linux integration authority,
 and Docker chaos with a temporary immutable runner image. It deliberately does
 not fabricate or claim the separately operator-authorized target-conformance
-proof. A zero-capacity, acquisition-disabled dark observer does not consume
-that proof; canary-only or enabled acquisition remains denied until target
-conformance and its later actual GitHub transport case pass against the same
-immutable bindings.
+proof. A live one-job candidate requires that target proof before mutation;
+canary-only or enabled production acquisition remains denied until target
+conformance and its actual GitHub transport case pass against the same
+immutable bindings. Force-disabled/zero-authority startup remains a transient
+fail-closed primitive, not a persistent observer outcome.
 
 ## Persisted controller states
 
@@ -91,11 +92,13 @@ Detailed source-ready procedures are separated by lifecycle phase:
 - [Controller upgrade](controller-upgrade.md) covers immutable replacement,
   hosted hold, qualification, drain, selection, canary, and enable gates.
 - [Controller recovery](controller-recovery.md) covers authoritative
-  read-back, ambiguity, dark observer startup, forward recovery, compensation,
-  and rollback.
-- [Runner release](runner-release.md) covers automatic official-release
-  observation, maintenance responses, forced-version-bump continuity, and
-  whole-container reclamation.
+  read-back, ambiguity, transient disabled startup, forward recovery,
+  compensation, and rollback.
+- [Runner release](runner-release.md) covers exact source qualification,
+  maintenance responses, forced-version-bump continuity, and whole-container
+  reclamation without an upstream-archive heartbeat dependency.
+- [QTS live canary](qts-live-canary.md) covers the disjoint three-job RhoNAS
+  stability window and candidate-only rollback while LabMacPro stays active.
 
 These procedures do not authorize live-host commands. Each live execution
 still requires a separately approved packet with exact identities,
@@ -189,7 +192,15 @@ than treating panel-now counts as atomic.
 
 ### Cutover acceptance
 
-Observability first passes one **projection-readiness gate** before any canary:
+The projection, controller, heartbeat, lease, and watchdog requirements below
+belong only to the later Worker-authorized production-routing canary. They run
+after the bounded [QTS payload canary](qts-live-canary.md) has admitted its exact
+payload/host tuple and only when ordinary Worker authority and its private
+execution packet are present. They are not prerequisites for that earlier
+one-shot payload canary, which installs no controller or watchdog.
+
+Before any Worker-authorized production-routing canary, observability first
+passes one **projection-readiness gate**:
 
 - the exact health-export schema is read successfully through the least-
   privilege adapter;
@@ -221,11 +232,11 @@ future, mismatched, or last-known-good-substituted evidence and emits a bounded
 signed/hashed acceptance receipt; it has no credential or code path that can
 change acquisition or GitHub routing.
 
-1. **Dark observer:** require at least three consecutive complete controller
-   receipts from successful reconciliation cycles with acquisition `disabled`,
-   zero effective/occupied/available capacity, zero assigned/running jobs, zero
-   unassigned released listeners, and the expected policy, repository-policy,
-   host-profile, degraded-state, and build identities.
+1. **Production-candidate readiness:** verify the exact source-built release,
+   completed bounded-payload-canary evidence, production target profile,
+   disjoint production-canary selector, one-job JIT registration shape, zero
+   preexisting candidate residue, and healthy unchanged LabMacPro production
+   selectors.
 2. **Queued canary while disabled:** keep consumer routing and the hosted hold
    hosted and acquisition disabled. Hold the secretless canary queued through a
    scheduled GitHub sample; verify the authoritative queued set, current wait,
@@ -262,7 +273,8 @@ and the health series may age to no-data when its adapter stops.
 
 ## Host-profile probes
 
-A host is only eligible to acquire work after it positively proves,
+For ordinary controller-owned production acquisition, a host is only eligible
+after it positively proves,
 rather than merely declares, every required property: supported
 Docker/runtime version and kernel features; CPU, memory, PID, tmpfs,
 read-only-root, seccomp, and capability enforcement; non-root execution or
@@ -273,14 +285,25 @@ runner namespace; no access to host Docker control or private paths from
 inside a job; and reboot-persistent watchdog behavior. An unsupported host
 profile fails closed rather than falling back to a weaker default.
 
-## Dark deployment
+The earlier bounded QTS payload canary proves the one-shot host and workload
+properties in its own runbook, including candidate-only interruption and exact
+cleanup. It does not install a watchdog or claim this full production-host
+eligibility.
 
-A new Portable GHAR install is never handed live traffic on day one.
-While an existing (legacy, or no) fleet still owns the host-local
-fleet-generation fence, the new controller and watchdog start as a
-**force-disabled, zero-capacity observer**: they may run, report local
-health, and prove their own host-profile conformance, but they cannot
-poll for work, acquire a job, or generate a JIT credential. Only an
-explicit, fenced hand-off from the prior fleet to `portable` -- itself
-gated on the safe-upgrade sequence above -- ever lets the observer begin
-acquiring at nonzero capacity.
+## Bounded live canary
+
+A new Portable GHAR payload is never handed an existing production selector
+on day one. RhoNAS receives one disjoint, operation-bound selector and one
+ephemeral JIT runner for a pre-dispatched secretless job. LabMacPro stays
+active and untouched on its existing production selectors, so the two hosts
+cannot race for the same job.
+
+The candidate may pass through force-disabled and zero-authority states while
+it is staged, started, reclaimed, or rolled back. Those are transient
+fail-closed states only. The canary installs no resident observer, controller,
+watchdog, or cron. Three serial one-job operations, including one
+candidate-scoped interruption/recovery proof, must meet the resource,
+single-effect, cleanup, and LabMacPro-readback gates in
+[QTS live canary](qts-live-canary.md). Passing admits only the exact payload
+and host profile; production routing still requires the pre-existing Worker
+authority and execution-packet gates.

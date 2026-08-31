@@ -53,17 +53,43 @@ OCI_GRAPH_KEYS = {
     "layer_digests",
 }
 RUNNER_KEYS = {
+    "build",
+    "command_settings_sha256",
+    "observation_evidence",
+    "published_at",
     "schema_version",
     "version",
     "tag_ref_sha",
     "source_commit_sha",
-    "linux_x64_asset_name",
-    "linux_x64_asset_size",
-    "linux_x64_asset_digest",
-    "published_at",
-    "command_settings_sha256",
-    "observation_evidence",
+    "source_tree_sha",
 }
+RUNNER_BUILD_KEYS = {
+    "dotnet_sdk",
+    "expected_listener_version",
+    "externals",
+    "nuget_locks",
+}
+DOTNET_SDK_KEYS = {
+    "asset_name",
+    "rid",
+    "runtime_version",
+    "sha512",
+    "source_url",
+    "version",
+}
+NUGET_LOCK_KEYS = {"aggregate_sha256", "files"}
+NUGET_LOCK_FILE_KEYS = {"path", "sha256"}
+EXTERNAL_KEYS = {"asset_name", "layout", "sha256", "source_url", "version"}
+NUGET_LOCK_PATHS = (
+    "Runner.Common/packages.lock.json",
+    "Runner.Listener/packages.lock.json",
+    "Runner.PluginHost/packages.lock.json",
+    "Runner.Plugins/packages.lock.json",
+    "Runner.Sdk/packages.lock.json",
+    "Runner.Worker/packages.lock.json",
+    "Sdk/packages.lock.json",
+)
+EXTERNAL_LAYOUTS = ("node20", "node20_alpine", "node24", "node24_alpine")
 PROVENANCE_KEYS = {"schema_version", "subjects"}
 PROVENANCE_SUBJECT_KEYS = {"path", "sha256", "size"}
 SUBJECT_TYPES = {
@@ -177,10 +203,105 @@ def read_small(path, maximum=MAX_JSON):
         reject("unreadable authority")
 
 
+def validate_dotnet_sdk(value):
+    if not isinstance(value, dict) or set(value) != DOTNET_SDK_KEYS:
+        reject("runner dotnet schema")
+    version = value["version"]
+    runtime = value["runtime_version"]
+    if (
+        not isinstance(version, str)
+        or re.fullmatch(r"[1-9][0-9]*\.[0-9]+\.[0-9]+", version) is None
+        or not isinstance(runtime, str)
+        or re.fullmatch(r"[1-9][0-9]*\.[0-9]+\.[0-9]+", runtime) is None
+        or value["rid"] != "linux-x64"
+    ):
+        reject("runner dotnet version")
+    expected_name = f"dotnet-sdk-{version}-linux-x64.tar.gz"
+    expected_url = f"https://builds.dotnet.microsoft.com/dotnet/Sdk/{version}/{expected_name}"
+    if value["asset_name"] != expected_name or value["source_url"] != expected_url:
+        reject("runner dotnet asset")
+    if not isinstance(value["sha512"], str) or re.fullmatch(
+        r"[0-9a-f]{128}", value["sha512"]
+    ) is None:
+        reject("runner dotnet digest")
+
+
+def validate_nuget_locks(value):
+    if not isinstance(value, dict) or set(value) != NUGET_LOCK_KEYS:
+        reject("runner nuget schema")
+    files = value["files"]
+    if not isinstance(files, list) or len(files) != len(NUGET_LOCK_PATHS):
+        reject("runner nuget files")
+    paths = []
+    for item in files:
+        if (
+            not isinstance(item, dict)
+            or set(item) != NUGET_LOCK_FILE_KEYS
+            or not isinstance(item["path"], str)
+            or not isinstance(item["sha256"], str)
+            or HEX64.fullmatch(item["sha256"]) is None
+        ):
+            reject("runner nuget file")
+        paths.append(item["path"])
+    if tuple(paths) != NUGET_LOCK_PATHS:
+        reject("runner nuget paths")
+    if value["aggregate_sha256"] != sha256_bytes(canonical_json({"files": files})):
+        reject("runner nuget aggregate")
+
+
+def validate_externals(value):
+    if not isinstance(value, list) or len(value) != len(EXTERNAL_LAYOUTS):
+        reject("runner externals schema")
+    layouts = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != EXTERNAL_KEYS:
+            reject("runner external schema")
+        layout = item["layout"]
+        version = item["version"]
+        if (
+            layout not in EXTERNAL_LAYOUTS
+            or not isinstance(version, str)
+            or re.fullmatch(r"[1-9][0-9]*\.[0-9]+\.[0-9]+", version) is None
+            or not isinstance(item["sha256"], str)
+            or HEX64.fullmatch(item["sha256"]) is None
+        ):
+            reject("runner external identity")
+        alpine = layout.endswith("_alpine")
+        expected_name = (
+            f"node-v{version}-alpine-x64.tar.gz"
+            if alpine
+            else f"node-v{version}-linux-x64.tar.gz"
+        )
+        expected_url = (
+            f"https://github.com/actions/alpine_nodejs/releases/download/v{version}/{expected_name}"
+            if alpine
+            else f"https://nodejs.org/dist/v{version}/{expected_name}"
+        )
+        if item["asset_name"] != expected_name or item["source_url"] != expected_url:
+            reject("runner external asset")
+        layouts.append(layout)
+    if tuple(layouts) != EXTERNAL_LAYOUTS:
+        reject("runner external ordering")
+
+
+def runner_evidence_digest(value):
+    admitted = {
+        key: item for key, item in value.items() if key != "observation_evidence"
+    }
+    return sha256_bytes(
+        canonical_json(
+            {
+                "protocol": "portable-ghar-runner-source-release-v2",
+                "runner_release": admitted,
+            }
+        )
+    )
+
+
 def validate_runner(value):
     if not isinstance(value, dict) or set(value) != RUNNER_KEYS:
         reject("runner schema")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 2:
         reject("runner schema")
     version = value["version"]
     match = re.fullmatch(
@@ -188,23 +309,9 @@ def validate_runner(value):
     ) if isinstance(version, str) else None
     if match is None or any(int(item) > (1 << 64) - 1 for item in match.groups()):
         reject("runner version")
-    for key in ("tag_ref_sha", "source_commit_sha"):
+    for key in ("tag_ref_sha", "source_commit_sha", "source_tree_sha"):
         if not isinstance(value[key], str) or HEX40.fullmatch(value[key]) is None:
             reject("runner commit")
-    expected_name = f"actions-runner-linux-x64-{version[1:]}.tar.gz"
-    if value["linux_x64_asset_name"] != expected_name:
-        reject("runner asset")
-    if (
-        type(value["linux_x64_asset_size"]) is not int
-        or value["linux_x64_asset_size"] < 1
-        or value["linux_x64_asset_size"] > 1024 * 1024 * 1024
-    ):
-        reject("runner asset")
-    if (
-        not isinstance(value["linux_x64_asset_digest"], str)
-        or DIGEST.fullmatch(value["linux_x64_asset_digest"]) is None
-    ):
-        reject("runner digest")
     if (
         not isinstance(value["published_at"], str)
         or re.fullmatch(
@@ -217,6 +324,16 @@ def validate_runner(value):
     for key in ("command_settings_sha256", "observation_evidence"):
         if not isinstance(value[key], str) or HEX64.fullmatch(value[key]) is None:
             reject("runner evidence")
+    build = value["build"]
+    if not isinstance(build, dict) or set(build) != RUNNER_BUILD_KEYS:
+        reject("runner build schema")
+    validate_dotnet_sdk(build["dotnet_sdk"])
+    validate_nuget_locks(build["nuget_locks"])
+    validate_externals(build["externals"])
+    if build["expected_listener_version"] != version[1:]:
+        reject("runner listener version")
+    if value["observation_evidence"] != runner_evidence_digest(value):
+        reject("runner observation evidence")
     return value
 
 

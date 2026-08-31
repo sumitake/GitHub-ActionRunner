@@ -297,7 +297,7 @@ class ProductionLifecycleContractTest(unittest.TestCase):
         "Persisted controller states",
         "Safe upgrade sequence",
         "Host-profile probes",
-        "Dark deployment",
+        "Bounded live canary",
     ]
 
     def test_required_headings_in_order(self) -> None:
@@ -310,11 +310,6 @@ class ProductionLifecycleContractTest(unittest.TestCase):
         text = (REPO_ROOT / self.RELPATH).read_text(encoding="utf-8")
         self.assertIn("../architecture/overview.md", text)
         self.assertIn("../security/trust-boundaries.md", text)
-
-    def test_states_dark_deployment_is_zero_capacity_observer(self) -> None:
-        text = _normalized(self.RELPATH)
-        self.assertIn("zero", text)
-        self.assertIn("observer", text)
 
 
 class ControllerUpgradeContractTest(unittest.TestCase):
@@ -361,7 +356,7 @@ class ControllerRecoveryContractTest(unittest.TestCase):
     HEADINGS = [
         "Initial read-back",
         "Ambiguity and disabled acquisition",
-        "Dark observer recovery",
+        "Transient disabled recovery",
         "Forward recovery and compensation",
         "Hosted confirmation and rollback",
         "Retained state and evidence",
@@ -399,7 +394,7 @@ class ControllerRecoveryContractTest(unittest.TestCase):
 class RunnerReleaseContractTest(unittest.TestCase):
     RELPATH = "docs/operations/runner-release.md"
     HEADINGS = [
-        "Automatic release path",
+        "Exact source release path",
         "Immutable candidate qualification",
         "Maintenance response phases",
         "Retry and operator hold",
