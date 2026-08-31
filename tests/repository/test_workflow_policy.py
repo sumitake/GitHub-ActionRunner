@@ -60,6 +60,7 @@ CREATE_APP_TOKEN_ACTION = (
 EXPECTED_SCHEDULED_WATCH_CONTEXTS = {
     "source-full-policy",
     "base-image-fixable",
+    "release-bats-diagnostic",
 }
 EXPECTED_ALL_CONTEXTS = (
     EXPECTED_STABLE_CONTEXTS
