@@ -14,7 +14,7 @@
     "@cloudflare/vitest-pool-workers": "0.22.0",
     "@cloudflare/workers-types": "5.20260827.1",
     "@vitest/runner": "4.1.11",
-    "@vitest/snapshot": "4.1.11",
+    "@vitest/snapshot": "5.0.0",
     "vitest": "4.1.11",
     "wrangler": "4.126.0"
   }
