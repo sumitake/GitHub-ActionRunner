@@ -2826,5 +2826,12 @@
     "rule": "PATH001",
     "sha256": "a64b1b1b93e9cc02517be92d96e8d374b0bba6fca1fa6e29523319b1dfd122b2",
     "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/README.md@b646b6426180d615a953cfc6cbf3f12d84d1e33f",
+    "line": 35,
+    "rule": "PATH001",
+    "sha256": "8a86c4605eb845563f53e70a7c948084096bafa46216d7ef8b81ecccce887f24",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
   }
 ]
