@@ -126,7 +126,7 @@
       },
       {
         "path": "cmd/portable-ghar-runtime-lock/main_test.go",
-        "identity_inventory_sha256": "226ba6f91d89cd8aadddaf18117803516f6ff7a0e0444a6e452c10320c6ce960"
+        "identity_inventory_sha256": "06780acbfd9588c43bd79f57d3b0d5d99d7b7190839cf41054356e4e0c6e0af9"
       },
       {
         "path": "docs/superpowers/plans/2026-07-11-controller-runtime.md",
@@ -142,11 +142,11 @@
       },
       {
         "path": "internal/buildinfo/pins.go",
-        "identity_inventory_sha256": "75f13a3085422ec5f015fc4aa59cfb7d93d6a30d7c1818389eb76b878ffa75cb"
+        "identity_inventory_sha256": "050f10905503baa0f9ad99ffc5ed80468a3063bc2436da1c7f3019cbb4a9c6d4"
       },
       {
         "path": "internal/buildinfo/pins_test.go",
-        "identity_inventory_sha256": "cc1dc96a05475d00dd1777dfddb998f2c48bb2058525a1f071e56371f24c3cca"
+        "identity_inventory_sha256": "c3c73b84c5c538377498d9eed7b34621892660a655ccc9250bbec8643b0ae031"
       },
       {
         "path": "internal/runtimelock/lock_test.go",
