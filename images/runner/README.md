@@ -38,7 +38,11 @@ A future base refresh is one governed atomic change: derive the source
 timestamp and source set from the exact new platform manifest/rootfs, refresh
 the signed-index evidence and package versions, update every checked consumer,
 and require both clean hosted builds to produce the same image ID. Updating
-only the base digest or only the snapshot is invalid.
+only the base digest or only the snapshot is invalid. Weekly Vulnerability
+Watch scans the built runner image (`trivy image` on installed inventory) for
+newly fixable HIGH/CRITICAL findings. It does not claim the official
+`bookworm-slim` digest is green; a post-DLA slim tag remains that same
+governed atomic lock refresh.
 
 This image definition is source evidence only. Linux target-conformance,
 approved resource sizing, and any RhoNAS activation remain separate gates.

@@ -97,8 +97,10 @@ Nothing in this section has shipped as a tagged release.
   filesystem scan still blocks on unfixed findings, secret scanning is
   unchanged, and all package versions remain recorded in the release SBOMs.
 - Added a weekly `Vulnerability Watch` workflow that re-runs the full
-  release-gate policy against default-branch source and turns red the week
-  any previously unfixable HIGH/CRITICAL finding in the pinned runner base
-  image gains an upstream fix, prompting a deliberate base-image bump.
+  release-gate filesystem policy against source and scans the built runner
+  image (installed inventory) for newly fixable HIGH/CRITICAL findings. A
+  future official post-DLA `bookworm-slim` digest remains a governed atomic
+  lock refresh; watch no longer treats the virgin `FROM` digest as the
+  image-admission surface.
 
 [Unreleased]: https://github.com/sumitake/portable-ghar/compare/main...HEAD
