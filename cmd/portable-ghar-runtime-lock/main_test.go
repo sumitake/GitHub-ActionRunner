@@ -21,7 +21,7 @@ func TestRunPinsEmitsCanonicalRunnerAcquisitionPins(t *testing.T) {
 	if code := run([]string{"pins"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run pins = %d, stderr=%q", code, stderr.String())
 	}
-	const expected = `{"schema_version":1,"runner_version":"v2.336.0","linux_x64_sha256":"04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d","source_commit":"98aabcd429c4e8402406c56ce2d26387fed3b9ce","command_settings_sha256":"937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08","runner_base_image":"debian:bookworm-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4"}` + "\n"
+	const expected = `{"schema_version":1,"runner_version":"v2.336.0","linux_x64_sha256":"04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d","source_commit":"98aabcd429c4e8402406c56ce2d26387fed3b9ce","command_settings_sha256":"937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08","runner_base_image":"debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867"}` + "\n"
 	if stdout.String() != expected || stderr.Len() != 0 {
 		t.Fatalf("pins stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}

@@ -25,7 +25,7 @@ UID/GID `65532`.
 
 `debian-snapshot.lock.json` makes the pinned Debian base and package universe
 one atomic input. It binds the exact amd64 base manifest and its
-`20260623T000000Z` provenance to the ordered `bookworm`,
+`20260824T000000Z` provenance to the ordered `bookworm`,
 `bookworm-updates`, and `bookworm-security` sources, their signed
 `InRelease` and `Packages.xz` content, exact direct package versions, and the
 matching `perl`/`perl-base` edge. The image verifies those signed indexes
