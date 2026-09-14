@@ -76,7 +76,7 @@ REVIEWED_ACTION_PINS: dict[str, tuple[str, str]] = {
     "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "v7.0.1"),
     "docker/setup-buildx-action": ("37fe631027851001ddb9b187196cc803df7f5f0e", "v4.3.0"),
     "aquasecurity/trivy-action": ("ed142fd0673e97e23eac54620cfb913e5ce36c25", "v0.36.0"),
-    "github/codeql-action": ("cdf488f595d80d6e07e03d4674febd5ab45fa938", "v4.37.9"),
+    "github/codeql-action": ("b96794f015dfd88f77b49b1c93e0fa7110f94c63", "v4.38.0"),
     "actions/dependency-review-action": (
         "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
         "v5.0.0",
