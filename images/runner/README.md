@@ -25,13 +25,14 @@ UID/GID `65532`.
 
 `debian-snapshot.lock.json` makes the pinned Debian base and package universe
 one atomic input. It binds the exact amd64 base manifest and its
-`20260824T000000Z` provenance to the ordered `bookworm`,
-`bookworm-updates`, and `bookworm-security` sources, their signed
-`InRelease` and `Packages.xz` content, exact direct package versions, and the
-matching `perl`/`perl-base` edge. The image verifies those signed indexes
-after update but before install, compares the installed version anchors, and
-retains the audited lock plus full package inventory under
-`/usr/share/portable-ghar/`.
+`20260824T000000Z` provenance to the ordered `bookworm` and
+`bookworm-updates` sources, a later `bookworm-security` snapshot
+(`20260905T000000Z`) that publishes `libpcre2-8-0` `10.42-1+deb12u1`,
+their signed `InRelease` and `Packages.xz` content, exact direct package
+versions, and the matching `perl`/`perl-base` edge. The image verifies
+those signed indexes after update but before install, compares the
+installed version anchors, and retains the audited lock plus full package
+inventory under `/usr/share/portable-ghar/`.
 
 A future base refresh is one governed atomic change: derive the source
 timestamp and source set from the exact new platform manifest/rootfs, refresh

@@ -14,6 +14,7 @@
       "archive": "debian",
       "suite": "bookworm",
       "component": "main",
+      "snapshot": "20260824T000000Z",
       "inrelease_sha256": "77737fa4b34f2693e982cc9ee35736816c35a7778fc2d326cc1bbf5b301fe1aa",
       "packages_size": 8790396,
       "packages_sha256": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5"
@@ -22,6 +23,7 @@
       "archive": "debian",
       "suite": "bookworm-updates",
       "component": "main",
+      "snapshot": "20260824T000000Z",
       "inrelease_sha256": "c41bb7c5ad6a952234e53ec0c81099459e8c2d58adbeb5bf797ec29863451ab0",
       "packages_size": 6924,
       "packages_sha256": "87e7e94047fb7fb6f4ceecc7022d4bee55b66031cc2a7666d3196f3e0aabb846"
@@ -30,9 +32,10 @@
       "archive": "debian-security",
       "suite": "bookworm-security",
       "component": "main",
-      "inrelease_sha256": "0ba1af3fa3372c3426cfe2e1d6efdbad69a02a1b1e1978da0ac98081f8578eba",
-      "packages_size": 335144,
-      "packages_sha256": "476b7d393c173a29a40619e3a514f9bb3bb4d01d2d252e2fd117bb3bf941340e"
+      "snapshot": "20260905T000000Z",
+      "inrelease_sha256": "dc7305b9a84595905108bce64535538cd5fca256f9aa793d84e1f7df1fb99a4a",
+      "packages_size": 336272,
+      "packages_sha256": "fb1d0e23ee5ba783043a834d39dd41e6fd1a618ab898b394fccb4585984e9099"
     }
   ],
   "direct_packages": [
@@ -59,6 +62,10 @@
     {
       "name": "liblttng-ust1",
       "version": "2.13.5-1"
+    },
+    {
+      "name": "libpcre2-8-0",
+      "version": "10.42-1+deb12u1"
     },
     {
       "name": "libssl3",
