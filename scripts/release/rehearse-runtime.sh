@@ -907,7 +907,7 @@ def validate_dockerfiles(clone, runtime):
             (
                 "deb [check-valid-until=no] "
                 "https://snapshot.debian.org/archive/"
-                f"{row['archive']}/{snapshot_lock['snapshot']} "
+                f"{row['archive']}/{row['snapshot']} "
                 f"{row['suite']} {row['component']}"
             )
             for row in snapshot_lock["sources"]

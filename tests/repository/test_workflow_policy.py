@@ -59,7 +59,7 @@ CREATE_APP_TOKEN_ACTION = (
 # failing when the release-gate policy would newly fire.
 EXPECTED_SCHEDULED_WATCH_CONTEXTS = {
     "source-full-policy",
-    "base-image-fixable",
+    "runner-image-fixable",
 }
 EXPECTED_ALL_CONTEXTS = (
     EXPECTED_STABLE_CONTEXTS
@@ -843,6 +843,58 @@ class RealCiWorkflowTest(unittest.TestCase):
                     "compare-runtime-rebuilds.sh",
                     self._run_text(root["jobs"][publish_id]),
                 )
+
+    def test_vuln_watch_scans_built_runner_image(self) -> None:
+        root = self._load_real_workflow("vuln-watch.yml")
+        self.assertEqual(set(root.get("on", {})), {"schedule", "workflow_dispatch"})
+        self.assertEqual(
+            set(root["jobs"]),
+            {"source-full-policy", "runner-image-fixable"},
+        )
+
+        source = root["jobs"]["source-full-policy"]
+        source_trivy = [
+            step
+            for step in source["steps"]
+            if str(step.get("uses", "")).startswith("aquasecurity/trivy-action@")
+        ]
+        self.assertEqual(len(source_trivy), 1)
+        self.assertEqual(
+            source_trivy[0]["with"],
+            {
+                "scan-type": "fs",
+                "scan-ref": ".",
+                "scanners": "vuln,secret",
+                "severity": "HIGH,CRITICAL",
+                "exit-code": "1",
+            },
+        )
+        self.assertNotIn("ignore-unfixed", source_trivy[0].get("with", {}))
+
+        image = root["jobs"]["runner-image-fixable"]
+        image_text = self._run_text(image)
+        self.assertIn("scripts/prepare-task6-images.sh", image_text)
+        self.assertIn("scripts/prepare-task5-images.sh", image_text)
+        self.assertIn("docker buildx build", image_text)
+        self.assertIn("images/runner/Dockerfile", image_text)
+        self.assertIn("images/runner", image_text)
+        self.assertNotIn("awk", image_text)
+        self.assertNotIn("/^FROM /", image_text)
+
+        image_trivy = [
+            step
+            for step in image["steps"]
+            if str(step.get("uses", "")).startswith("aquasecurity/trivy-action@")
+        ]
+        self.assertEqual(len(image_trivy), 1)
+        self.assertEqual(image_trivy[0]["with"]["scan-type"], "image")
+        self.assertEqual(image_trivy[0]["with"]["image-ref"], "${{ steps.runner.outputs.ref }}")
+        self.assertEqual(image_trivy[0]["with"]["scanners"], "vuln")
+        self.assertEqual(image_trivy[0]["with"]["vuln-type"], "os")
+        self.assertEqual(image_trivy[0]["with"]["severity"], "HIGH,CRITICAL")
+        self.assertEqual(image_trivy[0]["with"]["ignore-unfixed"], "true")
+        self.assertEqual(image_trivy[0]["with"]["exit-code"], "1")
+        self.assertNotIn("vuln-type", source_trivy[0].get("with", {}))
 
     def test_sanitization_workflow_triggers_and_job_shape(self) -> None:
         sys.path.insert(0, str(REPO_ROOT / "scripts"))

@@ -27,28 +27,41 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
 
-  base-image-fixable:
+  runner-image-fixable:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     concurrency:
-      group: ${{ github.workflow }}-base-image-${{ github.ref }}
+      group: ${{ github.workflow }}-runner-image-${{ github.ref }}
       cancel-in-progress: true
+    env:
+      GOTOOLCHAIN: go1.26.6
     steps:
-      - name: Checkout default-branch source
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Resolve the pinned runner base image reference
-        id: base
-        run: 'set -euo pipefail; ref="$(awk ''/^FROM /{print $2; exit}'' images/runner/Dockerfile)"; case "$ref" in *@sha256:*) ;; *) echo "base image reference is not digest-pinned" >&2; exit 1 ;; esac; printf "ref=%s\n" "$ref" >>"$GITHUB_OUTPUT"'
-      - name: Fail when a previously unfixable base CVE gains a fix
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Prepare Task 6 image contexts
+        run: scripts/prepare-task6-images.sh
+      - name: Prepare Task 5 image contexts
+        run: 'repository="$(pwd -P)"; scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID" --ca-bundle "$repository/images/trust/build/ca-bundle.pem"'
+      - name: Build the pinned runner image
+        id: runner
+        run: 'set -euo pipefail; tag="portable-ghar-vuln-watch:runner"; source_epoch="$(git show -s --format=%ct HEAD)"; case "$source_epoch" in ""|*[!0-9]*|0) echo "invalid SOURCE_DATE_EPOCH" >&2; exit 1 ;; esac; SOURCE_DATE_EPOCH="$source_epoch" docker buildx build --platform linux/amd64 --no-cache --provenance=false --sbom=false --build-arg "SOURCE_DATE_EPOCH=$source_epoch" --output "type=docker,name=$tag,rewrite-timestamp=true" -f images/runner/Dockerfile images/runner; printf "ref=%s\n" "$tag" >>"$GITHUB_OUTPUT"'
+      - name: Fail when a previously unfixable runner CVE gains a fix
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: ${{ steps.base.outputs.ref }}
+          image-ref: ${{ steps.runner.outputs.ref }}
           scanners: vuln
+          vuln-type: os
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"

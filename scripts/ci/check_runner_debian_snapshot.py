@@ -47,6 +47,7 @@ SOURCE_KEYS = {
     "archive",
     "suite",
     "component",
+    "snapshot",
     "inrelease_sha256",
     "packages_size",
     "packages_sha256",
@@ -64,6 +65,8 @@ EXPECTED_DIRECT_NAMES = (
     "libicu72",
     "libkrb5-3",
     "liblttng-ust1",
+    "libpcre2-8-0",
+    "libssh2-1",
     "libssl3",
     "zlib1g",
 )
@@ -190,6 +193,8 @@ def validate_lock(value: Any) -> None:
             row["archive"] != archive
             or row["suite"] != suite
             or row["component"] != "main"
+            or not isinstance(row["snapshot"], str)
+            or SNAPSHOT.fullmatch(row["snapshot"]) is None
             or not isinstance(row["inrelease_sha256"], str)
             or HEX64.fullmatch(row["inrelease_sha256"]) is None
             or type(row["packages_size"]) is not int
@@ -224,12 +229,11 @@ def validate_lock(value: Any) -> None:
 
 
 def _source_lines(lock: dict[str, Any]) -> list[str]:
-    snapshot = lock["snapshot"]
     return [
         (
             "deb [check-valid-until=no] "
             f"https://snapshot.debian.org/archive/{row['archive']}/"
-            f"{snapshot} {row['suite']} {row['component']}"
+            f"{row['snapshot']} {row['suite']} {row['component']}"
         )
         for row in lock["sources"]
     ]

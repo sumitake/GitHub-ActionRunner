@@ -2,27 +2,29 @@
   "schema_version": 1,
   "architecture": "amd64",
   "base": {
-    "reference": "debian:bookworm-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4",
-    "config_digest": "sha256:1f2403136cb0aef651921f255f5155701f36083e64764b3134c573438e13b46a",
-    "layer_digest": "sha256:68629629b516c3cd6f5e71ffbe18e32afb1ae5b4926c92d058c0f11ef1fd58a3",
-    "created_at": "2026-06-23T00:00:00Z",
-    "source_epoch": 1782172800
+    "reference": "debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
+    "config_digest": "sha256:160466e67bb85a4099d9d9c2356b4a6a64747b281a22c142efbd4539db1b8525",
+    "layer_digest": "sha256:a8ac7f6c67abc236e4c745052c404112b8fab6fe8ac3a329d1ef3b867ad67c71",
+    "created_at": "2026-08-24T00:00:00Z",
+    "source_epoch": 1787529600
   },
-  "snapshot": "20260623T000000Z",
+  "snapshot": "20260824T000000Z",
   "sources": [
     {
       "archive": "debian",
       "suite": "bookworm",
       "component": "main",
-      "inrelease_sha256": "7733619f41f413ed7a2d62cecdabd659dd4e597fffa8e00bbaca1b4d27b1ea23",
-      "packages_size": 8790116,
-      "packages_sha256": "62d555a3a8be1d6de520fcd497ae85f2317c6dbb1249976e07720043e77b85d8"
+      "snapshot": "20260824T000000Z",
+      "inrelease_sha256": "77737fa4b34f2693e982cc9ee35736816c35a7778fc2d326cc1bbf5b301fe1aa",
+      "packages_size": 8790396,
+      "packages_sha256": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5"
     },
     {
       "archive": "debian",
       "suite": "bookworm-updates",
       "component": "main",
-      "inrelease_sha256": "312c90c874b3cd679f972eae054182e52df37aa5799f1f13aecedfe98b5631f3",
+      "snapshot": "20260824T000000Z",
+      "inrelease_sha256": "c41bb7c5ad6a952234e53ec0c81099459e8c2d58adbeb5bf797ec29863451ab0",
       "packages_size": 6924,
       "packages_sha256": "87e7e94047fb7fb6f4ceecc7022d4bee55b66031cc2a7666d3196f3e0aabb846"
     },
@@ -30,9 +32,10 @@
       "archive": "debian-security",
       "suite": "bookworm-security",
       "component": "main",
-      "inrelease_sha256": "4dcc5d5b93979ceb3a6d7c12820122e9107997cd441ab8118a372c433bb9a9c5",
-      "packages_size": 311896,
-      "packages_sha256": "76124710ca5e4d363325023c282e511ac1f726d924e32e0f161f26a50581fd55"
+      "snapshot": "20260906T000000Z",
+      "inrelease_sha256": "54fbb49bee8e9b916e702b754081ab2c292038c477d0c1dbe7a09f4b753ed828",
+      "packages_size": 336508,
+      "packages_sha256": "904649be6031840086ed21432f83c0c85941ff5d57169100d7d80e2becb1591c"
     }
   ],
   "direct_packages": [
@@ -42,7 +45,7 @@
     },
     {
       "name": "curl",
-      "version": "7.88.1-10+deb12u14"
+      "version": "7.88.1-10+deb12u15"
     },
     {
       "name": "git",
@@ -59,6 +62,14 @@
     {
       "name": "liblttng-ust1",
       "version": "2.13.5-1"
+    },
+    {
+      "name": "libpcre2-8-0",
+      "version": "10.42-1+deb12u1"
+    },
+    {
+      "name": "libssh2-1",
+      "version": "1.10.0-3+deb12u1"
     },
     {
       "name": "libssl3",

@@ -132,7 +132,7 @@ func Pins() Manifest {
 			SourceCommit:          "98aabcd429c4e8402406c56ce2d26387fed3b9ce",
 			CommandSettingsSHA256: "937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08",
 		},
-		RunnerBaseImage: "debian:bookworm-slim@sha256:1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4",
+		RunnerBaseImage: "debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
 		AdapterImage:    "scratch",
 		BrokerImage:     "scratch",
 		HelperImage:     "scratch",

@@ -116,12 +116,12 @@ class RunnerDebianSnapshotContractTest(unittest.TestCase):
         cases = {
             "stale-base": (
                 "debian:bookworm-slim@sha256:"
-                "1def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4",
+                "5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
                 "debian:bookworm-slim@sha256:"
-                "0def178129dfb5f24db43afbf2fcac04530012e3264ba4ff81c71184e17a9ee4",
+                "0ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
             ),
             "known-bad-snapshot": (
-                "20260623T000000Z",
+                "20260824T000000Z",
                 "20250101T000000Z",
             ),
             "stale-package": (
