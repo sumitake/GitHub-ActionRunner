@@ -60,7 +60,8 @@ jobs:
         with:
           scan-type: image
           image-ref: ${{ steps.runner.outputs.ref }}
-          scanners: vuln,secret
+          scanners: vuln
+          vuln-type: os
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"

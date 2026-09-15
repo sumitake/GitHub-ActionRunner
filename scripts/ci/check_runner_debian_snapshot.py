@@ -66,6 +66,7 @@ EXPECTED_DIRECT_NAMES = (
     "libkrb5-3",
     "liblttng-ust1",
     "libpcre2-8-0",
+    "libssh2-1",
     "libssl3",
     "zlib1g",
 )

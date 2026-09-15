@@ -22,7 +22,7 @@ RUN set -eu; \
     done; \
     expected_ca_sha=3ff344e30b9b1ed2971044eabb438a08f2e2245ddb5f8ab1a3ad8b63ab4eaf91; \
     expected_ca_lock_sha=b39d26752fd97766b533547ff731334348c0f35e041adb49848e2cd10f30c592; \
-    expected_debian_snapshot_lock_sha=77698efbd51de8ff612a2e7dd9c0af8e7869ffe48d0d4f561638d81612d1e44a; \
+    expected_debian_snapshot_lock_sha=9448eec7f0584d18d4ad5b01800758a26e8eba197dd3f2646ef87febbfe78e03; \
     test "$(sha256sum /context/build/ca-bundle.lock.json | awk '{print $1}')" = "$expected_ca_lock_sha"; \
     test "$(sha256sum /context/build/ca-bundle.pem | awk '{print $1}')" = "$expected_ca_sha"; \
     test "$(sha256sum /context/debian-snapshot.lock.json | awk '{print $1}')" = "$expected_debian_snapshot_lock_sha"; \
@@ -49,7 +49,7 @@ RUN set -eu; \
     printf '%s\n' \
       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260824T000000Z bookworm main' \
       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260824T000000Z bookworm-updates main' \
-      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260905T000000Z bookworm-security main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260906T000000Z bookworm-security main' \
       > /etc/apt/sources.list; \
     apt-get \
       -o Acquire::Check-Valid-Until=false \
@@ -60,7 +60,7 @@ RUN set -eu; \
     && /usr/local/bin/verify-debian-snapshot /var/lib/apt/lists \
       bookworm 77737fa4b34f2693e982cc9ee35736816c35a7778fc2d326cc1bbf5b301fe1aa 8790396 9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5 \
       bookworm-updates c41bb7c5ad6a952234e53ec0c81099459e8c2d58adbeb5bf797ec29863451ab0 6924 87e7e94047fb7fb6f4ceecc7022d4bee55b66031cc2a7666d3196f3e0aabb846 \
-      bookworm-security dc7305b9a84595905108bce64535538cd5fca256f9aa793d84e1f7df1fb99a4a 336272 fb1d0e23ee5ba783043a834d39dd41e6fd1a618ab898b394fccb4585984e9099 \
+      bookworm-security 54fbb49bee8e9b916e702b754081ab2c292038c477d0c1dbe7a09f4b753ed828 336508 904649be6031840086ed21432f83c0c85941ff5d57169100d7d80e2becb1591c \
     && apt-get \
       -o Acquire::https::CaInfo=/portable-ghar-bootstrap-ca.pem \
       -o Acquire::https::Verify-Peer=true \
@@ -73,6 +73,7 @@ RUN set -eu; \
       libkrb5-3=1.20.1-2+deb12u5 \
       liblttng-ust1=2.13.5-1 \
       libpcre2-8-0=10.42-1+deb12u1 \
+      libssh2-1=1.10.0-3+deb12u1 \
       libssl3=3.0.20-1~deb12u2 \
       zlib1g=1:1.2.13.dfsg-1 \
     && printf '%s\t%s\n' \
@@ -83,12 +84,13 @@ RUN set -eu; \
       'libkrb5-3' '1.20.1-2+deb12u5' \
       'liblttng-ust1' '2.13.5-1' \
       'libpcre2-8-0' '10.42-1+deb12u1' \
+      'libssh2-1' '1.10.0-3+deb12u1' \
       'libssl3' '3.0.20-1~deb12u2' \
       'zlib1g' '1:1.2.13.dfsg-1' \
       'perl' '5.36.0-7+deb12u3' \
       'perl-base' '5.36.0-7+deb12u3' \
       | LC_ALL=C sort > /tmp/runner-package-anchors.expected \
-    && for package in ca-certificates curl git libicu72 libkrb5-3 liblttng-ust1 libpcre2-8-0 libssl3 zlib1g perl perl-base; do \
+    && for package in ca-certificates curl git libicu72 libkrb5-3 liblttng-ust1 libpcre2-8-0 libssh2-1 libssl3 zlib1g perl perl-base; do \
       dpkg-query -W -f='${Package}\t${Version}\n' "$package"; \
     done | LC_ALL=C sort > /usr/share/portable-ghar/runner-package-anchors.tsv \
     && cmp /tmp/runner-package-anchors.expected /usr/share/portable-ghar/runner-package-anchors.tsv \

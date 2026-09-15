@@ -32,10 +32,10 @@
       "archive": "debian-security",
       "suite": "bookworm-security",
       "component": "main",
-      "snapshot": "20260905T000000Z",
-      "inrelease_sha256": "dc7305b9a84595905108bce64535538cd5fca256f9aa793d84e1f7df1fb99a4a",
-      "packages_size": 336272,
-      "packages_sha256": "fb1d0e23ee5ba783043a834d39dd41e6fd1a618ab898b394fccb4585984e9099"
+      "snapshot": "20260906T000000Z",
+      "inrelease_sha256": "54fbb49bee8e9b916e702b754081ab2c292038c477d0c1dbe7a09f4b753ed828",
+      "packages_size": 336508,
+      "packages_sha256": "904649be6031840086ed21432f83c0c85941ff5d57169100d7d80e2becb1591c"
     }
   ],
   "direct_packages": [
@@ -66,6 +66,10 @@
     {
       "name": "libpcre2-8-0",
       "version": "10.42-1+deb12u1"
+    },
+    {
+      "name": "libssh2-1",
+      "version": "1.10.0-3+deb12u1"
     },
     {
       "name": "libssl3",

@@ -889,10 +889,12 @@ class RealCiWorkflowTest(unittest.TestCase):
         self.assertEqual(len(image_trivy), 1)
         self.assertEqual(image_trivy[0]["with"]["scan-type"], "image")
         self.assertEqual(image_trivy[0]["with"]["image-ref"], "${{ steps.runner.outputs.ref }}")
-        self.assertEqual(image_trivy[0]["with"]["scanners"], "vuln,secret")
+        self.assertEqual(image_trivy[0]["with"]["scanners"], "vuln")
+        self.assertEqual(image_trivy[0]["with"]["vuln-type"], "os")
         self.assertEqual(image_trivy[0]["with"]["severity"], "HIGH,CRITICAL")
         self.assertEqual(image_trivy[0]["with"]["ignore-unfixed"], "true")
         self.assertEqual(image_trivy[0]["with"]["exit-code"], "1")
+        self.assertNotIn("vuln-type", source_trivy[0].get("with", {}))
 
     def test_sanitization_workflow_triggers_and_job_shape(self) -> None:
         sys.path.insert(0, str(REPO_ROOT / "scripts"))

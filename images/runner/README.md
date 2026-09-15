@@ -27,7 +27,8 @@ UID/GID `65532`.
 one atomic input. It binds the exact amd64 base manifest and its
 `20260824T000000Z` provenance to the ordered `bookworm` and
 `bookworm-updates` sources, a later `bookworm-security` snapshot
-(`20260905T000000Z`) that publishes `libpcre2-8-0` `10.42-1+deb12u1`,
+(`20260906T000000Z`) that publishes `libpcre2-8-0` `10.42-1+deb12u1`
+and `libssh2-1` `1.10.0-3+deb12u1`,
 their signed `InRelease` and `Packages.xz` content, exact direct package
 versions, and the matching `perl`/`perl-base` edge. The image verifies
 those signed indexes after update but before install, compares the
@@ -39,10 +40,11 @@ timestamp and source set from the exact new platform manifest/rootfs, refresh
 the signed-index evidence and package versions, update every checked consumer,
 and require both clean hosted builds to produce the same image ID. Updating
 only the base digest or only the snapshot is invalid. Weekly Vulnerability
-Watch scans the built runner image (`trivy image` on installed inventory) for
-newly fixable HIGH/CRITICAL findings. It does not claim the official
-`bookworm-slim` digest is green; a post-DLA slim tag remains that same
-governed atomic lock refresh.
+Watch scans the built runner image (`trivy image`, OS packages only) for
+newly fixable HIGH/CRITICAL findings in the installed Debian inventory.
+Node.js / `actions-runner` bundle CVEs are a separate release-admission
+track. It does not claim the official `bookworm-slim` digest is green; a
+post-DLA slim tag remains that same governed atomic lock refresh.
 
 This image definition is source evidence only. Linux target-conformance,
 approved resource sizing, and any RhoNAS activation remain separate gates.
