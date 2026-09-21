@@ -46,6 +46,7 @@ Nothing in this section has shipped as a tagged release.
 
 - Reviewed-pin `actions/setup-go` to v7.0.0 (`b7ad1dad…`) and `actions/setup-node` to v7.0.0 (`82076278…`) in workflows and `REVIEWED_ACTION_PINS`.
 - Reviewed-pin `github/codeql-action` to v4.37.9 (`cdf488f5…`) and `docker/setup-buildx-action` to v4.3.0 (`37fe6310…`) in workflows and `REVIEWED_ACTION_PINS`.
+- Reviewed-pin `docker/setup-buildx-action` to v4.4.1 (`f87e5991…`) in workflows and `REVIEWED_ACTION_PINS`.
 
 - Made operational reliability, practical simplicity, and clear boundaries
   blocking design criteria; simplified the planned external control plane to
