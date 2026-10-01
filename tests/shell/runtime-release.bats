@@ -922,7 +922,7 @@ for entry in images:
     if "apt-get" in text:
         acquirers.append(entry["name"])
         assert all(source in text for source in expected_sources)
-        assert len(re.findall(r"\bsnapshot=[0-9]{8}T000000Z;", text)) == 1
+        assert len(re.findall(r"\bsnapshot=[0-9]{8}T[0-9]{6}Z;", text)) == 1
         assert "ARG SOURCE_DATE_EPOCH" in text
 assert acquirers == ["runner"]
 PY

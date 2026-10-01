@@ -918,7 +918,7 @@ def validate_dockerfiles(clone, runtime):
             acquirers.append(entry["name"])
             if (
                 "ARG SOURCE_DATE_EPOCH" not in text
-                or len(re.findall(r"\bsnapshot=[0-9]{8}T000000Z;", text)) != 1
+                or len(re.findall(r"\bsnapshot=[0-9]{8}T[0-9]{6}Z;", text)) != 1
                 or any(source not in text for source in RUNNER_SNAPSHOT_SOURCES)
             ):
                 reject("package snapshot")
