@@ -40,7 +40,7 @@ RUN set -eu; \
       ""|*[!0-9]*) exit 1 ;; \
     esac; \
     rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*; \
-    snapshot=20261001T050000Z; \
+    snapshot=20261001T110000Z; \
     printf '%s\n' \
       "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${snapshot} bookworm main" \
       "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${snapshot} bookworm-updates main" \
