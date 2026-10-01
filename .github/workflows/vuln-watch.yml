@@ -79,7 +79,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Fail when a newer official runner release exists
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: 'set -euo pipefail; pinned="$(jq -er ''.runtime.runner_release.version'' release/manifest.json)"; latest_json="$(gh api repos/actions/runner/releases/latest)"; latest="$(jq -er ''.tag_name'' <<<"$latest_json")"; published="$(jq -er ''.published_at'' <<<"$latest_json")"; [[ "$pinned" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; if [ "$latest" = "$pinned" ]; then printf "pinned runner %s is the latest official release\n" "$pinned"; exit 0; fi; deadline="$(date -u -d "$published + 30 days" +%Y-%m-%dT%H:%M:%SZ)"; printf "::error::pinned runner %s is behind official %s (published %s); GitHub stops queuing jobs to non-updating runners after %s\n" "$pinned" "$latest" "$published" "$deadline"; exit 1'
+      - name: Observe the official runner release
+        id: observe
+        run: 'set -euo pipefail; out="$RUNNER_TEMP/runner-observation"; mkdir -m 700 "$out"; set +e; scripts/release/observe-runner-release.sh --current-manifest release/manifest.json --output "$out/runner-release.json"; observer_rc=$?; set -e; if [ "$observer_rc" -eq 3 ]; then printf "pinned runner %s is the latest official release\n" "$(jq -er ''.runtime.runner_release.version'' release/manifest.json)"; printf "newer=false\n" >>"$GITHUB_OUTPUT"; exit 0; fi; test "$observer_rc" -eq 0; test -f "$out/runner-release.json"; printf "newer=true\n" >>"$GITHUB_OUTPUT"'
+      - name: Upload the observed runner release entry
+        if: steps.observe.outputs.newer == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runner-release-observation
+          path: ${{ runner.temp }}/runner-observation/runner-release.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+          overwrite: false
+      - name: Fail while a newer official runner release exists
+        if: steps.observe.outputs.newer == 'true'
+        run: 'set -euo pipefail; observed="$RUNNER_TEMP/runner-observation/runner-release.json"; pinned="$(jq -er ''.runtime.runner_release.version'' release/manifest.json)"; latest="$(jq -er ''.version'' "$observed")"; published="$(jq -er ''.published_at'' "$observed")"; deadline="$(date -u -d "$published + 30 days" +%Y-%m-%dT%H:%M:%SZ)"; printf "Observed runtime.runner_release entry:\n"; cat "$observed"; printf "\n::error::pinned runner %s is behind official %s (published %s); GitHub stops queuing jobs to non-updating runners after %s. The entry above (also the runner-release-observation artifact) is the exact runtime.runner_release value to commit.\n" "$pinned" "$latest" "$published" "$deadline"; exit 1'

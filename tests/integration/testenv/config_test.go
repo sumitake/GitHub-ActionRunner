@@ -91,11 +91,11 @@ func TestReadConformanceInputRejectsInvalidBindingsAndAuthority(t *testing.T) {
 		},
 		"image reference digest mismatch": func(input *ConformanceInput) {
 			input.Images.Runner.Reference =
-				"example/runner@sha256:" + inputDigestB
+				"sha256:" + inputDigestB
 		},
 		"uppercase image reference": func(input *ConformanceInput) {
 			input.Images.Runner.Reference =
-				"Example/runner@sha256:" + inputDigestA
+				"SHA256:" + inputDigestA
 		},
 		"duplicate image identity": func(input *ConformanceInput) {
 			input.Images.Adapter.Digest = input.Images.Runner.Digest
@@ -116,8 +116,7 @@ func TestReadConformanceInputRejectsInvalidBindingsAndAuthority(t *testing.T) {
 		},
 		"workflow tool digest mismatch": func(input *ConformanceInput) {
 			input.WorkflowTools[0].ImageReference =
-				"example/tools/" + input.WorkflowTools[0].ProbeID +
-					"@sha256:" + inputDigestD
+				"sha256:" + inputDigestD
 		},
 		"workflow tool image substitution": func(input *ConformanceInput) {
 			input.WorkflowTools[0].ImageReference =
@@ -540,29 +539,29 @@ func validConformanceInput(
 		},
 		Images: ImageBindings{
 			Runner: ImmutableImageBinding{
-				ID: "runner", Reference: "example/runner@sha256:" + inputDigestA,
+				ID: "runner", Reference: "sha256:" + inputDigestA,
 				Digest: inputDigestA,
 			},
 			Adapter: ImmutableImageBinding{
-				ID: "adapter", Reference: "example/adapter@sha256:" + inputDigestB,
+				ID: "adapter", Reference: "sha256:" + inputDigestB,
 				Digest: inputDigestB,
 			},
 			Broker: ImmutableImageBinding{
-				ID: "broker", Reference: "example/broker@sha256:" + inputDigestC,
+				ID: "broker", Reference: "sha256:" + inputDigestC,
 				Digest: inputDigestC,
 			},
 			Helper: ImmutableImageBinding{
-				ID: "helper", Reference: "example/helper@sha256:" + inputDigestD,
+				ID: "helper", Reference: "sha256:" + inputDigestD,
 				Digest: inputDigestD,
 			},
 			Verifier: ImmutableImageBinding{
 				ID:        "verifier",
-				Reference: "example/verifier@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+				Reference: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
 				Digest:    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
 			},
 			SyntheticListener: ImmutableImageBinding{
 				ID:        "synthetic-listener",
-				Reference: "example/synthetic-listener@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+				Reference: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 				Digest:    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 			},
 		},
@@ -654,7 +653,7 @@ func validConformanceInput(
 			input.WorkflowTools,
 			WorkflowToolBinding{
 				ProbeID: id,
-				ImageReference: "example/tools/" + id + "@sha256:" +
+				ImageReference: "sha256:" +
 					string(digestCharacters),
 				ImageDigest: string(digestCharacters),
 			},

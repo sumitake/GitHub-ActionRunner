@@ -48,9 +48,11 @@ them. Workflows that need a package manager install their own.
 The selected image disables in-place updates, and GitHub stops queuing jobs to
 such a runner 30 days after a newer official release is published. The weekly
 vulnerability watch therefore fails while a newer official release exists and
-prints that deadline. The response is an ordinary pin bump: run the observer,
-review the new `runtime.runner_release` tuple, and qualify it through the
-release path below.
+prints that deadline. The same job runs the observer, prints the exact new
+`runtime.runner_release` entry in its log, and uploads it as the
+`runner-release-observation` artifact.
+The response is an ordinary pin bump: review that entry, commit it, and qualify
+it through the release path below.
 
 ## Immutable candidate qualification
 

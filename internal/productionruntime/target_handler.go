@@ -8,7 +8,6 @@ import (
 	"os"
 	"reflect"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/cli"
@@ -988,8 +987,7 @@ func imageReferenceMatchesRuntimeDigest(
 	reference string,
 	digest string,
 ) bool {
-	return strings.HasSuffix(reference, "@"+digest) &&
-		len(reference) > len(digest)+1
+	return reference != "" && reference == digest
 }
 
 func digestPinnedExecutable(path string) (string, error) {

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const goldenPrivateOverlayRevision = "9188c3259e88a025093101bb0b7863004609a929d4783491a478240b16d4382c"
+const goldenPrivateOverlayRevision = "3ca67ec93db3d96575d4ea1ac36fc3d7ca93aa05a3fde153ec578db38efce081"
 
 func TestPrivateOverlayGolden(t *testing.T) {
 	t.Parallel()
@@ -567,6 +567,6 @@ func syntheticControlPath(parts ...string) string {
 	return "/" + strings.Join(append([]string{"Users", "control"}, parts...), "/")
 }
 
-func immutableImage(name, digit string) string {
-	return "example.invalid/portable/" + name + "@sha256:" + strings.Repeat(digit, 64)
+func immutableImage(_ string, digit string) string {
+	return "sha256:" + strings.Repeat(digit, 64)
 }

@@ -99,7 +99,7 @@ func validWorkflowToolSourceInputs(
 		digest := fmt.Sprintf("%064x", index+1)
 		bindings = append(bindings, WorkflowToolBinding{
 			ProbeID:        id,
-			ImageReference: "example/tools/" + id + "@sha256:" + digest,
+			ImageReference: "sha256:" + digest,
 			ImageDigest:    digest,
 		})
 		users = append(users, "65532:65532")

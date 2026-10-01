@@ -11,7 +11,6 @@ import (
 	"io"
 	"math"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
@@ -21,7 +20,7 @@ import (
 var ErrClosedCommand = errors.New("testenv: closed command failed")
 
 const (
-	imageInspectFormat = `{"id":{{json .Id}},"repo_digests":{{json .RepoDigests}},"operating_system":{{json .Os}},"architecture":{{json .Architecture}},"user":{{json .Config.User}}}`
+	imageInspectFormat = `{"id":{{json .Id}},"operating_system":{{json .Os}},"architecture":{{json .Architecture}},"user":{{json .Config.User}}}`
 	dockerInfoFormat   = `{"server_version":{{json .ServerVersion}},"operating_system":{{json .OperatingSystem}},"architecture":{{json .Architecture}},"kernel_version":{{json .KernelVersion}},"cgroup_version":{{json .CgroupVersion}},"memory_limit":{{json .MemoryLimit}},"cpu_cfs":{{json .CPUCfs}},"pids_limit":{{json .PidsLimit}}}`
 )
 
@@ -463,42 +462,24 @@ func (s *closedCommandSurface) argv(
 }
 
 type closedImageInspectWire struct {
-	ID              string   `json:"id"`
-	RepoDigests     []string `json:"repo_digests"`
-	OperatingSystem string   `json:"operating_system"`
-	Architecture    string   `json:"architecture"`
-	User            string   `json:"user"`
+	ID              string `json:"id"`
+	OperatingSystem string `json:"operating_system"`
+	Architecture    string `json:"architecture"`
+	User            string `json:"user"`
 }
 
 func validClosedImageInspectWire(
 	wire closedImageInspectWire,
 	expectedReference string,
 ) bool {
-	if !strings.HasPrefix(wire.ID, "sha256:") ||
-		!isLowerHex(strings.TrimPrefix(wire.ID, "sha256:"), 64) ||
-		len(wire.RepoDigests) == 0 ||
+	if !immutableImageReferencePattern.MatchString(wire.ID) ||
+		wire.ID != expectedReference ||
 		wire.OperatingSystem == "" ||
 		wire.Architecture == "" {
 		return false
 	}
-	if _, _, ok := parseStaticNumericUser(wire.User); !ok {
-		return false
-	}
-	found := 0
-	for index, reference := range wire.RepoDigests {
-		if !immutableImageReferencePattern.MatchString(reference) {
-			return false
-		}
-		for prior := 0; prior < index; prior++ {
-			if wire.RepoDigests[prior] == reference {
-				return false
-			}
-		}
-		if reference == expectedReference {
-			found++
-		}
-	}
-	return found == 1
+	_, _, ok := parseStaticNumericUser(wire.User)
+	return ok
 }
 
 func validClosedImageBindings(bindings []staticImageBinding) bool {

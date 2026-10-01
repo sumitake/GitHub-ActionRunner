@@ -172,22 +172,20 @@ func TestPreflightImageInspectionBindsExactReferencesAndTypedUsers(
 	references := []staticImageBinding{
 		{
 			ID: "runner",
-			Reference: "example/runner@sha256:" +
+			Reference: "sha256:" +
 				inputDigestA,
 		},
 		{
 			ID: "adapter",
-			Reference: "example/adapter@sha256:" +
+			Reference: "sha256:" +
 				inputDigestB,
 		},
 	}
 	raw := []byte(
 		fmt.Sprintf(
-			`{"id":"sha256:%s","repo_digests":["%s"],"operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n"+
-				`{"id":"sha256:%s","repo_digests":["%s"],"operating_system":"linux","architecture":"amd64","user":"1001:1001"}`+"\n",
-			inputDigestC,
+			`{"id":"%s","operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n"+
+				`{"id":"%s","operating_system":"linux","architecture":"amd64","user":"1001:1001"}`+"\n",
 			references[0].Reference,
-			inputDigestD,
 			references[1].Reference,
 		),
 	)
@@ -219,7 +217,7 @@ func TestPreflightImageInspectionBindsExactReferencesAndTypedUsers(
 		"image",
 		"inspect",
 		"--format",
-		`{"id":{{json .Id}},"repo_digests":{{json .RepoDigests}},"operating_system":{{json .Os}},"architecture":{{json .Architecture}},"user":{{json .Config.User}}}`,
+		`{"id":{{json .Id}},"operating_system":{{json .Os}},"architecture":{{json .Architecture}},"user":{{json .Config.User}}}`,
 		references[0].Reference,
 		references[1].Reference,
 	}
@@ -238,7 +236,7 @@ func TestPreflightImageInspectionRejectsMissingDuplicateOrWrongReference(
 ) {
 	t.Parallel()
 
-	reference := "example/runner@sha256:" + inputDigestA
+	reference := "sha256:" + inputDigestA
 	config := closedCommandConfig{
 		DockerPath:   "/usr/bin/docker",
 		FixtureRoot:  "/private/tmp/portable-ghar-fixture",
@@ -249,25 +247,22 @@ func TestPreflightImageInspectionRejectsMissingDuplicateOrWrongReference(
 	}
 	tests := map[string][]byte{
 		"missing line": nil,
-		"wrong reference": []byte(
+		"wrong image id": []byte(
 			fmt.Sprintf(
-				`{"id":"sha256:%s","repo_digests":["example/other@sha256:%s"],"operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n",
+				`{"id":"sha256:%s","operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n",
 				inputDigestB,
-				inputDigestA,
 			),
 		),
-		"duplicate reference": []byte(
+		"repository digest field": []byte(
 			fmt.Sprintf(
-				`{"id":"sha256:%s","repo_digests":["%s","%s"],"operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n",
-				inputDigestB,
+				`{"id":"%s","repo_digests":["example/runner@%s"],"operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n",
 				reference,
 				reference,
 			),
 		),
 		"named user": []byte(
 			fmt.Sprintf(
-				`{"id":"sha256:%s","repo_digests":["%s"],"operating_system":"linux","architecture":"amd64","user":"runner"}`+"\n",
-				inputDigestB,
+				`{"id":"%s","operating_system":"linux","architecture":"amd64","user":"runner"}`+"\n",
 				reference,
 			),
 		),
@@ -562,8 +557,8 @@ func TestRunnerSessionObservesExactHeldGateSequenceAndNumericUser(
 	conformance := []byte(
 		`{"version":1,"euid":1001,"egid":1001,"capabilities":{"effective":"0000000000000000","permitted":"0000000000000000","inheritable":"0000000000000000","bounding":"0000000000000000","ambient":"0000000000000000"},"raw_socket_denied":true,"bpf_denied":true,"unshare_denied":true,"setns_denied":true,"clone3_denied":true,"namespace_denied":true,"proc_sys_read_only":true,"proc_masks_present":true,"controller_database_absent":true,"docker_authority_absent":true,"host_control_absent":true,"secret_environment_absent":true,"jit_environment_absent":true,"synthetic_token_absent":true}` + "\n",
 	)
-	verifyVersion := []byte("2.336.0\n")
-	listenerVersion := []byte("2.336.0\n")
+	verifyVersion := []byte("2.337.0\n")
+	listenerVersion := []byte("2.337.0\n")
 	commandRunner := &orderedClosedRunner{
 		results: []orderedClosedResult{
 			{result: hostruntime.Result{Stdout: inventory}},
@@ -603,7 +598,7 @@ func TestRunnerSessionObservesExactHeldGateSequenceAndNumericUser(
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
-	if observation.Version != "2.336.0" ||
+	if observation.Version != "2.337.0" ||
 		observation.Conformance.EUID != 1001 ||
 		observation.Conformance.EGID != 1001 ||
 		observation.InventoryDigest == "" ||
@@ -702,8 +697,8 @@ func TestRunnerSessionFailsClosedOnSequenceOrEvidenceDrift(
 			{result: hostruntime.Result{
 				Stdout: append([]byte(nil), validInventory...),
 			}},
-			{result: hostruntime.Result{Stdout: []byte("2.336.0\n")}},
-			{result: hostruntime.Result{Stdout: []byte("2.336.0\n")}},
+			{result: hostruntime.Result{Stdout: []byte("2.337.0\n")}},
+			{result: hostruntime.Result{Stdout: []byte("2.337.0\n")}},
 			{result: hostruntime.Result{
 				Stdout: append([]byte(nil), validInventory...),
 			}},
@@ -1192,8 +1187,8 @@ func TestScannerSessionCapturesExactRoleOrderAndReusesRunnerInventory(
 			{result: hostruntime.Result{
 				Stdout: append([]byte(nil), inventory...),
 			}},
-			{result: hostruntime.Result{Stdout: []byte("2.336.0\n")}},
-			{result: hostruntime.Result{Stdout: []byte("2.336.0\n")}},
+			{result: hostruntime.Result{Stdout: []byte("2.337.0\n")}},
+			{result: hostruntime.Result{Stdout: []byte("2.337.0\n")}},
 			{result: hostruntime.Result{
 				Stdout: append([]byte(nil), inventory...),
 			}},
@@ -1361,7 +1356,7 @@ func validClosedNetworkSessionBinding(
 		BuildID:         inputDigestD,
 		FleetGeneration: 7,
 		SlotIdentity:    "slot-1",
-		VerifierImage: "example/verifier@sha256:" +
+		VerifierImage: "sha256:" +
 			inputDigestC,
 		VerifierUser: "65532:65532",
 		VerifierSeccomp: hostruntime.SeccompBinding{

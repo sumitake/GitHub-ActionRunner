@@ -322,7 +322,7 @@ func validSetupRequest(t *testing.T) SetupRequest {
 			SlotIdentity: slotIdentity,
 		},
 		Verifier: hostruntime.VerifierSpec{
-			Image: "portable-ghar/network-verifier@sha256:" +
+			Image: "sha256:" +
 				strings.Repeat("9", 64),
 			BuildID:         strings.Repeat("b", 64),
 			FleetGeneration: 17,

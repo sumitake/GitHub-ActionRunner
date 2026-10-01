@@ -1033,13 +1033,12 @@ func validCanonicalAbsolutePath(value string) bool {
 		validLifecycleScalar(value)
 }
 
+// validImmutableImageReference accepts only a content-addressed Docker image
+// ID ("sha256:" plus the OCI config digest). The image ID survives
+// "docker load" of a release OCI archive on every target, whereas a
+// repository digest exists only after a registry pull or push.
 func validImmutableImageReference(value string) bool {
-	index := strings.LastIndex(value, "@sha256:")
-	if index <= 0 || index+len("@sha256:")+64 != len(value) {
-		return false
-	}
-	return validLifecycleScalar(value[:index]) &&
-		validImageDigest(value[index+1:])
+	return validImageDigest(value)
 }
 
 func validHTTPSURL(value string) bool {

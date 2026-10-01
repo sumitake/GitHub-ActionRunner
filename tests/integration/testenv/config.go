@@ -296,9 +296,9 @@ var requiredReclamationResources = [...]ReclamationResource{
 	ResourceInodes,
 }
 
-var immutableImageReferencePattern = regexp.MustCompile(
-	`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+@sha256:[0-9a-f]{64}$`,
-)
+// immutableImageReferencePattern admits only a content-addressed local image
+// ID, matching the production Docker wrapper.
+var immutableImageReferencePattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 func RequiredWorkflowToolProbeIDs() []string {
 	return append([]string(nil), requiredWorkflowToolProbeIDs[:]...)
@@ -732,7 +732,7 @@ func validateWorkflowTools(
 func validImmutableImageReference(reference string, digest string) bool {
 	return isLowerHex(digest, 64) &&
 		immutableImageReferencePattern.MatchString(reference) &&
-		strings.HasSuffix(reference, "@sha256:"+digest)
+		reference == "sha256:"+digest
 }
 
 func validateLimits(limits ConformanceLimits) bool {

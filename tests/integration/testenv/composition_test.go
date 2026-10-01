@@ -745,23 +745,23 @@ func validRuntimeSpecInputs(t *testing.T) (
 	input.Runtime.SeccompDigest = strings.Repeat("b", 64)
 	input.Target.ProfileID = "qts-capless-root"
 	input.Images.Runner = ImmutableImageBinding{
-		ID: "runner", Reference: "example/runner@sha256:" + strings.Repeat("1", 64),
+		ID: "runner", Reference: "sha256:" + strings.Repeat("1", 64),
 		Digest: strings.Repeat("1", 64),
 	}
 	input.Images.Adapter = ImmutableImageBinding{
-		ID: "adapter", Reference: "example/adapter@sha256:" + strings.Repeat("2", 64),
+		ID: "adapter", Reference: "sha256:" + strings.Repeat("2", 64),
 		Digest: strings.Repeat("2", 64),
 	}
 	input.Images.Broker = ImmutableImageBinding{
-		ID: "broker", Reference: "example/broker@sha256:" + strings.Repeat("3", 64),
+		ID: "broker", Reference: "sha256:" + strings.Repeat("3", 64),
 		Digest: strings.Repeat("3", 64),
 	}
 	input.Images.Helper = ImmutableImageBinding{
-		ID: "helper", Reference: "example/helper@sha256:" + strings.Repeat("4", 64),
+		ID: "helper", Reference: "sha256:" + strings.Repeat("4", 64),
 		Digest: strings.Repeat("4", 64),
 	}
 	input.Images.Verifier = ImmutableImageBinding{
-		ID: "verifier", Reference: "example/verifier@sha256:" + strings.Repeat("5", 64),
+		ID: "verifier", Reference: "sha256:" + strings.Repeat("5", 64),
 		Digest: strings.Repeat("5", 64),
 	}
 	plan, err := compositionPlanFrom(input, overlay)

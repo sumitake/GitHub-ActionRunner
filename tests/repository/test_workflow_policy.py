@@ -900,11 +900,21 @@ class RealCiWorkflowTest(unittest.TestCase):
         currency = root["jobs"]["runner-upstream-currency"]
         self.assertEqual(currency["permissions"], {"contents": "read"})
         currency_text = self._run_text(currency)
-        self.assertIn("repos/actions/runner/releases/latest", currency_text)
-        self.assertIn(".runtime.runner_release.version", currency_text)
+        self.assertIn("scripts/release/observe-runner-release.sh", currency_text)
+        self.assertIn('"$observer_rc" -eq 3', currency_text)
         self.assertIn("release/manifest.json", currency_text)
         self.assertIn("+ 30 days", currency_text)
         self.assertIn("exit 1", currency_text)
+        self.assertNotIn("GH_TOKEN", currency_text)
+        self.assertIn('cat "$observed"', currency_text)
+        uploads = [
+            step
+            for step in currency["steps"]
+            if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+        ]
+        self.assertEqual(len(uploads), 1)
+        self.assertEqual(uploads[0]["with"]["name"], "runner-release-observation")
+        self.assertEqual(uploads[0]["if"], "steps.observe.outputs.newer == 'true'")
 
     def test_sanitization_workflow_triggers_and_job_shape(self) -> None:
         sys.path.insert(0, str(REPO_ROOT / "scripts"))

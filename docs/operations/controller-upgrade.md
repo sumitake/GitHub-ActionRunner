@@ -71,6 +71,15 @@ workflow. The target independently verifies every manifest, digest, platform,
 license, SBOM, provenance subject, and immutable image identity before it
 accepts the candidate.
 
+Image identity is the content-addressed image ID: `sha256:` followed by the
+OCI config digest of each release archive. `docker load` preserves that ID on
+every target, whereas a repository digest exists only after a registry pull or
+push, so release images are referenced, verified, and started by image ID
+alone. The target accepts an image only when `docker image inspect` reports
+exactly the expected ID. A Docker engine whose image store reports a
+different ID (for example, the containerd image store) fails that check
+closed rather than admitting the image under another identity.
+
 QNAP Container Station cannot run `docker build` as the non-admin account in
 the current host design because its wrapper forces an admin-only home. A QTS
 build therefore requires the separately approved admin execution path, or the

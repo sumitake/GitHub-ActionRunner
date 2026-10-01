@@ -1027,6 +1027,7 @@ PUBLIC_HISTORY_METADATA_LINES = frozenset(
         ),
         "".join(("Signed-off-by: dependabot[bot] <support", "@github.com>")),
         "".join(("Claude <noreply", "@anthropic.com>")),
+        "".join(("Co-authored-by: Claude <noreply", "@anthropic.com>")),
         "".join(
             (
                 "Co-Authored-By: Claude Fable 5 <noreply",

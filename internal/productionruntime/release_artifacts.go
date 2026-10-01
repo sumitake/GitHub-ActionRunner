@@ -19,7 +19,7 @@ const (
 	maximumReleaseArtifactReceiptBytes  = 1 << 16
 	releaseImageVerificationReceiptName = "image-verification.json"
 	releaseRunnerSmokeReceiptName       = "runner-smoke.json"
-	releaseImageInspectFormat           = `{"architecture":{{json .Architecture}},"id":{{json .Id}},"os":{{json .Os}},"repo_digests":{{json .RepoDigests}}}`
+	releaseImageInspectFormat           = `{"architecture":{{json .Architecture}},"id":{{json .Id}},"os":{{json .Os}}}`
 	releaseRunnerListener               = "/opt/actions-runner/bin/Runner.Listener"
 )
 
@@ -28,10 +28,9 @@ var ErrReleaseArtifacts = errors.New(
 )
 
 type releaseImageObservation struct {
-	Architecture string   `json:"architecture"`
-	ID           string   `json:"id"`
-	OS           string   `json:"os"`
-	RepoDigests  []string `json:"repo_digests"`
+	Architecture string `json:"architecture"`
+	ID           string `json:"id"`
+	OS           string `json:"os"`
 }
 
 type VerifiedReleaseImages struct {
@@ -236,11 +235,7 @@ func parseReleaseImageInspectOutput(
 		if err != nil || !bytes.Equal(canonical, line) ||
 			observation.OS != "linux" ||
 			observation.Architecture != "amd64" ||
-			!validReleaseImageID(observation.ID) ||
-			!repoDigestsContainExactly(
-				observation.RepoDigests,
-				references[index],
-			) {
+			observation.ID != references[index] {
 			return [releaseImageCount]string{}, ErrReleaseArtifacts
 		}
 		imageIDs[index] = observation.ID
@@ -257,33 +252,11 @@ func cleanReleaseCommandResult(result hostruntime.Result) bool {
 		len(result.Stderr) == 0
 }
 
-func repoDigestsContainExactly(values []string, expected string) bool {
-	if len(values) == 0 {
-		return false
-	}
-	seen := make(map[string]struct{}, len(values))
-	count := 0
-	for _, value := range values {
-		if !digestQualifiedImageReference(value) {
-			return false
-		}
-		if _, duplicate := seen[value]; duplicate {
-			return false
-		}
-		seen[value] = struct{}{}
-		if value == expected {
-			count++
-		}
-	}
-	return count == 1
-}
-
+// digestQualifiedImageReference accepts only a content-addressed image ID,
+// which is exactly the identity "docker image inspect" reports after a
+// release OCI archive is loaded.
 func digestQualifiedImageReference(value string) bool {
-	marker := strings.LastIndex(value, "@sha256:")
-	if marker <= 0 || marker+len("@sha256:")+64 != len(value) {
-		return false
-	}
-	return lowerHexDigest(value[marker+len("@sha256:"):])
+	return validReleaseImageID(value)
 }
 
 func validReleaseImageID(value string) bool {
