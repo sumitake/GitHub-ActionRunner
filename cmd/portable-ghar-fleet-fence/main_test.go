@@ -150,11 +150,7 @@ func TestFenceWorkloadSubprocess(t *testing.T) {
 		}
 		defer grandchild.Wait()
 	}
-	if err := os.WriteFile(
-		os.Getenv(fenceHelperMarkerEnv),
-		[]byte(strconv.Itoa(os.Getpid())),
-		0o600,
-	); err != nil {
+	if err := writeMarkerPID(os.Getenv(fenceHelperMarkerEnv)); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
 	time.Sleep(duration)
@@ -172,14 +168,20 @@ func TestFenceGrandchildSubprocess(t *testing.T) {
 	if err != nil || duration <= 0 {
 		t.Fatalf("duration invalid: %v", err)
 	}
-	if err := os.WriteFile(
-		os.Getenv(fenceHelperMarkerEnv),
-		[]byte(strconv.Itoa(os.Getpid())),
-		0o600,
-	); err != nil {
+	if err := writeMarkerPID(os.Getenv(fenceHelperMarkerEnv)); err != nil {
 		t.Fatalf("write grandchild marker: %v", err)
 	}
 	time.Sleep(duration)
+}
+
+// writeMarkerPID publishes this process's PID with an atomic rename so the
+// parent's waitForMarkerPID never observes a created-but-unwritten marker.
+func writeMarkerPID(marker string) error {
+	staging := marker + ".tmp"
+	if err := os.WriteFile(staging, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(staging, marker)
 }
 
 func bootstrapPortableFence(
