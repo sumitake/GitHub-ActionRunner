@@ -906,6 +906,7 @@ class RealCiWorkflowTest(unittest.TestCase):
         self.assertIn("+ 30 days", currency_text)
         self.assertIn("exit 1", currency_text)
         self.assertNotIn("GH_TOKEN", currency_text)
+        self.assertIn('cat "$observed"', currency_text)
         uploads = [
             step
             for step in currency["steps"]
