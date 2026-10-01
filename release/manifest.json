@@ -7,15 +7,15 @@
     "debian_snapshot": "20250101T000000Z",
     "runner_release": {
       "schema_version": 1,
-      "version": "v2.336.0",
-      "tag_ref_sha": "98aabcd429c4e8402406c56ce2d26387fed3b9ce",
-      "source_commit_sha": "98aabcd429c4e8402406c56ce2d26387fed3b9ce",
-      "linux_x64_asset_name": "actions-runner-linux-x64-2.336.0.tar.gz",
-      "linux_x64_asset_size": 226035903,
-      "linux_x64_asset_digest": "sha256:04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d",
-      "published_at": "2026-07-20T17:45:55Z",
+      "version": "v2.337.0",
+      "tag_ref_sha": "397b032cbf865e9c3ddfab89d533ec19325e1273",
+      "source_commit_sha": "397b032cbf865e9c3ddfab89d533ec19325e1273",
+      "linux_x64_asset_name": "actions-runner-linux-x64-2.337.0.tar.gz",
+      "linux_x64_asset_size": 226430031,
+      "linux_x64_asset_digest": "sha256:70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613",
+      "published_at": "2026-08-26T14:33:29Z",
       "command_settings_sha256": "937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08",
-      "observation_evidence": "62ca14dfc4584bf56fe235b973546eb4e08f05c93529859c556ff604eb3f5ed9"
+      "observation_evidence": "82fc45362f3a3d7958246dfccfb8a8fa005846de18577e83bc52cf270572c937"
     },
     "tools": {
       "buildx": {
