@@ -1047,6 +1047,19 @@ PUBLIC_HISTORY_METADATA_LINES = frozenset(
         ),
         "".join(
             (
+                "Co-Authored-By: Claude Opus 4.8 <noreply",
+                "@anthropic.com>",
+            )
+        ),
+        "".join(
+            (
+                "Co-Authored-By: Claude Sonnet 5.5 <noreply",
+                "@anthropic.com>",
+            )
+        ),
+        "".join(("Co-authored-by: Claude <noreply", "@anthropic.com>")),
+        "".join(
+            (
                 "Conduct, changelog, third-party-notices placeholder, "
                 "CODEOWNERS (* ",
                 "@",
