@@ -578,6 +578,7 @@ class H10History(unittest.TestCase):
             "claude <noreply@anthropic.com>",
             "Claude <noreply@anthropic.com.invalid>",
             "Co-Authored-By: Claude Opus 5.5 <other@anthropic.com>",
+            "Co-authored-by: Claude <noreply@anthropic.com.invalid>",
         )
         for near_miss in near_misses:
             with self.subTest(near_miss=near_miss):
