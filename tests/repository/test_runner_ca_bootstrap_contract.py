@@ -135,7 +135,8 @@ class RunnerCABootstrapContractTest(unittest.TestCase):
             "Acquire::https::Verify-Host=true",
         ):
             with self.subTest(setting=setting):
-                self.assertEqual(self.dockerfile.count(setting), 2)
+                # update, install, and dist-upgrade each fetch over HTTPS.
+                self.assertEqual(self.dockerfile.count(setting), 3)
         self.assertNotIn("Acquire::https::Verify-Peer=false", self.dockerfile)
         self.assertNotIn("Acquire::https::Verify-Host=false", self.dockerfile)
         self.assertNotIn("http://snapshot.debian.org", self.dockerfile)

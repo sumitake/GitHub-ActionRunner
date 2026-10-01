@@ -278,10 +278,6 @@ stage_module() {
   go mod verify
 }
 
-stage_runner_debian_snapshot() {
-  python3 scripts/ci/check_runner_debian_snapshot.py
-}
-
 stage_shellcheck() {
   local inventory="$log_directory/shellcheck.files"
   local files=()
@@ -592,7 +588,6 @@ if [ "$mode" != docker ]; then
   run_unit_stage boundary stage_boundary
   run_unit_stage staticcheck stage_staticcheck
   run_unit_stage module stage_module
-  run_unit_stage runner-debian-snapshot stage_runner_debian_snapshot
   run_unit_stage shellcheck stage_shellcheck
   run_unit_stage shfmt stage_shfmt
   run_unit_stage bats stage_bats

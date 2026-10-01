@@ -1,8 +1,6 @@
 **
 !Dockerfile
 !.dockerignore
-!debian-snapshot.lock.json
-!verify-debian-snapshot.sh
 !build/
 !build/portable-ghar-runner-gate
 !build/runner/

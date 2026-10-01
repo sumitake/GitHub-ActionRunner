@@ -875,46 +875,17 @@ def apply_candidate_overlay(clone, runtime, candidate):
             reject("substitution result")
 
 
+# The runner image takes Debian packages from one immutable snapshot date;
+# apt verifies the Debian-signed indexes, and the release A/B comparison
+# proves the resulting image is reproducible.
+RUNNER_SNAPSHOT_SOURCES = (
+    "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${snapshot} bookworm main",
+    "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${snapshot} bookworm-updates main",
+    "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${snapshot} bookworm-security main",
+)
+
+
 def validate_dockerfiles(clone, runtime):
-    try:
-        snapshot_check = subprocess.run(
-            [
-                sys.executable,
-                "scripts/ci/check_runner_debian_snapshot.py",
-            ],
-            cwd=clone,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        reject("runner Debian snapshot contract")
-    if (
-        snapshot_check.returncode != 0
-        or snapshot_check.stdout
-        != b"check-runner-debian-snapshot: verified\n"
-        or snapshot_check.stderr
-    ):
-        reject("runner Debian snapshot contract")
-
-    snapshot_lock = read_json(
-        clone / "images/runner/debian-snapshot.lock.json"
-    )
-    try:
-        expected_sources = [
-            (
-                "deb [check-valid-until=no] "
-                "https://snapshot.debian.org/archive/"
-                f"{row['archive']}/{row['snapshot']} "
-                f"{row['suite']} {row['component']}"
-            )
-            for row in snapshot_lock["sources"]
-        ]
-    except (KeyError, TypeError):
-        reject("runner Debian snapshot contract")
-
     acquirers = []
     for entry in runtime["images"]:
         dockerfile = clone / entry["dockerfile"]
@@ -947,7 +918,8 @@ def validate_dockerfiles(clone, runtime):
             acquirers.append(entry["name"])
             if (
                 "ARG SOURCE_DATE_EPOCH" not in text
-                or any(source not in text for source in expected_sources)
+                or len(re.findall(r"\bsnapshot=[0-9]{8}T000000Z;", text)) != 1
+                or any(source not in text for source in RUNNER_SNAPSHOT_SOURCES)
             ):
                 reject("package snapshot")
     if acquirers != ["runner"]:
