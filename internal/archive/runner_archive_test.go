@@ -55,11 +55,11 @@ func TestExtractRunnerArchiveAcceptsZeroFilesAndConfinedSymlinks(t *testing.T) {
 	if err != nil || empty.Size != 0 || empty.SHA256 != emptySHA256 || empty.Mode != 0o444 {
 		t.Fatalf("empty=%+v err=%v", empty, err)
 	}
-	link, err := verified.Symlink("externals/node/bin/npm")
-	if err != nil || link.Target != "../lib/node_modules/npm/bin/npm-cli.js" {
+	link, err := verified.Symlink("externals/node/bin/tool")
+	if err != nil || link.Target != "../lib/node_modules/tool/bin/tool.js" {
 		t.Fatalf("link=%+v err=%v", link, err)
 	}
-	target, err := os.Readlink(filepath.Join(output, "externals", "node", "bin", "npm"))
+	target, err := os.Readlink(filepath.Join(output, "externals", "node", "bin", "tool"))
 	if err != nil || target != link.Target {
 		t.Fatalf("Readlink target=%q err=%v", target, err)
 	}
@@ -156,23 +156,37 @@ func TestExtractRunnerArchiveRejectsUnsafeHeadersBeforePublication(t *testing.T)
 			mode:     0o644,
 			body:     []byte("mutable"),
 		}),
+		"omitted-package-manager-metadata": append(validRunnerTarEntries(), runnerTarEntry{
+			name:     "./externals/node/bin/npm",
+			typeflag: tar.TypeReg,
+			mode:     0o755,
+			body:     []byte("npm"),
+			format:   tar.FormatPAX,
+			pax:      map[string]string{"SCHILY.xattr.user.payload": "x"},
+		}),
+		"case-variant-package-manager": append(validRunnerTarEntries(), runnerTarEntry{
+			name:     "./externals/node/bin/NPM",
+			typeflag: tar.TypeReg,
+			mode:     0o755,
+			body:     []byte("npm"),
+		}),
 		"case-collision": append(validRunnerTarEntries(), runnerTarEntry{
 			name:     "./BIN/Runner.Listener",
 			typeflag: tar.TypeReg,
 			mode:     0o755,
 			body:     []byte("collision"),
 		}),
-		"escaping-symlink": replaceRunnerTarEntry(validRunnerTarEntries(), "./externals/node/bin/npm", runnerTarEntry{
-			name:     "./externals/node/bin/npm",
+		"escaping-symlink": replaceRunnerTarEntry(validRunnerTarEntries(), "./externals/node/bin/tool", runnerTarEntry{
+			name:     "./externals/node/bin/tool",
 			typeflag: tar.TypeSymlink,
 			mode:     0o777,
 			linkname: "../../../../outside",
 		}),
-		"missing-symlink-target": replaceRunnerTarEntry(validRunnerTarEntries(), "./externals/node/bin/npm", runnerTarEntry{
-			name:     "./externals/node/bin/npm",
+		"missing-symlink-target": replaceRunnerTarEntry(validRunnerTarEntries(), "./externals/node/bin/tool", runnerTarEntry{
+			name:     "./externals/node/bin/tool",
 			typeflag: tar.TypeSymlink,
 			mode:     0o777,
-			linkname: "../lib/node_modules/npm/bin/missing.js",
+			linkname: "../lib/node_modules/tool/bin/missing.js",
 		}),
 		"duplicate": append(validRunnerTarEntries(), runnerTarEntry{
 			name:     "./externals/empty",
@@ -224,17 +238,17 @@ func TestExtractRunnerArchiveRejectsUnsafeHeadersBeforePublication(t *testing.T)
 			runnerTarEntry{name: "./unexpected/", typeflag: tar.TypeDir, mode: 0o755},
 			runnerTarEntry{name: "./unexpected/payload", typeflag: tar.TypeReg, mode: 0o644, body: []byte("payload")},
 		),
-		"absolute-symlink": replaceRunnerTarEntry(validRunnerTarEntries(), "./externals/node/bin/npm", runnerTarEntry{
-			name:     "./externals/node/bin/npm",
+		"absolute-symlink": replaceRunnerTarEntry(validRunnerTarEntries(), "./externals/node/bin/tool", runnerTarEntry{
+			name:     "./externals/node/bin/tool",
 			typeflag: tar.TypeSymlink,
 			mode:     0o777,
 			linkname: "/etc/passwd",
 		}),
 		"symlink-chain": append(validRunnerTarEntries(), runnerTarEntry{
-			name:     "./externals/node/bin/npm-chain",
+			name:     "./externals/node/bin/tool-chain",
 			typeflag: tar.TypeSymlink,
 			mode:     0o777,
-			linkname: "npm",
+			linkname: "tool",
 		}),
 	}
 
@@ -414,10 +428,10 @@ func TestVerifyRunnerDirectoryRejectsSymlinkAndFileIdentityChanges(t *testing.T)
 	if err := os.Chmod(linkParent, 0o700); err != nil {
 		t.Fatalf("Chmod link parent writable: %v", err)
 	}
-	if err := os.Remove(filepath.Join(linkParent, "npm")); err != nil {
+	if err := os.Remove(filepath.Join(linkParent, "tool")); err != nil {
 		t.Fatalf("Remove symlink: %v", err)
 	}
-	if err := os.Symlink("../lib/node_modules/npm/bin/other.js", filepath.Join(linkParent, "npm")); err != nil {
+	if err := os.Symlink("../lib/node_modules/tool/bin/other.js", filepath.Join(linkParent, "tool")); err != nil {
 		t.Fatalf("replace symlink: %v", err)
 	}
 	if err := os.Chmod(linkParent, 0o555); err != nil {
@@ -430,10 +444,10 @@ func TestVerifyRunnerDirectoryRejectsSymlinkAndFileIdentityChanges(t *testing.T)
 	if err := os.Chmod(linkParent, 0o700); err != nil {
 		t.Fatalf("Chmod link parent writable for restore: %v", err)
 	}
-	if err := os.Remove(filepath.Join(linkParent, "npm")); err != nil {
+	if err := os.Remove(filepath.Join(linkParent, "tool")); err != nil {
 		t.Fatalf("Remove replacement symlink: %v", err)
 	}
-	if err := os.Symlink("../lib/node_modules/npm/bin/npm-cli.js", filepath.Join(linkParent, "npm")); err != nil {
+	if err := os.Symlink("../lib/node_modules/tool/bin/tool.js", filepath.Join(linkParent, "tool")); err != nil {
 		t.Fatalf("restore symlink: %v", err)
 	}
 	if err := os.Chmod(linkParent, 0o555); err != nil {
@@ -903,7 +917,9 @@ func TestPinnedRunnerArchiveConformance(t *testing.T) {
 			symlinks++
 		}
 	}
-	if len(manifest.Entries) != 11_432 || regular != 9_291 || symlinks != 6 || zero != 8 {
+	// The upstream archive holds 11,432 entries; the 4,880 omitted entries are
+	// the bundled npm, npx, and corepack trees and their six bin symlinks.
+	if len(manifest.Entries) != 6_552 || regular != 5_372 || symlinks != 0 || zero != 0 {
 		t.Fatalf("exact archive inventory entries=%d regular=%d symlinks=%d zero=%d", len(manifest.Entries), regular, symlinks, zero)
 	}
 }
@@ -918,12 +934,12 @@ func validRunnerTarEntries() []runnerTarEntry {
 		{name: "./externals/empty", typeflag: tar.TypeReg, mode: 0o644},
 		{name: "./externals/node/", typeflag: tar.TypeDir, mode: 0o755},
 		{name: "./externals/node/bin/", typeflag: tar.TypeDir, mode: 0o755},
-		{name: "./externals/node/bin/npm", typeflag: tar.TypeSymlink, mode: 0o777, linkname: "../lib/node_modules/npm/bin/npm-cli.js"},
+		{name: "./externals/node/bin/tool", typeflag: tar.TypeSymlink, mode: 0o777, linkname: "../lib/node_modules/tool/bin/tool.js"},
 		{name: "./externals/node/lib/", typeflag: tar.TypeDir, mode: 0o755},
 		{name: "./externals/node/lib/node_modules/", typeflag: tar.TypeDir, mode: 0o755},
-		{name: "./externals/node/lib/node_modules/npm/", typeflag: tar.TypeDir, mode: 0o755},
-		{name: "./externals/node/lib/node_modules/npm/bin/", typeflag: tar.TypeDir, mode: 0o755},
-		{name: "./externals/node/lib/node_modules/npm/bin/npm-cli.js", typeflag: tar.TypeReg, mode: 0o644, body: []byte("npm")},
+		{name: "./externals/node/lib/node_modules/tool/", typeflag: tar.TypeDir, mode: 0o755},
+		{name: "./externals/node/lib/node_modules/tool/bin/", typeflag: tar.TypeDir, mode: 0o755},
+		{name: "./externals/node/lib/node_modules/tool/bin/tool.js", typeflag: tar.TypeReg, mode: 0o644, body: []byte("tool")},
 	}
 }
 

@@ -60,6 +60,7 @@ CREATE_APP_TOKEN_ACTION = (
 EXPECTED_SCHEDULED_WATCH_CONTEXTS = {
     "source-full-policy",
     "runner-image-fixable",
+    "runner-upstream-currency",
 }
 EXPECTED_ALL_CONTEXTS = (
     EXPECTED_STABLE_CONTEXTS
@@ -849,7 +850,7 @@ class RealCiWorkflowTest(unittest.TestCase):
         self.assertEqual(set(root.get("on", {})), {"schedule", "workflow_dispatch"})
         self.assertEqual(
             set(root["jobs"]),
-            {"source-full-policy", "runner-image-fixable"},
+            {"source-full-policy", "runner-image-fixable", "runner-upstream-currency"},
         )
 
         source = root["jobs"]["source-full-policy"]
@@ -890,11 +891,20 @@ class RealCiWorkflowTest(unittest.TestCase):
         self.assertEqual(image_trivy[0]["with"]["scan-type"], "image")
         self.assertEqual(image_trivy[0]["with"]["image-ref"], "${{ steps.runner.outputs.ref }}")
         self.assertEqual(image_trivy[0]["with"]["scanners"], "vuln")
-        self.assertEqual(image_trivy[0]["with"]["vuln-type"], "os")
+        self.assertEqual(image_trivy[0]["with"]["vuln-type"], "os,library")
         self.assertEqual(image_trivy[0]["with"]["severity"], "HIGH,CRITICAL")
         self.assertEqual(image_trivy[0]["with"]["ignore-unfixed"], "true")
         self.assertEqual(image_trivy[0]["with"]["exit-code"], "1")
         self.assertNotIn("vuln-type", source_trivy[0].get("with", {}))
+
+        currency = root["jobs"]["runner-upstream-currency"]
+        self.assertEqual(currency["permissions"], {"contents": "read"})
+        currency_text = self._run_text(currency)
+        self.assertIn("repos/actions/runner/releases/latest", currency_text)
+        self.assertIn(".runtime.runner_release.version", currency_text)
+        self.assertIn("release/manifest.json", currency_text)
+        self.assertIn("+ 30 days", currency_text)
+        self.assertIn("exit 1", currency_text)
 
     def test_sanitization_workflow_triggers_and_job_shape(self) -> None:
         sys.path.insert(0, str(REPO_ROOT / "scripts"))

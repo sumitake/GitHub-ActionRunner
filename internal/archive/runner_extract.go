@@ -308,11 +308,14 @@ func preflightRunnerArchive(
 		if index >= limits.maxEntries {
 			return RunnerTreeManifest{}, nil, errors.New("archive: runner archive entry count exceeded")
 		}
-		entry, root, err := runnerEntryFromHeader(header, limits)
+		entry, kind, err := runnerEntryFromHeader(header, limits)
 		if err != nil {
 			return RunnerTreeManifest{}, nil, err
 		}
-		if root {
+		if kind == runnerHeaderOmitted {
+			continue
+		}
+		if kind == runnerHeaderRoot {
 			if index != 0 || rootSeen {
 				return RunnerTreeManifest{}, nil, errors.New("archive: runner archive root invalid")
 			}
@@ -366,51 +369,63 @@ func preflightRunnerArchive(
 	return manifest, sequence, nil
 }
 
-func runnerEntryFromHeader(header *tar.Header, limits runnerArchiveLimits) (RunnerTreeEntry, bool, error) {
+// runnerHeaderKind classifies one parsed tar header.
+type runnerHeaderKind int
+
+const (
+	runnerHeaderEntry runnerHeaderKind = iota
+	runnerHeaderRoot
+	runnerHeaderOmitted
+)
+
+func runnerEntryFromHeader(header *tar.Header, limits runnerArchiveLimits) (RunnerTreeEntry, runnerHeaderKind, error) {
 	if header == nil {
-		return RunnerTreeEntry{}, false, errors.New("archive: runner tar header metadata invalid")
+		return RunnerTreeEntry{}, runnerHeaderEntry, errors.New("archive: runner tar header metadata invalid")
 	}
 	//lint:ignore SA1019 archive/tar still populates legacy Xattrs; rejecting either representation is intentional.
 	hasLegacyXattrs := len(header.Xattrs) != 0
 	if len(header.PAXRecords) != 0 || hasLegacyXattrs ||
 		header.Devmajor != 0 || header.Devminor != 0 || header.Mode < 0 ||
 		header.Mode&^0o777 != 0 {
-		return RunnerTreeEntry{}, false, errors.New("archive: runner tar header metadata invalid")
+		return RunnerTreeEntry{}, runnerHeaderEntry, errors.New("archive: runner tar header metadata invalid")
 	}
 	if header.Name == "./" {
 		if header.Typeflag != tar.TypeDir || header.Size != 0 || header.Linkname != "" {
-			return RunnerTreeEntry{}, false, errors.New("archive: runner tar root header invalid")
+			return RunnerTreeEntry{}, runnerHeaderEntry, errors.New("archive: runner tar root header invalid")
 		}
-		return RunnerTreeEntry{}, true, nil
+		return RunnerTreeEntry{}, runnerHeaderRoot, nil
 	}
 	if !strings.HasPrefix(header.Name, "./") || len(header.Name) <= 2 {
-		return RunnerTreeEntry{}, false, errors.New("archive: runner tar path noncanonical")
+		return RunnerTreeEntry{}, runnerHeaderEntry, errors.New("archive: runner tar path noncanonical")
 	}
 	name := strings.TrimPrefix(header.Name, "./")
 	isDirectory := header.Typeflag == tar.TypeDir
 	if isDirectory {
 		if !strings.HasSuffix(name, "/") {
-			return RunnerTreeEntry{}, false, errors.New("archive: runner tar directory path invalid")
+			return RunnerTreeEntry{}, runnerHeaderEntry, errors.New("archive: runner tar directory path invalid")
 		}
 		name = strings.TrimSuffix(name, "/")
 	} else if strings.HasSuffix(name, "/") {
-		return RunnerTreeEntry{}, false, errors.New("archive: runner tar object path invalid")
+		return RunnerTreeEntry{}, runnerHeaderEntry, errors.New("archive: runner tar object path invalid")
+	}
+	if len(name) <= limits.maxPathBytes && runnerPackageManagerPath(name) {
+		return RunnerTreeEntry{}, runnerHeaderOmitted, nil
 	}
 	if len(name) > limits.maxPathBytes || validateRunnerRelativePath(name) != nil {
-		return RunnerTreeEntry{}, false, errors.New("archive: runner tar path invalid")
+		return RunnerTreeEntry{}, runnerHeaderEntry, errors.New("archive: runner tar path invalid")
 	}
 
 	entry := RunnerTreeEntry{Path: name}
 	switch header.Typeflag {
 	case tar.TypeDir:
 		if header.Size != 0 || header.Linkname != "" {
-			return RunnerTreeEntry{}, false, errors.New("archive: runner tar directory header invalid")
+			return RunnerTreeEntry{}, runnerHeaderEntry, errors.New("archive: runner tar directory header invalid")
 		}
 		entry.Type = RunnerEntryDirectory
 		entry.Mode = 0o555
 	case tar.TypeReg:
 		if header.Size < 0 || uint64(header.Size) > limits.maxFileBytes || header.Linkname != "" {
-			return RunnerTreeEntry{}, false, errors.New("archive: runner tar file header invalid")
+			return RunnerTreeEntry{}, runnerHeaderEntry, errors.New("archive: runner tar file header invalid")
 		}
 		entry.Type = RunnerEntryRegular
 		entry.Size = uint64(header.Size)
@@ -421,7 +436,7 @@ func runnerEntryFromHeader(header *tar.Header, limits runnerArchiveLimits) (Runn
 	case tar.TypeSymlink:
 		if header.Size != 0 || len(header.Linkname) > limits.maxLinkBytes ||
 			validateRunnerLinkTarget(header.Linkname) != nil {
-			return RunnerTreeEntry{}, false, errors.New("archive: runner tar symlink header invalid")
+			return RunnerTreeEntry{}, runnerHeaderEntry, errors.New("archive: runner tar symlink header invalid")
 		}
 		entry.Type = RunnerEntrySymlink
 		entry.LinkTarget = header.Linkname
@@ -429,9 +444,9 @@ func runnerEntryFromHeader(header *tar.Header, limits runnerArchiveLimits) (Runn
 		entry.Mode = 0
 		entry.SHA256 = sha256String([]byte(header.Linkname))
 	default:
-		return RunnerTreeEntry{}, false, errors.New("archive: runner tar entry type prohibited")
+		return RunnerTreeEntry{}, runnerHeaderEntry, errors.New("archive: runner tar entry type prohibited")
 	}
-	return entry, false, nil
+	return entry, runnerHeaderEntry, nil
 }
 
 func extractRunnerArchiveSecondPass(
@@ -465,11 +480,14 @@ func extractRunnerArchiveSecondPass(
 		if archiveIndex >= limits.maxEntries {
 			return errors.New("archive: runner extraction entry count exceeded")
 		}
-		entry, root, err := runnerEntryFromHeader(header, limits)
+		entry, kind, err := runnerEntryFromHeader(header, limits)
 		if err != nil {
 			return err
 		}
-		if root {
+		if kind == runnerHeaderOmitted {
+			continue
+		}
+		if kind == runnerHeaderRoot {
 			if archiveIndex != 0 || rootSeen {
 				return errors.New("archive: runner extraction root invalid")
 			}

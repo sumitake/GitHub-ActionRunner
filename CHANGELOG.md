@@ -44,6 +44,8 @@ Nothing in this section has shipped as a tagged release.
 
 ### Changed
 
+- Runner extraction omits the npm, npx, and corepack copies bundled in each Node external, and runner tree manifests reject them. The runner never invokes them, and they carry the upstream archive's remaining fixable HIGH/CRITICAL findings.
+- The weekly vulnerability watch now scans runner-image libraries as well as OS packages, and fails while a newer official runner release exists (GitHub's 30-day update window for runners with updates disabled).
 - Reviewed-pin `actions/setup-go` to v7.0.0 (`b7ad1dad…`) and `actions/setup-node` to v7.0.0 (`82076278…`) in workflows and `REVIEWED_ACTION_PINS`.
 - Reviewed-pin `github/codeql-action` to v4.37.9 (`cdf488f5…`) and `docker/setup-buildx-action` to v4.3.0 (`37fe6310…`) in workflows and `REVIEWED_ACTION_PINS`.
 - Reviewed-pin `docker/setup-buildx-action` to v4.4.1 (`f87e5991…`) in workflows and `REVIEWED_ACTION_PINS`.
