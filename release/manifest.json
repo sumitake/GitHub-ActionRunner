@@ -7,15 +7,15 @@
     "debian_snapshot": "20250101T000000Z",
     "runner_release": {
       "schema_version": 1,
-      "version": "v2.336.0",
-      "tag_ref_sha": "98aabcd429c4e8402406c56ce2d26387fed3b9ce",
-      "source_commit_sha": "98aabcd429c4e8402406c56ce2d26387fed3b9ce",
-      "linux_x64_asset_name": "actions-runner-linux-x64-2.336.0.tar.gz",
-      "linux_x64_asset_size": 226035903,
-      "linux_x64_asset_digest": "sha256:04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d",
-      "published_at": "2026-07-20T17:45:55Z",
+      "version": "v2.337.0",
+      "tag_ref_sha": "397b032cbf865e9c3ddfab89d533ec19325e1273",
+      "source_commit_sha": "397b032cbf865e9c3ddfab89d533ec19325e1273",
+      "linux_x64_asset_name": "actions-runner-linux-x64-2.337.0.tar.gz",
+      "linux_x64_asset_size": 226430031,
+      "linux_x64_asset_digest": "sha256:70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613",
+      "published_at": "2026-08-26T14:33:29Z",
       "command_settings_sha256": "937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08",
-      "observation_evidence": "62ca14dfc4584bf56fe235b973546eb4e08f05c93529859c556ff604eb3f5ed9"
+      "observation_evidence": "82fc45362f3a3d7958246dfccfb8a8fa005846de18577e83bc52cf270572c937"
     },
     "tools": {
       "buildx": {
@@ -121,80 +121,66 @@
     ],
     "candidate_protected_files": [
       {
+        "path": "CHANGELOG.md",
+        "identity_inventory_sha256": "84ea5ae57126c6a24b712a81290eea7066c63b06a343829aa8a699b811ed6cc1"
+      },
+      {
         "path": "cmd/portable-ghar-runner-gate/main_test.go",
-        "identity_inventory_sha256": "9da71622a1eae040ff4aed7b3c6f8f63653aa6e3dd296b725fad5d2242a9ac3a"
+        "identity_inventory_sha256": "8feb6a13ad09d6e670a48343f327d2fee8fd16f65f14e1cb58aa7d1d87d11038"
       },
       {
         "path": "cmd/portable-ghar-runtime-lock/main_test.go",
-        "identity_inventory_sha256": "06780acbfd9588c43bd79f57d3b0d5d99d7b7190839cf41054356e4e0c6e0af9"
-      },
-      {
-        "path": "docs/superpowers/plans/2026-07-11-controller-runtime.md",
-        "identity_inventory_sha256": "ddf96fb757f8cc66cd2c60f38634705d570f70e5e2bdcd2d1a474852474475ed"
-      },
-      {
-        "path": "docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md",
-        "identity_inventory_sha256": "a1b540585fc2c1802c23b1b4f3f6d481bb9e853c711eecc530ae3e114db42a52"
+        "identity_inventory_sha256": "fea2458714d6efe3111f87b8446a42ba9371370c62b5825451a832455e8e45d6"
       },
       {
         "path": "internal/archive/runner_archive_test.go",
-        "identity_inventory_sha256": "7f02482a0700a88de2a215f032a2900658d63dc97ad99982ba2c3f9159ac00f5"
+        "identity_inventory_sha256": "bed060724d89db4a39a209b79d6db972a75c893fa4c6ea4a3e157d3f897c7568"
       },
       {
         "path": "internal/buildinfo/pins.go",
-        "identity_inventory_sha256": "050f10905503baa0f9ad99ffc5ed80468a3063bc2436da1c7f3019cbb4a9c6d4"
+        "identity_inventory_sha256": "6f044e61d512d6036b4af80d18005ce143926b09e5a12b412ab5f2a2eb61e3d3"
       },
       {
         "path": "internal/buildinfo/pins_test.go",
-        "identity_inventory_sha256": "c3c73b84c5c538377498d9eed7b34621892660a655ccc9250bbec8643b0ae031"
+        "identity_inventory_sha256": "a54c6e6b40fa312e24e005d958003cca1b895b538a98d6e98457492d9a7122bb"
       },
       {
         "path": "internal/runtimelock/lock_test.go",
-        "identity_inventory_sha256": "01a83aaf0965f411ddbec63718b754561fc55942f98e6b6022b0ad49a4ba762d"
+        "identity_inventory_sha256": "d565966120ff4089ad9dc1a9832039843aa5b2cbe5d3725b55afd403d9515ca2"
       },
       {
-        "path": "internal/upgrade/model_test.go",
-        "identity_inventory_sha256": "17a2ec153c66dfa24330d2062e474634b564379cb1663676f494c182dc1c9b14"
+        "path": "internal/upgrade/directive_test.go",
+        "identity_inventory_sha256": "c4da716dec20bc1a10c6e803c8aed307e5114fecbb0d272d635cce421064a0d2"
       },
       {
-        "path": "internal/upgrade/runner_release_test.go",
-        "identity_inventory_sha256": "fdf3d8a7f5816cfcc35415bda62e4ee895aa1b7f43c3bc2d86ffc3c18ae8db01"
+        "path": "internal/upgrade/journal_test.go",
+        "identity_inventory_sha256": "a4542b19d1b455fb864c667b718c12b53e60f4d5ce6dae6105701b3dcd053314"
+      },
+      {
+        "path": "internal/upgrade/service_test.go",
+        "identity_inventory_sha256": "aee3aa812a752bb93e3f26f6558d1b8debec6a032cf93c8ca2dd321b2023e0ea"
       },
       {
         "path": "tests/boundaries/runtime_boundary_test.go",
-        "identity_inventory_sha256": "57b85fcaf4d11630cbba9c2d78530c9d398acf7a5238376e82cf457e2e2c1c70"
+        "identity_inventory_sha256": "c7e05cc7d8d3a2a46d39cf3361cbb12787c65a3c9a487917f488dad08834cadd"
       },
       {
         "path": "tests/integration/testenv/closed_command_test.go",
-        "identity_inventory_sha256": "0dadf6d6b3bd21b9fd8fccb4c6645b04c2b52647b2e5faa0795efd9babc93042"
+        "identity_inventory_sha256": "fbba2576fa9d28f58d88aceed829b8e6b9beb3cf82e2985bb1aa03209da62547"
       },
       {
         "path": "tests/integration/testenv/closed_runtime_scanner_test.go",
-        "identity_inventory_sha256": "9da71622a1eae040ff4aed7b3c6f8f63653aa6e3dd296b725fad5d2242a9ac3a"
-      },
-      {
-        "path": "tests/shell/fetch-runner.bats",
-        "identity_inventory_sha256": "183775b6df7efe70fed1f9eaadeef5ade6e4750991b3fc4c6ca24742116fdd28"
-      },
-      {
-        "path": "tests/shell/prepare-task5-images.bats",
-        "identity_inventory_sha256": "9da71622a1eae040ff4aed7b3c6f8f63653aa6e3dd296b725fad5d2242a9ac3a"
-      },
-      {
-        "path": "tests/shell/publish-runtime-release.bats",
-        "identity_inventory_sha256": "bbed62b480a375662cf3cf3137b59319a3b3dba93b68dc0f10eb134d31e5e2f3"
-      },
-      {
-        "path": "tests/shell/runner-release.bats",
-        "identity_inventory_sha256": "13aeec9306d5ca39840ee9b1fb7c5af35369a599e8f78be8a83f757868f27c4f"
-      },
-      {
-        "path": "tests/shell/runtime-release.bats",
-        "identity_inventory_sha256": "e90954e7e0bd2dfaf9ae4f988a2292610ca72c82d19421c787f2af1ceb3d1bd7"
+        "identity_inventory_sha256": "8feb6a13ad09d6e670a48343f327d2fee8fd16f65f14e1cb58aa7d1d87d11038"
       }
     ],
     "candidate_substitutions": [
       {
+        "path": "CHANGELOG.md",
+        "token": "version_bare",
+        "count": 1,
+        "replace": false
+      },
+      {
         "path": "cmd/portable-ghar-runner-gate/main_test.go",
         "token": "version_bare",
         "count": 2,
@@ -223,24 +209,6 @@
         "token": "command_settings_sha256",
         "count": 1,
         "replace": true
-      },
-      {
-        "path": "docs/superpowers/plans/2026-07-11-controller-runtime.md",
-        "token": "version_bare",
-        "count": 5,
-        "replace": false
-      },
-      {
-        "path": "docs/superpowers/plans/2026-07-11-controller-runtime.md",
-        "token": "linux_x64_sha256",
-        "count": 3,
-        "replace": false
-      },
-      {
-        "path": "docs/superpowers/specs/2026-07-10-portable-ghar-platform-design.md",
-        "token": "version_bare",
-        "count": 1,
-        "replace": false
       },
       {
         "path": "internal/archive/runner_archive_test.go",
@@ -303,15 +271,21 @@
         "replace": true
       },
       {
-        "path": "internal/upgrade/model_test.go",
+        "path": "internal/upgrade/directive_test.go",
         "token": "version_bare",
-        "count": 22,
+        "count": 1,
         "replace": false
       },
       {
-        "path": "internal/upgrade/runner_release_test.go",
+        "path": "internal/upgrade/journal_test.go",
         "token": "version_bare",
-        "count": 13,
+        "count": 4,
+        "replace": false
+      },
+      {
+        "path": "internal/upgrade/service_test.go",
+        "token": "version_bare",
+        "count": 2,
         "replace": false
       },
       {
@@ -342,42 +316,6 @@
         "path": "tests/integration/testenv/closed_runtime_scanner_test.go",
         "token": "version_bare",
         "count": 2,
-        "replace": false
-      },
-      {
-        "path": "tests/shell/fetch-runner.bats",
-        "token": "version_bare",
-        "count": 4,
-        "replace": true
-      },
-      {
-        "path": "tests/shell/fetch-runner.bats",
-        "token": "linux_x64_sha256",
-        "count": 1,
-        "replace": true
-      },
-      {
-        "path": "tests/shell/prepare-task5-images.bats",
-        "token": "version_bare",
-        "count": 2,
-        "replace": false
-      },
-      {
-        "path": "tests/shell/publish-runtime-release.bats",
-        "token": "version_bare",
-        "count": 5,
-        "replace": false
-      },
-      {
-        "path": "tests/shell/runner-release.bats",
-        "token": "version_bare",
-        "count": 7,
-        "replace": false
-      },
-      {
-        "path": "tests/shell/runtime-release.bats",
-        "token": "version_bare",
-        "count": 4,
         "replace": false
       }
     ],

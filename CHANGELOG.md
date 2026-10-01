@@ -44,6 +44,7 @@ Nothing in this section has shipped as a tagged release.
 
 ### Changed
 
+- Pin the official GitHub Actions runner to v2.337.0 (tag commit `397b032c…`, Linux x64 asset `sha256:70920811…`), which bundles .NET runtime 8.0.30 and clears the six .NET HIGH findings in v2.336.0. The entry is the observer's own output from the vuln-watch run, cross-checked against the downloaded asset's size and digest and the upstream tag commit.
 - Release images are identified, verified, and started by content-addressed image ID (`sha256:` plus the OCI config digest) instead of a repository digest. `docker load` of a release OCI archive preserves the image ID but leaves `RepoDigests` empty, which blocked QTS admission without a registry. Captured legacy-fleet images keep their repository-digest form.
 - Runner extraction omits the npm, npx, and corepack copies bundled in each Node external, and runner tree manifests reject them. The runner never invokes them, and they carry the upstream archive's remaining fixable HIGH/CRITICAL findings.
 - The weekly vulnerability watch now scans runner-image libraries as well as OS packages, and fails while a newer official runner release exists (GitHub's 30-day update window for runners with updates disabled).

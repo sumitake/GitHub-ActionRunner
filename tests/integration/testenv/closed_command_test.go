@@ -557,8 +557,8 @@ func TestRunnerSessionObservesExactHeldGateSequenceAndNumericUser(
 	conformance := []byte(
 		`{"version":1,"euid":1001,"egid":1001,"capabilities":{"effective":"0000000000000000","permitted":"0000000000000000","inheritable":"0000000000000000","bounding":"0000000000000000","ambient":"0000000000000000"},"raw_socket_denied":true,"bpf_denied":true,"unshare_denied":true,"setns_denied":true,"clone3_denied":true,"namespace_denied":true,"proc_sys_read_only":true,"proc_masks_present":true,"controller_database_absent":true,"docker_authority_absent":true,"host_control_absent":true,"secret_environment_absent":true,"jit_environment_absent":true,"synthetic_token_absent":true}` + "\n",
 	)
-	verifyVersion := []byte("2.336.0\n")
-	listenerVersion := []byte("2.336.0\n")
+	verifyVersion := []byte("2.337.0\n")
+	listenerVersion := []byte("2.337.0\n")
 	commandRunner := &orderedClosedRunner{
 		results: []orderedClosedResult{
 			{result: hostruntime.Result{Stdout: inventory}},
@@ -598,7 +598,7 @@ func TestRunnerSessionObservesExactHeldGateSequenceAndNumericUser(
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
-	if observation.Version != "2.336.0" ||
+	if observation.Version != "2.337.0" ||
 		observation.Conformance.EUID != 1001 ||
 		observation.Conformance.EGID != 1001 ||
 		observation.InventoryDigest == "" ||
@@ -697,8 +697,8 @@ func TestRunnerSessionFailsClosedOnSequenceOrEvidenceDrift(
 			{result: hostruntime.Result{
 				Stdout: append([]byte(nil), validInventory...),
 			}},
-			{result: hostruntime.Result{Stdout: []byte("2.336.0\n")}},
-			{result: hostruntime.Result{Stdout: []byte("2.336.0\n")}},
+			{result: hostruntime.Result{Stdout: []byte("2.337.0\n")}},
+			{result: hostruntime.Result{Stdout: []byte("2.337.0\n")}},
 			{result: hostruntime.Result{
 				Stdout: append([]byte(nil), validInventory...),
 			}},
@@ -1187,8 +1187,8 @@ func TestScannerSessionCapturesExactRoleOrderAndReusesRunnerInventory(
 			{result: hostruntime.Result{
 				Stdout: append([]byte(nil), inventory...),
 			}},
-			{result: hostruntime.Result{Stdout: []byte("2.336.0\n")}},
-			{result: hostruntime.Result{Stdout: []byte("2.336.0\n")}},
+			{result: hostruntime.Result{Stdout: []byte("2.337.0\n")}},
+			{result: hostruntime.Result{Stdout: []byte("2.337.0\n")}},
 			{result: hostruntime.Result{
 				Stdout: append([]byte(nil), inventory...),
 			}},
