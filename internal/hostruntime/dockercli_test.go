@@ -236,7 +236,7 @@ func validAdapterSpec(t *testing.T) (AdapterSpec, DockerCLIConfig) {
 
 	return AdapterSpec{
 			Name:            "pghar-adapter-000007",
-			Image:           "portable-ghar/network-adapter@sha256:" + strings.Repeat("a", 64),
+			Image:           "sha256:" + strings.Repeat("a", 64),
 			BuildID:         strings.Repeat("b", 64),
 			FleetGeneration: 17,
 			SlotIdentity:    "slot-000007",
@@ -692,7 +692,7 @@ func TestRejectedNamedCreateCleanupProvesOwnedIDRemovalAndNameAbsence(t *testing
 	expected := rejectedCreateIdentity{
 		Name:            "pghar-broker-000007-policy",
 		Kind:            "network-policy-helper",
-		Image:           "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+		Image:           "sha256:" + strings.Repeat("f", 64),
 		BuildID:         spec.BuildID,
 		FleetGeneration: spec.FleetGeneration,
 		SlotIdentity:    spec.SlotIdentity,
@@ -736,7 +736,7 @@ func TestRejectedNamedCreateCleanupNeverRemovesUnprovedInventory(t *testing.T) {
 	expected := rejectedCreateIdentity{
 		Name:            "pghar-broker-000007",
 		Kind:            "network-broker",
-		Image:           "portable-ghar/network-broker-dialer@sha256:" + strings.Repeat("d", 64),
+		Image:           "sha256:" + strings.Repeat("d", 64),
 		BuildID:         spec.BuildID,
 		FleetGeneration: spec.FleetGeneration,
 		SlotIdentity:    spec.SlotIdentity,
@@ -787,7 +787,7 @@ func TestRejectedNamedCreateCleanupAcceptsInspectGoneOnlyAfterBothAbsenceProofs(
 	expected := rejectedCreateIdentity{
 		Name:            "pghar-broker-000007-policy",
 		Kind:            "network-policy-helper",
-		Image:           "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+		Image:           "sha256:" + strings.Repeat("f", 64),
 		BuildID:         spec.BuildID,
 		FleetGeneration: spec.FleetGeneration,
 		SlotIdentity:    spec.SlotIdentity,
@@ -829,7 +829,7 @@ func TestRejectedNamedCreateCleanupRejectsNameReuseWithoutRemovingReplacement(t 
 	expected := rejectedCreateIdentity{
 		Name:            "pghar-broker-000007-policy",
 		Kind:            "network-policy-helper",
-		Image:           "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+		Image:           "sha256:" + strings.Repeat("f", 64),
 		BuildID:         spec.BuildID,
 		FleetGeneration: spec.FleetGeneration,
 		SlotIdentity:    spec.SlotIdentity,
@@ -1615,7 +1615,7 @@ func TestCreateRunnerRejectsAdapterInspectDrift(t *testing.T) {
 		new  string
 	}{
 		{"id", strings.Repeat("c", 64), strings.Repeat("f", 64)},
-		{"image", "portable-ghar/network-adapter@sha256:" + strings.Repeat("a", 64), "portable-ghar/network-adapter@sha256:" + strings.Repeat("f", 64)},
+		{"image", "sha256:" + strings.Repeat("a", 64), "sha256:" + strings.Repeat("f", 64)},
 		{"managed label", `"io.portable-ghar.managed":"true"`, `"io.portable-ghar.managed":"false"`},
 		{"running state", `"Running":true`, `"Running":false`},
 		{"network mode", `"NetworkMode":"none"`, `"NetworkMode":"bridge"`},
@@ -1755,7 +1755,7 @@ func TestQTSRootProfileIsExplicitlyDegradedAndStrictProfileRejectsRoot(t *testin
 func validRunnerSpec(adapter AdapterHandle, seccomp SeccompBinding) RunnerSpec {
 	return RunnerSpec{
 		Name:            "pghar-runner-000007",
-		Image:           "portable-ghar/runner@sha256:" + strings.Repeat("e", 64),
+		Image:           "sha256:" + strings.Repeat("e", 64),
 		BuildID:         strings.Repeat("b", 64),
 		FleetGeneration: 17,
 		SlotIdentity:    adapter.slotIdentity,

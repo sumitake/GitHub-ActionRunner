@@ -44,6 +44,7 @@ Nothing in this section has shipped as a tagged release.
 
 ### Changed
 
+- Release images are identified, verified, and started by content-addressed image ID (`sha256:` plus the OCI config digest) instead of a repository digest. `docker load` of a release OCI archive preserves the image ID but leaves `RepoDigests` empty, which blocked QTS admission without a registry. Captured legacy-fleet images keep their repository-digest form.
 - Runner extraction omits the npm, npx, and corepack copies bundled in each Node external, and runner tree manifests reject them. The runner never invokes them, and they carry the upstream archive's remaining fixable HIGH/CRITICAL findings.
 - The weekly vulnerability watch now scans runner-image libraries as well as OS packages, and fails while a newer official runner release exists (GitHub's 30-day update window for runners with updates disabled).
 - Reviewed-pin `actions/setup-go` to v7.0.0 (`b7ad1dad…`) and `actions/setup-node` to v7.0.0 (`82076278…`) in workflows and `REVIEWED_ACTION_PINS`.

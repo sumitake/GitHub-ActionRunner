@@ -172,22 +172,20 @@ func TestPreflightImageInspectionBindsExactReferencesAndTypedUsers(
 	references := []staticImageBinding{
 		{
 			ID: "runner",
-			Reference: "example/runner@sha256:" +
+			Reference: "sha256:" +
 				inputDigestA,
 		},
 		{
 			ID: "adapter",
-			Reference: "example/adapter@sha256:" +
+			Reference: "sha256:" +
 				inputDigestB,
 		},
 	}
 	raw := []byte(
 		fmt.Sprintf(
-			`{"id":"sha256:%s","repo_digests":["%s"],"operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n"+
-				`{"id":"sha256:%s","repo_digests":["%s"],"operating_system":"linux","architecture":"amd64","user":"1001:1001"}`+"\n",
-			inputDigestC,
+			`{"id":"%s","operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n"+
+				`{"id":"%s","operating_system":"linux","architecture":"amd64","user":"1001:1001"}`+"\n",
 			references[0].Reference,
-			inputDigestD,
 			references[1].Reference,
 		),
 	)
@@ -219,7 +217,7 @@ func TestPreflightImageInspectionBindsExactReferencesAndTypedUsers(
 		"image",
 		"inspect",
 		"--format",
-		`{"id":{{json .Id}},"repo_digests":{{json .RepoDigests}},"operating_system":{{json .Os}},"architecture":{{json .Architecture}},"user":{{json .Config.User}}}`,
+		`{"id":{{json .Id}},"operating_system":{{json .Os}},"architecture":{{json .Architecture}},"user":{{json .Config.User}}}`,
 		references[0].Reference,
 		references[1].Reference,
 	}
@@ -238,7 +236,7 @@ func TestPreflightImageInspectionRejectsMissingDuplicateOrWrongReference(
 ) {
 	t.Parallel()
 
-	reference := "example/runner@sha256:" + inputDigestA
+	reference := "sha256:" + inputDigestA
 	config := closedCommandConfig{
 		DockerPath:   "/usr/bin/docker",
 		FixtureRoot:  "/private/tmp/portable-ghar-fixture",
@@ -249,25 +247,22 @@ func TestPreflightImageInspectionRejectsMissingDuplicateOrWrongReference(
 	}
 	tests := map[string][]byte{
 		"missing line": nil,
-		"wrong reference": []byte(
+		"wrong image id": []byte(
 			fmt.Sprintf(
-				`{"id":"sha256:%s","repo_digests":["example/other@sha256:%s"],"operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n",
+				`{"id":"sha256:%s","operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n",
 				inputDigestB,
-				inputDigestA,
 			),
 		),
-		"duplicate reference": []byte(
+		"repository digest field": []byte(
 			fmt.Sprintf(
-				`{"id":"sha256:%s","repo_digests":["%s","%s"],"operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n",
-				inputDigestB,
+				`{"id":"%s","repo_digests":["example/runner@%s"],"operating_system":"linux","architecture":"amd64","user":"0:0"}`+"\n",
 				reference,
 				reference,
 			),
 		),
 		"named user": []byte(
 			fmt.Sprintf(
-				`{"id":"sha256:%s","repo_digests":["%s"],"operating_system":"linux","architecture":"amd64","user":"runner"}`+"\n",
-				inputDigestB,
+				`{"id":"%s","operating_system":"linux","architecture":"amd64","user":"runner"}`+"\n",
 				reference,
 			),
 		),
@@ -1361,7 +1356,7 @@ func validClosedNetworkSessionBinding(
 		BuildID:         inputDigestD,
 		FleetGeneration: 7,
 		SlotIdentity:    "slot-1",
-		VerifierImage: "example/verifier@sha256:" +
+		VerifierImage: "sha256:" +
 			inputDigestC,
 		VerifierUser: "65532:65532",
 		VerifierSeccomp: hostruntime.SeccompBinding{

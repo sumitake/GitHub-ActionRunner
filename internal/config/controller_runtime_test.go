@@ -430,7 +430,7 @@ func validControllerPrivateOverlay() hostruntime.PrivateOverlay {
 	}
 }
 
-func configImmutableImage(name, digit string) string {
-	return "example.invalid/portable/" + name + "@sha256:" +
+func configImmutableImage(_ string, digit string) string {
+	return "sha256:" +
 		strings.Repeat(digit, 64)
 }

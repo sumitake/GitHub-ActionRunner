@@ -348,8 +348,8 @@ func TestRecordingCreationSpecDigestsBindExactRuntimeIdentity(t *testing.T) {
 	}
 	brokerSpec := hostruntime.BrokerSpec{
 		Name:            "portable-ghar-broker",
-		Image:           "example/broker@sha256:" + inputDigestA,
-		HelperImage:     "example/helper@sha256:" + inputDigestB,
+		Image:           "sha256:" + inputDigestA,
+		HelperImage:     "sha256:" + inputDigestB,
 		BuildID:         binding.BuildID,
 		FleetGeneration: binding.FleetGeneration,
 		SlotIdentity:    binding.SlotIdentity,
@@ -401,7 +401,7 @@ func TestRecordingCreationSpecDigestsBindExactRuntimeIdentity(t *testing.T) {
 
 	runnerSpec := hostruntime.RunnerSpec{
 		Name:            "portable-ghar-runner",
-		Image:           "example/runner@sha256:" + inputDigestC,
+		Image:           "sha256:" + inputDigestC,
 		BuildID:         binding.BuildID,
 		FleetGeneration: binding.FleetGeneration,
 		SlotIdentity:    binding.SlotIdentity,
@@ -511,7 +511,7 @@ func TestRecordingEngineRunsAndRetainsOneExactLoopbackFlood(t *testing.T) {
 		return want, nil
 	}
 	verifier := hostruntime.VerifierSpec{
-		Image:           "example/verifier@sha256:" + inputDigestA,
+		Image:           "sha256:" + inputDigestA,
 		BuildID:         adapterSpec.BuildID,
 		FleetGeneration: adapterSpec.FleetGeneration,
 		SlotIdentity:    adapterSpec.SlotIdentity,
@@ -620,7 +620,7 @@ func validRecordingAdapterRuntime(
 	}
 	return engine, runner, hostruntime.AdapterSpec{
 		Name:            "portable-ghar-adapter",
-		Image:           "example/adapter@sha256:" + strings.Repeat("1", 64),
+		Image:           "sha256:" + strings.Repeat("1", 64),
 		BuildID:         strings.Repeat("2", 64),
 		FleetGeneration: 1,
 		SlotIdentity:    "portable-ghar-slot",
