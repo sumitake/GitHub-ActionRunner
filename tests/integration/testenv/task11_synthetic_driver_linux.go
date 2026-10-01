@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/controller"
+	"github.com/sumitake/portable-ghar/internal/failoverclient"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
 	"github.com/sumitake/portable-ghar/internal/networkjail"
 	"github.com/sumitake/portable-ghar/internal/redaction"
@@ -789,19 +790,33 @@ func (d *linuxTask11SyntheticDriver) executeListenerCycle(
 			task11SyntheticProvedCleanup{},
 			ErrFixtureStart
 	}
+	permit, err := d.acquireReleasePermit(ctx, cycle, plan)
+	if err != nil {
+		zeroLeaseBytes(document)
+		return task11synthetic.Stream{},
+			task11SyntheticProvedCleanup{},
+			ErrFixtureStart
+	}
 	jit := redaction.SecretFromBytes(document)
 	document = nil
 	live, err := cycleState.composition.Orchestrator.Release(
 		ctx,
 		held,
 		jit,
+		permit,
 	)
+	closeErr := permit.Close()
 	if err != nil {
 		return task11synthetic.Stream{},
 			task11SyntheticProvedCleanup{},
 			ErrFixtureStart
 	}
 	cycleState.setLive(live)
+	if closeErr != nil {
+		return task11synthetic.Stream{},
+			task11SyntheticProvedCleanup{},
+			ErrFixtureStart
+	}
 	stream, err = attach.waitAndInspect(
 		ctx,
 		plan.CommandRunner,
@@ -1133,6 +1148,34 @@ func (d *linuxTask11SyntheticDriver) prepareCycle(
 	cycleState.composition = &composition
 	cycleState.recovery = recovery
 	return cycleState, cycleInput, plan, offer, evidence, nil
+}
+
+// acquireReleasePermit issues the guard Orchestrator.Release consumes. Its
+// authority ends at the conformance authorization expiry, and the cleanup
+// timeout is the termination tail the guard reserves after that point.
+func (d *linuxTask11SyntheticDriver) acquireReleasePermit(
+	ctx context.Context,
+	cycle task11SyntheticCycleIdentity,
+	plan compositionPlan,
+) (controller.AcquisitionPermitGuard, error) {
+	notAfter, ok := parseCanonicalUTC(d.input.Authorization.NotAfter)
+	if !ok {
+		return nil, ErrFixtureStart
+	}
+	clock, err := failoverclient.NewProductionAuthorityClock()
+	if err != nil {
+		return nil, ErrFixtureStart
+	}
+	return acquireTask11SyntheticReleasePermit(
+		ctx,
+		clock,
+		cycle,
+		plan.AssignmentKey.RepositoryAlias,
+		d.graph.Digest().String(),
+		d.now().UTC(),
+		notAfter,
+		durationMilliseconds(d.input.Limits.CleanupTimeoutMilliseconds),
+	)
 }
 
 func (d *linuxTask11SyntheticDriver) armFullObserver(

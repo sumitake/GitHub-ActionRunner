@@ -222,7 +222,10 @@ stage_gofmt() {
 }
 
 stage_vet() {
-  go vet ./...
+  go vet ./... || return 1
+  # Hosted CI only builds the integration tag for ./internal/networkjail, so
+  # compile-check the integration-only fixture packages here as well.
+  go vet -tags=integration ./tests/integration/...
 }
 
 run_go_test() (
