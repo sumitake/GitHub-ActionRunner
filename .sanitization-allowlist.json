@@ -785,70 +785,28 @@
   },
   {
     "path": "images/runner/Dockerfile",
-    "line": 42,
+    "line": 66,
     "rule": "PATH001",
-    "sha256": "19ddcd3c40b5a0dff3b8e409b2959f5d94186b9614d35c4d5fd968f8e6df12be",
+    "sha256": "6f588b3f83e3dec66a1c03eec2f381f00795492f594ec8c22a8dd49ff5a635e7",
     "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
   },
   {
     "path": "images/runner/Dockerfile",
-    "line": 95,
-    "rule": "PATH001",
-    "sha256": "7d66787c67f77e0a3d8a5b192cf339a82301cd5dd635b12fe2e1d5f21de989d1",
-    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
-  },
-  {
-    "path": "images/runner/Dockerfile",
-    "line": 96,
-    "rule": "PATH001",
-    "sha256": "e1bb92c460358d1e9087b6fb82d6c96647e78dcb2d59f24d3e138cfdc0f1da79",
-    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
-  },
-  {
-    "path": "images/runner/Dockerfile",
-    "line": 98,
+    "line": 68,
     "rule": "PATH001",
     "sha256": "1faddca08a7a2959110a04bcd483e0bc26156d465c3308de40a154088f960b86",
     "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
   },
   {
     "path": "images/runner/Dockerfile",
-    "line": 100,
+    "line": 69,
     "rule": "PATH001",
-    "sha256": "5b390b21f45135b223f9df284bf80f6725b54f55942dd4d757f9f1e875899149",
+    "sha256": "829bea379fbde8fa493085d781303f30c68b22cfe8f1792092bde1969aa093f8",
     "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
   },
   {
     "path": "images/runner/Dockerfile",
     "line": 101,
-    "rule": "PATH001",
-    "sha256": "d1471c44a855e831a71659029fcfb211f3a03ac4da95224d154036c86898d12d",
-    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
-  },
-  {
-    "path": "images/runner/Dockerfile",
-    "line": 102,
-    "rule": "PATH001",
-    "sha256": "f377165bd95d06492865403df7782d32a596cb40a2f9731a6142cdaa4a8acce3",
-    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
-  },
-  {
-    "path": "images/runner/Dockerfile",
-    "line": 135,
-    "rule": "PATH001",
-    "sha256": "022d4093d1e3ec105971109045908bdf427fe41dc4223734a00c7a8a77b5dfd8",
-    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
-  },
-  {
-    "path": "images/runner/Dockerfile",
-    "line": 136,
-    "rule": "PATH001",
-    "sha256": "269106b34e4751752f394a11831a3151e84c461c3ecae0f900f334c2b0311336",
-    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
-  },
-  {
-    "path": "images/runner/Dockerfile",
-    "line": 137,
     "rule": "PATH001",
     "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
     "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
@@ -2959,5 +2917,33 @@
     "rule": "DEPLOYID002",
     "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
     "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile@7415642456d242a261a92895692512bbeec6d4f7",
+    "line": 66,
+    "rule": "PATH001",
+    "sha256": "6f588b3f83e3dec66a1c03eec2f381f00795492f594ec8c22a8dd49ff5a635e7",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile@7415642456d242a261a92895692512bbeec6d4f7",
+    "line": 68,
+    "rule": "PATH001",
+    "sha256": "1faddca08a7a2959110a04bcd483e0bc26156d465c3308de40a154088f960b86",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile@7415642456d242a261a92895692512bbeec6d4f7",
+    "line": 69,
+    "rule": "PATH001",
+    "sha256": "829bea379fbde8fa493085d781303f30c68b22cfe8f1792092bde1969aa093f8",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/Dockerfile@7415642456d242a261a92895692512bbeec6d4f7",
+    "line": 101,
+    "rule": "PATH001",
+    "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
   }
 ]
