@@ -151,11 +151,11 @@ func TestControllerManifestBindingRejectsEveryMismatchedArtifact(t *testing.T) {
 	overlay := hostruntime.PrivateOverlay{
 		Docker: hostruntime.DockerOverlay{
 			BrokerNetworkID: "restricted-broker-v1",
-			RunnerImage:     "example.invalid/runner@" + manifest.RunnerImageDigest,
-			AdapterImage:    "example.invalid/adapter@" + manifest.AdapterImageDigest,
-			BrokerImage:     "example.invalid/broker@" + manifest.BrokerImageDigest,
-			HelperImage:     "example.invalid/helper@" + manifest.HelperImageDigest,
-			VerifierImage:   "example.invalid/verifier@" + manifest.VerifierImageDigest,
+			RunnerImage:     manifest.RunnerImageDigest,
+			AdapterImage:    manifest.AdapterImageDigest,
+			BrokerImage:     manifest.BrokerImageDigest,
+			HelperImage:     manifest.HelperImageDigest,
+			VerifierImage:   manifest.VerifierImageDigest,
 		},
 		Policy: hostruntime.PolicyOverlay{
 			ManifestDigest: manifest.PolicyManifestDigest,
@@ -172,19 +172,19 @@ func TestControllerManifestBindingRejectsEveryMismatchedArtifact(t *testing.T) {
 			value.Policy.ManifestDigest = repeatedDigest("b")
 		},
 		"runner": func(value *hostruntime.PrivateOverlay) {
-			value.Docker.RunnerImage = "example.invalid/runner@" + digest("9")
+			value.Docker.RunnerImage = digest("9")
 		},
 		"adapter": func(value *hostruntime.PrivateOverlay) {
-			value.Docker.AdapterImage = "example.invalid/adapter@" + digest("9")
+			value.Docker.AdapterImage = digest("9")
 		},
 		"broker": func(value *hostruntime.PrivateOverlay) {
-			value.Docker.BrokerImage = "example.invalid/broker@" + digest("9")
+			value.Docker.BrokerImage = digest("9")
 		},
 		"helper": func(value *hostruntime.PrivateOverlay) {
-			value.Docker.HelperImage = "example.invalid/helper@" + digest("9")
+			value.Docker.HelperImage = digest("9")
 		},
 		"verifier": func(value *hostruntime.PrivateOverlay) {
-			value.Docker.VerifierImage = "example.invalid/verifier@" + digest("9")
+			value.Docker.VerifierImage = digest("9")
 		},
 	} {
 		name, mutate := name, mutate

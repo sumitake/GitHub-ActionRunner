@@ -32,7 +32,9 @@ const (
 
 var (
 	containerNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
-	imageRefPattern      = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+@sha256:[0-9a-f]{64}$`)
+	// imageRefPattern admits only a content-addressed local image ID, the
+	// identity "docker load" preserves for a release OCI archive.
+	imageRefPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 
 // DockerCLIConfig binds every path-valued Docker argument to a
@@ -1010,7 +1012,7 @@ func validateContainerName(name string) error {
 
 func validateImageRef(image string) error {
 	if !imageRefPattern.MatchString(image) || hasControl(image) {
-		return errors.New("hostruntime: image must be canonical digest reference")
+		return errors.New("hostruntime: image must be a content-addressed image ID")
 	}
 	return nil
 }

@@ -901,9 +901,8 @@ func protocolTestManifest() hostruntime.RuntimeManifest {
 	}
 }
 
-func testImage(name, digit string) string {
-	return "example.invalid/portable/" + name +
-		"@sha256:" + strings.Repeat(digit, 64)
+func testImage(_ string, digit string) string {
+	return "sha256:" + strings.Repeat(digit, 64)
 }
 
 func TestServeOperationDeadlineIsBounded(t *testing.T) {

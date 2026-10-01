@@ -181,8 +181,8 @@ func validBrokerSpec(t *testing.T, adapter AdapterHandle, adapterSpec AdapterSpe
 	}
 	return BrokerSpec{
 		Name:              "pghar-broker-000007",
-		Image:             "portable-ghar/network-broker-dialer@sha256:" + strings.Repeat("d", 64),
-		HelperImage:       "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+		Image:             "sha256:" + strings.Repeat("d", 64),
+		HelperImage:       "sha256:" + strings.Repeat("f", 64),
 		PolicyIPv6Posture: PolicyIPv6DenyViaIP6Tables,
 		BuildID:           adapterSpec.BuildID,
 		FleetGeneration:   adapterSpec.FleetGeneration,
@@ -723,7 +723,7 @@ func TestBrokerPolicyAuthorityReleaseAndAuditAreExactlyOrdered(t *testing.T) {
 			ContainerID:     helperID,
 			Name:            "pghar-broker-000007-policy",
 			Kind:            "network-policy-helper",
-			Image:           "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+			Image:           "sha256:" + strings.Repeat("f", 64),
 			BuildID:         adapterSpec.BuildID,
 			FleetGeneration: adapterSpec.FleetGeneration,
 			SlotIdentity:    adapterSpec.SlotIdentity,
@@ -1095,8 +1095,8 @@ func managedBrokerInspectJSON(
 ) string {
 	spec := BrokerSpec{
 		Name:              "pghar-broker-000007",
-		Image:             "portable-ghar/network-broker-dialer@sha256:" + strings.Repeat("d", 64),
-		HelperImage:       "portable-ghar/network-helper@sha256:" + strings.Repeat("f", 64),
+		Image:             "sha256:" + strings.Repeat("d", 64),
+		HelperImage:       "sha256:" + strings.Repeat("f", 64),
 		PolicyIPv6Posture: PolicyIPv6DenyViaIP6Tables,
 		BuildID:           adapterSpec.BuildID,
 		FleetGeneration:   adapterSpec.FleetGeneration,

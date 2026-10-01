@@ -700,8 +700,7 @@ func controllerManifestMatchesOverlay(
 }
 
 func imageReferenceMatchesDigest(reference string, digest string) bool {
-	return strings.HasSuffix(reference, "@"+digest) &&
-		len(reference) > len(digest)+1
+	return reference != "" && reference == digest
 }
 
 func currentControllerExecutableDigest() (string, error) {

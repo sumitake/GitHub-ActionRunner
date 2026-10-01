@@ -17,8 +17,8 @@ const (
 	oneShotTestBroker  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	oneShotTestRunner  = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	oneShotTestBuild   = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-	oneShotTestImage   = "example/verifier@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-	oneShotTestHelper  = "example/helper@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	oneShotTestImage   = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	oneShotTestHelper  = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 )
 
 type oneShotRecorderRunner struct {

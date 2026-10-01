@@ -217,11 +217,20 @@ func TestParseReleaseImageInspectOutputFailsClosed(t *testing.T) {
 			),
 			ExitCode: 0,
 		},
-		"duplicate repo digest": {
+		"image id differs from reference": {
 			Stdout: bytes.Replace(
 				valid,
-				[]byte(`"]}`),
-				[]byte(`","`+references[0]+`"]}`),
+				[]byte(references[0]),
+				[]byte("sha256:"+strings.Repeat("0", 64)),
+				1,
+			),
+			ExitCode: 0,
+		},
+		"unexpected inspect field": {
+			Stdout: bytes.Replace(
+				valid,
+				[]byte(`"os":"linux"}`),
+				[]byte(`"os":"linux","repo_digests":[]}`),
 				1,
 			),
 			ExitCode: 0,
@@ -708,15 +717,11 @@ func releaseInspectFixture(
 	var output bytes.Buffer
 	var imageIDs [releaseImageCount]string
 	for index, reference := range references {
-		imageIDs[index] = "sha256:" + strings.Repeat(
-			string(rune('a'+index)),
-			64,
-		)
+		imageIDs[index] = reference
 		line, err := json.Marshal(releaseImageObservation{
 			Architecture: "amd64",
 			ID:           imageIDs[index],
 			OS:           "linux",
-			RepoDigests:  []string{reference},
 		})
 		if err != nil {
 			t.Fatalf("json.Marshal() error = %v", err)

@@ -33,7 +33,7 @@ func (runner *cancelOnVerifierRun) Run(
 
 func validVerifierSpec(adapter AdapterHandle, spec AdapterSpec) VerifierSpec {
 	return VerifierSpec{
-		Image:           "portable-ghar/network-verifier@sha256:" + strings.Repeat("9", 64),
+		Image:           "sha256:" + strings.Repeat("9", 64),
 		BuildID:         spec.BuildID,
 		FleetGeneration: spec.FleetGeneration,
 		SlotIdentity:    spec.SlotIdentity,

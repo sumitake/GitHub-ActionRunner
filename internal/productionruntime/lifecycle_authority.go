@@ -116,7 +116,7 @@ func validLegacyCommandExpectation(
 		return false
 	}
 	for index, digest := range expectation.ImageDigests {
-		if !digestQualifiedImageReference(digest) ||
+		if !legacyImageReference(digest) ||
 			(index > 0 && expectation.ImageDigests[index-1] == digest) {
 			return false
 		}
@@ -244,4 +244,15 @@ func validAuthorityScalar(value string) bool {
 		}
 	}
 	return true
+}
+
+// legacyImageReference accepts the repository-digest form recorded for the
+// captured legacy fleet's images. Portable release images use image IDs
+// instead; see digestQualifiedImageReference.
+func legacyImageReference(value string) bool {
+	marker := strings.LastIndex(value, "@sha256:")
+	if marker <= 0 || marker+len("@sha256:")+64 != len(value) {
+		return false
+	}
+	return lowerHexDigest(value[marker+len("@sha256:"):])
 }
