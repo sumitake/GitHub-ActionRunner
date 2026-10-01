@@ -35,6 +35,23 @@ official source, immutable manifests, qualification gates, and external
 maintenance directives. It is not an operator-edited tag, file, URL, digest,
 or bypass around verification.
 
+## Runner payload and update window
+
+The payload is the official prebuilt Linux x64 archive at the pinned digest.
+Extraction omits the `npm`, `npx`, and `corepack` copies bundled inside each
+`externals/node*` tree. The runner only executes `externals/<node>/bin/node`,
+and those package managers carry most of the archive's fixable HIGH/CRITICAL
+findings; Node 20's bundled npm will not receive further upstream fixes. Every
+runner tree manifest rejects those paths, so a selected image cannot contain
+them. Workflows that need a package manager install their own.
+
+The selected image disables in-place updates, and GitHub stops queuing jobs to
+such a runner 30 days after a newer official release is published. The weekly
+vulnerability watch therefore fails while a newer official release exists and
+prints that deadline. The response is an ordinary pin bump: run the observer,
+review the new `runtime.runner_release` tuple, and qualify it through the
+release path below.
+
 ## Immutable candidate qualification
 
 The candidate identity binds the release-evidence digest,

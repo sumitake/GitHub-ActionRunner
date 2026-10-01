@@ -200,7 +200,32 @@ func validateRunnerRelativePath(value string) error {
 			return errors.New("archive: unexpected runner top-level tree")
 		}
 	}
+	if runnerPackageManagerPath(strings.ToLower(value)) {
+		return errors.New("archive: runner package-manager path prohibited")
+	}
 	return nil
+}
+
+// runnerPackageManagerPath reports whether a runner-relative path belongs to
+// the npm, npx, or corepack copy bundled inside an upstream Node external.
+// The runner only executes externals/<node>/bin/node, so these package
+// managers are never invoked; they carry most of the archive's fixable
+// HIGH/CRITICAL findings. Extraction omits them and every runner tree
+// manifest rejects them, so a selected image can never contain them.
+func runnerPackageManagerPath(relative string) bool {
+	segments := strings.Split(relative, "/")
+	if len(segments) < 4 || segments[0] != "externals" || !strings.HasPrefix(segments[1], "node") {
+		return false
+	}
+	switch segments[2] {
+	case "bin":
+		return len(segments) == 4 &&
+			(segments[3] == "npm" || segments[3] == "npx" || segments[3] == "corepack")
+	case "lib":
+		return len(segments) >= 5 && segments[3] == "node_modules" &&
+			(segments[4] == "npm" || segments[4] == "corepack")
+	}
+	return false
 }
 
 func validateRunnerLinkTarget(value string) error {

@@ -575,6 +575,9 @@ class H10History(unittest.TestCase):
             "john Osumi <931193+sumitake@users.noreply.github.com>",
             "John Osumi <931193+sumitake@users.noreply.github.com> intruder@corp.invalid",
             "Conduct, changelog, CODEOWNERS (* @sumitake-extra),",
+            "claude <noreply@anthropic.com>",
+            "Claude <noreply@anthropic.com.invalid>",
+            "Co-Authored-By: Claude Opus 5.5 <other@anthropic.com>",
         )
         for near_miss in near_misses:
             with self.subTest(near_miss=near_miss):
