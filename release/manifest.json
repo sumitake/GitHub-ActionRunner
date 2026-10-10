@@ -122,7 +122,7 @@
     "candidate_protected_files": [
       {
         "path": "CHANGELOG.md",
-        "identity_inventory_sha256": "fc4362c6efa416885218c69dd0468e1554c7d9a2a10dfaae858ab3e0f1ddc537"
+        "identity_inventory_sha256": "9ffed8656a81d1076f7908c5f743c11b78c8eae99de3b3f5375f4486fb913702"
       },
       {
         "path": "cmd/portable-ghar-runner-gate/main_test.go",
