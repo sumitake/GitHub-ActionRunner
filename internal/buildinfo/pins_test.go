@@ -12,7 +12,7 @@ import (
 func TestPinsExactValues(t *testing.T) {
 	want := Manifest{
 		GoLanguageVersion: "1.26.0",
-		GoToolchain:       "go1.26.6",
+		GoToolchain:       "go1.26.9",
 		Scaleset: ModulePin{
 			Path:    "github.com/actions/scaleset",
 			Version: "v0.4.0",
@@ -29,9 +29,9 @@ func TestPinsExactValues(t *testing.T) {
 			Version: "v0.3.0",
 		},
 		UpstreamRunner: UpstreamRunnerPin{
-			Version:               "v2.337.0",
-			LinuxX64SHA256:        "70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613",
-			SourceCommit:          "397b032cbf865e9c3ddfab89d533ec19325e1273",
+			Version:               "v2.338.0",
+			LinuxX64SHA256:        "af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32",
+			SourceCommit:          "197ca027b90de199464dee3bb9ff198a1db60967",
 			CommandSettingsSHA256: "937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08",
 		},
 		RunnerBaseImage: "debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
@@ -64,7 +64,7 @@ func TestPinsFieldTable(t *testing.T) {
 		want string
 	}{
 		{"go language version", p.GoLanguageVersion, "1.26.0"},
-		{"go toolchain", p.GoToolchain, "go1.26.6"},
+		{"go toolchain", p.GoToolchain, "go1.26.9"},
 		{"scaleset module path", p.Scaleset.Path, "github.com/actions/scaleset"},
 		{"scaleset version", p.Scaleset.Version, "v0.4.0"},
 		{"scaleset commit", p.Scaleset.Commit, "6ce025902cd964747a078c2aabe7340ebc667eca"},
@@ -74,9 +74,9 @@ func TestPinsFieldTable(t *testing.T) {
 		{"sqlite version", p.SQLite.Version, "v1.53.0"},
 		{"nftables module path", p.NFTables.Path, "github.com/google/nftables"},
 		{"nftables version", p.NFTables.Version, "v0.3.0"},
-		{"upstream runner version", p.UpstreamRunner.Version, "v2.337.0"},
-		{"upstream runner sha256", p.UpstreamRunner.LinuxX64SHA256, "70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613"},
-		{"upstream runner source commit", p.UpstreamRunner.SourceCommit, "397b032cbf865e9c3ddfab89d533ec19325e1273"},
+		{"upstream runner version", p.UpstreamRunner.Version, "v2.338.0"},
+		{"upstream runner sha256", p.UpstreamRunner.LinuxX64SHA256, "af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32"},
+		{"upstream runner source commit", p.UpstreamRunner.SourceCommit, "197ca027b90de199464dee3bb9ff198a1db60967"},
 		{"upstream command settings sha256", p.UpstreamRunner.CommandSettingsSHA256, "937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08"},
 		{"runner base image", p.RunnerBaseImage, "debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867"},
 		{"adapter image", p.AdapterImage, "scratch"},

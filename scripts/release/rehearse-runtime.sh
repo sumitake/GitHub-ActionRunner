@@ -918,7 +918,7 @@ def validate_dockerfiles(clone, runtime):
             acquirers.append(entry["name"])
             if (
                 "ARG SOURCE_DATE_EPOCH" not in text
-                or len(re.findall(r"\bsnapshot=[0-9]{8}T000000Z;", text)) != 1
+                or len(re.findall(r"\bsnapshot=[0-9]{8}T[0-9]{6}Z;", text)) != 1
                 or any(source not in text for source in RUNNER_SNAPSHOT_SOURCES)
             ):
                 reject("package snapshot")
@@ -1451,7 +1451,7 @@ def main():
                 "GOCACHE": os.fspath(caches / "go-build"),
                 "GOMODCACHE": os.fspath(caches / "go-mod"),
                 "GOPATH": os.fspath(caches / "gopath"),
-                "GOTOOLCHAIN": "go1.26.6",
+                "GOTOOLCHAIN": "go1.26.9",
                 "SOURCE_DATE_EPOCH": str(source_epoch),
                 "TRIVY_CACHE_DIR": os.fspath(caches / "trivy"),
                 "SYFT_CHECK_FOR_APP_UPDATE": "false",

@@ -604,7 +604,7 @@ PY
   mkdir -m 700 "$WORK/bin"
 
   run bash -c '
-    exec env GOTOOLCHAIN=go1.26.6 \
+    exec env GOTOOLCHAIN=go1.26.9 \
       go run ./internal/buildinfo/cmd/portable-ghar-build-identity \
       "$1" "$2" 2>"$3"
   ' _ "$version" "$commit" "$WORK/build-identity.stderr"
@@ -615,7 +615,7 @@ PY
   run env \
     PGHAR_EXPECTED_BUILD_VERSION="$version" \
     PGHAR_EXPECTED_BUILD_COMMIT="$commit" \
-    GOTOOLCHAIN=go1.26.6 \
+    GOTOOLCHAIN=go1.26.9 \
     go test \
     -run '^TestLinkedIdentity$' \
     -count=1 \
@@ -627,7 +627,7 @@ PY
   run env \
     PGHAR_EXPECTED_BUILD_VERSION="$version" \
     PGHAR_EXPECTED_BUILD_COMMIT="$commit" \
-    GOTOOLCHAIN=go1.26.6 \
+    GOTOOLCHAIN=go1.26.9 \
     go test \
     -run '^TestLinkedIdentity$' \
     -count=1 \
@@ -637,7 +637,7 @@ PY
 
   while IFS="$(printf '\t')" read -r name package; do
     run bash -c '
-      exec env GOTOOLCHAIN=go1.26.6 \
+      exec env GOTOOLCHAIN=go1.26.9 \
         go list -json "$1" 2>"$2"
     ' _ "$package" "$WORK/go-list.stderr"
     [ "$status" -eq 0 ]
@@ -652,7 +652,7 @@ PY
       CGO_ENABLED=0 \
       GOOS=linux \
       GOARCH=amd64 \
-      GOTOOLCHAIN=go1.26.6 \
+      GOTOOLCHAIN=go1.26.9 \
       go build \
       -trimpath \
       -buildvcs=false \
@@ -922,7 +922,7 @@ for entry in images:
     if "apt-get" in text:
         acquirers.append(entry["name"])
         assert all(source in text for source in expected_sources)
-        assert len(re.findall(r"\bsnapshot=[0-9]{8}T000000Z;", text)) == 1
+        assert len(re.findall(r"\bsnapshot=[0-9]{8}T[0-9]{6}Z;", text)) == 1
         assert "ARG SOURCE_DATE_EPOCH" in text
 assert acquirers == ["runner"]
 PY

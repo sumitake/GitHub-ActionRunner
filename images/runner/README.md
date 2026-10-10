@@ -32,8 +32,10 @@ Debian-signed indexes; the release A/B rebuild proves the result is
 reproducible; and the image records its full installed inventory in
 `dpkg-manifest.tsv`.
 
-Applying Debian security fixes is one change: move the snapshot date forward
-and let CI rebuild, scan, and compare. The base image digest is pinned
+Applying Debian security fixes is one change: move the snapshot timestamp
+(`YYYYMMDDTHHMMSSZ`, in the past) forward and let CI rebuild, scan, and
+compare. A fix published today needs a time after snapshot.debian.org imported
+it; the midnight snapshot may predate it. The base image digest is pinned
 separately and refreshed by Dependabot. Weekly Vulnerability Watch scans the
 built runner image (`trivy image`, OS packages and bundled libraries) and
 fails when a HIGH/CRITICAL finding has a published fix, which is the signal to

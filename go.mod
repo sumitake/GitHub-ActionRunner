@@ -2,7 +2,7 @@ module github.com/sumitake/portable-ghar
 
 go 1.26.0
 
-toolchain go1.26.6
+toolchain go1.26.9
 
 tool (
 	github.com/rhysd/actionlint/cmd/actionlint
@@ -16,7 +16,7 @@ require (
 	github.com/google/nftables v0.3.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-retryablehttp v0.7.8
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
 	modernc.org/sqlite v1.60.1
