@@ -1,0 +1,645 @@
+{
+  "schema_version": 1,
+  "target": {
+    "os": "linux",
+    "architecture": "amd64",
+    "expected_euid": 0,
+    "host_identity_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "control_host_identity_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "profile_id": "qts-capless-root",
+    "owner_id": "portable-owner",
+    "degraded_acknowledged": true
+  },
+  "manifest": {
+    "path": "",
+    "digest": ""
+  },
+  "paths": {
+    "state_root": "/opt/portable/state",
+    "release_root": "/opt/portable/releases",
+    "staging_root": "/opt/portable/staging",
+    "rollback_root": "/opt/portable/rollback",
+    "scratch_root": "/opt/portable/scratch",
+    "log_root": "/opt/portable/logs",
+    "fence_root": "/opt/portable/fence",
+    "journal_root": "/opt/portable/journal",
+    "receipt_root": "/opt/portable/receipts",
+    "reservation_root": "/opt/portable/reservations",
+    "database_path": "/opt/portable/state/controller.db",
+    "admin_socket_path": "/opt/portable/state/admin.sock",
+    "health_socket_path": "/opt/portable/state/health.sock",
+    "broker_root": "/opt/portable/broker",
+    "seccomp_root": "/opt/portable/seccomp",
+    "policy_path": "/opt/portable/policy.json",
+    "trust_lock_path": "/opt/portable/trust.lock",
+    "legacy_root": "/opt/portable/legacy"
+  },
+  "commands": {
+    "docker_binary": "/usr/local/bin/docker",
+    "controller_binary": "/opt/portable/bin/portable-ghar-controller",
+    "watchdog_binary": "/opt/portable/bin/portable-ghar-watchdog",
+    "host_runtime_binary": "/opt/portable/bin/portable-ghar",
+    "legacy_fence_binary": "/opt/portable/bin/run-legacy-fenced"
+  },
+  "docker": {
+    "broker_network_id": "restricted-broker-v1",
+    "runner_network_mode": "none",
+    "runner_image": "",
+    "adapter_image": "",
+    "broker_image": "",
+    "helper_image": "",
+    "verifier_image": "",
+    "immutable_build_mode": "attested-pull"
+  },
+  "resources": {
+    "admission_ceiling": {
+      "milli_cpu": 100,
+      "memory_bytes": 1024,
+      "pids": 8,
+      "file_descriptors": 16,
+      "tmpfs_bytes": 512,
+      "scratch_bytes": 512,
+      "socket_state_bytes": 128,
+      "durable_state_bytes": 256,
+      "inodes": 16
+    },
+    "slot_resources": {
+      "runner": {
+        "milli_cpu": 100,
+        "memory_bytes": 1024,
+        "pids": 8,
+        "file_descriptors": 16,
+        "tmpfs_bytes": 512,
+        "scratch_bytes": 512,
+        "socket_state_bytes": 128,
+        "durable_state_bytes": 256,
+        "inodes": 16
+      },
+      "adapter": {
+        "milli_cpu": 100,
+        "memory_bytes": 1024,
+        "pids": 8,
+        "file_descriptors": 16,
+        "tmpfs_bytes": 512,
+        "scratch_bytes": 512,
+        "socket_state_bytes": 128,
+        "durable_state_bytes": 256,
+        "inodes": 16
+      },
+      "broker": {
+        "milli_cpu": 100,
+        "memory_bytes": 1024,
+        "pids": 8,
+        "file_descriptors": 16,
+        "tmpfs_bytes": 512,
+        "scratch_bytes": 512,
+        "socket_state_bytes": 128,
+        "durable_state_bytes": 256,
+        "inodes": 16
+      },
+      "dial_authority": {
+        "milli_cpu": 100,
+        "memory_bytes": 1024,
+        "pids": 8,
+        "file_descriptors": 16,
+        "tmpfs_bytes": 512,
+        "scratch_bytes": 512,
+        "socket_state_bytes": 128,
+        "durable_state_bytes": 256,
+        "inodes": 16
+      },
+      "helper": {
+        "milli_cpu": 100,
+        "memory_bytes": 1024,
+        "pids": 8,
+        "file_descriptors": 16,
+        "tmpfs_bytes": 512,
+        "scratch_bytes": 512,
+        "socket_state_bytes": 128,
+        "durable_state_bytes": 256,
+        "inodes": 16
+      },
+      "verifier": {
+        "milli_cpu": 100,
+        "memory_bytes": 1024,
+        "pids": 8,
+        "file_descriptors": 16,
+        "tmpfs_bytes": 512,
+        "scratch_bytes": 512,
+        "socket_state_bytes": 128,
+        "durable_state_bytes": 256,
+        "inodes": 16
+      },
+      "workflow_tool_probe": {
+        "milli_cpu": 100,
+        "memory_bytes": 1024,
+        "pids": 8,
+        "file_descriptors": 16,
+        "tmpfs_bytes": 512,
+        "scratch_bytes": 512,
+        "socket_state_bytes": 128,
+        "durable_state_bytes": 256,
+        "inodes": 16
+      }
+    },
+    "container_swap": {
+      "adapter": {
+        "configured": true,
+        "bytes": 64
+      },
+      "broker": {
+        "configured": true,
+        "bytes": 64
+      },
+      "helper": {
+        "configured": true,
+        "bytes": 0
+      },
+      "verifier": {
+        "configured": true,
+        "bytes": 0
+      },
+      "workflow_tool_probe": {
+        "configured": true,
+        "bytes": 64
+      }
+    },
+    "max_capacity": 2,
+    "max_live_references": 8,
+    "max_offer_logical_bytes": 1024,
+    "max_live_offer_logical_bytes": 8192,
+    "transient_mode": "serialized",
+    "policy_revision": 1,
+    "fleet_concurrency": 2,
+    "network_ledger_reserve_rows": 8,
+    "network_ledger_reserve_bytes": 8192,
+    "history": {
+      "min_retention": "1h0m0s",
+      "max_history_rows": 1000,
+      "max_history_logical_bytes": 1048576,
+      "max_network_ledger_rows": 1000,
+      "max_network_ledger_logical_bytes": 1048576,
+      "inflight_reserve_rows": 10,
+      "inflight_reserve_logical_bytes": 1024,
+      "gc_batch_rows": 10,
+      "network_gc_batch_rows": 10,
+      "vacuum_batch_pages": 10,
+      "maintenance_cadence": "1m0s"
+    },
+    "runner_sizing": {
+      "operator_approved": true,
+      "runner_tmpfs_bytes": 3072,
+      "runner_p99_bytes": 2162,
+      "runner_margin_bytes": 512,
+      "tmp_tmpfs_bytes": 1024,
+      "tmp_p99_bytes": 512,
+      "tmp_margin_bytes": 256,
+      "scratch_tmpfs_bytes": 1024,
+      "scratch_p99_bytes": 512,
+      "scratch_margin_bytes": 256,
+      "runner_cgroup_p99_bytes": 2162,
+      "process_margin_bytes": 512,
+      "runner_memory_bytes": 8192,
+      "swap_limit_configured": true,
+      "swap_limit_bytes": 1024,
+      "max_active_concurrency": 2,
+      "auxiliary_slot_memory_bytes": 512,
+      "idle_control_plane_bytes": 1024,
+      "candidate_build_and_smoke_peak_bytes": 1024,
+      "host_and_gateway_reserve_bytes": 4096,
+      "usable_host_memory_bytes": 32768,
+      "measured_idle_runner_bytes": 666,
+      "reclamation_observation_cadence": "1m0s",
+      "evidence_revision": "evidence-v1"
+    },
+    "conntrack": {
+      "current_entries": 10,
+      "maximum_entries": 10000,
+      "host_reserve_entries": 100,
+      "maximum_runner_capacity": 2,
+      "measured_job_class_entries": 10,
+      "measured_doh_class_entries": 5,
+      "job_class_budget": 20,
+      "doh_class_budget": 10,
+      "timeouts": [
+        {
+          "name": "established",
+          "seconds": 60
+        }
+      ],
+      "dial_token_state_revision": "dial-v1",
+      "consume_before_dial": true,
+      "evidence_revision": "evidence-v1",
+      "egress_backend": "restricted-broker-v1"
+    },
+    "storage": {
+      "maximum_active_concurrency": 2,
+      "observations": [
+        {
+          "role": "docker-root",
+          "device": 1,
+          "inode": 11,
+          "free_bytes": 1073741824,
+          "free_inodes": 1048576
+        },
+        {
+          "role": "state",
+          "device": 2,
+          "inode": 12,
+          "free_bytes": 1073741824,
+          "free_inodes": 1048576
+        },
+        {
+          "role": "staging",
+          "device": 3,
+          "inode": 13,
+          "free_bytes": 1073741824,
+          "free_inodes": 1048576
+        },
+        {
+          "role": "rollback",
+          "device": 4,
+          "inode": 14,
+          "free_bytes": 1073741824,
+          "free_inodes": 1048576
+        },
+        {
+          "role": "scratch",
+          "device": 5,
+          "inode": 15,
+          "free_bytes": 1073741824,
+          "free_inodes": 1048576
+        },
+        {
+          "role": "logs",
+          "device": 6,
+          "inode": 16,
+          "free_bytes": 1073741824,
+          "free_inodes": 1048576
+        }
+      ],
+      "requirements": [
+        {
+          "role": "docker-root",
+          "current_release_bytes": 1,
+          "current_release_inodes": 1,
+          "candidate_release_bytes": 1,
+          "candidate_release_inodes": 1,
+          "extraction_bytes": 1,
+          "extraction_inodes": 1,
+          "rollback_bytes": 1,
+          "rollback_inodes": 1,
+          "per_slot_bytes": 1,
+          "per_slot_inodes": 1,
+          "helper_bytes": 1,
+          "helper_inodes": 1,
+          "relay_bytes": 1,
+          "relay_inodes": 1,
+          "controller_bytes": 1,
+          "controller_inodes": 1,
+          "ledger_bytes": 1,
+          "ledger_inodes": 1,
+          "log_bytes": 1,
+          "log_inodes": 1,
+          "host_reserve_bytes": 1,
+          "host_reserve_inodes": 1,
+          "stop_reserve_bytes": 1,
+          "stop_reserve_inodes": 1,
+          "warning_reserve_bytes": 2,
+          "warning_reserve_inodes": 2
+        },
+        {
+          "role": "state",
+          "current_release_bytes": 1,
+          "current_release_inodes": 1,
+          "candidate_release_bytes": 1,
+          "candidate_release_inodes": 1,
+          "extraction_bytes": 1,
+          "extraction_inodes": 1,
+          "rollback_bytes": 1,
+          "rollback_inodes": 1,
+          "per_slot_bytes": 1,
+          "per_slot_inodes": 1,
+          "helper_bytes": 1,
+          "helper_inodes": 1,
+          "relay_bytes": 1,
+          "relay_inodes": 1,
+          "controller_bytes": 1,
+          "controller_inodes": 1,
+          "ledger_bytes": 1,
+          "ledger_inodes": 1,
+          "log_bytes": 1,
+          "log_inodes": 1,
+          "host_reserve_bytes": 1,
+          "host_reserve_inodes": 1,
+          "stop_reserve_bytes": 1,
+          "stop_reserve_inodes": 1,
+          "warning_reserve_bytes": 2,
+          "warning_reserve_inodes": 2
+        },
+        {
+          "role": "staging",
+          "current_release_bytes": 1,
+          "current_release_inodes": 1,
+          "candidate_release_bytes": 1,
+          "candidate_release_inodes": 1,
+          "extraction_bytes": 1,
+          "extraction_inodes": 1,
+          "rollback_bytes": 1,
+          "rollback_inodes": 1,
+          "per_slot_bytes": 1,
+          "per_slot_inodes": 1,
+          "helper_bytes": 1,
+          "helper_inodes": 1,
+          "relay_bytes": 1,
+          "relay_inodes": 1,
+          "controller_bytes": 1,
+          "controller_inodes": 1,
+          "ledger_bytes": 1,
+          "ledger_inodes": 1,
+          "log_bytes": 1,
+          "log_inodes": 1,
+          "host_reserve_bytes": 1,
+          "host_reserve_inodes": 1,
+          "stop_reserve_bytes": 1,
+          "stop_reserve_inodes": 1,
+          "warning_reserve_bytes": 2,
+          "warning_reserve_inodes": 2
+        },
+        {
+          "role": "rollback",
+          "current_release_bytes": 1,
+          "current_release_inodes": 1,
+          "candidate_release_bytes": 1,
+          "candidate_release_inodes": 1,
+          "extraction_bytes": 1,
+          "extraction_inodes": 1,
+          "rollback_bytes": 1,
+          "rollback_inodes": 1,
+          "per_slot_bytes": 1,
+          "per_slot_inodes": 1,
+          "helper_bytes": 1,
+          "helper_inodes": 1,
+          "relay_bytes": 1,
+          "relay_inodes": 1,
+          "controller_bytes": 1,
+          "controller_inodes": 1,
+          "ledger_bytes": 1,
+          "ledger_inodes": 1,
+          "log_bytes": 1,
+          "log_inodes": 1,
+          "host_reserve_bytes": 1,
+          "host_reserve_inodes": 1,
+          "stop_reserve_bytes": 1,
+          "stop_reserve_inodes": 1,
+          "warning_reserve_bytes": 2,
+          "warning_reserve_inodes": 2
+        },
+        {
+          "role": "scratch",
+          "current_release_bytes": 1,
+          "current_release_inodes": 1,
+          "candidate_release_bytes": 1,
+          "candidate_release_inodes": 1,
+          "extraction_bytes": 1,
+          "extraction_inodes": 1,
+          "rollback_bytes": 1,
+          "rollback_inodes": 1,
+          "per_slot_bytes": 1,
+          "per_slot_inodes": 1,
+          "helper_bytes": 1,
+          "helper_inodes": 1,
+          "relay_bytes": 1,
+          "relay_inodes": 1,
+          "controller_bytes": 1,
+          "controller_inodes": 1,
+          "ledger_bytes": 1,
+          "ledger_inodes": 1,
+          "log_bytes": 1,
+          "log_inodes": 1,
+          "host_reserve_bytes": 1,
+          "host_reserve_inodes": 1,
+          "stop_reserve_bytes": 1,
+          "stop_reserve_inodes": 1,
+          "warning_reserve_bytes": 2,
+          "warning_reserve_inodes": 2
+        },
+        {
+          "role": "logs",
+          "current_release_bytes": 1,
+          "current_release_inodes": 1,
+          "candidate_release_bytes": 1,
+          "candidate_release_inodes": 1,
+          "extraction_bytes": 1,
+          "extraction_inodes": 1,
+          "rollback_bytes": 1,
+          "rollback_inodes": 1,
+          "per_slot_bytes": 1,
+          "per_slot_inodes": 1,
+          "helper_bytes": 1,
+          "helper_inodes": 1,
+          "relay_bytes": 1,
+          "relay_inodes": 1,
+          "controller_bytes": 1,
+          "controller_inodes": 1,
+          "ledger_bytes": 1,
+          "ledger_inodes": 1,
+          "log_bytes": 1,
+          "log_inodes": 1,
+          "host_reserve_bytes": 1,
+          "host_reserve_inodes": 1,
+          "stop_reserve_bytes": 1,
+          "stop_reserve_inodes": 1,
+          "warning_reserve_bytes": 2,
+          "warning_reserve_inodes": 2
+        }
+      ],
+      "log_bounds": {
+        "used_bytes": 1,
+        "max_bytes": 1024,
+        "used_files": 1,
+        "max_files": 10
+      },
+      "evidence_revision": "evidence-v1"
+    }
+  },
+  "repositories": [
+    {
+      "alias": "repo-a",
+      "config_url": "https://github.com/example/repo-a",
+      "scale_set_name": "portable-repo-a",
+      "eligibility": "active",
+      "weight": 1,
+      "max_concurrency": 1,
+      "aging_threshold": "1m0s",
+      "credential_name": "github",
+      "slot_resources": {
+        "runner": {
+          "milli_cpu": 100,
+          "memory_bytes": 1024,
+          "pids": 8,
+          "file_descriptors": 16,
+          "tmpfs_bytes": 512,
+          "scratch_bytes": 512,
+          "socket_state_bytes": 128,
+          "durable_state_bytes": 256,
+          "inodes": 16
+        },
+        "adapter": {
+          "milli_cpu": 100,
+          "memory_bytes": 1024,
+          "pids": 8,
+          "file_descriptors": 16,
+          "tmpfs_bytes": 512,
+          "scratch_bytes": 512,
+          "socket_state_bytes": 128,
+          "durable_state_bytes": 256,
+          "inodes": 16
+        },
+        "broker": {
+          "milli_cpu": 100,
+          "memory_bytes": 1024,
+          "pids": 8,
+          "file_descriptors": 16,
+          "tmpfs_bytes": 512,
+          "scratch_bytes": 512,
+          "socket_state_bytes": 128,
+          "durable_state_bytes": 256,
+          "inodes": 16
+        },
+        "dial_authority": {
+          "milli_cpu": 100,
+          "memory_bytes": 1024,
+          "pids": 8,
+          "file_descriptors": 16,
+          "tmpfs_bytes": 512,
+          "scratch_bytes": 512,
+          "socket_state_bytes": 128,
+          "durable_state_bytes": 256,
+          "inodes": 16
+        },
+        "helper": {
+          "milli_cpu": 100,
+          "memory_bytes": 1024,
+          "pids": 8,
+          "file_descriptors": 16,
+          "tmpfs_bytes": 512,
+          "scratch_bytes": 512,
+          "socket_state_bytes": 128,
+          "durable_state_bytes": 256,
+          "inodes": 16
+        },
+        "verifier": {
+          "milli_cpu": 100,
+          "memory_bytes": 1024,
+          "pids": 8,
+          "file_descriptors": 16,
+          "tmpfs_bytes": 512,
+          "scratch_bytes": 512,
+          "socket_state_bytes": 128,
+          "durable_state_bytes": 256,
+          "inodes": 16
+        },
+        "workflow_tool_probe": {
+          "milli_cpu": 100,
+          "memory_bytes": 1024,
+          "pids": 8,
+          "file_descriptors": 16,
+          "tmpfs_bytes": 512,
+          "scratch_bytes": 512,
+          "socket_state_bytes": 128,
+          "durable_state_bytes": 256,
+          "inodes": 16
+        }
+      }
+    }
+  ],
+  "policy": {
+    "manifest_digest": "",
+    "compiled_graph_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+    "acquisition_default": "disabled"
+  },
+  "controller": {
+    "ack_timeout": "1s",
+    "operation_timeout": "2s",
+    "poll_cycle_timeout": "3s",
+    "reconciliation_timeout": "4s",
+    "poll_cadence": "5s",
+    "reconciliation_cadence": "6s",
+    "drain_poll_cadence": "7s",
+    "shutdown_timeout": "8s",
+    "session_close_timeout": "9s",
+    "transition_join_timeout": "10s",
+    "durable_finish_timeout": "11s",
+    "replay_evidence_max_age": "12s",
+    "host_capacity_max_age": "13s",
+    "poll_lease_ttl": "14s",
+    "ledger_tail": "15s"
+  },
+  "fence": {
+    "lock_poll_interval": "10ms",
+    "renewal_interval": "1s",
+    "renewal_timeout": "2s"
+  },
+  "health": {
+    "sink": "local-closed-v1",
+    "max_document_bytes": 4096,
+    "observation_max_age": "5s"
+  },
+  "profile": {
+    "conformance_evidence_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "network_evidence_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "platform_evidence_revision": "platform-v1"
+  },
+  "watchdog": {
+    "cadence": "30s",
+    "restart_deadline": "1m0s",
+    "process_grace": "5s",
+    "health_max_age": "10s",
+    "logs": {
+      "max_bytes": 1024,
+      "max_files": 10,
+      "max_age": "1h0m0s"
+    }
+  },
+  "management_transport": {
+    "mode": "openssh-subsystem-v1",
+    "openssh_binary": "/usr/bin/ssh",
+    "host": "target.example.invalid",
+    "port": 22,
+    "user": "portable_ghar",
+    "known_hosts_file": "/private-root/ssh/known_hosts",
+    "credential_name": "ssh-control",
+    "control_uid": 501,
+    "subsystem": "portable-ghar-v1",
+    "connection_timeout": "5s",
+    "operation_timeout": "30s"
+  },
+  "secrets": [
+    {
+      "name": "github",
+      "ref": {
+        "source": "file",
+        "ref": "/run/secrets/github"
+      }
+    },
+    {
+      "name": "ssh-control",
+      "ref": {
+        "source": "file",
+        "ref": "/private-root/ssh/id_ed25519"
+      }
+    }
+  ],
+  "legacy": null,
+  "allowed_actions": [
+    "install",
+    "resume",
+    "rollback",
+    "suspend",
+    "uninstall",
+    "verify",
+    "watchdog-install",
+    "watchdog-uninstall"
+  ]
+}
