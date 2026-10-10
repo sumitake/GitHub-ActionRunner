@@ -17,7 +17,7 @@ func TestNewRunnerLockBindsPinsTreeAndExactListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunnerLock: %v", err)
 	}
-	if lock.RunnerVersion != "v2.337.0" || lock.Listener.Path != "/opt/actions-runner/bin/Runner.Listener" || lock.Listener.Mode != 0o555 {
+	if lock.RunnerVersion != "v2.338.0" || lock.Listener.Path != "/opt/actions-runner/bin/Runner.Listener" || lock.Listener.Mode != 0o555 {
 		t.Fatalf("lock = %+v", lock)
 	}
 	encoded, err := Encode(lock)
@@ -46,7 +46,7 @@ func TestLoadRejectsDuplicateUnknownOrPinDrift(t *testing.T) {
 	tests := map[string]string{
 		"duplicate":         strings.Replace(valid, `"schema_version":1`, `"schema_version":1,"schema_version":1`, 1),
 		"unknown":           strings.Replace(valid, `"schema_version":1`, `"schema_version":1,"unknown":true`, 1),
-		"version":           strings.Replace(valid, `"runner_version":"v2.337.0"`, `"runner_version":"v2.335.1"`, 1),
+		"version":           strings.Replace(valid, `"runner_version":"v2.338.0"`, `"runner_version":"v2.335.1"`, 1),
 		"archive digest":    strings.Replace(valid, lock.RunnerArchiveSHA256, strings.Repeat("f", 64), 1),
 		"source commit":     strings.Replace(valid, lock.RunnerSourceCommit, strings.Repeat("f", 40), 1),
 		"tree digest shape": strings.Replace(valid, lock.TreeLockSHA256, "bad", 1),

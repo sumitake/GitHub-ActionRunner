@@ -7,15 +7,15 @@
     "debian_snapshot": "20250101T000000Z",
     "runner_release": {
       "schema_version": 1,
-      "version": "v2.337.0",
-      "tag_ref_sha": "397b032cbf865e9c3ddfab89d533ec19325e1273",
-      "source_commit_sha": "397b032cbf865e9c3ddfab89d533ec19325e1273",
-      "linux_x64_asset_name": "actions-runner-linux-x64-2.337.0.tar.gz",
-      "linux_x64_asset_size": 226430031,
-      "linux_x64_asset_digest": "sha256:70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613",
-      "published_at": "2026-08-26T14:33:29Z",
+      "version": "v2.338.0",
+      "tag_ref_sha": "197ca027b90de199464dee3bb9ff198a1db60967",
+      "source_commit_sha": "197ca027b90de199464dee3bb9ff198a1db60967",
+      "linux_x64_asset_name": "actions-runner-linux-x64-2.338.0.tar.gz",
+      "linux_x64_asset_size": 227660598,
+      "linux_x64_asset_digest": "sha256:af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32",
+      "published_at": "2026-10-06T13:55:11Z",
       "command_settings_sha256": "937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08",
-      "observation_evidence": "82fc45362f3a3d7958246dfccfb8a8fa005846de18577e83bc52cf270572c937"
+      "observation_evidence": "3cf25e318a5c9127cc4f524a8fee5d661c6faf111019a659c38a3572c3fa3de1"
     },
     "tools": {
       "buildx": {
@@ -122,55 +122,47 @@
     "candidate_protected_files": [
       {
         "path": "CHANGELOG.md",
-        "identity_inventory_sha256": "9ffed8656a81d1076f7908c5f743c11b78c8eae99de3b3f5375f4486fb913702"
+        "identity_inventory_sha256": "aa5a4d9c1d519f1a6ad03e48dd1d602497dfd4d765793ebdcba647b5f7dc884e"
       },
       {
         "path": "cmd/portable-ghar-runner-gate/main_test.go",
-        "identity_inventory_sha256": "8feb6a13ad09d6e670a48343f327d2fee8fd16f65f14e1cb58aa7d1d87d11038"
+        "identity_inventory_sha256": "7c8b0eebc0054b51b5fc50ed55abce53caf311f0cba985bb5bde50bee3f66abd"
       },
       {
         "path": "cmd/portable-ghar-runtime-lock/main_test.go",
-        "identity_inventory_sha256": "fea2458714d6efe3111f87b8446a42ba9371370c62b5825451a832455e8e45d6"
+        "identity_inventory_sha256": "14f549370533f590973c0e24d7e14a55915b743e4a7de389621807b5d5d2fe23"
       },
       {
         "path": "internal/archive/runner_archive_test.go",
-        "identity_inventory_sha256": "bed060724d89db4a39a209b79d6db972a75c893fa4c6ea4a3e157d3f897c7568"
+        "identity_inventory_sha256": "da9a7c2c587cfba70fc8c9f16c539829dd57f59d24f98222eafbc6f6b392faa3"
       },
       {
         "path": "internal/buildinfo/pins.go",
-        "identity_inventory_sha256": "6f044e61d512d6036b4af80d18005ce143926b09e5a12b412ab5f2a2eb61e3d3"
+        "identity_inventory_sha256": "60c80a624442da02c6aac5d214524081f64dbe9268acab90350a0bb803b9c2ff"
       },
       {
         "path": "internal/buildinfo/pins_test.go",
-        "identity_inventory_sha256": "a54c6e6b40fa312e24e005d958003cca1b895b538a98d6e98457492d9a7122bb"
+        "identity_inventory_sha256": "ec1dc4b6f14d8adde96a069f7cd45fb01a93a31555be51bc6c9bcf5cbec9ae2b"
       },
       {
         "path": "internal/runtimelock/lock_test.go",
-        "identity_inventory_sha256": "d565966120ff4089ad9dc1a9832039843aa5b2cbe5d3725b55afd403d9515ca2"
-      },
-      {
-        "path": "internal/upgrade/directive_test.go",
-        "identity_inventory_sha256": "c4da716dec20bc1a10c6e803c8aed307e5114fecbb0d272d635cce421064a0d2"
-      },
-      {
-        "path": "internal/upgrade/journal_test.go",
-        "identity_inventory_sha256": "a4542b19d1b455fb864c667b718c12b53e60f4d5ce6dae6105701b3dcd053314"
-      },
-      {
-        "path": "internal/upgrade/service_test.go",
-        "identity_inventory_sha256": "aee3aa812a752bb93e3f26f6558d1b8debec6a032cf93c8ca2dd321b2023e0ea"
+        "identity_inventory_sha256": "3e120eae69da9743b84639c379ca5171e05daf648942c13dedf07dff10dd704e"
       },
       {
         "path": "tests/boundaries/runtime_boundary_test.go",
-        "identity_inventory_sha256": "c7e05cc7d8d3a2a46d39cf3361cbb12787c65a3c9a487917f488dad08834cadd"
+        "identity_inventory_sha256": "8281615cc0fdfe1f680494639b54987a88d01de6f0bb906a6d09b40021a51eeb"
       },
       {
         "path": "tests/integration/testenv/closed_command_test.go",
-        "identity_inventory_sha256": "fbba2576fa9d28f58d88aceed829b8e6b9beb3cf82e2985bb1aa03209da62547"
+        "identity_inventory_sha256": "881eb02861fd87d46c30b0e04de4136988aa6c8e8019a9f24de50b61772e5437"
       },
       {
         "path": "tests/integration/testenv/closed_runtime_scanner_test.go",
-        "identity_inventory_sha256": "8feb6a13ad09d6e670a48343f327d2fee8fd16f65f14e1cb58aa7d1d87d11038"
+        "identity_inventory_sha256": "7c8b0eebc0054b51b5fc50ed55abce53caf311f0cba985bb5bde50bee3f66abd"
+      },
+      {
+        "path": "tests/shell/runtime-release.bats",
+        "identity_inventory_sha256": "e90954e7e0bd2dfaf9ae4f988a2292610ca72c82d19421c787f2af1ceb3d1bd7"
       }
     ],
     "candidate_substitutions": [
@@ -271,24 +263,6 @@
         "replace": true
       },
       {
-        "path": "internal/upgrade/directive_test.go",
-        "token": "version_bare",
-        "count": 1,
-        "replace": false
-      },
-      {
-        "path": "internal/upgrade/journal_test.go",
-        "token": "version_bare",
-        "count": 4,
-        "replace": false
-      },
-      {
-        "path": "internal/upgrade/service_test.go",
-        "token": "version_bare",
-        "count": 2,
-        "replace": false
-      },
-      {
         "path": "tests/boundaries/runtime_boundary_test.go",
         "token": "version_bare",
         "count": 1,
@@ -316,6 +290,12 @@
         "path": "tests/integration/testenv/closed_runtime_scanner_test.go",
         "token": "version_bare",
         "count": 2,
+        "replace": false
+      },
+      {
+        "path": "tests/shell/runtime-release.bats",
+        "token": "version_bare",
+        "count": 1,
         "replace": false
       }
     ],

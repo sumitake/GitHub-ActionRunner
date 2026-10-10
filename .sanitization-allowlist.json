@@ -3029,5 +3029,47 @@
     "rule": "PATH001",
     "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
     "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@5244e8555aebf39a509d77b6a4bbe1cd1df6ddad",
+    "line": 43,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@5244e8555aebf39a509d77b6a4bbe1cd1df6ddad",
+    "line": 53,
+    "rule": "URI001",
+    "sha256": "5e037138d3d5a8ce0c020abf12cb3e4cb477a71f32e9e681c982059b19cb1dbe",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@5244e8555aebf39a509d77b6a4bbe1cd1df6ddad",
+    "line": 74,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/githubscale/adapter_contract_test.go@245df7cbd660a00f51681d714dc3100254c3cd85",
+    "line": 886,
+    "rule": "IP001",
+    "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",
+    "reason": "Immutable public-history instance of an inspected synthetic RFC 3849 URL-normalization fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/prepare-task6-images.sh@63ff9b6f38aa87b738558d4b4a447bcd6fc915cc",
+    "line": 47,
+    "rule": "PATH001",
+    "sha256": "0ecfd98650200ab3ab2cd69efb05deeb046552b940e1403002f22907500a2830",
+    "reason": "Immutable public-history instance of an inspected container-internal build-path fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "scripts/prepare-task6-images.sh@63ff9b6f38aa87b738558d4b4a447bcd6fc915cc",
+    "line": 48,
+    "rule": "PATH001",
+    "sha256": "205e96057328302f581bc2634a14a8160d7584223184ccce43696ddc434259fa",
+    "reason": "Immutable public-history instance of an inspected container-internal build-path fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
   }
 ]

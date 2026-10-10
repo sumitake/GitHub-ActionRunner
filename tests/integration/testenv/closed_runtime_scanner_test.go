@@ -446,8 +446,8 @@ func validRuntimeScannerCaptureForTest() scannerSessionCapture {
 			{surfaceRunnerLogsStdout, closedRuntimeSurfaceRaw, nil},
 			{surfaceRunnerLogsStderr, closedRuntimeSurfaceRaw, nil},
 			{surfaceRunnerConformance, closedRuntimeSurfaceStructuredJSON, conformance},
-			{surfaceRunnerVerifyImage, closedRuntimeSurfaceRaw, []byte("2.337.0\n")},
-			{surfaceRunnerListenerVersion, closedRuntimeSurfaceRaw, []byte("2.337.0\n")},
+			{surfaceRunnerVerifyImage, closedRuntimeSurfaceRaw, []byte("2.338.0\n")},
+			{surfaceRunnerListenerVersion, closedRuntimeSurfaceRaw, []byte("2.338.0\n")},
 		},
 	}
 }

@@ -21,7 +21,7 @@ func TestRunPinsEmitsCanonicalRunnerAcquisitionPins(t *testing.T) {
 	if code := run([]string{"pins"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run pins = %d, stderr=%q", code, stderr.String())
 	}
-	const expected = `{"schema_version":1,"runner_version":"v2.337.0","linux_x64_sha256":"70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613","source_commit":"397b032cbf865e9c3ddfab89d533ec19325e1273","command_settings_sha256":"937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08","runner_base_image":"debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867"}` + "\n"
+	const expected = `{"schema_version":1,"runner_version":"v2.338.0","linux_x64_sha256":"af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32","source_commit":"197ca027b90de199464dee3bb9ff198a1db60967","command_settings_sha256":"937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08","runner_base_image":"debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867"}` + "\n"
 	if stdout.String() != expected || stderr.Len() != 0 {
 		t.Fatalf("pins stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
@@ -32,14 +32,14 @@ func TestRunRunnerDownloadSpecDerivesCanonicalReleaseURLFromPins(t *testing.T) {
 	if code := run([]string{"runner-download-spec"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run runner-download-spec = %d, stderr=%q", code, stderr.String())
 	}
-	const expected = `{"schema_version":1,"source_url":"https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz","asset_name":"actions-runner-linux-x64-2.337.0.tar.gz","sha256":"70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613"}` + "\n"
+	const expected = `{"schema_version":1,"source_url":"https://github.com/actions/runner/releases/download/v2.338.0/actions-runner-linux-x64-2.338.0.tar.gz","asset_name":"actions-runner-linux-x64-2.338.0.tar.gz","sha256":"af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32"}` + "\n"
 	if stdout.String() != expected || stderr.Len() != 0 {
 		t.Fatalf("download spec stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
 
 func TestValidateRunnerRedirectAcceptsOnlyBoundGitHubReleaseAsset(t *testing.T) {
-	asset := "actions-runner-linux-x64-2.337.0.tar.gz"
+	asset := "actions-runner-linux-x64-2.338.0.tar.gz"
 	valid := "https://release-assets.githubusercontent.com/github-production-release-asset/184286875/4f75472f-4bf4-4f5e-b40a-660e7ceb303f" +
 		"?response-content-disposition=attachment%3B%20filename%3D" + asset +
 		"&response-content-type=application%2Foctet-stream&sig=public-release-signature"
@@ -56,7 +56,7 @@ func TestValidateRunnerRedirectAcceptsOnlyBoundGitHubReleaseAsset(t *testing.T) 
 		"wrong repository":    strings.Replace(valid, "/184286875/", "/1/", 1),
 		"wrong path family":   strings.Replace(valid, "github-production-release-asset", "other", 1),
 		"encoded path":        strings.Replace(valid, "/4f75472f", "/%34f75472f", 1),
-		"wrong filename":      strings.Replace(valid, asset, "actions-runner-linux-arm64-2.337.0.tar.gz", 1),
+		"wrong filename":      strings.Replace(valid, asset, "actions-runner-linux-arm64-2.338.0.tar.gz", 1),
 		"missing disposition": strings.Replace(valid, "response-content-disposition=", "other=", 1),
 		"duplicate filename":  valid + "&response-content-disposition=attachment%3B%20filename%3D" + asset,
 		"newline":             valid + "\n",
@@ -72,7 +72,7 @@ func TestValidateRunnerRedirectAcceptsOnlyBoundGitHubReleaseAsset(t *testing.T) 
 
 func TestRunValidateRunnerRedirectReadsBoundedStdinAndEmitsCanonicalURL(t *testing.T) {
 	valid := "https://release-assets.githubusercontent.com/github-production-release-asset/184286875/4f75472f-4bf4-4f5e-b40a-660e7ceb303f" +
-		"?response-content-disposition=attachment%3B%20filename%3Dactions-runner-linux-x64-2.337.0.tar.gz" +
+		"?response-content-disposition=attachment%3B%20filename%3Dactions-runner-linux-x64-2.338.0.tar.gz" +
 		"&response-content-type=application%2Foctet-stream&sig=public-release-signature"
 	var stdout, stderr bytes.Buffer
 	if code := runWithInput([]string{"validate-runner-redirect"}, strings.NewReader(valid), &stdout, &stderr); code != 0 {
@@ -304,7 +304,7 @@ type runnerTransactionFixture struct {
 func newRunnerTransactionFixture(t *testing.T) runnerTransactionFixture {
 	t.Helper()
 	parent := canonicalTestDir(t)
-	archivePath := filepath.Join(parent, "actions-runner-linux-x64-2.337.0.tar.gz")
+	archivePath := filepath.Join(parent, "actions-runner-linux-x64-2.338.0.tar.gz")
 	listener := []byte("runner-listener")
 	manifest := seedarchive.RunnerTreeManifest{
 		SchemaVersion: 1,
@@ -316,7 +316,7 @@ func newRunnerTransactionFixture(t *testing.T) runnerTransactionFixture {
 	}
 	extractor := func(options seedarchive.RunnerExtractOptions) (seedarchive.VerifiedRunnerDirectory, error) {
 		if options.ArchivePath != archivePath ||
-			options.ExpectedSHA256 != "70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613" ||
+			options.ExpectedSHA256 != "af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32" ||
 			options.EvidenceGeneration == 0 {
 			return seedarchive.VerifiedRunnerDirectory{}, errors.New("fixture: extraction options invalid")
 		}
@@ -390,14 +390,14 @@ func newRuntimeLockFixture(t *testing.T) runtimeLockFixture {
 		Seeds: []seedarchive.Seed{{
 			ID:       "github-actions-runner",
 			Kind:     seedarchive.KindTool,
-			Source:   "https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz",
-			Revision: "v2.337.0",
+			Source:   "https://github.com/actions/runner/releases/download/v2.338.0/actions-runner-linux-x64-2.338.0.tar.gz",
+			Revision: "v2.338.0",
 			License: seedarchive.LicenseEvidence{
 				SPDX: "MIT", Path: "LICENSE", Size: uint64(len(license)), SHA256: shaHexBytes(license),
 			},
 			Files: []seedarchive.File{
-				{Path: "LICENSE", Target: "tools/github-actions-runner/v2.337.0/LICENSE", SHA256: shaHexBytes(license), Size: uint64(len(license)), Mode: 0o444},
-				{Path: "bin/Runner.Listener", Target: "tools/github-actions-runner/v2.337.0/bin/Runner.Listener", SHA256: shaHexBytes(listener), Size: uint64(len(listener)), Mode: 0o555},
+				{Path: "LICENSE", Target: "tools/github-actions-runner/v2.338.0/LICENSE", SHA256: shaHexBytes(license), Size: uint64(len(license)), Mode: 0o444},
+				{Path: "bin/Runner.Listener", Target: "tools/github-actions-runner/v2.338.0/bin/Runner.Listener", SHA256: shaHexBytes(listener), Size: uint64(len(listener)), Mode: 0o555},
 			},
 		}},
 	}

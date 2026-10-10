@@ -585,7 +585,7 @@ func TestRunVerifyImageIsBuildOnlyAndFailClosed(t *testing.T) {
 		&stdout,
 		&stderr,
 		runtime,
-	); code != 0 || stdout.String() != "2.337.0\n" || stderr.Len() != 0 ||
+	); code != 0 || stdout.String() != "2.338.0\n" || stderr.Len() != 0 ||
 		strictCalled != 1 || overlayCalled != 0 {
 		t.Fatalf(
 			"verify-image code/output/called = %d/%q/%q/%d/%d",
@@ -605,7 +605,7 @@ func TestRunVerifyImageIsBuildOnlyAndFailClosed(t *testing.T) {
 		&stdout,
 		&stderr,
 		runtime,
-	); code != 0 || stdout.String() != "2.337.0\n" || stderr.Len() != 0 ||
+	); code != 0 || stdout.String() != "2.338.0\n" || stderr.Len() != 0 ||
 		strictCalled != 1 || overlayCalled != 1 {
 		t.Fatalf(
 			"verify-image-overlay code/output/called = %d/%q/%q/%d/%d",

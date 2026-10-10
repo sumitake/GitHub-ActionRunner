@@ -890,7 +890,7 @@ func TestPinnedRunnerArchiveConformance(t *testing.T) {
 	defer makeRunnerTreeRemovable(output)
 	verified, err := ExtractRunnerArchive(RunnerExtractOptions{
 		ArchivePath:        archivePath,
-		ExpectedSHA256:     "70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613",
+		ExpectedSHA256:     "af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32",
 		EvidenceGeneration: 1,
 		OutputDirectory:    output,
 	})
@@ -917,9 +917,9 @@ func TestPinnedRunnerArchiveConformance(t *testing.T) {
 			symlinks++
 		}
 	}
-	// The upstream archive holds 11,445 entries; the 4,885 omitted entries are
+	// The upstream archive holds 11,555 entries; the 4,890 omitted entries are
 	// the bundled npm, npx, and corepack trees and their six bin symlinks.
-	if len(manifest.Entries) != 6_560 || regular != 5_380 || symlinks != 0 || zero != 0 {
+	if len(manifest.Entries) != 6_665 || regular != 5_465 || symlinks != 0 || zero != 0 {
 		t.Fatalf("exact archive inventory entries=%d regular=%d symlinks=%d zero=%d", len(manifest.Entries), regular, symlinks, zero)
 	}
 }
