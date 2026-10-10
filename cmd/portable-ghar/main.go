@@ -21,6 +21,7 @@ type commandDependencies struct {
 	RunTarget                 func(context.Context, []string) (hostruntime.HostActionResult, error)
 	RunTransport              func(context.Context, io.Reader, io.Writer, bool) error
 	RunValidatePrivateOverlay func(context.Context, []string) (cli.PrivateOverlayValidationReceipt, error)
+	RunAssemblePrivateOverlay func(context.Context, []string) (cli.PrivateOverlayAssemblyReceipt, error)
 }
 
 func productionCommandDependencies() commandDependencies {
@@ -82,6 +83,16 @@ func productionCommandDependencies() commandDependencies {
 				cli.LoadPrivateOverlayFile,
 			)
 		},
+		RunAssemblePrivateOverlay: func(
+			ctx context.Context,
+			args []string,
+		) (cli.PrivateOverlayAssemblyReceipt, error) {
+			if ctx == nil || ctx.Err() != nil {
+				return cli.PrivateOverlayAssemblyReceipt{},
+					cli.ErrHostCommandFailed
+			}
+			return cli.RunPrivateOverlayAssembly(args)
+		},
 	}
 }
 
@@ -129,6 +140,27 @@ func run(
 			_, _ = io.WriteString(
 				stderr,
 				"portable-ghar: private overlay validation failed\n",
+			)
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(result); err != nil {
+			_, _ = io.WriteString(stderr, "portable-ghar: output failed\n")
+			return 1
+		}
+		return 0
+	}
+	if args[0] == "assemble-private-overlay" {
+		if dependencies.RunAssemblePrivateOverlay == nil {
+			return writeUsage(stderr)
+		}
+		result, err := dependencies.RunAssemblePrivateOverlay(ctx, args)
+		if errors.Is(err, cli.ErrHostUsage) {
+			return writeUsage(stderr)
+		}
+		if err != nil {
+			_, _ = io.WriteString(
+				stderr,
+				"portable-ghar: private overlay assembly failed\n",
 			)
 			return 1
 		}
@@ -206,7 +238,7 @@ func runTarget(
 func writeUsage(stderr io.Writer) int {
 	_, _ = io.WriteString(
 		stderr,
-		"usage: portable-ghar validate-private-overlay|deploy|verify|suspend|resume [exact arguments]\n",
+		"usage: portable-ghar assemble-private-overlay|validate-private-overlay|deploy|verify|suspend|resume [exact arguments]\n",
 	)
 	return 2
 }

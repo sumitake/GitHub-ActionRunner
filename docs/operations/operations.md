@@ -11,6 +11,31 @@ They remain pre-deployment pending the deferred operational and
 live-activation gates, so this page is not a claim that any watchdog
 behavior below is live against a deployed host today.
 
+## Assembling the private overlay
+
+The host overlay (`controller-runtime.json`) must name the exact release it
+deploys. Do not type release identities into it by hand. Write a template
+with every operator and host value, leave the release-derived fields empty,
+and bind it to the release's `runtime-manifest.json`:
+
+```sh
+portable-ghar assemble-private-overlay \
+  --template "$PORTABLE_GHAR_PRIVATE_OVERLAY/template.json" \
+  --manifest "$PORTABLE_GHAR_PRIVATE_OVERLAY/runtime-manifest.json" \
+  --output "$PORTABLE_GHAR_PRIVATE_OVERLAY/controller-runtime.json"
+```
+
+The command copies the manifest path and digest, the policy manifest digest,
+and the five image IDs (`sha256:` plus each image's config digest) from the
+manifest. A template field that is already set must equal the derived value.
+The overlay is validated, written atomically with mode `0600`, and read back
+through the same loader `deploy` uses. The receipt prints only the overlay
+revision and the manifest digest. Re-running it with the same inputs produces
+the same bytes.
+
+The command does not observe the target host. Host identity, storage, and
+other live observations stay the operator's inputs in the template.
+
 ## Watchdog restart authority
 
 The host watchdog's authority is deliberately narrow, and it is a

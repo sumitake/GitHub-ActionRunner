@@ -145,6 +145,83 @@ func TestCommandSanitizesPrivateOverlayValidationFailure(t *testing.T) {
 	}
 }
 
+func TestCommandEmitsPrivateOverlayAssemblyReceipt(t *testing.T) {
+	t.Parallel()
+
+	revision := strings.Repeat("a", 64)
+	manifest := strings.Repeat("b", 64)
+	dependencies := commandDependencies{
+		RunAssemblePrivateOverlay: func(
+			context.Context,
+			[]string,
+		) (cli.PrivateOverlayAssemblyReceipt, error) {
+			return cli.PrivateOverlayAssemblyReceipt{
+				SchemaVersion:          1,
+				PrivateOverlayRevision: revision,
+				RuntimeManifestDigest:  manifest,
+			}, nil
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	exit := run(
+		context.Background(),
+		[]string{
+			"assemble-private-overlay",
+			"--template", "/private/template.json",
+			"--manifest", "/private/runtime-manifest.json",
+			"--output", "/private/controller-runtime.json",
+		},
+		bytes.NewReader(nil),
+		&stdout,
+		&stderr,
+		false,
+		dependencies,
+	)
+	if exit != 0 || stderr.Len() != 0 || stdout.String() !=
+		`{"schema_version":1,"private_overlay_revision":"`+revision+`",`+
+			`"runtime_manifest_digest":"`+manifest+`"}`+"\n" {
+		t.Fatalf(
+			"run() = exit %d stdout=%q stderr=%q",
+			exit,
+			stdout.String(),
+			stderr.String(),
+		)
+	}
+}
+
+func TestCommandSanitizesPrivateOverlayAssemblyFailure(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	exit := run(
+		context.Background(),
+		[]string{"assemble-private-overlay"},
+		bytes.NewReader(nil),
+		&stdout,
+		&stderr,
+		false,
+		commandDependencies{
+			RunAssemblePrivateOverlay: func(
+				context.Context,
+				[]string,
+			) (cli.PrivateOverlayAssemblyReceipt, error) {
+				return cli.PrivateOverlayAssemblyReceipt{},
+					errors.New("secret /private/template.json")
+			},
+		},
+	)
+	if exit != 1 || stdout.Len() != 0 ||
+		stderr.String() !=
+			"portable-ghar: private overlay assembly failed\n" {
+		t.Fatalf(
+			"run() = exit %d stdout=%q stderr=%q",
+			exit,
+			stdout.String(),
+			stderr.String(),
+		)
+	}
+}
+
 func TestCommandSeparatesUsageFromSanitizedFailure(t *testing.T) {
 	t.Parallel()
 
@@ -158,7 +235,7 @@ func TestCommandSeparatesUsageFromSanitizedFailure(t *testing.T) {
 			"usage",
 			cli.ErrHostUsage,
 			2,
-			"usage: portable-ghar validate-private-overlay|deploy|verify|suspend|resume [exact arguments]\n",
+			"usage: portable-ghar assemble-private-overlay|validate-private-overlay|deploy|verify|suspend|resume [exact arguments]\n",
 		},
 		{
 			"failure",
