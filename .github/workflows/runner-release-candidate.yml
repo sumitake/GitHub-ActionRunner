@@ -40,7 +40,7 @@ jobs:
         run: 'set -euo pipefail; source_commit="$(git rev-parse HEAD)"; source_tree="$(git rev-parse "HEAD^{tree}")"; test "$source_commit" = "$GITHUB_SHA"; mkdir -m 700 "$RUNNER_TEMP/runner-candidate"; set +e; scripts/release/observe-runner-release.sh --current-manifest release/manifest.json --output "$RUNNER_TEMP/runner-candidate/runner-release.json"; observer_rc=$?; set -e; if [ "$observer_rc" -eq 3 ]; then printf "candidate=false\nsource_commit=%s\nsource_tree=%s\n" "$source_commit" "$source_tree" >>"$GITHUB_OUTPUT"; exit 0; fi; test "$observer_rc" -eq 0; test -f "$RUNNER_TEMP/runner-candidate/runner-release.json"; runner_version="$(jq -er ''.version'' "$RUNNER_TEMP/runner-candidate/runner-release.json")"; evidence="$(jq -er ''.observation_evidence'' "$RUNNER_TEMP/runner-candidate/runner-release.json")"; [[ "$runner_version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; [[ "$evidence" =~ ^[0-9a-f]{64}$ ]]; artifact_version="${runner_version#v}-runner.${evidence}"; printf "candidate=true\nrunner_version=%s\nevidence=%s\nartifact_version=%s\nsource_commit=%s\nsource_tree=%s\n" "$runner_version" "$evidence" "$artifact_version" "$source_commit" "$source_tree" >>"$GITHUB_OUTPUT"'
       - name: Upload exact candidate manifest
         if: steps.observe.outputs.candidate == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runner-candidate-manifest
           path: ${{ runner.temp }}/runner-candidate/runner-release.json
@@ -90,7 +90,7 @@ jobs:
         id: package
         run: 'set -euo pipefail; export GOCACHE="$RUNNER_TEMP/workflow-go-build-a" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-a"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind candidate --version "$ARTIFACT_VERSION" --runner-manifest "$RUNNER_TEMP/candidate-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
       - name: Upload candidate rebuild A
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runner-candidate-rebuild-a
           path: ${{ runner.temp }}/publication-tree.tar
@@ -140,7 +140,7 @@ jobs:
         id: package
         run: 'set -euo pipefail; export GOCACHE="$RUNNER_TEMP/workflow-go-build-b" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-b"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind candidate --version "$ARTIFACT_VERSION" --runner-manifest "$RUNNER_TEMP/candidate-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
       - name: Upload candidate rebuild B
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runner-candidate-rebuild-b
           path: ${{ runner.temp }}/publication-tree.tar
@@ -194,7 +194,7 @@ jobs:
           subject-checksums: ${{ runner.temp }}/attestation-checksums.txt
           show-summary: true
       - name: Upload comparator-validated candidate bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runner-candidate-publication-bundle
           path: ${{ runner.temp }}/publication-bundle.tar
