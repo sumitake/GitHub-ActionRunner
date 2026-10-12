@@ -7,6 +7,7 @@ import {
   MAC_HEADER,
   SESSION_PATH,
   TIMESTAMP_HEADER,
+  verifyCanonical,
 } from "./protocol/auth";
 import { MAX_PROTOCOL_BYTES, parseCanonical } from "./protocol/canonical";
 import { FLEET_ID } from "./protocol/messages";
@@ -68,6 +69,21 @@ export async function dispatchFleetRequest(
   }
   const fleetId = fleetIdFromBody(body);
   if (fleetId === null || !gateway.inventoriedFleetIds.includes(fleetId)) {
+    return rejected();
+  }
+  // Authenticate before handing out the fleet store: a request that fails
+  // here never reaches a handler, so it writes nothing. Each handler
+  // verifies again and checks its own binding, window, and nonce.
+  try {
+    await verifyCanonical(
+      gateway.secrets.hmacKey,
+      request.method,
+      path,
+      timestamp,
+      body,
+      macHex,
+    );
+  } catch {
     return rejected();
   }
   const store = gateway.storeFor(fleetId);
