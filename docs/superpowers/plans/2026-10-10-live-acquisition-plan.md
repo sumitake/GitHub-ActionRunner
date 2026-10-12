@@ -165,9 +165,10 @@ Operator steps ship as exact commands and run only on the operator's go.
    so unsigned or uninventoried session requests write nothing. Redeploy only
    on a separate operator go.
 3. **GitHub sessions and probes.** A session provider per repository, a
-   one-shot `external-probe` (opens and closes each GitHub session, runs one
-   signed Worker heartbeat while disabled), and a one-shot `create-scale-set`
-   that creates and re-verifies the scale set (D7).
+   one-shot `external-probe` (opens and closes each GitHub session), and a
+   one-shot `create-scale-set` that creates and re-verifies the scale set
+   (D7). The Worker check is the enabled controller's first heartbeat, which
+   it sends while acquisition is still disabled.
 4. **Jail and lifecycle adapters.** Production permit-peer and ledger-reference
    checks, the reject-only conntrack rebase promoted from the test environment,
    and a setup builder that creates the broker directories safely. Security

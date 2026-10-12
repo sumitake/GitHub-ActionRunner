@@ -188,6 +188,7 @@ func testCommandDeps() commandDependencies {
 		DialAdmin: func(context.Context) (controller.LiveAdmin, io.Closer, error) {
 			return &testLiveAdmin{}, &testCloser{}, nil
 		},
+		GitHub:            newFakeGitHub().access(),
 		AdminTimeout:      time.Second,
 		DrainTimeout:      time.Second,
 		StatusReadTimeout: time.Second,

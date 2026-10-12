@@ -36,6 +36,7 @@ type commandDependencies struct {
 	AcquireOwnership  func(string) (controllerOwnershipLease, error)
 	OpenController    func(context.Context, string, string, controllerOwnershipLease) (controllerProcess, error)
 	DialAdmin         func(context.Context) (controller.LiveAdmin, io.Closer, error)
+	GitHub            githubAccess
 	AdminTimeout      time.Duration
 	DrainTimeout      time.Duration
 	StatusReadTimeout time.Duration
@@ -60,6 +61,7 @@ func productionCommandDependencies(clock func() time.Time) commandDependencies {
 			)
 		},
 		DialAdmin:         dialProductionAdmin,
+		GitHub:            productionGitHubAccess(),
 		AdminTimeout:      10 * time.Second,
 		DrainTimeout:      10 * time.Minute,
 		StatusReadTimeout: 10 * time.Second,
@@ -166,6 +168,10 @@ func runWithDependencies(
 		return executeAcquisition(ctx, args[1:], stdout, stderr, deps)
 	case "status":
 		return executeStatus(ctx, args[1:], stdout, stderr, deps)
+	case "external-probe":
+		return executeExternalProbe(ctx, args[1:], stdout, stderr, deps)
+	case "create-scale-set":
+		return executeCreateScaleSet(ctx, args[1:], stdout, stderr, deps)
 	default:
 		return commandUsage(stderr)
 	}
@@ -177,6 +183,7 @@ func validCommandDependencies(deps commandDependencies) bool {
 		deps.AcquireOwnership != nil &&
 		deps.OpenController != nil &&
 		deps.DialAdmin != nil &&
+		deps.GitHub.valid() &&
 		deps.AdminTimeout > 0 &&
 		deps.DrainTimeout > 0 &&
 		deps.StatusReadTimeout > 0
