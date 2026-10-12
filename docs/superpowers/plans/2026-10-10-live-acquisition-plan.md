@@ -25,7 +25,7 @@ unit tests. Nothing joins them in the production process.
 | Conformance gate | `canary-only` needs a fully passing 15-case report, checked at transition and before every guarded poll, acquire, and JIT call. The report binds BuildID, runtime manifest, private overlay, and fleet generation. No production report producer exists; `SealActualGitHubTransport` is called only by tests. | `internal/conformance/gate.go:62-125`; `registry.go:68-82`; `report.go:72-86,397-420,475-520` |
 | Network jail authority | Production has no `PermitPeerValidator`, `LedgerReferenceGuard`, or `EmptyConntrackValidator`. The test environment has the first two and a reject-only stub for the third. | `internal/networkjail/permit_proof.go:28-54`; `tests/integration/testenv/permit_guard.go:163-177` |
 | Lifecycle runtime | `lifecycle.Service` is constructed only in its own tests. No `SessionProvider` or `SetupBuilder` exists outside a unit-test fake. | `internal/lifecycle/service.go:131`; `service_test.go:482` |
-| Controller service dependencies | `NewService` rejects a nil value for any of 16 dependencies. Several have no production implementation, including the fatal terminator and the event sink. | `internal/controller/service.go:665-700`; `TerminateAfterPersist` is implemented only in `service_test.go` |
+| Controller service dependencies | `NewService` rejects a nil value for any of 16 dependencies, and no non-test code calls it. `FatalTerminator` and `EventSink` have no implementation outside tests. `ReplayVerifier` and `HostedRouter` have only the fail-closed stub. Real implementations of the broker adapter, permit provider, conformance gate, capacity provider, health publisher, and lifecycle runtime exist, but the controller binary constructs none of them. | `internal/controller/service.go:665-700`; fakes at `service_test.go:1972,2800`; stub at `cmd/portable-ghar-controller/disabled_authority.go:284,300`; the binary wires a zero-demand broker stub at `production_controller.go:356` |
 | Case 15 evidence | `SealActualGitHubTransport` accepts a caller-supplied assertion count and digest. No collector produces the evidence the spec lists, and the target profile always returns pending. | `internal/conformance/report.go:410-427` |
 | Hosted and replay routes | Stubs only. A stale, oversized, or untimed offer ends the poll loop and so the controller process. | `internal/controller/service.go:2026-2046`; `runtime.go:146-193` |
 | Watchdog | Every cycle requires `disabled` mode and capacity 0, and safe-stops the controller otherwise. It only launches the disabled path. | `internal/watchdog/watchdog.go:235-253`; `internal/productionruntime/controller_probe.go:64-72` |
@@ -130,12 +130,14 @@ existing code on the target. Effort per phase is not yet estimated.
    parsing, deregistration, and reclamation, and derives the observation
    digest bound to the report run. `SealActualGitHubTransport` consumes only
    this output.
-9. **Remaining controller adapters.** Production implementations for every
-   `NewService` dependency that has none today, including the fatal
-   terminator (process exit after the durable write) and the event sink.
-10. **Enabled controller process.** Compose `controller.Service` with the
-    lifecycle runtime, the Worker permit provider, the conformance gate, and
-    the adapters from phase 9 in a separate process path. Acquisition stays
+9. **Remaining controller adapters.** Production `FatalTerminator` (process
+   exit after the durable write) and `EventSink`. `ReplayVerifier` and
+   `HostedRouter` keep their fail-closed stubs for the canary (D6).
+10. **Enabled controller process.** Compose `controller.Service` in a separate
+    process path from the existing real pieces (durable state adapter,
+    admission broker adapter, fleet guard, reconciler, capacity provider,
+    lifecycle runtime, Worker permit provider and heartbeat session,
+    conformance gate) and the adapters from phase 9. Acquisition stays
     `disabled` by default.
 11. **Fence handover and watchdog (D4, D5).** Suspend legacy and hand the
     fence to Portable for the canary window, with rollback. Suspend and re-arm
