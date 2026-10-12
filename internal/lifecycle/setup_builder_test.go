@@ -176,11 +176,12 @@ func TestNewSetupBuilderRejectsUnsafeConfig(t *testing.T) {
 type recordingJails struct {
 	JailOrchestrator
 	prepared int
+	err      error
 }
 
 func (jails *recordingJails) Prepare(context.Context, networkjail.PreparedSetupRequest) (networkjail.HeldJail, error) {
 	jails.prepared++
-	return networkjail.HeldJail{}, nil
+	return networkjail.HeldJail{}, jails.err
 }
 
 func TestWithSlotDirectoriesCreatesDirectoriesBeforePrepare(t *testing.T) {
@@ -216,6 +217,23 @@ func TestWithSlotDirectoriesCreatesDirectoriesBeforePrepare(t *testing.T) {
 	if len(calls) != 1 || calls[0] != (call{"/var/lib/portable-ghar/broker", prepared.Broker.SlotIdentity, 1001, 1001}) || inner.prepared != 1 {
 		t.Fatalf("calls = %+v, prepared %d", calls, inner.prepared)
 	}
+
+	var removed []string
+	jails.remove = func(_ string, slot string) error {
+		removed = append(removed, slot)
+		return nil
+	}
+	if len(removed) != 0 {
+		t.Fatal("directories removed after a successful Prepare")
+	}
+	jails.create = func(string, string, uint32, uint32) error { return nil }
+	inner.err = errors.New("adapter create failed")
+	if _, err := wrapped.Prepare(context.Background(), prepared); !errors.Is(err, inner.err) ||
+		len(removed) != 1 || removed[0] != prepared.Broker.SlotIdentity {
+		t.Fatalf("failed Prepare = %v, removed %v; want the inner error and one rollback", err, removed)
+	}
+	inner.err = nil
+	inner.prepared = 1
 
 	jails.create = func(string, string, uint32, uint32) error { return errors.New("exists") }
 	if _, err := wrapped.Prepare(context.Background(), prepared); !errors.Is(err, ErrLifecycle) || inner.prepared != 1 {

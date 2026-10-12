@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -252,12 +253,14 @@ type slotDirectoryJails struct {
 	JailOrchestrator
 	brokerRoot string
 	create     func(brokerRoot, slotIdentity string, brokerUID, brokerGID uint32) error
+	remove     func(brokerRoot, slotIdentity string) error
 }
 
 // WithSlotDirectories wraps jails so Prepare first creates the slot's
 // directories with hostruntime.CreateSlotDirectories, owned by the broker
-// user named in the request. The request's directories must sit directly
-// under brokerRoot.
+// user named in the request, and removes them again, where still empty, if
+// the jail's Prepare fails. The request's directories must sit directly under
+// brokerRoot.
 func WithSlotDirectories(jails JailOrchestrator, brokerRoot string) (JailOrchestrator, error) {
 	if jails == nil || !filepath.IsAbs(brokerRoot) || filepath.Clean(brokerRoot) != brokerRoot {
 		return nil, fmt.Errorf("%w: slot directories", ErrLifecycle)
@@ -266,6 +269,7 @@ func WithSlotDirectories(jails JailOrchestrator, brokerRoot string) (JailOrchest
 		JailOrchestrator: jails,
 		brokerRoot:       brokerRoot,
 		create:           hostruntime.CreateSlotDirectories,
+		remove:           hostruntime.RemoveEmptySlotDirectories,
 	}, nil
 }
 
@@ -285,5 +289,14 @@ func (jails *slotDirectoryJails) Prepare(
 	if err := jails.create(jails.brokerRoot, slotIdentity, uid, gid); err != nil {
 		return networkjail.HeldJail{}, fmt.Errorf("%w: slot directories: %w", ErrLifecycle, err)
 	}
-	return jails.JailOrchestrator.Prepare(ctx, request)
+	held, err := jails.JailOrchestrator.Prepare(ctx, request)
+	if err != nil {
+		// Reclaim what is still empty. Anything a started container uses is
+		// kept for the managed cleanup path.
+		if removeErr := jails.remove(jails.brokerRoot, slotIdentity); removeErr != nil {
+			err = errors.Join(err, removeErr)
+		}
+		return networkjail.HeldJail{}, err
+	}
+	return held, nil
 }

@@ -73,6 +73,49 @@ func CreateSlotDirectories(brokerRoot, slotIdentity string, brokerUID, brokerGID
 
 // createBrokerDirectory reports whether it created name, so a failed call
 // removes only what it made.
+// RemoveEmptySlotDirectories undoes CreateSlotDirectories after a failed
+// prepare. It removes relay, authority and then the slot directory, each only
+// if it is empty: rmdir refuses a directory that holds anything, so whatever a
+// started broker or adapter put there is left for the managed cleanup path.
+// Directories already gone are not an error.
+func RemoveEmptySlotDirectories(brokerRoot, slotIdentity string) error {
+	if !validSlotDirectoryName(slotIdentity) {
+		return errSlotDirectories
+	}
+	rootFD, err := unix.Open(brokerRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return errSlotDirectories
+	}
+	defer unix.Close(rootFD)
+	slotFD, err := openBeneath(rootFD, slotIdentity)
+	if errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	if err != nil {
+		return errSlotDirectories
+	}
+	defer unix.Close(slotFD)
+	for index := len(slotChildDirectories) - 1; index >= 0; index-- {
+		if err := removeEmptyDirectory(slotFD, slotChildDirectories[index]); err != nil {
+			return err
+		}
+	}
+	if err := removeEmptyDirectory(rootFD, slotIdentity); err != nil {
+		return err
+	}
+	_ = unix.Fsync(rootFD)
+	return nil
+}
+
+func removeEmptyDirectory(parentFD int, name string) error {
+	err := unix.Unlinkat(parentFD, name, unix.AT_REMOVEDIR)
+	if err == nil || errors.Is(err, unix.ENOENT) ||
+		errors.Is(err, unix.ENOTEMPTY) || errors.Is(err, unix.EEXIST) {
+		return nil
+	}
+	return errSlotDirectories
+}
+
 func createBrokerDirectory(parentFD int, name string, uid, gid uint32, device uint64) (bool, error) {
 	if err := unix.Mkdirat(parentFD, name, 0o700); err != nil {
 		return false, errSlotDirectories

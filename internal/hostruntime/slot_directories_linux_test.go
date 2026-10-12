@@ -189,3 +189,37 @@ func TestRemoveEmptySlotParentRestoresAnEmptyBrokerRoot(t *testing.T) {
 		t.Fatalf("nested parent was removed: %v", err)
 	}
 }
+
+func TestRemoveEmptySlotDirectoriesKeepsAnythingInUse(t *testing.T) {
+	uid, gid := slotTestUser()
+	root := newSlotBrokerRoot(t)
+	if err := CreateSlotDirectories(root, testSlotIdentity, uid, gid); err != nil {
+		t.Fatalf("CreateSlotDirectories: %v", err)
+	}
+	if err := RemoveEmptySlotDirectories(root, testSlotIdentity); err != nil {
+		t.Fatalf("RemoveEmptySlotDirectories: %v", err)
+	}
+	if err := proveBrokerRootEmpty(root); err != nil {
+		t.Fatalf("broker root not empty: %v", err)
+	}
+	if err := RemoveEmptySlotDirectories(root, testSlotIdentity); err != nil {
+		t.Fatalf("RemoveEmptySlotDirectories on a removed slot: %v", err)
+	}
+
+	if err := CreateSlotDirectories(root, testSlotIdentity, uid, gid); err != nil {
+		t.Fatalf("CreateSlotDirectories: %v", err)
+	}
+	socket := filepath.Join(root, testSlotIdentity, "authority", "dial-authority.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := RemoveEmptySlotDirectories(root, testSlotIdentity); err != nil {
+		t.Fatalf("RemoveEmptySlotDirectories with a busy authority: %v", err)
+	}
+	if _, err := os.Lstat(socket); err != nil {
+		t.Fatalf("in-use authority directory was removed: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, testSlotIdentity, "relay")); !os.IsNotExist(err) {
+		t.Fatalf("empty relay directory was kept: %v", err)
+	}
+}
