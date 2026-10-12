@@ -49,6 +49,10 @@ func RunPrivateOverlayAssembly(
 		return PrivateOverlayAssemblyReceipt{}, ErrHostUsage
 	}
 	templatePath, manifestPath, outputPath := args[2], args[4], args[6]
+	if sameExistingFile(outputPath, templatePath) ||
+		sameExistingFile(outputPath, manifestPath) {
+		return PrivateOverlayAssemblyReceipt{}, ErrHostUsage
+	}
 
 	template, err := loadPrivateOverlayTemplate(templatePath)
 	if err != nil {
@@ -83,6 +87,14 @@ func RunPrivateOverlayAssembly(
 		PrivateOverlayRevision: revision,
 		RuntimeManifestDigest:  manifestDigest,
 	}, nil
+}
+
+// sameExistingFile reports whether both paths resolve to the same existing
+// file, so a symlink or other alias of an input cannot name the output.
+func sameExistingFile(a string, b string) bool {
+	aInfo, aErr := os.Stat(a)
+	bInfo, bErr := os.Stat(b)
+	return aErr == nil && bErr == nil && os.SameFile(aInfo, bInfo)
 }
 
 // loadPrivateOverlayTemplate reads the template through the private-tree

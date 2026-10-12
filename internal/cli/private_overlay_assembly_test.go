@@ -238,3 +238,28 @@ func TestRunPrivateOverlayAssemblyKeepsExistingOutputWhenReadBackFails(t *testin
 		t.Fatalf("root entries = %d, want only the existing output", len(entries))
 	}
 }
+
+func TestRunPrivateOverlayAssemblyRejectsManifestAliasOfOutput(t *testing.T) {
+	t.Parallel()
+	templatePath, manifestPath, outputPath := assemblyFixture(t, nil)
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("ReadFile(manifest) error = %v", err)
+	}
+	// The output currently holds the manifest, and the manifest argument is
+	// a symlink to it from outside the private root.
+	privateOverlayTestFile(t, outputPath, manifest)
+	alias := filepath.Join(t.TempDir(), "runtime-manifest.json")
+	if err := os.Symlink(outputPath, alias); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	_, err = RunPrivateOverlayAssembly(assemblyArgs(templatePath, alias, outputPath))
+	if !errors.Is(err, ErrHostUsage) {
+		t.Fatalf("error = %v, want %v", err, ErrHostUsage)
+	}
+	current, err := os.ReadFile(outputPath)
+	if err != nil || string(current) != string(manifest) {
+		t.Fatalf("output = %q, %v; want the manifest unchanged", current, err)
+	}
+}
