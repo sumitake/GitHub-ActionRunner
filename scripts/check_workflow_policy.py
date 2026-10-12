@@ -72,11 +72,11 @@ from typing import Optional, Union
 REVIEWED_ACTION_PINS: dict[str, tuple[str, str]] = {
     "actions/checkout": ("3d3c42e5aac5ba805825da76410c181273ba90b1", "v7.0.1"),
     "actions/setup-go": ("b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "v7.0.0"),
-    "actions/setup-node": ("820762786026740c76f36085b0efc47a31fe5020", "v7.0.0"),
-    "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "v7.0.1"),
+    "actions/setup-node": ("949feb2413d6458794dcd2491c4babbbce0c15c1", "v7.1.0"),
+    "actions/upload-artifact": ("cf430e030ddbb5b0abf93d22962f4752f3646cd9", "v7.0.2"),
     "docker/setup-buildx-action": ("f87e5991a6d7451dcb8d9637bfbc97413f497069", "v4.4.1"),
     "aquasecurity/trivy-action": ("ed142fd0673e97e23eac54620cfb913e5ce36c25", "v0.36.0"),
-    "github/codeql-action": ("2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2", "v4.38.2"),
+    "github/codeql-action": ("24c54180a607b1449ed407dd24f251e4e9147c8d", "v4.38.3"),
     "actions/dependency-review-action": (
         "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
         "v5.0.0",
