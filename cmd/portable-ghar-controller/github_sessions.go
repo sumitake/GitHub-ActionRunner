@@ -164,10 +164,14 @@ func openGitHubPollTargets(
 	return targets, nil
 }
 
+// closePollTargets closes every session even after ctx is canceled, so a
+// signal never leaves GitHub's one message session per scale set allocated.
+// Each Close stays bounded by the session's own operation timeout.
 func closePollTargets(ctx context.Context, targets []controller.PollTarget) error {
+	closeCtx := context.WithoutCancel(ctx)
 	var errs []error
 	for _, target := range targets {
-		if err := target.Session.Close(ctx); err != nil {
+		if err := target.Session.Close(closeCtx); err != nil {
 			errs = append(errs, fmt.Errorf("%s: close session: %w", target.Fleet.RepositoryAlias, err))
 		}
 	}

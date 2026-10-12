@@ -25,7 +25,12 @@ func (s *fakeGitHubSession) Compatibility() githubscale.ScaleSetCompatibilityRep
 	return s.report
 }
 
-func (s *fakeGitHubSession) Close(context.Context) error {
+// Close fails on a canceled context, as the production session does before
+// it sends the upstream close request.
+func (s *fakeGitHubSession) Close(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.closed++
 	return nil
 }
@@ -206,6 +211,24 @@ func TestExternalProbeClosesOpenedSessionsWhenALaterOpenFails(t *testing.T) {
 	}
 	if fake.clients[0].session.closed != 1 {
 		t.Fatalf("alpha session closed %d times, want 1", fake.clients[0].session.closed)
+	}
+}
+
+func TestClosePollTargetsClosesSessionsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sessions := []*fakeGitHubSession{{}, {}}
+	targets := []controller.PollTarget{
+		{Fleet: githubscale.Fleet{RepositoryAlias: "alpha"}, Session: sessions[0]},
+		{Fleet: githubscale.Fleet{RepositoryAlias: "beta"}, Session: sessions[1]},
+	}
+	if err := closePollTargets(ctx, targets); err != nil {
+		t.Fatalf("closePollTargets after cancellation: %v", err)
+	}
+	for index, session := range sessions {
+		if session.closed != 1 {
+			t.Fatalf("session %d closed %d times, want 1", index, session.closed)
+		}
 	}
 }
 
