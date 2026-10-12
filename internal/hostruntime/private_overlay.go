@@ -1027,7 +1027,7 @@ func validWorkerOverlay(worker *WorkerOverlay, overlay PrivateOverlay) bool {
 		return true
 	}
 	parsed, err := url.Parse(worker.BaseURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" ||
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" ||
 		worker.BaseURL != "https://"+parsed.Host {
 		return false
 	}
@@ -1068,7 +1068,8 @@ func validGitHubOverlay(github *GitHubOverlay, overlay PrivateOverlay) bool {
 	header, headerOK := canonicalDuration(github.ResponseHeaderTimeout)
 	if github.MaxResponseBytes == 0 ||
 		github.MaxResponseBytes > maxGitHubResponseBytes ||
-		!operationOK || !headerOK || header > operation {
+		!operationOK || !headerOK || header > operation ||
+		operation%time.Millisecond != 0 || header%time.Millisecond != 0 {
 		return false
 	}
 	for _, repository := range overlay.Repositories {

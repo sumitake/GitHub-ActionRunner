@@ -107,6 +107,9 @@ func TestPrivateOverlayRejectsInvalidExternalSections(t *testing.T) {
 			}
 			overlay.Worker.BaseURL = withUser.String()
 		},
+		"worker URL with port and no host": func(overlay *PrivateOverlay) {
+			overlay.Worker.BaseURL = "https://:443"
+		},
 		"uppercase fleet": func(overlay *PrivateOverlay) {
 			overlay.Worker.FleetID = "Example-fleet"
 		},
@@ -154,6 +157,13 @@ func TestPrivateOverlayRejectsInvalidExternalSections(t *testing.T) {
 		},
 		"header timeout over operation timeout": func(overlay *PrivateOverlay) {
 			overlay.GitHub.ResponseHeaderTimeout = "2m0s"
+		},
+		"submillisecond operation timeout": func(overlay *PrivateOverlay) {
+			overlay.GitHub.OperationTimeout = "1.5ms"
+			overlay.GitHub.ResponseHeaderTimeout = "1ms"
+		},
+		"submillisecond header timeout": func(overlay *PrivateOverlay) {
+			overlay.GitHub.ResponseHeaderTimeout = "1.5ms"
 		},
 		"repository token missing": func(overlay *PrivateOverlay) {
 			overlay.Repositories[0].CredentialName = "absent"
