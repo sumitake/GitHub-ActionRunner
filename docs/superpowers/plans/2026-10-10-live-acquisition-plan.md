@@ -63,8 +63,20 @@ canary that acquires a real job (lines 1292-1305). No option satisfies both
 sentences, so every option is a spec change.
 
 Recommendation: (c), adopted as an explicit, reviewed amendment to the Task 11
-invariant, then implemented as a new gate constructor. It keeps the case's
-meaning and confines the exception to one approved, capacity-1 job.
+invariant. It keeps the case's meaning. The exception must be bound to one
+job, not to a mode: `AcquisitionConformanceRequest` carries only build,
+profile, fleet generation, and mode (`internal/conformance/gate.go:28-33`),
+and `canary-only` capacity 1 limits concurrency, not count. So the normal
+gate stays unchanged, and a separate authority is:
+
+- durable and single-use, consumed atomically at acquisition;
+- bound to the exact approved repository, workflow, revision, and run across
+  poll, acquire, and JIT;
+- void after one job, success or failure.
+
+After the canary, a full canonical report run with all 15 cases passing is
+required before any further acquisition. A dedicated label used only by the
+canary workflow narrows exposure but does not replace the binding.
 
 **D2. Cases 1-14 on the target.** The test harness already implements
 `conformance.HostProfile` (`tests/integration/conformance_test.go:14-35`), and
@@ -121,9 +133,10 @@ existing code on the target. Effort per phase is not yet estimated.
    permit-peer, ledger-reference, and empty-conntrack validators, a lifecycle
    `SetupBuilder`, and a `SessionProvider`. This is new security-critical code,
    not a port, and needs a security review.
-7. **Production conformance profile and canary gate (D1).** Amend the Task 11
-   invariant after review, then implement the profile for the target and the
-   one-shot canary gate constructor.
+7. **Production conformance profile and canary authority (D1).** Amend the
+   Task 11 invariant after review, then implement the profile for the target
+   and the single-use, job-bound canary authority beside the unchanged gate.
+   Needs a security review.
 8. **Case 15 evidence path.** A dedicated canary workflow that runs every
    proxy-sensitive tool and a checkout, plus a collector that records the
    in-run `Compatibility()` result and live `DisableUpdate`, JIT absence after
