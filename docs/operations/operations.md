@@ -40,6 +40,13 @@ The overlay records the `--manifest` path as given. The control host and the
 target both open that path, so the manifest must sit at the same absolute
 path on each.
 
+Two sections are optional and only an acquiring controller reads them:
+`worker` (the failover Worker's bare `https://` origin with no port, fleet ID, HMAC secret name, and lease
+timings, which must match the Worker's deployment settings) and `github`
+(response-size and timeout bounds for scale-set calls). When `github` is
+present, every repository's `credential_name` must name exactly one file
+secret. The disabled observer ignores both.
+
 The command does not observe the target host. Host identity, storage, and
 other live observations stay the operator's inputs in the template.
 

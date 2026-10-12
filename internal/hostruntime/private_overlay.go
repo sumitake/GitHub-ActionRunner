@@ -9,7 +9,9 @@ import (
 	"net/netip"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -41,6 +43,11 @@ type PrivateOverlay struct {
 	Secrets             []NamedSecretRef           `json:"secrets"`
 	Legacy              *LegacyOverlay             `json:"legacy"`
 	AllowedActions      []string                   `json:"allowed_actions"`
+	// Worker and GitHub configure the external services an acquiring
+	// controller talks to. Both are optional: the disabled observer reads
+	// neither, and overlays written before they existed stay canonical.
+	Worker *WorkerOverlay `json:"worker,omitempty"`
+	GitHub *GitHubOverlay `json:"github,omitempty"`
 }
 
 type TargetIdentityOverlay struct {
@@ -368,6 +375,28 @@ type LegacyOverlay struct {
 	WatchdogDigest      string   `json:"watchdog_digest"`
 }
 
+// WorkerOverlay names the failover Worker the controller enrolls with. The
+// timing values must match the Worker's own deployment settings.
+type WorkerOverlay struct {
+	BaseURL            string `json:"base_url"`
+	HMACCredentialName string `json:"hmac_credential_name"`
+	FleetID            string `json:"fleet_id"`
+	TimestampWindow    string `json:"timestamp_window"`
+	LeaseDuration      string `json:"lease_duration"`
+	HeartbeatDeadline  string `json:"heartbeat_deadline"`
+	ShorteningMargin   string `json:"shortening_margin"`
+	LostRenewals       uint64 `json:"lost_renewals"`
+	TerminationTail    string `json:"termination_tail"`
+}
+
+// GitHubOverlay bounds the controller's calls to GitHub's scale-set service.
+// Each repository's credential_name names its token.
+type GitHubOverlay struct {
+	MaxResponseBytes      uint64 `json:"max_response_bytes"`
+	OperationTimeout      string `json:"operation_timeout"`
+	ResponseHeaderTimeout string `json:"response_header_timeout"`
+}
+
 func ParsePrivateOverlay(document []byte, maxBytes int) (PrivateOverlay, string, error) {
 	if maxBytes <= 0 || len(document) == 0 || len(document) > maxBytes {
 		return PrivateOverlay{}, "", ErrInvalidPrivateOverlay
@@ -443,7 +472,9 @@ func validatePrivateOverlay(overlay PrivateOverlay) error {
 			overlay.Repositories,
 		) ||
 		!validLegacyOverlay(overlay.Legacy) ||
-		!validAllowedActions(overlay.AllowedActions) {
+		!validAllowedActions(overlay.AllowedActions) ||
+		!validWorkerOverlay(overlay.Worker, overlay) ||
+		!validGitHubOverlay(overlay.GitHub, overlay) {
 		return ErrInvalidPrivateOverlay
 	}
 	return nil
@@ -986,6 +1017,121 @@ func validSecretRefs(secrets []NamedSecretRef) bool {
 	return true
 }
 
+// maxGitHubResponseBytes caps a single GitHub response the controller will
+// buffer, so a misconfigured overlay cannot ask for unbounded memory.
+const maxGitHubResponseBytes = 64 << 20
+
+var workerFleetIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+
+func validWorkerOverlay(worker *WorkerOverlay, overlay PrivateOverlay) bool {
+	if worker == nil {
+		return true
+	}
+	parsed, err := url.Parse(worker.BaseURL)
+	// A bare https://host origin: no port, path, user, query, or fragment.
+	// Requiring Host == Hostname rejects every explicit port, so no port
+	// range or syntax can reach the protocol client.
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" ||
+		parsed.Host != parsed.Hostname() ||
+		worker.BaseURL != "https://"+parsed.Host {
+		return false
+	}
+	if !workerFleetIDPattern.MatchString(worker.FleetID) ||
+		worker.LostRenewals == 0 ||
+		!uniqueFileSecret(
+			worker.HMACCredentialName,
+			overlay.Secrets,
+			overlay.ManagementTransport.CredentialName,
+		) {
+		return false
+	}
+	// The HMAC key must not be readable as any other credential: compare the
+	// resolved references, not only the names. uniqueFileSecret already
+	// separates it from the management credential.
+	hmacRef, _ := namedSecretRef(worker.HMACCredentialName, overlay.Secrets)
+	for _, repository := range overlay.Repositories {
+		if ref, ok := namedSecretRef(repository.CredentialName, overlay.Secrets); repository.CredentialName == worker.HMACCredentialName || (ok && ref == hmacRef) {
+			return false
+		}
+	}
+	for _, value := range []string{
+		worker.TimestampWindow,
+		worker.LeaseDuration,
+		worker.HeartbeatDeadline,
+		worker.ShorteningMargin,
+		worker.TerminationTail,
+	} {
+		duration, ok := canonicalDuration(value)
+		if !ok || duration%time.Millisecond != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func validGitHubOverlay(github *GitHubOverlay, overlay PrivateOverlay) bool {
+	if github == nil {
+		return true
+	}
+	operation, operationOK := canonicalDuration(github.OperationTimeout)
+	header, headerOK := canonicalDuration(github.ResponseHeaderTimeout)
+	if github.MaxResponseBytes == 0 ||
+		github.MaxResponseBytes > maxGitHubResponseBytes ||
+		!operationOK || !headerOK || header > operation ||
+		operation%time.Millisecond != 0 || header%time.Millisecond != 0 {
+		return false
+	}
+	for _, repository := range overlay.Repositories {
+		if !uniqueFileSecret(
+			repository.CredentialName,
+			overlay.Secrets,
+			overlay.ManagementTransport.CredentialName,
+		) {
+			return false
+		}
+	}
+	return true
+}
+
+// uniqueFileSecret reports whether name resolves to exactly one file secret
+// and is not the management transport's own credential.
+func namedSecretRef(name string, secrets []NamedSecretRef) (SecretRefOverlay, bool) {
+	for _, secret := range secrets {
+		if secret.Name == name {
+			return secret.Ref, true
+		}
+	}
+	return SecretRefOverlay{}, false
+}
+
+func uniqueFileSecret(
+	name string,
+	secrets []NamedSecretRef,
+	managementCredential string,
+) bool {
+	if !validLifecycleScalar(name) || name == managementCredential {
+		return false
+	}
+	// Compare the resolved reference too, so another name for the same file
+	// is not accepted.
+	if ref, ok := namedSecretRef(name, secrets); ok {
+		if management, ok := namedSecretRef(managementCredential, secrets); ok && ref == management {
+			return false
+		}
+	}
+	found := 0
+	for _, secret := range secrets {
+		if secret.Name != name {
+			continue
+		}
+		if secret.Ref.Source != "file" {
+			return false
+		}
+		found++
+	}
+	return found == 1
+}
+
 func validLegacyOverlay(legacy *LegacyOverlay) bool {
 	if legacy == nil {
 		return true
@@ -1041,14 +1187,27 @@ func validImmutableImageReference(value string) bool {
 	return validImageDigest(value)
 }
 
+// validHTTPSURL requires an https URL with a hostname, no user, query, or
+// fragment, and either no port or a canonical TCP port (GitHub Enterprise may
+// serve on one), so every accepted URL can be dialed.
 func validHTTPSURL(value string) bool {
 	parsed, err := url.Parse(value)
 	return err == nil &&
 		parsed.Scheme == "https" &&
-		parsed.Host != "" &&
+		parsed.Hostname() != "" &&
+		!strings.HasSuffix(parsed.Host, ":") &&
+		validOptionalPort(parsed.Port()) &&
 		parsed.User == nil &&
 		parsed.RawQuery == "" &&
 		parsed.Fragment == ""
+}
+
+func validOptionalPort(port string) bool {
+	if port == "" {
+		return true
+	}
+	number, err := strconv.Atoi(port)
+	return err == nil && number >= 1 && number <= 65535 && strconv.Itoa(number) == port
 }
 
 func validCanonicalDuration(value string) bool {
