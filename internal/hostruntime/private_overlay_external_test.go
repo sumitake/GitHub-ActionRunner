@@ -186,7 +186,13 @@ func TestPrivateOverlayRejectsInvalidExternalSections(t *testing.T) {
 		"repository URL without hostname": func(overlay *PrivateOverlay) {
 			overlay.Repositories[0].ConfigURL = "https://:443/example/repository"
 		},
-		"repository URL with port": func(overlay *PrivateOverlay) {
+		"repository URL with empty port": func(overlay *PrivateOverlay) {
+			overlay.Repositories[0].ConfigURL = "https://github.example.invalid:/example/repository"
+		},
+		"repository URL with zero-padded port": func(overlay *PrivateOverlay) {
+			overlay.Repositories[0].ConfigURL = "https://github.example.invalid:08443/example/repository"
+		},
+		"repository URL with out-of-range port": func(overlay *PrivateOverlay) {
 			overlay.Repositories[0].ConfigURL = "https://github.example.invalid:65536/example/repository"
 		},
 		"repository token missing": func(overlay *PrivateOverlay) {
@@ -219,5 +225,15 @@ func shareSecretRef(overlay *PrivateOverlay, target, source string) {
 		if overlay.Secrets[index].Name == target {
 			overlay.Secrets[index].Ref = ref
 		}
+	}
+}
+
+func TestPrivateOverlayAcceptsEnterprisePort(t *testing.T) {
+	t.Parallel()
+
+	overlay := externalPrivateOverlay()
+	overlay.Repositories[0].ConfigURL = "https://github.example.invalid:8443/example/repository"
+	if _, _, err := MarshalPrivateOverlay(overlay); err != nil {
+		t.Fatalf("MarshalPrivateOverlay() error = %v", err)
 	}
 }

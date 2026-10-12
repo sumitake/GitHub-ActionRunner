@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -1186,17 +1187,27 @@ func validImmutableImageReference(value string) bool {
 	return validImageDigest(value)
 }
 
-// validHTTPSURL requires an https URL with a hostname and no explicit port,
-// user, query, or fragment, so every accepted URL can be dialed.
+// validHTTPSURL requires an https URL with a hostname, no user, query, or
+// fragment, and either no port or a canonical TCP port (GitHub Enterprise may
+// serve on one), so every accepted URL can be dialed.
 func validHTTPSURL(value string) bool {
 	parsed, err := url.Parse(value)
 	return err == nil &&
 		parsed.Scheme == "https" &&
 		parsed.Hostname() != "" &&
-		parsed.Host == parsed.Hostname() &&
+		!strings.HasSuffix(parsed.Host, ":") &&
+		validOptionalPort(parsed.Port()) &&
 		parsed.User == nil &&
 		parsed.RawQuery == "" &&
 		parsed.Fragment == ""
+}
+
+func validOptionalPort(port string) bool {
+	if port == "" {
+		return true
+	}
+	number, err := strconv.Atoi(port)
+	return err == nil && number >= 1 && number <= 65535 && strconv.Itoa(number) == port
 }
 
 func validCanonicalDuration(value string) bool {
