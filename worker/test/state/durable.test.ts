@@ -581,6 +581,33 @@ test("enabled Durable Object refuses an uninventoried object without writes", as
   expect(durableSnapshot(shared.db)).toEqual(before);
 });
 
+test("enabled Durable Object writes nothing for an unsigned request", async () => {
+  const shared = sharedSql();
+  const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");
+  const store = new MemoryFleetStore("example-fleet", { now: () => timestamp });
+  store.fleet.inventoried = true;
+  saveFleetStore(shared.persist, store);
+  const before = durableSnapshot(shared.db);
+  const signed = await signedAdmin({
+    protocolVersion: 1,
+    kind: "portable-canary-stop",
+    fleetId: "example-fleet",
+    timestamp,
+    nonce: "6".repeat(64),
+  });
+  const unsigned = new Request(signed.url, {
+    method: "POST",
+    body: await signed.text(),
+  });
+
+  const response = await enabledDurable("example-fleet", shared).fetch(
+    unsigned,
+  );
+
+  expect(response.status).toBe(401);
+  expect(durableSnapshot(shared.db)).toEqual(before);
+});
+
 test("enabled Durable Object persists a portable canary start", async () => {
   const shared = sharedSql();
   const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");

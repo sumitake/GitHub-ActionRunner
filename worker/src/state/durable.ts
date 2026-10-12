@@ -200,12 +200,24 @@ export class FleetDurableObject extends DurableObject<WorkerEnv> {
     const store = loadFleetStore(this.sql, fleetId, {
       now: () => new Date().toISOString(),
     });
+    // Persist only when the request reached a protocol handler. A request
+    // the gateway refuses first, such as one without signature headers,
+    // writes nothing.
+    let handled = false;
     const response = await dispatchFleetRequest(request, {
       inventoriedFleetIds: bindings.inventoriedFleetIds,
       secrets: bindings.secrets,
-      storeFor: (id) => (id === store.fleet.fleetId ? store : undefined),
+      storeFor: (id) => {
+        if (id !== store.fleet.fleetId) {
+          return undefined;
+        }
+        handled = true;
+        return store;
+      },
     });
-    saveFleetStore(this.sql, store);
+    if (handled) {
+      saveFleetStore(this.sql, store);
+    }
     return response;
   }
 
