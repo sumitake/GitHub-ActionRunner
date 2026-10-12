@@ -209,6 +209,10 @@ type RecoverableLister interface {
 // reservation. The permit ledger for that slot is then never collected under
 // a live job. Store errors, and an assignment whose two slot identities
 // disagree, fail closed.
+//
+// The answer is a snapshot of the store. PermitAuthority.Collect deletes on
+// it, so whatever calls Collect must keep admission from reserving the slot
+// until the delete completes. Nothing in production calls Collect yet.
 type StateLedgerReferenceGuard struct {
 	store RecoverableLister
 }
