@@ -227,14 +227,11 @@ func TestRemoveEmptySlotDirectoriesKeepsAnythingInUse(t *testing.T) {
 	if err := os.WriteFile(socket, nil, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if err := RemoveEmptySlotDirectories(root, testSlotIdentity); err != nil {
-		t.Fatalf("RemoveEmptySlotDirectories with a busy authority: %v", err)
+	if err := RemoveEmptySlotDirectories(root, testSlotIdentity); err == nil {
+		t.Fatal("RemoveEmptySlotDirectories reported a busy slot as removed")
 	}
 	if _, err := os.Lstat(socket); err != nil {
 		t.Fatalf("in-use authority directory was removed: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(root, testSlotIdentity, "relay")); !os.IsNotExist(err) {
-		t.Fatalf("empty relay directory was kept: %v", err)
 	}
 }
 

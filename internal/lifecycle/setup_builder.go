@@ -258,9 +258,10 @@ type slotDirectoryJails struct {
 
 // WithSlotDirectories wraps jails so Prepare first creates the slot's
 // directories with hostruntime.CreateSlotDirectories, owned by the broker
-// user named in the request, and removes them again, where still empty, if
-// the jail's Prepare fails with its cleanup proven. The request's directories
-// must sit directly under brokerRoot.
+// user named in the request, and removes them again if the jail's Prepare
+// fails with its cleanup proven. A slot that cannot be removed, because it is
+// not empty or the removal is not durable, is joined into the returned error.
+// The request's directories must sit directly under brokerRoot.
 func WithSlotDirectories(jails JailOrchestrator, brokerRoot string) (JailOrchestrator, error) {
 	if jails == nil || !filepath.IsAbs(brokerRoot) || filepath.Clean(brokerRoot) != brokerRoot {
 		return nil, fmt.Errorf("%w: slot directories", ErrLifecycle)
