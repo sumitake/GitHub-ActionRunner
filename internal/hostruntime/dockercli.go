@@ -1096,3 +1096,9 @@ func hasControl(value string) bool {
 	}
 	return false
 }
+
+// ParseNumericUser parses a canonical numeric "uid:gid" container user.
+func ParseNumericUser(value string) (uint32, uint32, error) {
+	uid, gid, err := parseUser(value)
+	return uint32(uid), uint32(gid), err
+}

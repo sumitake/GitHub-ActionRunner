@@ -270,3 +270,9 @@ func zeroOrchestratorBytes(value []byte) {
 		value[index] = 0
 	}
 }
+
+// ValidatePreparedSetupRequest applies the checks Prepare runs on its
+// request, so a setup builder can be tested against them.
+func ValidatePreparedSetupRequest(request PreparedSetupRequest) error {
+	return validatePreparedSetupRequest(request)
+}
