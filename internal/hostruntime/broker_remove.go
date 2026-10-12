@@ -157,21 +157,34 @@ func removeSlotDirectory(brokerRoot, slotIdentity, relayParent, authorityParent 
 		return nil
 	}
 	info, err := os.Lstat(slot)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil || !info.IsDir() {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// Already removed, possibly by an attempt that crashed before the
+		// sync below; sync again.
+	case err != nil || !info.IsDir():
 		return errors.New("hostruntime: broker cleanup slot directory invalid")
+	default:
+		entries, err := os.ReadDir(slot)
+		if err != nil {
+			return errors.New("hostruntime: broker cleanup slot directory unavailable")
+		}
+		if len(entries) != 0 {
+			return errors.New("hostruntime: broker cleanup slot directory not empty")
+		}
+		if err := os.Remove(slot); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errors.New("hostruntime: broker cleanup failed")
+		}
 	}
-	entries, err := os.ReadDir(slot)
+	// Make the removal durable before cleanup reports success: a slot entry
+	// that reappeared after a crash would block quiescence for an assignment
+	// already recorded as destroyed.
+	root, err := os.Open(filepath.Clean(brokerRoot))
 	if err != nil {
-		return errors.New("hostruntime: broker cleanup slot directory unavailable")
+		return errors.New("hostruntime: broker cleanup root unavailable")
 	}
-	if len(entries) != 0 {
-		return errors.New("hostruntime: broker cleanup slot directory not empty")
-	}
-	if err := os.Remove(slot); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.New("hostruntime: broker cleanup failed")
+	syncErr := root.Sync()
+	if closeErr := root.Close(); syncErr != nil || closeErr != nil {
+		return errors.New("hostruntime: broker cleanup not durable")
 	}
 	return nil
 }
