@@ -44,9 +44,14 @@ Nothing in this section has shipped as a tagged release.
 - Pinned patched releases of five transitive npm development dependencies
   (sharp, source-map-js, fast-uri, smol-toml, and katex) through `overrides`.
   The braces advisory under the docs linter has no patched release yet.
+- Each slot's dial-permit socket now refuses requests that name another slot
+  or job generation. The permit authority is shared by every slot, so before
+  this a broker that could reach one slot's socket could spend another slot's
+  dial budget.
 
 ### Changed
 
+- Add the production permit guards an acquiring controller needs: a `/proc` peer validator for the broker user, a ledger-reference guard backed by the controller store, and a conntrack rebase validator that always refuses. The test environment now uses the same `/proc` observer.
 - Add `portable-ghar assemble-private-overlay`, which binds an operator-authored overlay template to a release's runtime manifest. It copies the manifest path and digest, the policy manifest digest, and the five image IDs from the manifest, rejects a template value that disagrees, and writes the overlay atomically after the same validation and read-back `deploy` uses. Release identities in the host overlay are no longer typed by hand.
 - `assemble-private-overlay` now reads the template through the private-tree checks and verifies the staged overlay before it replaces the output. A failed read-back no longer deletes an existing overlay. It also rejects a template or manifest path that resolves to the output file, such as a symlink to it.
 - The private overlay accepts optional `worker` and `github` sections for an acquiring controller. Overlays without them are unchanged.

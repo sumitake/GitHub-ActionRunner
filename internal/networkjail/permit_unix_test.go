@@ -20,7 +20,7 @@ func TestUnixPermitServerPersistsBeforeCanonicalReply(t *testing.T) {
 	const generation JobGeneration = 9
 	fixture.activate(generation)
 	socket := filepath.Join(permitSocketTempDir(t), "dial-authority.sock")
-	server := startTestPermitServer(t, fixture.authority, socket)
+	server := startTestPermitServer(t, fixture.authority, fixture.slot, generation, socket)
 	defer func() {
 		if err := server.close(); err != nil {
 			t.Fatalf("close server: %v", err)
@@ -61,7 +61,7 @@ func TestUnixPermitServerRejectsAncillaryDescriptorsWithoutConsuming(t *testing.
 	const generation JobGeneration = 11
 	fixture.activate(generation)
 	socket := filepath.Join(permitSocketTempDir(t), "dial-authority.sock")
-	server := startTestPermitServer(t, fixture.authority, socket)
+	server := startTestPermitServer(t, fixture.authority, fixture.slot, generation, socket)
 	defer func() { _ = server.close() }()
 
 	request := DialPermitRequest{
@@ -154,6 +154,8 @@ func TestUnixPermitClientRejectsNoncanonicalResponse(t *testing.T) {
 func startTestPermitServer(
 	t *testing.T,
 	authority *PermitAuthority,
+	slot CapacitySlotID,
+	generation JobGeneration,
 	path string,
 ) *unixPermitServer {
 	t.Helper()
@@ -164,7 +166,7 @@ func startTestPermitServer(
 	if err != nil {
 		t.Fatalf("ListenUnix: %v", err)
 	}
-	server, err := newUnixPermitServer(authority, listener, 4, time.Second)
+	server, err := newUnixPermitServer(authority, slot, generation, listener, 4, time.Second)
 	if err != nil {
 		_ = listener.Close()
 		t.Fatalf("newUnixPermitServer: %v", err)
@@ -189,4 +191,47 @@ func permitSocketTempDir(t *testing.T) string {
 		}
 	})
 	return directory
+}
+
+func TestUnixPermitServerRejectsAnotherSlotOrGenerationWithoutConsuming(t *testing.T) {
+	fixture := newPermitFixture(t, 4)
+	const generation JobGeneration = 9
+	const otherSlot CapacitySlotID = 4
+	fixture.activate(generation)
+	if err := fixture.authority.Activate(context.Background(), otherSlot, generation); err != nil {
+		t.Fatalf("Activate(other slot): %v", err)
+	}
+	socket := filepath.Join(permitSocketTempDir(t), "dial-authority.sock")
+	server := startTestPermitServer(t, fixture.authority, fixture.slot, generation, socket)
+	defer func() {
+		if err := server.close(); err != nil {
+			t.Fatalf("close server: %v", err)
+		}
+	}()
+	client, err := NewUnixPermitClient(socket, time.Second)
+	if err != nil {
+		t.Fatalf("NewUnixPermitClient: %v", err)
+	}
+	for name, request := range map[string]DialPermitRequest{
+		"other slot": {
+			SlotID: otherSlot, JobGeneration: generation, Class: DialClassJob, Sequence: 1,
+		},
+		"other generation": {
+			SlotID: fixture.slot, JobGeneration: generation + 1, Class: DialClassJob, Sequence: 1,
+		},
+	} {
+		if _, err := client.Request(context.Background(), request); !errors.Is(err, ErrPermitAuthorityUnavailable) {
+			t.Fatalf("%s: Request error = %v, want authority unavailable", name, err)
+		}
+	}
+	for _, slot := range []CapacitySlotID{fixture.slot, otherSlot} {
+		if durable := fixture.store.mustLoad(t, slot); durable.Job.ReservedHighWater != 0 {
+			t.Fatalf("slot %d reserved budget for a rejected frame: %+v", slot, durable.Job)
+		}
+	}
+	if _, err := client.Request(context.Background(), DialPermitRequest{
+		SlotID: fixture.slot, JobGeneration: generation, Class: DialClassJob, Sequence: 1,
+	}); err != nil {
+		t.Fatalf("bound Request: %v", err)
+	}
 }

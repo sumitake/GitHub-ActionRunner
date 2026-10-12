@@ -3,7 +3,6 @@ package testenv
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -216,117 +215,5 @@ func TestCompositionLedgerReferenceGuardBindsExactRecoverableSlot(
 		networkjail.CapacitySlotID(plan.Identity.CapacitySlotID+1),
 	); !errors.Is(err, networkjail.ErrPermitAuthorityUnavailable) {
 		t.Fatalf("mismatched slot error = %v", err)
-	}
-}
-
-func TestRejectCompositionRebaseAlwaysFailsClosed(t *testing.T) {
-	t.Parallel()
-
-	var validator rejectCompositionRebase
-	if err := validator.ValidateEmptyConntrack(
-		context.Background(),
-		1,
-		networkjail.BootID{1},
-		networkjail.BootID{2},
-		networkjail.EmptyConntrackProof{},
-	); !errors.Is(err, networkjail.ErrEmptyConntrackProofInvalid) {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestLinuxPermitPeerProcessObserverRequiresStableProcIdentity(
-	t *testing.T,
-) {
-	t.Parallel()
-
-	status := []byte("Name:\tbroker\nUid:\t1001\t1001\t1001\t1001\n")
-	stat := []byte(
-		"71 (broker) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 " +
-			"17 18 7001 20\n",
-	)
-	documents := map[string][]byte{
-		"/proc/71/status": status,
-		"/proc/71/stat":   stat,
-	}
-	observer := linuxPermitPeerProcessObserver{
-		readFile: func(path string, maximum int64) ([]byte, error) {
-			if maximum != maximumPermitProcDocumentBytes {
-				return nil, fmt.Errorf("maximum = %d", maximum)
-			}
-			document, ok := documents[path]
-			if !ok {
-				return nil, fmt.Errorf("unexpected path %q", path)
-			}
-			return append([]byte(nil), document...), nil
-		},
-	}
-	got, err := observer.ObservePermitPeerProcess(
-		context.Background(),
-		71,
-	)
-	if err != nil ||
-		got != (permitPeerProcessObservation{
-			UID:       1001,
-			StartTime: 7001,
-		}) {
-		t.Fatalf("observation/error = %+v/%v", got, err)
-	}
-
-	var statReads int
-	observer.readFile = func(path string, _ int64) ([]byte, error) {
-		switch path {
-		case "/proc/71/status":
-			return append([]byte(nil), status...), nil
-		case "/proc/71/stat":
-			statReads++
-			if statReads == 2 {
-				return []byte(
-					"71 (broker) S 1 2 3 4 5 6 7 8 9 10 11 12 " +
-						"13 14 15 16 17 18 7002 20\n",
-				), nil
-			}
-			return append([]byte(nil), stat...), nil
-		default:
-			return nil, fmt.Errorf("unexpected path %q", path)
-		}
-	}
-	if _, err := observer.ObservePermitPeerProcess(
-		context.Background(),
-		71,
-	); !errors.Is(err, networkjail.ErrPermitPeerInvalid) {
-		t.Fatalf("unstable error = %v", err)
-	}
-}
-
-func TestLinuxPermitPeerProcessObserverRejectsMalformedStatusAndContext(
-	t *testing.T,
-) {
-	t.Parallel()
-
-	stat := []byte(
-		"71 (broker) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 " +
-			"17 18 7001 20\n",
-	)
-	observer := linuxPermitPeerProcessObserver{
-		readFile: func(path string, _ int64) ([]byte, error) {
-			if path == "/proc/71/status" {
-				return []byte("Name:\tbroker\nUid:\t1001\t1002\t1001\t1001\n"), nil
-			}
-			return append([]byte(nil), stat...), nil
-		},
-	}
-	if _, err := observer.ObservePermitPeerProcess(
-		context.Background(),
-		71,
-	); !errors.Is(err, networkjail.ErrPermitPeerInvalid) {
-		t.Fatalf("malformed status error = %v", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := observer.ObservePermitPeerProcess(
-		ctx,
-		71,
-	); !errors.Is(err, networkjail.ErrPermitPeerInvalid) {
-		t.Fatalf("canceled error = %v", err)
 	}
 }
