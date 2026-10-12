@@ -84,8 +84,10 @@ gate stays unchanged, and a separate authority is:
   poll, acquire, and JIT;
 - void after one job, success or failure.
 
-After the canary, a full canonical report run with all 15 cases passing is
-required before any further acquisition. A dedicated label used only by the
+After the canary, the same report, completed with the sealed case 15
+evidence, must pass the normal gate before any further acquisition. A fresh
+run cannot do this: case 15 is pending in every run until a canary seals it,
+so a new run would need a new canary. A dedicated label used only by the
 canary workflow narrows exposure but does not replace the binding.
 
 **D2. Cases 1-14 on the target.** The test harness already implements
@@ -127,58 +129,69 @@ verified. Decision: the operator creates the scale set and the token.
 
 ## 3. Phases
 
-Each phase is one PR, merged only when green, except phases that only run
-existing code on the target. Effort per phase is not yet estimated.
+Scoped against the source on 2026-10-12. Each code PR merges only when green.
+Operator steps ship as exact commands and run only on the operator's go.
 
-1. **Target conformance run (D2).** Run the existing harness on the QTS target
-   and record which of cases 1-14 pass. No code.
-2. **Overlay Worker and GitHub settings.** Add Worker base URL, HMAC secret
-   name, fleet ID, and GitHub response-size limit to the overlay schema, with
-   validators, the golden fixture, and assembler support.
-3. **GitHub sessions.** Build one scale-set client per repository from the
-   overlay and its secret, and expose an alias-to-session provider.
-4. **Worker authority (D3).** Enable session and heartbeat in the Worker, add
-   the portable canary route, and redeploy after approval.
-5. **Worker enrollment, still disabled.** Construct the protocol client,
-   heartbeat session, and lease cache in the controller process. Prove a live
-   session and heartbeat with acquisition still disabled.
-6. **Production jail and lifecycle adapters.** Write production
-   permit-peer, ledger-reference, and empty-conntrack validators, a lifecycle
-   `SetupBuilder`, and a `SessionProvider`. This is new security-critical code,
-   not a port, and needs a security review.
-7. **Production conformance profile and canary authority (D1).** Amend the
-   Task 11 invariant after review, then implement the profile for the target
-   and the single-use, job-bound canary authority beside the unchanged gate.
-   Needs a security review.
-8. **Case 15 evidence path.** A dedicated canary workflow that runs every
-   proxy-sensitive tool and a checkout, plus a collector that records the
-   in-run `Compatibility()` result and live `DisableUpdate`, JIT absence after
-   parsing, deregistration, and reclamation, and derives the observation
-   digest bound to the report run. `SealActualGitHubTransport` consumes only
-   this output.
-9. **Remaining controller adapters.** Production `FatalTerminator` (process
-   exit after the durable write) and `EventSink`. `ReplayVerifier` and
-   `HostedRouter` keep their fail-closed stubs for the canary (D6).
-10. **Enabled controller process.** Compose `controller.Service` in a separate
-    process path from the existing real pieces (durable state adapter,
-    admission broker adapter, fleet guard, reconciler, capacity provider,
-    lifecycle runtime, Worker permit provider and heartbeat session,
-    conformance gate) and the adapters from phase 9. Acquisition stays
-    `disabled` by default.
-11. **Fence handover and watchdog (D4, D5).** Suspend legacy and hand the
-    fence to Portable for the canary window, with rollback. Suspend and re-arm
-    the watchdog around it.
-12. **Release and qualify.** Cut a release from the frozen code, assemble the
-    overlay, deploy, run conformance cases 1-14 on the target, and install the
-    report. The report's binding is invalidated by any later build or overlay
-    change, so this comes last.
-13. **Canary runbook script.** A thin script that records each step before it
-    runs: suspend the watchdog, hand over the fence, move the Worker fleet
-    `HOSTED → PORTABLE_CANARY` (a fleet left in `HOSTED` gets no lease, per
-    `worker/src/engine/heartbeat.ts:246-250`), set `canary-only` on one scale
-    set, dispatch one job, wait for one terminal result, collect the case 15
-    evidence and seal it, verify zero residue, set `disabled`, return the
-    Worker fleet to `HOSTED`, and restore the fence and watchdog.
+### Findings that change the original phase list
+
+- **D3 needs no GitHub credential.** Entering `PORTABLE_CANARY` writes no
+  repository variables (`worker/src/github/outbox.ts:263-315`), and the
+  Worker's GitHub executor has no production caller. For the canary the Worker
+  is a pure lease authority over a fleet with zero repository records.
+- **D2 cannot run today.** Its preflight requires `vcs.revision` in the build
+  info (`tests/integration/testenv/static_preflight_linux.go:490-515`), and
+  `go test` binaries carry none (verified with `go version -m`). The harness
+  also never writes its report out.
+- **D7 needs a tool.** A runner scale set cannot be created in the GitHub UI or
+  REST API, and nothing in the repo creates one.
+- **Production rollback is a stub** (`internal/productionruntime/system_lifecycle.go:1856-1866`),
+  so the fence handover uses the existing fence `handoff` command, rehearsed
+  in a fixture and logged by the runbook.
+- **The JIT is likely visible to the job.** It is passed in the listener's exec
+  environment (`internal/runtimeenv/environment.go:52-56`), which stays readable
+  in `/proc`. The canary workflow probes this; if it is present, the runner
+  gate must hand the JIT over another way before case 15 can pass.
+- **No production host-capacity source exists.** The canary uses a capacity-1
+  provider read from the overlay.
+
+### Order
+
+1. **Overlay settings.** Optional `worker` and `github` sections, plus the jail
+   inputs the setup builder needs (image users, dial and authority limits, log
+   limits), in one schema change.
+2. **Worker lease authority.** `WORKER_AUTHORITY=enabled` replaces the
+   compile-time constant (off by default, so merging changes nothing),
+   `portable-canary-start` and `portable-canary-stop` admin commands, and a fix
+   so unsigned or uninventoried session requests write nothing. Redeploy only
+   on a separate operator go.
+3. **GitHub sessions and probes.** A session provider per repository, a
+   one-shot `external-probe` (opens and closes each GitHub session, runs one
+   signed Worker heartbeat while disabled), and a one-shot `create-scale-set`
+   that creates and re-verifies the scale set (D7).
+4. **Jail and lifecycle adapters.** Production permit-peer and ledger-reference
+   checks, the reject-only conntrack rebase promoted from the test environment,
+   and a setup builder that creates the broker directories safely. Security
+   review.
+5. **Enabled controller process.** A `run-acquisition` subcommand beside `run`
+   that composes `controller.Service` from existing parts, with a fatal
+   terminator, a log event sink, and the capacity-1 provider. It starts
+   disabled and refuses to run unless the portable fleet holds the fence.
+6. **Canary authority (D1).** The Task 11 amendment, a canary gate that accepts
+   only a report with cases 1-14 passing and case 15 pending, and a single-use
+   authority row in the existing SQLite store, consumed by compare-and-swap at
+   acquisition and checked at poll and JIT. The D2 harness gains a source
+   commit check that works for test binaries and writes its report out.
+   Security review.
+7. **Case 15 evidence.** Record the job result for the consumed key, a
+   `canary-seal` command that derives the evidence only from durable state,
+   completion of the same pending report, and the canary workflow. Includes the
+   JIT hand-over fix if the probe needs it.
+8. **Canary runbook.** One bash script that journals each step: watchdog
+   suspend, fence handover, Worker start, `canary-only`, dispatch, wait, seal,
+   residue check, and the reverse steps.
+
+Operator steps, in order: D5 fence read (read-only), D7 scale set and token,
+D2 conformance run, Worker redeploy, then the canary.
 
 ## 4. Alternatives
 
