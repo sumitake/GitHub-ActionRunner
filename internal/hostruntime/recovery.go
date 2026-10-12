@@ -442,8 +442,9 @@ func (c *DockerCLI) RemoveManaged(
 	if err := c.removeBrokerDirectory(snapshot.spec.RelayParent); err != nil {
 		return err
 	}
-	if err := removeEmptySlotParent(
+	if err := removeSlotDirectory(
 		c.cfg.BrokerRoot,
+		snapshot.spec.SlotIdentity,
 		snapshot.spec.RelayParent,
 		snapshot.spec.AuthorityParent,
 	); err != nil {

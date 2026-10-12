@@ -82,8 +82,9 @@ func (c *DockerCLI) removeBrokerResources(
 		if err := c.removeBrokerDirectory(record.spec.RelayParent); err != nil {
 			return err
 		}
-		if err := removeEmptySlotParent(
+		if err := removeSlotDirectory(
 			c.cfg.BrokerRoot,
+			record.spec.SlotIdentity,
 			record.spec.RelayParent,
 			record.spec.AuthorityParent,
 		); err != nil {
@@ -140,31 +141,36 @@ func (c *DockerCLI) removeBrokerDirectory(path string) error {
 	return nil
 }
 
-// removeEmptySlotParent removes the directory that held relay and authority
-// once both are gone, so the broker root can return to empty. It removes only
-// an empty, real directory directly under the broker root, and leaves any
-// other parent in place.
-func removeEmptySlotParent(brokerRoot, relayParent, authorityParent string) error {
-	parent := filepath.Dir(relayParent)
-	if filepath.Dir(authorityParent) != parent ||
-		filepath.Dir(parent) != filepath.Clean(brokerRoot) {
+// removeSlotDirectory removes <broker root>/<slot identity> once relay and
+// authority, its only expected entries, are gone, so the broker root can
+// return to empty. It acts only on that exact directory; a relay or authority
+// parent anywhere else is not one this package created and is left alone.
+// Anything still inside the slot directory fails cleanup, so it stays
+// unproven and is retried.
+func removeSlotDirectory(brokerRoot, slotIdentity, relayParent, authorityParent string) error {
+	if slotIdentity == "" || strings.ContainsAny(slotIdentity, "/\x00") ||
+		slotIdentity == "." || slotIdentity == ".." {
+		return errors.New("hostruntime: broker cleanup slot identity invalid")
+	}
+	slot := filepath.Join(filepath.Clean(brokerRoot), slotIdentity)
+	if filepath.Dir(relayParent) != slot || filepath.Dir(authorityParent) != slot {
 		return nil
 	}
-	info, err := os.Lstat(parent)
+	info, err := os.Lstat(slot)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil || !info.IsDir() {
 		return errors.New("hostruntime: broker cleanup slot directory invalid")
 	}
-	entries, err := os.ReadDir(parent)
+	entries, err := os.ReadDir(slot)
 	if err != nil {
 		return errors.New("hostruntime: broker cleanup slot directory unavailable")
 	}
 	if len(entries) != 0 {
-		return nil
+		return errors.New("hostruntime: broker cleanup slot directory not empty")
 	}
-	if err := os.Remove(parent); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(slot); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.New("hostruntime: broker cleanup failed")
 	}
 	return nil

@@ -155,7 +155,7 @@ func TestCreateSlotDirectoriesFailsClosed(t *testing.T) {
 	}
 }
 
-func TestRemoveEmptySlotParentRestoresAnEmptyBrokerRoot(t *testing.T) {
+func TestRemoveSlotDirectoryRestoresAnEmptyBrokerRoot(t *testing.T) {
 	uid, gid := slotTestUser()
 	root := newSlotBrokerRoot(t)
 	slot := filepath.Join(root, testSlotIdentity)
@@ -164,40 +164,43 @@ func TestRemoveEmptySlotParentRestoresAnEmptyBrokerRoot(t *testing.T) {
 		t.Fatalf("CreateSlotDirectories: %v", err)
 	}
 
-	// A parent that still holds anything is left in place.
+	// Anything still inside fails cleanup and is kept for a retry.
 	if err := os.Remove(authority); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	if err := removeEmptySlotParent(root, relay, authority); err != nil {
-		t.Fatalf("removeEmptySlotParent with relay present: %v", err)
+	if err := removeSlotDirectory(root, testSlotIdentity, relay, authority); err == nil {
+		t.Fatal("removeSlotDirectory succeeded with relay still present")
 	}
-	if _, err := os.Lstat(slot); err != nil {
-		t.Fatalf("non-empty slot directory was removed: %v", err)
+	if _, err := os.Lstat(relay); err != nil {
+		t.Fatalf("relay was removed: %v", err)
 	}
 
 	if err := os.Remove(relay); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	if err := removeEmptySlotParent(root, relay, authority); err != nil {
-		t.Fatalf("removeEmptySlotParent: %v", err)
+	if err := removeSlotDirectory(root, testSlotIdentity, relay, authority); err != nil {
+		t.Fatalf("removeSlotDirectory: %v", err)
 	}
 	if err := proveBrokerRootEmpty(root); err != nil {
 		t.Fatalf("broker root not empty after cleanup: %v", err)
 	}
-	if err := removeEmptySlotParent(root, relay, authority); err != nil {
-		t.Fatalf("removeEmptySlotParent is not idempotent: %v", err)
+	if err := removeSlotDirectory(root, testSlotIdentity, relay, authority); err != nil {
+		t.Fatalf("removeSlotDirectory is not idempotent: %v", err)
 	}
 
-	// A parent that is not directly under the broker root is never touched.
-	nested := filepath.Join(root, "a", "b")
-	if err := os.MkdirAll(nested, 0o700); err != nil {
+	// A parent that is not <broker root>/<slot identity> is never touched.
+	other := filepath.Join(root, "fixture")
+	if err := os.MkdirAll(filepath.Join(other, "state"), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	if err := removeEmptySlotParent(root, filepath.Join(nested, "relay"), filepath.Join(nested, "authority")); err != nil {
-		t.Fatalf("nested parent: %v", err)
+	if err := removeSlotDirectory(root, testSlotIdentity, filepath.Join(other, "relay"), filepath.Join(other, "authority")); err != nil {
+		t.Fatalf("foreign parent: %v", err)
 	}
-	if _, err := os.Lstat(nested); err != nil {
-		t.Fatalf("nested parent was removed: %v", err)
+	if _, err := os.Lstat(filepath.Join(other, "state")); err != nil {
+		t.Fatalf("foreign parent was changed: %v", err)
+	}
+	if err := removeSlotDirectory(root, "../escape", relay, authority); err == nil {
+		t.Fatal("removeSlotDirectory accepted a path as the slot identity")
 	}
 }
 

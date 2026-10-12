@@ -58,6 +58,10 @@ func CreateSlotDirectories(brokerRoot, slotIdentity string, brokerUID, brokerGID
 		}
 		return errSlotDirectories
 	}
+	// Make a new slot entry durable before anything is created inside it.
+	if slotCreated && unix.Fsync(rootFD) != nil {
+		return rollback(-1)
+	}
 	slotFD, err := openBeneath(rootFD, slotIdentity)
 	if err != nil {
 		return rollback(-1)
