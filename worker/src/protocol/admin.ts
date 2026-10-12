@@ -48,6 +48,32 @@ const LEGACY_ROLLBACK_COMMAND_FIELDS = [
   "fenceGeneration",
   "observeUntil",
 ] as const;
+const PORTABLE_CANARY_START_FIELDS = [
+  "protocolVersion",
+  "kind",
+  "fleetId",
+  "timestamp",
+  "nonce",
+  "repositoryAlias",
+  "workflow",
+  "revision",
+  "scaleSet",
+  "configurationRevision",
+  "policyDigest",
+  "fenceGeneration",
+  "leaseGeneration",
+  "observeUntil",
+] as const;
+const PORTABLE_CANARY_STOP_FIELDS = [
+  "protocolVersion",
+  "kind",
+  "fleetId",
+  "timestamp",
+  "nonce",
+] as const;
+// A portable canary is one operator-dispatched job; a day bounds how long its
+// observation window may stay open.
+const MAX_PORTABLE_CANARY_WINDOW_MS = 86_400_000;
 const WORKFLOW = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.ya?ml$/;
 const SELECTOR = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const EXPECTATION_FIELDS = [
@@ -120,10 +146,37 @@ export type LegacyRollbackCommandV1 = {
   observeUntil: string;
 };
 
+export type PortableCanaryStartCommandV1 = {
+  protocolVersion: 1;
+  kind: "portable-canary-start";
+  fleetId: string;
+  timestamp: string;
+  nonce: string;
+  repositoryAlias: string;
+  workflow: string;
+  revision: string;
+  scaleSet: string;
+  configurationRevision: number;
+  policyDigest: string;
+  fenceGeneration: number;
+  leaseGeneration: number;
+  observeUntil: string;
+};
+
+export type PortableCanaryStopCommandV1 = {
+  protocolVersion: 1;
+  kind: "portable-canary-stop";
+  fleetId: string;
+  timestamp: string;
+  nonce: string;
+};
+
 export type AdminCommandV1 =
   | QueueRecoveryCommandV1
   | ArchiveReactivationCommandV1
-  | LegacyRollbackCommandV1;
+  | LegacyRollbackCommandV1
+  | PortableCanaryStartCommandV1
+  | PortableCanaryStopCommandV1;
 
 export type QueueRecoveryExpectation = {
   schemaVersion: 1;
@@ -175,7 +228,59 @@ export function parseAdminCommand(body: string): AdminCommandV1 {
     assertLegacyRollbackCommand(parsed);
     return parsed as LegacyRollbackCommandV1;
   }
+  if (parsed.kind === "portable-canary-start") {
+    assertPortableCanaryStartCommand(parsed);
+    return parsed as PortableCanaryStartCommandV1;
+  }
+  if (parsed.kind === "portable-canary-stop") {
+    assertPortableCanaryStopCommand(parsed);
+    return parsed as PortableCanaryStopCommandV1;
+  }
   throw new Error("admin command is invalid");
+}
+
+function assertPortableCanaryStartCommand(
+  parsed: Record<string, unknown>,
+): void {
+  assertExactKeys(parsed, PORTABLE_CANARY_START_FIELDS);
+  const command = parsed as PortableCanaryStartCommandV1;
+  if (
+    command.protocolVersion !== 1 ||
+    command.kind !== "portable-canary-start" ||
+    !FLEET_ID.test(command.fleetId) ||
+    !isRfc3339MsZ(command.timestamp) ||
+    !HEX64.test(command.nonce) ||
+    !ALIAS.test(command.repositoryAlias) ||
+    !WORKFLOW.test(command.workflow) ||
+    !SHA40.test(command.revision) ||
+    !ALIAS.test(command.scaleSet) ||
+    !isPositiveSafeInteger(command.configurationRevision) ||
+    !HEX64.test(command.policyDigest) ||
+    !isPositiveSafeInteger(command.fenceGeneration) ||
+    !isPositiveSafeInteger(command.leaseGeneration) ||
+    !isRfc3339MsZ(command.observeUntil) ||
+    command.observeUntil <= command.timestamp ||
+    command.observeUntil >
+      addMs(command.timestamp, MAX_PORTABLE_CANARY_WINDOW_MS)
+  ) {
+    throw new Error("portable-canary-start command is invalid");
+  }
+}
+
+function assertPortableCanaryStopCommand(
+  parsed: Record<string, unknown>,
+): void {
+  assertExactKeys(parsed, PORTABLE_CANARY_STOP_FIELDS);
+  const command = parsed as PortableCanaryStopCommandV1;
+  if (
+    command.protocolVersion !== 1 ||
+    command.kind !== "portable-canary-stop" ||
+    !FLEET_ID.test(command.fleetId) ||
+    !isRfc3339MsZ(command.timestamp) ||
+    !HEX64.test(command.nonce)
+  ) {
+    throw new Error("portable-canary-stop command is invalid");
+  }
 }
 
 function assertLegacyRollbackCommand(parsed: Record<string, unknown>): void {

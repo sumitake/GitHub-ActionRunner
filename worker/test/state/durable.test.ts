@@ -530,3 +530,93 @@ test("address-status replay and widened request semantics fail closed", async ()
     expect(durableSnapshot(db)).toEqual(afterSuccess);
   }
 });
+
+function enabledDurable(
+  name: string,
+  shared: ReturnType<typeof sharedSql>,
+): FleetDurableObject {
+  return new FleetDurableObject(
+    {
+      storage: { sql: shared.sql, transactionSync: shared.transactionSync },
+      id: { name },
+      blockConcurrencyWhile: async (work) => work(),
+    },
+    { ...validEnv(), WORKER_AUTHORITY: "enabled" },
+  );
+}
+
+async function signedAdmin(value: Record<string, unknown>): Promise<Request> {
+  const body = canonicalize(value);
+  const timestamp = value.timestamp as string;
+  const mac = await signCanonical(
+    hexToBytes(keyHex),
+    "POST",
+    "/v1/admin/command",
+    timestamp,
+    body,
+  );
+  return new Request("https://worker.example/v1/admin/command", {
+    method: "POST",
+    headers: { [TIMESTAMP_HEADER]: timestamp, [MAC_HEADER]: mac },
+    body,
+  });
+}
+
+test("enabled Durable Object refuses an uninventoried object without writes", async () => {
+  const shared = sharedSql();
+  const before = durableSnapshot(shared.db);
+  const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");
+
+  const response = await enabledDurable("other-fleet", shared).fetch(
+    await signedAdmin({
+      protocolVersion: 1,
+      kind: "portable-canary-stop",
+      fleetId: "other-fleet",
+      timestamp,
+      nonce: "4".repeat(64),
+    }),
+  );
+
+  expect(response.status).toBe(401);
+  expect(durableSnapshot(shared.db)).toEqual(before);
+});
+
+test("enabled Durable Object persists a portable canary start", async () => {
+  const shared = sharedSql();
+  const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");
+  const store = new MemoryFleetStore("example-fleet", { now: () => timestamp });
+  store.fleet.inventoried = true;
+  store.fleet.epoch = 1;
+  store.fleet.sessionId = session;
+  store.fleet.leaseGeneration = 3;
+  saveFleetStore(shared.persist, store);
+
+  const response = await enabledDurable("example-fleet", shared).fetch(
+    await signedAdmin({
+      protocolVersion: 1,
+      kind: "portable-canary-start",
+      fleetId: "example-fleet",
+      timestamp,
+      nonce: "5".repeat(64),
+      repositoryAlias: "repo-a",
+      workflow: "portable-canary.yml",
+      revision: "0123456789abcdef0123456789abcdef01234567",
+      scaleSet: "portable-canary",
+      configurationRevision: 2,
+      policyDigest: digest,
+      fenceGeneration: 7,
+      leaseGeneration: 3,
+      observeUntil: new Date(Date.parse(timestamp) + 3_600_000)
+        .toISOString()
+        .replace(/\.\d+Z$/, ".000Z"),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  const fleets = shared.db
+    .prepare("SELECT routing_state, fence_generation FROM fleet_state")
+    .all() as Array<{ routing_state: string; fence_generation: number }>;
+  expect(fleets).toEqual([
+    { routing_state: "PORTABLE_CANARY", fence_generation: 7 },
+  ]);
+});

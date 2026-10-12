@@ -123,19 +123,51 @@ function validateBase(base) {
   }
 }
 
-function validateDescriptor(descriptor) {
-  exactKeys(descriptor, [
-    "accountId",
-    "cronBudgetOverheadMs",
-    "cronTickBudgetMs",
-    "fleetIds",
-    "inventoryDigest",
-    "inventoryRevision",
-    "maxFleets",
-    "nonceTtlMs",
-    "perFleetDeadlineMs",
-    "timestampWindowMs",
+const DESCRIPTOR_FIELDS = [
+  "accountId",
+  "cronBudgetOverheadMs",
+  "cronTickBudgetMs",
+  "fleetIds",
+  "inventoryDigest",
+  "inventoryRevision",
+  "maxFleets",
+  "nonceTtlMs",
+  "perFleetDeadlineMs",
+  "timestampWindowMs",
+];
+
+// validateAuthority accepts the optional block that turns on the Worker's
+// session, heartbeat, and admin authority. Without it the rendered
+// deployment stays address-only, byte for byte.
+function validateAuthority(authority) {
+  exactKeys(authority, [
+    "archiveEvidenceMaxAgeMs",
+    "hostedTransitionSafetyMarginMs",
+    "leaseDurationMs",
+    "selectorEvidenceMaxAgeMs",
   ]);
+  return {
+    WORKER_AUTHORITY: "enabled",
+    LEASE_DURATION_MS: String(positiveSafeInteger(authority.leaseDurationMs)),
+    ARCHIVE_EVIDENCE_MAX_AGE_MS: String(
+      positiveSafeInteger(authority.archiveEvidenceMaxAgeMs),
+    ),
+    SELECTOR_EVIDENCE_MAX_AGE_MS: String(
+      positiveSafeInteger(authority.selectorEvidenceMaxAgeMs),
+    ),
+    HOSTED_TRANSITION_SAFETY_MARGIN_MS: String(
+      positiveSafeInteger(authority.hostedTransitionSafetyMarginMs),
+    ),
+  };
+}
+
+function validateDescriptor(descriptor) {
+  exactKeys(
+    descriptor,
+    Object.hasOwn(descriptor, "authority")
+      ? [...DESCRIPTOR_FIELDS, "authority"]
+      : DESCRIPTOR_FIELDS,
+  );
   if (!ACCOUNT_ID.test(descriptor.accountId)) {
     throw new Error("account rejected");
   }
@@ -199,6 +231,9 @@ function validateDescriptor(descriptor) {
     perFleetDeadlineMs,
     cronBudgetOverheadMs,
     cronTickBudgetMs,
+    authorityVars: Object.hasOwn(descriptor, "authority")
+      ? validateAuthority(descriptor.authority)
+      : {},
   };
 }
 
@@ -282,6 +317,7 @@ export function renderWorkerDeployment({
       CRON_TICK_BUDGET_MS: String(terms.cronTickBudgetMs),
       FLEET_INVENTORY_REVISION: descriptor.inventoryRevision,
       FLEET_INVENTORY_DIGEST: descriptor.inventoryDigest,
+      ...terms.authorityVars,
     },
   };
   writeAtomicPrivate(outputPath, `${JSON.stringify(rendered, null, 2)}\n`);

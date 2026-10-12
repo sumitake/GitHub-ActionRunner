@@ -311,3 +311,61 @@ test("renderer requires private regular files and an exact public base", () => {
   expect(baseResult.status).toBe(1);
   expect(() => statSync(baseOutput)).toThrow();
 });
+
+function authorityBlock(): Record<string, unknown> {
+  return {
+    leaseDurationMs: 120_000,
+    archiveEvidenceMaxAgeMs: 600_000,
+    selectorEvidenceMaxAgeMs: 600_000,
+    hostedTransitionSafetyMarginMs: 30_000,
+  };
+}
+
+test("renderer enables Worker authority only from an explicit block", () => {
+  const root = mkdtempSync(join(tmpdir(), "pghar-worker-config-"));
+  temporaryRoots.push(root);
+  const { output, result } = runRenderer(root, {
+    ...validDescriptor(),
+    authority: authorityBlock(),
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  const vars = JSON.parse(readFileSync(output, "utf8")).vars as Record<
+    string,
+    string
+  >;
+  expect(vars).toMatchObject({
+    FLEET_IDS: "alpha,beta,gamma",
+    WORKER_AUTHORITY: "enabled",
+    LEASE_DURATION_MS: "120000",
+    ARCHIVE_EVIDENCE_MAX_AGE_MS: "600000",
+    SELECTOR_EVIDENCE_MAX_AGE_MS: "600000",
+    HOSTED_TRANSITION_SAFETY_MARGIN_MS: "30000",
+  });
+  expect(readFileSync(output, "utf8")).not.toContain("0b".repeat(32));
+});
+
+test("renderer rejects a partial or malformed authority block", () => {
+  const partial = authorityBlock();
+  delete partial.leaseDurationMs;
+  const cases: Array<[string, unknown]> = [
+    ["partial", partial],
+    ["extra field", { ...authorityBlock(), enabled: true }],
+    ["zero lease", { ...authorityBlock(), leaseDurationMs: 0 }],
+    [
+      "string margin",
+      { ...authorityBlock(), hostedTransitionSafetyMarginMs: "1" },
+    ],
+    ["null", null],
+  ];
+  for (const [name, authority] of cases) {
+    const root = mkdtempSync(join(tmpdir(), "pghar-worker-config-"));
+    temporaryRoots.push(root);
+    const { output, result } = runRenderer(root, {
+      ...validDescriptor(),
+      authority,
+    });
+    expect(result.status, name).not.toBe(0);
+    expect(() => statSync(output), name).toThrow();
+  }
+});

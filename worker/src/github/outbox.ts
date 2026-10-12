@@ -1135,6 +1135,39 @@ function settleCanaryBoundary(
   store.recordAudit("canary-boundary-hosted");
 }
 
+// settlePortableCanaryDrain completes a portable canary's drain without the
+// due-work runner: once the boundary row for the current lease generation is
+// due, the fleet returns to HOSTED. It reports the state after the call.
+export function settlePortableCanaryDrain(
+  store: MemoryFleetStore,
+  now: string,
+): "hosted" | "draining" {
+  if (store.fleet.routingState !== "DRAINING_TO_HOSTED") {
+    throw new Error("portable canary drain requires DRAINING_TO_HOSTED");
+  }
+  const boundary = store.dueWork.find(
+    (row) =>
+      row.kind === "canary-boundary" &&
+      row.status === "ready" &&
+      row.payload.from === "PORTABLE_CANARY" &&
+      row.payload.transitionRevision === String(store.fleet.leaseGeneration),
+  );
+  if (boundary === undefined) {
+    throw new Error("portable canary drain has no current boundary");
+  }
+  if (now < boundary.dueAt) {
+    return "draining";
+  }
+  assertTransition("DRAINING_TO_HOSTED", "HOSTED");
+  store.transitions.push(
+    nextTransitionRecord(store, "DRAINING_TO_HOSTED", "HOSTED"),
+  );
+  store.fleet.routingState = "HOSTED";
+  finishWork(boundary, "done");
+  store.recordAudit("canary-boundary-hosted");
+  return "hosted";
+}
+
 function failPendingCanaryWork(store: MemoryFleetStore, keepId?: string): void {
   for (const row of store.dueWork) {
     if (

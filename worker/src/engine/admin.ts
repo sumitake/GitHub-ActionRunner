@@ -10,6 +10,8 @@ import {
   type AdminCommandV1,
   type ArchiveReactivationCommandV1,
   type LegacyRollbackCommandV1,
+  type PortableCanaryStartCommandV1,
+  type PortableCanaryStopCommandV1,
   type QueueRecoveryExpectation,
 } from "../protocol/admin";
 import { canonicalize } from "../protocol/canonical";
@@ -18,10 +20,16 @@ import {
   encodeArchiveExpectation,
   type ArchiveReactivationExpectation,
 } from "../routing/archive";
-import { persistCanary } from "../github/outbox";
+import {
+  abortCanary,
+  persistCanary,
+  settlePortableCanaryDrain,
+} from "../github/outbox";
+import { assertTransition } from "../routing/machine";
 import { selectorRestrictionReason } from "../routing/selector";
 import {
   isGitHubMutation,
+  nextTransitionRecord,
   type DueWorkRecord,
   type MemoryFleetStore,
 } from "../state/memory";
@@ -35,6 +43,14 @@ export type AdminSecrets = {
   nonceTtlMs: number;
   archiveEvidenceMaxAgeMs?: number;
   selectorEvidenceMaxAgeMs?: number;
+  hostedTransitionSafetyMarginMs?: number;
+};
+
+type AdminResult = {
+  status: number;
+  body: string;
+  timestamp: string;
+  macHex: string;
 };
 
 export type AdminCommandInput = {
@@ -110,6 +126,26 @@ export async function handleAdminCommand(
   }
   if (command.kind === "archive-reactivation") {
     return handleArchiveReactivation(
+      store,
+      secrets,
+      command,
+      receiptTime,
+      respond,
+      reject,
+    );
+  }
+  if (command.kind === "portable-canary-start") {
+    return handlePortableCanaryStart(
+      store,
+      secrets,
+      command,
+      receiptTime,
+      respond,
+      reject,
+    );
+  }
+  if (command.kind === "portable-canary-stop") {
+    return handlePortableCanaryStop(
       store,
       secrets,
       command,
@@ -337,6 +373,183 @@ async function handleLegacyRollback(
     `legacy-rollback-canary:${command.repositoryAlias}:${command.transitionEpoch}`,
   );
   return accepted;
+}
+
+// handlePortableCanaryStart moves a fleet with no repository records from
+// UNINITIALIZED or HOSTED into PORTABLE_CANARY for one named scale set. The
+// Worker then issues canary-only, capacity-1 leases to the portable holder
+// whose fence generation, policy digest, and configuration revision match.
+// With no repository records the Worker writes no repository variables and
+// needs no GitHub credential; the canary workflow targets the scale set.
+async function handlePortableCanaryStart(
+  store: MemoryFleetStore,
+  secrets: AdminSecrets,
+  command: PortableCanaryStartCommandV1,
+  receiptTime: string,
+  respond: (status: number, body: string) => Promise<AdminResult>,
+  reject: () => Promise<AdminResult>,
+): Promise<AdminResult> {
+  const fleet = store.fleet;
+  if (
+    (fleet.routingState !== "UNINITIALIZED" &&
+      fleet.routingState !== "HOSTED") ||
+    store.repositories.size !== 0 ||
+    fleet.hostedHold ||
+    fleet.sessionId === null ||
+    fleet.leaseGeneration !== command.leaseGeneration ||
+    hasUnresolvedCanaryWork(store)
+  ) {
+    return reject();
+  }
+
+  let expiresAt: string;
+  let accepted: AdminResult;
+  try {
+    expiresAt = addMs(receiptTime, secrets.nonceTtlMs);
+    accepted = await respond(
+      200,
+      canonicalize({
+        protocolVersion: 1,
+        kind: command.kind,
+        fleetId: command.fleetId,
+        nonce: command.nonce,
+        scaleSet: command.scaleSet,
+        status: "portable-canary",
+        receiptTime,
+      }),
+    );
+  } catch {
+    return reject();
+  }
+  if (!store.rememberNonce(command.nonce, expiresAt)) {
+    return reject();
+  }
+
+  const previous = {
+    routingState: fleet.routingState,
+    fenceGeneration: fleet.fenceGeneration,
+    policyDigest: fleet.policyDigest,
+    configRevision: fleet.configRevision,
+    canaryScaleSet: fleet.canaryScaleSet,
+    canaryEvidence: fleet.canaryEvidence,
+    dueWork: store.dueWork.length,
+    transitions: store.transitions.length,
+    audit: store.audit.length,
+  };
+  try {
+    if (fleet.routingState === "UNINITIALIZED") {
+      assertTransition("UNINITIALIZED", "HOSTED");
+      store.transitions.push(
+        nextTransitionRecord(store, "UNINITIALIZED", "HOSTED"),
+      );
+      fleet.routingState = "HOSTED";
+    }
+    fleet.fenceGeneration = command.fenceGeneration;
+    fleet.policyDigest = command.policyDigest;
+    fleet.configRevision = command.configurationRevision;
+    fleet.canaryScaleSet = command.scaleSet;
+    persistCanary(store, receiptTime, "PORTABLE_CANARY", {
+      repositoryAlias: command.repositoryAlias,
+      workflow: command.workflow,
+      revision: command.revision,
+      observeUntil: command.observeUntil,
+    });
+  } catch {
+    store.nonces.delete(command.nonce);
+    fleet.routingState = previous.routingState;
+    fleet.fenceGeneration = previous.fenceGeneration;
+    fleet.policyDigest = previous.policyDigest;
+    fleet.configRevision = previous.configRevision;
+    fleet.canaryScaleSet = previous.canaryScaleSet;
+    fleet.canaryEvidence = previous.canaryEvidence;
+    store.dueWork.splice(previous.dueWork);
+    store.transitions.splice(previous.transitions);
+    store.audit.splice(previous.audit);
+    return reject();
+  }
+  store.recordAudit(`portable-canary-start:${command.scaleSet}`);
+  return accepted;
+}
+
+// handlePortableCanaryStop drains a portable canary back to hosted. The first
+// call moves PORTABLE_CANARY to DRAINING_TO_HOSTED; a later call, once the
+// last issued lease has expired plus the safety margin, completes the move to
+// HOSTED. The response reports which state the fleet is in.
+async function handlePortableCanaryStop(
+  store: MemoryFleetStore,
+  secrets: AdminSecrets,
+  command: PortableCanaryStopCommandV1,
+  receiptTime: string,
+  respond: (status: number, body: string) => Promise<AdminResult>,
+  reject: () => Promise<AdminResult>,
+): Promise<AdminResult> {
+  const margin = secrets.hostedTransitionSafetyMarginMs;
+  const state = store.fleet.routingState;
+  if (
+    margin === undefined ||
+    (state !== "PORTABLE_CANARY" && state !== "DRAINING_TO_HOSTED")
+  ) {
+    return reject();
+  }
+  let expiresAt: string;
+  try {
+    expiresAt = addMs(receiptTime, secrets.nonceTtlMs);
+  } catch {
+    return reject();
+  }
+  const previous = {
+    routingState: state,
+    leaseGeneration: store.fleet.leaseGeneration,
+    canaryEvidence: store.fleet.canaryEvidence,
+    dueWork: store.dueWork.map((row) => ({ ...row })),
+    transitions: store.transitions.length,
+    audit: store.audit.length,
+  };
+  let outcome: "hosted" | "draining";
+  try {
+    if (state === "PORTABLE_CANARY") {
+      abortCanary(store, margin);
+    }
+    outcome = settlePortableCanaryDrain(store, receiptTime);
+  } catch {
+    store.fleet.routingState = previous.routingState;
+    store.fleet.leaseGeneration = previous.leaseGeneration;
+    store.fleet.canaryEvidence = previous.canaryEvidence;
+    store.dueWork.splice(0, store.dueWork.length, ...previous.dueWork);
+    store.transitions.splice(previous.transitions);
+    store.audit.splice(previous.audit);
+    return reject();
+  }
+  if (!store.rememberNonce(command.nonce, expiresAt)) {
+    store.fleet.routingState = previous.routingState;
+    store.fleet.leaseGeneration = previous.leaseGeneration;
+    store.fleet.canaryEvidence = previous.canaryEvidence;
+    store.dueWork.splice(0, store.dueWork.length, ...previous.dueWork);
+    store.transitions.splice(previous.transitions);
+    store.audit.splice(previous.audit);
+    return reject();
+  }
+  return respond(
+    200,
+    canonicalize({
+      protocolVersion: 1,
+      kind: command.kind,
+      fleetId: command.fleetId,
+      nonce: command.nonce,
+      status: outcome,
+      receiptTime,
+    }),
+  );
+}
+
+function hasUnresolvedCanaryWork(store: MemoryFleetStore): boolean {
+  return store.dueWork.some(
+    (row) =>
+      (row.status === "ready" ||
+        row.status === "claimed" ||
+        row.status === "uncertain") &&
+      row.kind === "canary-boundary",
+  );
 }
 
 async function handleArchiveReactivation(

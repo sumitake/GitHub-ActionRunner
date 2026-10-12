@@ -226,3 +226,52 @@ test("wrong, widened, future, and late queue observations fail closed", () => {
     ),
   ).toEqual({ kind: "failed" });
 });
+
+const portableStart = {
+  protocolVersion: 1,
+  kind: "portable-canary-start",
+  fleetId: "example-fleet",
+  timestamp: "2026-01-01T00:00:00.000Z",
+  nonce: "1".repeat(64),
+  repositoryAlias: "repo-a",
+  workflow: "portable-canary.yml",
+  revision: "0123456789abcdef0123456789abcdef01234567",
+  scaleSet: "portable-canary",
+  configurationRevision: 1,
+  policyDigest: "a".repeat(64),
+  fenceGeneration: 1,
+  leaseGeneration: 1,
+  observeUntil: "2026-01-01T01:00:00.000Z",
+};
+
+test("portable canary commands parse only their exact shapes", () => {
+  expect(parseAdminCommand(canonicalize(portableStart))).toEqual(portableStart);
+  const stop = {
+    protocolVersion: 1,
+    kind: "portable-canary-stop",
+    fleetId: "example-fleet",
+    timestamp: "2026-01-01T00:00:00.000Z",
+    nonce: "2".repeat(64),
+  };
+  expect(parseAdminCommand(canonicalize(stop))).toEqual(stop);
+
+  const invalid: Array<[string, Record<string, unknown>]> = [
+    ["extra field", { ...portableStart, maxCapacity: 1 }],
+    ["uppercase scale set", { ...portableStart, scaleSet: "Portable" }],
+    ["bad policy digest", { ...portableStart, policyDigest: "A".repeat(64) }],
+    ["zero fence", { ...portableStart, fenceGeneration: 0 }],
+    ["short revision", { ...portableStart, revision: "abc" }],
+    [
+      "window not after timestamp",
+      { ...portableStart, observeUntil: portableStart.timestamp },
+    ],
+    [
+      "window over a day",
+      { ...portableStart, observeUntil: "2026-01-02T00:00:00.001Z" },
+    ],
+    ["stop with extra field", { ...stop, scaleSet: "portable-canary" }],
+  ];
+  for (const [name, value] of invalid) {
+    expect(() => parseAdminCommand(canonicalize(value)), name).toThrow();
+  }
+});
