@@ -82,6 +82,13 @@ func (c *DockerCLI) removeBrokerResources(
 		if err := c.removeBrokerDirectory(record.spec.RelayParent); err != nil {
 			return err
 		}
+		if err := removeEmptySlotParent(
+			c.cfg.BrokerRoot,
+			record.spec.RelayParent,
+			record.spec.AuthorityParent,
+		); err != nil {
+			return err
+		}
 		c.mu.Lock()
 		record.directoriesGone = true
 		c.mu.Unlock()
@@ -129,6 +136,36 @@ func (c *DockerCLI) removeBrokerDirectory(path string) error {
 	}
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("hostruntime: broker cleanup not confirmed")
+	}
+	return nil
+}
+
+// removeEmptySlotParent removes the directory that held relay and authority
+// once both are gone, so the broker root can return to empty. It removes only
+// an empty, real directory directly under the broker root, and leaves any
+// other parent in place.
+func removeEmptySlotParent(brokerRoot, relayParent, authorityParent string) error {
+	parent := filepath.Dir(relayParent)
+	if filepath.Dir(authorityParent) != parent ||
+		filepath.Dir(parent) != filepath.Clean(brokerRoot) {
+		return nil
+	}
+	info, err := os.Lstat(parent)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.IsDir() {
+		return errors.New("hostruntime: broker cleanup slot directory invalid")
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return errors.New("hostruntime: broker cleanup slot directory unavailable")
+	}
+	if len(entries) != 0 {
+		return nil
+	}
+	if err := os.Remove(parent); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.New("hostruntime: broker cleanup failed")
 	}
 	return nil
 }

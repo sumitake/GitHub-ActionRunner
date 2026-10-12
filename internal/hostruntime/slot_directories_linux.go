@@ -18,9 +18,9 @@ var slotChildDirectories = []string{"relay", "authority"}
 
 // CreateSlotDirectories creates <brokerRoot>/<slotIdentity>/relay and
 // .../authority for one job. brokerRoot must be a directory owned by this
-// process's user with mode 0700. The slot directory may already exist,
-// because cleanup keeps it when it removes relay and authority, but must then
-// have the same owner and mode. The
+// process's user with mode 0700. The slot directory may already exist, for
+// example after an interrupted cleanup, but must then have the same owner and
+// mode; cleanup removes it once it is empty. The
 // relay and authority directories must not exist; a leftover means cleanup
 // did not finish, so the call fails rather than reuse it. Both are created
 // empty, owned by the broker user, mode 0700. Every path is resolved beneath
