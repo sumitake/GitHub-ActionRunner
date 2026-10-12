@@ -49,7 +49,9 @@ container log limits, and the dial authority's block size, client limit, and
 timeout). When `github` is present, every repository's `credential_name` must
 name exactly one file secret. In `jail`, the adapter-broker and verifier users
 are never root; the runner is unprivileged on `strict-linux-v1` and `0:0` on
-`qts-capless-root`. The disabled observer ignores all three.
+`qts-capless-root`. The adapter, broker, and runner logs of every slot, at the
+jail's rotation limits, must fit the remaining `log_bounds` budget at
+`max_capacity`. The disabled observer ignores all three.
 
 The command does not observe the target host. Host identity, storage, and
 other live observations stay the operator's inputs in the template.

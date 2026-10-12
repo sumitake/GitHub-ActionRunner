@@ -15,8 +15,8 @@ func jailPrivateOverlay() PrivateOverlay {
 		RunnerUser:               "0:0",
 		VerifierUser:             "1002:1002",
 		SeccompProfilePath:       overlay.Paths.SeccompRoot + "/jail.json",
-		ContainerLogMaxBytes:     1 << 20,
-		ContainerLogMaxFiles:     2,
+		ContainerLogMaxBytes:     128,
+		ContainerLogMaxFiles:     1,
 		DialReservationBlockSize: 4,
 		DialAuthorityMaxClients:  4,
 		DialAuthorityTimeout:     "2s",
@@ -69,18 +69,29 @@ func TestPrivateOverlayRejectsInvalidJailSection(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]func(*JailOverlay){
-		"root adapter":           func(jail *JailOverlay) { jail.AdapterBrokerUser = "0:1001" },
-		"named adapter":          func(jail *JailOverlay) { jail.AdapterBrokerUser = "broker" },
-		"root verifier":          func(jail *JailOverlay) { jail.VerifierUser = "0:0" },
-		"missing verifier gid":   func(jail *JailOverlay) { jail.VerifierUser = "1002" },
-		"unprivileged runner":    func(jail *JailOverlay) { jail.RunnerUser = "1003:1003" },
-		"runner with root uid":   func(jail *JailOverlay) { jail.RunnerUser = "0:1003" },
-		"seccomp outside root":   func(jail *JailOverlay) { jail.SeccompProfilePath = "/etc/seccomp.json" },
-		"seccomp is the root":    func(jail *JailOverlay) { jail.SeccompProfilePath = "/opt/portable/seccomp" },
-		"relative seccomp":       func(jail *JailOverlay) { jail.SeccompProfilePath = "seccomp/jail.json" },
-		"unclean seccomp":        func(jail *JailOverlay) { jail.SeccompProfilePath = "/opt/portable/seccomp/../jail.json" },
-		"zero log bytes":         func(jail *JailOverlay) { jail.ContainerLogMaxBytes = 0 },
-		"zero log files":         func(jail *JailOverlay) { jail.ContainerLogMaxFiles = 0 },
+		"root adapter":         func(jail *JailOverlay) { jail.AdapterBrokerUser = "0:1001" },
+		"named adapter":        func(jail *JailOverlay) { jail.AdapterBrokerUser = "broker" },
+		"root verifier":        func(jail *JailOverlay) { jail.VerifierUser = "0:0" },
+		"missing verifier gid": func(jail *JailOverlay) { jail.VerifierUser = "1002" },
+		"unprivileged runner":  func(jail *JailOverlay) { jail.RunnerUser = "1003:1003" },
+		"runner with root uid": func(jail *JailOverlay) { jail.RunnerUser = "0:1003" },
+		"seccomp outside root": func(jail *JailOverlay) { jail.SeccompProfilePath = "/etc/seccomp.json" },
+		"seccomp is the root":  func(jail *JailOverlay) { jail.SeccompProfilePath = "/opt/portable/seccomp" },
+		"relative seccomp":     func(jail *JailOverlay) { jail.SeccompProfilePath = "seccomp/jail.json" },
+		"unclean seccomp":      func(jail *JailOverlay) { jail.SeccompProfilePath = "/opt/portable/seccomp/../jail.json" },
+		"zero log bytes":       func(jail *JailOverlay) { jail.ContainerLogMaxBytes = 0 },
+		"zero log files":       func(jail *JailOverlay) { jail.ContainerLogMaxFiles = 0 },
+		"logs over the byte budget": func(jail *JailOverlay) {
+			jail.ContainerLogMaxBytes = 171
+		},
+		"logs over the file budget": func(jail *JailOverlay) {
+			jail.ContainerLogMaxBytes = 64
+			jail.ContainerLogMaxFiles = 2
+		},
+		"log product overflows": func(jail *JailOverlay) {
+			jail.ContainerLogMaxBytes = 1 << 40
+			jail.ContainerLogMaxFiles = 1 << 40
+		},
 		"zero block size":        func(jail *JailOverlay) { jail.DialReservationBlockSize = 0 },
 		"block size over uint32": func(jail *JailOverlay) { jail.DialReservationBlockSize = 1 << 32 },
 		"zero clients":           func(jail *JailOverlay) { jail.DialAuthorityMaxClients = 0 },

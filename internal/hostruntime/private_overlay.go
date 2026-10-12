@@ -1116,6 +1116,10 @@ func validGitHubOverlay(github *GitHubOverlay, overlay PrivateOverlay) bool {
 // dial authority.
 const maxDialAuthorityTimeout = 30 * time.Second
 
+// longLivedLogContainers counts each slot's containers that keep logs: the
+// adapter, the broker, and the runner.
+const longLivedLogContainers = 3
+
 func validJailOverlay(jail *JailOverlay, overlay PrivateOverlay) bool {
 	if jail == nil {
 		return true
@@ -1143,14 +1147,13 @@ func validJailOverlay(jail *JailOverlay, overlay PrivateOverlay) bool {
 	}
 	timeout, timeoutOK := canonicalDuration(jail.DialAuthorityTimeout)
 	authority := overlay.Resources.SlotResources.DialAuthority
-	return validCanonicalAbsolutePath(jail.SeccompProfilePath) &&
+	return jailLogsFit(*jail, overlay.Resources) &&
+		validCanonicalAbsolutePath(jail.SeccompProfilePath) &&
 		validateDescendant(
 			overlay.Paths.SeccompRoot,
 			jail.SeccompProfilePath,
 			"seccomp profile",
 		) == nil &&
-		jail.ContainerLogMaxBytes > 0 &&
-		jail.ContainerLogMaxFiles > 0 &&
 		jail.DialReservationBlockSize > 0 &&
 		jail.DialReservationBlockSize <= math.MaxUint32 &&
 		jail.DialAuthorityMaxClients > 0 &&
@@ -1160,6 +1163,25 @@ func validJailOverlay(jail *JailOverlay, overlay PrivateOverlay) bool {
 		timeoutOK &&
 		timeout%time.Millisecond == 0 &&
 		timeout <= maxDialAuthorityTimeout
+}
+
+// jailLogsFit reports whether every slot's long-lived containers, rotating
+// their logs at the jail limits, fit the log filesystem's remaining budget
+// at full capacity.
+func jailLogsFit(jail JailOverlay, resources ResourceOverlay) bool {
+	if jail.ContainerLogMaxBytes == 0 || jail.ContainerLogMaxFiles == 0 {
+		return false
+	}
+	perContainer, perContainerOK := checkedMul(jail.ContainerLogMaxBytes, jail.ContainerLogMaxFiles)
+	containers, containersOK := checkedMul(longLivedLogContainers, resources.MaxCapacity)
+	fleetBytes, bytesOK := checkedMul(perContainer, containers)
+	fleetFiles, filesOK := checkedMul(jail.ContainerLogMaxFiles, containers)
+	bounds := resources.Storage.LogBounds
+	return perContainerOK && containersOK && bytesOK && filesOK &&
+		bounds.UsedBytes <= bounds.MaxBytes &&
+		bounds.UsedFiles <= bounds.MaxFiles &&
+		fleetBytes <= bounds.MaxBytes-bounds.UsedBytes &&
+		fleetFiles <= bounds.MaxFiles-bounds.UsedFiles
 }
 
 // uniqueFileSecret reports whether name resolves to exactly one file secret
