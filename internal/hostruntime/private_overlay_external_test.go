@@ -174,6 +174,12 @@ func TestPrivateOverlayRejectsInvalidExternalSections(t *testing.T) {
 		"submillisecond header timeout": func(overlay *PrivateOverlay) {
 			overlay.GitHub.ResponseHeaderTimeout = "1.5ms"
 		},
+		"repository URL without hostname": func(overlay *PrivateOverlay) {
+			overlay.Repositories[0].ConfigURL = "https://:443/example/repository"
+		},
+		"repository URL with port": func(overlay *PrivateOverlay) {
+			overlay.Repositories[0].ConfigURL = "https://github.example.invalid:65536/example/repository"
+		},
 		"repository token missing": func(overlay *PrivateOverlay) {
 			overlay.Repositories[0].CredentialName = "absent"
 		},

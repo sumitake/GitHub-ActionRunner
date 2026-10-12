@@ -1166,11 +1166,14 @@ func validImmutableImageReference(value string) bool {
 	return validImageDigest(value)
 }
 
+// validHTTPSURL requires an https URL with a hostname and no explicit port,
+// user, query, or fragment, so every accepted URL can be dialed.
 func validHTTPSURL(value string) bool {
 	parsed, err := url.Parse(value)
 	return err == nil &&
 		parsed.Scheme == "https" &&
-		parsed.Host != "" &&
+		parsed.Hostname() != "" &&
+		parsed.Host == parsed.Hostname() &&
 		parsed.User == nil &&
 		parsed.RawQuery == "" &&
 		parsed.Fragment == ""
