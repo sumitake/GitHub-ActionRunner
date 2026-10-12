@@ -41,6 +41,9 @@ Nothing in this section has shipped as a tagged release.
   framing, crash-safe journal locking, full-history public sanitization,
   and hosted CI checks for Linux, containers, supply chain, and static
   analysis.
+- Pinned patched releases of five transitive npm development dependencies
+  (sharp, source-map-js, fast-uri, smol-toml, and katex) through `overrides`.
+  The braces advisory under the docs linter has no patched release yet.
 
 ### Changed
 
