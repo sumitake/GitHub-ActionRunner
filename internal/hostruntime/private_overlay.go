@@ -1045,14 +1045,11 @@ func validWorkerOverlay(worker *WorkerOverlay, overlay PrivateOverlay) bool {
 		return false
 	}
 	// The HMAC key must not be readable as any other credential: compare the
-	// resolved references, not only the names.
+	// resolved references, not only the names. uniqueFileSecret already
+	// separates it from the management credential.
 	hmacRef, _ := namedSecretRef(worker.HMACCredentialName, overlay.Secrets)
-	others := []string{overlay.ManagementTransport.CredentialName}
 	for _, repository := range overlay.Repositories {
-		others = append(others, repository.CredentialName)
-	}
-	for _, name := range others {
-		if ref, ok := namedSecretRef(name, overlay.Secrets); name == worker.HMACCredentialName || (ok && ref == hmacRef) {
+		if ref, ok := namedSecretRef(repository.CredentialName, overlay.Secrets); repository.CredentialName == worker.HMACCredentialName || (ok && ref == hmacRef) {
 			return false
 		}
 	}
@@ -1113,6 +1110,13 @@ func uniqueFileSecret(
 ) bool {
 	if !validLifecycleScalar(name) || name == managementCredential {
 		return false
+	}
+	// Compare the resolved reference too, so another name for the same file
+	// is not accepted.
+	if ref, ok := namedSecretRef(name, secrets); ok {
+		if management, ok := namedSecretRef(managementCredential, secrets); ok && ref == management {
+			return false
+		}
 	}
 	found := 0
 	for _, secret := range secrets {

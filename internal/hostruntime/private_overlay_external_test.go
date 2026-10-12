@@ -142,6 +142,9 @@ func TestPrivateOverlayRejectsInvalidExternalSections(t *testing.T) {
 		"HMAC file shared with the management credential": func(overlay *PrivateOverlay) {
 			shareSecretRef(overlay, "worker-hmac", overlay.ManagementTransport.CredentialName)
 		},
+		"repository token file shared with the management credential": func(overlay *PrivateOverlay) {
+			shareSecretRef(overlay, overlay.Repositories[0].CredentialName, overlay.ManagementTransport.CredentialName)
+		},
 		"HMAC from environment": func(overlay *PrivateOverlay) {
 			for index := range overlay.Secrets {
 				if overlay.Secrets[index].Name == "worker-hmac" {
