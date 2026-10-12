@@ -263,3 +263,43 @@ func TestRunPrivateOverlayAssemblyRejectsManifestAliasOfOutput(t *testing.T) {
 		t.Fatalf("output = %q, %v; want the manifest unchanged", current, err)
 	}
 }
+
+func TestRunPrivateOverlayAssemblyCarriesExternalSections(t *testing.T) {
+	t.Parallel()
+	templatePath, manifestPath, outputPath := assemblyFixture(t, func(template map[string]any) {
+		secrets := template["secrets"].([]any)
+		template["secrets"] = append(secrets, map[string]any{
+			"name": "worker-hmac",
+			"ref":  map[string]any{"source": "file", "ref": "/private-root/worker-hmac"},
+		})
+		template["worker"] = map[string]any{
+			"base_url":             "https://failover.example.invalid",
+			"hmac_credential_name": "worker-hmac",
+			"fleet_id":             "example-fleet",
+			"timestamp_window":     "5m0s",
+			"lease_duration":       "2m0s",
+			"heartbeat_deadline":   "10s",
+			"shortening_margin":    "5s",
+			"lost_renewals":        2,
+			"termination_tail":     "30s",
+		}
+		template["github"] = map[string]any{
+			"max_response_bytes":      1048576,
+			"operation_timeout":       "1m0s",
+			"response_header_timeout": "55s",
+		}
+	})
+	if _, err := RunPrivateOverlayAssembly(
+		assemblyArgs(templatePath, manifestPath, outputPath),
+	); err != nil {
+		t.Fatalf("RunPrivateOverlayAssembly() error = %v", err)
+	}
+	overlay, _, err := LoadPrivateOverlayFile(outputPath)
+	if err != nil {
+		t.Fatalf("LoadPrivateOverlayFile(output) error = %v", err)
+	}
+	if overlay.Worker == nil || overlay.Worker.FleetID != "example-fleet" ||
+		overlay.GitHub == nil || overlay.GitHub.MaxResponseBytes != 1048576 {
+		t.Fatalf("external sections not carried: %+v %+v", overlay.Worker, overlay.GitHub)
+	}
+}
