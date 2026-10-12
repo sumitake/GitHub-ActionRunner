@@ -634,6 +634,31 @@ test("enabled Durable Object writes nothing for a request with a bad MAC", async
   expect(durableSnapshot(shared.db)).toEqual(before);
 });
 
+test("enabled Durable Object writes nothing for a stale signed request", async () => {
+  const shared = sharedSql();
+  const now = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");
+  const store = new MemoryFleetStore("example-fleet", { now: () => now });
+  store.fleet.inventoried = true;
+  saveFleetStore(shared.persist, store);
+  const before = durableSnapshot(shared.db);
+  const stale = new Date(Date.parse(now) - 24 * 3_600_000)
+    .toISOString()
+    .replace(/\.\d+Z$/, ".000Z");
+
+  const response = await enabledDurable("example-fleet", shared).fetch(
+    await signedAdmin({
+      protocolVersion: 1,
+      kind: "portable-canary-stop",
+      fleetId: "example-fleet",
+      timestamp: stale,
+      nonce: "8".repeat(64),
+    }),
+  );
+
+  expect(response.status).toBe(401);
+  expect(durableSnapshot(shared.db)).toEqual(before);
+});
+
 test("enabled Durable Object persists a portable canary start", async () => {
   const shared = sharedSql();
   const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");

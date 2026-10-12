@@ -37,12 +37,9 @@ Use one fleet from the existing inventory and record the choice in the canary
 runbook. The signed address-status query answers only while a fleet's state is
 inert. A successful session makes it non-inert, so the canary fleet's
 address-status fails closed and the addressability verifier reports it red.
-A session request that passes the MAC check but is then rejected also records
-an audit row with the same effect, so anyone holding the HMAC key can turn an
-inventoried fleet's address-status red. A request that fails the MAC check
-writes nothing. Rejected heartbeat and admin requests leave a fleet inert.
-Treat a red result as expected for the canary fleet and as a reason to read
-the audit rows for any other.
+A rejected session, heartbeat, or admin request writes nothing, so it leaves
+a fleet inert. Treat a red result as expected for the canary fleet and as a
+reason to read the audit rows for any other.
 
 ## Canary commands
 

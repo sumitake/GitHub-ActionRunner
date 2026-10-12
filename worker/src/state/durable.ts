@@ -200,22 +200,16 @@ export class FleetDurableObject extends DurableObject<WorkerEnv> {
     const store = loadFleetStore(this.sql, fleetId, {
       now: () => new Date().toISOString(),
     });
-    // Persist only when the request reached a protocol handler. A request
-    // the gateway refuses first, such as one without signature headers,
-    // writes nothing.
-    let handled = false;
     const response = await dispatchFleetRequest(request, {
       inventoriedFleetIds: bindings.inventoriedFleetIds,
       secrets: bindings.secrets,
-      storeFor: (id) => {
-        if (id !== store.fleet.fleetId) {
-          return undefined;
-        }
-        handled = true;
-        return store;
-      },
+      storeFor: (id) => (id === store.fleet.fleetId ? store : undefined),
     });
-    if (handled) {
+    // A rejected request writes nothing: no protocol handler changes fleet
+    // state before it rejects (the admin handler rolls back first), and the
+    // store is reloaded for every request. Rejections cover bad or stale
+    // signatures, replays, and refused commands alike.
+    if (response.status !== 401) {
       saveFleetStore(this.sql, store);
     }
     return response;
