@@ -110,6 +110,15 @@ func TestPrivateOverlayRejectsInvalidExternalSections(t *testing.T) {
 		"worker URL with port and no host": func(overlay *PrivateOverlay) {
 			overlay.Worker.BaseURL = "https://:443"
 		},
+		"worker URL with out-of-range port": func(overlay *PrivateOverlay) {
+			overlay.Worker.BaseURL = "https://failover.example.invalid:65536"
+		},
+		"worker URL with explicit port": func(overlay *PrivateOverlay) {
+			overlay.Worker.BaseURL = "https://failover.example.invalid:443"
+		},
+		"worker URL with empty port": func(overlay *PrivateOverlay) {
+			overlay.Worker.BaseURL = "https://failover.example.invalid:"
+		},
 		"uppercase fleet": func(overlay *PrivateOverlay) {
 			overlay.Worker.FleetID = "Example-fleet"
 		},

@@ -1027,7 +1027,11 @@ func validWorkerOverlay(worker *WorkerOverlay, overlay PrivateOverlay) bool {
 		return true
 	}
 	parsed, err := url.Parse(worker.BaseURL)
+	// A bare https://host origin: no port, path, user, query, or fragment.
+	// Requiring Host == Hostname rejects every explicit port, so no port
+	// range or syntax can reach the protocol client.
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" ||
+		parsed.Host != parsed.Hostname() ||
 		worker.BaseURL != "https://"+parsed.Host {
 		return false
 	}
