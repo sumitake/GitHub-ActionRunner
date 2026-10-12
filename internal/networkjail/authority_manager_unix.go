@@ -176,6 +176,8 @@ func (manager *UnixAuthorityManager) Start(
 	}
 	server, err := newUnixPermitServer(
 		manager.authority,
+		slot,
+		generation,
 		listener,
 		manager.maxClients,
 		manager.timeout,

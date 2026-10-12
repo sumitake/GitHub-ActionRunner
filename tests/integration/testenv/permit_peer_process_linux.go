@@ -3,36 +3,32 @@
 package testenv
 
 import (
-	"io"
-	"math"
-	"os"
+	"bytes"
 
+	"github.com/sumitake/portable-ghar/internal/hostruntime"
 	"github.com/sumitake/portable-ghar/internal/networkjail"
 )
 
 func newLinuxPermitPeerProcessObserver() linuxPermitPeerProcessObserver {
-	return linuxPermitPeerProcessObserver{
-		readFile: readBoundedPermitProcFile,
-	}
+	return linuxPermitPeerProcessObserver{}
 }
 
-func readBoundedPermitProcFile(
-	path string,
-	maximum int64,
-) ([]byte, error) {
-	if path == "" || maximum <= 0 || maximum == math.MaxInt64 {
-		return nil, networkjail.ErrPermitPeerInvalid
+// parsePermitProcStatStartTime parses one newline-terminated /proc stat
+// document for the cleanup probe.
+func parsePermitProcStatStartTime(document []byte) (uint64, error) {
+	if len(document) == 0 ||
+		len(document) > int(maximumPermitProcDocumentBytes) ||
+		document[len(document)-1] != '\n' ||
+		bytes.Count(document, []byte{'\n'}) != 1 ||
+		bytes.IndexByte(document, 0) >= 0 ||
+		bytes.IndexByte(document, '\r') >= 0 {
+		return 0, networkjail.ErrPermitPeerInvalid
 	}
-	file, err := os.Open(path)
+	startTime, err := hostruntime.ParseLinuxProcStatStartTime(
+		document[:len(document)-1],
+	)
 	if err != nil {
-		return nil, networkjail.ErrPermitPeerInvalid
+		return 0, networkjail.ErrPermitPeerInvalid
 	}
-	defer file.Close()
-	document, err := io.ReadAll(io.LimitReader(file, maximum+1))
-	if err != nil || len(document) == 0 ||
-		int64(len(document)) > maximum {
-		zeroPermitProcDocument(document)
-		return nil, networkjail.ErrPermitPeerInvalid
-	}
-	return document, nil
+	return startTime, nil
 }

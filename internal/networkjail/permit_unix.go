@@ -83,33 +83,43 @@ func (client *UnixPermitClient) Request(
 	return permit, nil
 }
 
+// unixPermitServer serves one slot's socket. The authority is shared by every
+// slot, so the server binds each frame to its own slot and generation: a
+// broker can only spend the budget of the slot whose socket it can reach.
 type unixPermitServer struct {
-	authority *PermitAuthority
-	listener  *net.UnixListener
-	timeout   time.Duration
-	slots     chan struct{}
-	cancel    context.CancelFunc
-	done      chan struct{}
-	closeOnce sync.Once
-	workers   sync.WaitGroup
+	authority       *PermitAuthority
+	boundSlot       CapacitySlotID
+	boundGeneration JobGeneration
+	listener        *net.UnixListener
+	timeout         time.Duration
+	slots           chan struct{}
+	cancel          context.CancelFunc
+	done            chan struct{}
+	closeOnce       sync.Once
+	workers         sync.WaitGroup
 }
 
 func newUnixPermitServer(
 	authority *PermitAuthority,
+	slot CapacitySlotID,
+	generation JobGeneration,
 	listener *net.UnixListener,
 	maxClients uint32,
 	timeout time.Duration,
 ) (*unixPermitServer, error) {
-	if authority == nil || listener == nil || maxClients == 0 ||
+	if authority == nil || slot == 0 || generation == 0 ||
+		listener == nil || maxClients == 0 ||
 		timeout <= 0 || timeout > maxPermitUnixTimeout {
 		return nil, ErrPermitAuthorityUnavailable
 	}
 	return &unixPermitServer{
-		authority: authority,
-		listener:  listener,
-		timeout:   timeout,
-		slots:     make(chan struct{}, maxClients),
-		done:      make(chan struct{}),
+		authority:       authority,
+		boundSlot:       slot,
+		boundGeneration: generation,
+		listener:        listener,
+		timeout:         timeout,
+		slots:           make(chan struct{}, maxClients),
+		done:            make(chan struct{}),
 	}, nil
 }
 
@@ -160,7 +170,9 @@ func (server *unixPermitServer) serveConnection(
 		return
 	}
 	request, err := ParseDialPermitRequest(requestFrame)
-	if err != nil {
+	if err != nil ||
+		request.SlotID != server.boundSlot ||
+		request.JobGeneration != server.boundGeneration {
 		return
 	}
 	peer, err := observeUnixPermitPeer(connection)

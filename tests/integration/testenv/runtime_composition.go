@@ -198,7 +198,7 @@ func newFixtureRuntimeComposition(
 		store,
 		peerGuard,
 		referenceGuard,
-		rejectCompositionRebase{},
+		networkjail.RejectEmptyConntrackRebase{},
 		plan.Authority.ReservationBlockSize,
 	)
 	if err != nil {

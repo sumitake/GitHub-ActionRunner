@@ -160,18 +160,5 @@ func (g *compositionLedgerReferenceGuard) HasLedgerReferences(
 	return found, nil
 }
 
-type rejectCompositionRebase struct{}
-
-func (rejectCompositionRebase) ValidateEmptyConntrack(
-	context.Context,
-	networkjail.CapacitySlotID,
-	networkjail.BootID,
-	networkjail.BootID,
-	networkjail.EmptyConntrackProof,
-) error {
-	return networkjail.ErrEmptyConntrackProofInvalid
-}
-
 var _ networkjail.PermitPeerValidator = (*compositionPermitPeerGuard)(nil)
 var _ networkjail.LedgerReferenceGuard = (*compositionLedgerReferenceGuard)(nil)
-var _ networkjail.EmptyConntrackValidator = rejectCompositionRebase{}
