@@ -139,6 +139,17 @@ const DESCRIPTOR_FIELDS = [
 // validateAuthority accepts the optional block that turns on the Worker's
 // session, heartbeat, and admin authority. Without it the rendered
 // deployment stays address-only, byte for byte.
+// Mirrors MAX_LEASE_DURATION_MS in worker/src/protocol/messages.ts, which
+// the Worker enforces when it parses its bindings.
+const MAX_LEASE_DURATION_MS = 9_223_372_036_854;
+
+function leaseDuration(value) {
+  if (positiveSafeInteger(value) > MAX_LEASE_DURATION_MS) {
+    throw new Error("lease duration rejected");
+  }
+  return value;
+}
+
 function validateAuthority(authority) {
   exactKeys(authority, [
     "archiveEvidenceMaxAgeMs",
@@ -148,7 +159,7 @@ function validateAuthority(authority) {
   ]);
   return {
     WORKER_AUTHORITY: "enabled",
-    LEASE_DURATION_MS: String(positiveSafeInteger(authority.leaseDurationMs)),
+    LEASE_DURATION_MS: String(leaseDuration(authority.leaseDurationMs)),
     ARCHIVE_EVIDENCE_MAX_AGE_MS: String(
       positiveSafeInteger(authority.archiveEvidenceMaxAgeMs),
     ),

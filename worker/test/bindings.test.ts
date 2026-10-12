@@ -451,3 +451,43 @@ test("enabled runtime addresses only inventoried fleet Durable Objects", async (
   expect(await inside.text()).toBe("forwarded");
   expect(addressed).toEqual(["example-fleet"]);
 });
+
+test("enabled runtime stops reading an oversized body before routing", async () => {
+  const addressed: string[] = [];
+  const env = {
+    ...validEnv(),
+    WORKER_AUTHORITY: "enabled",
+    FLEET: {
+      getByName(name: string) {
+        addressed.push(name);
+        return { fetch: async () => new Response("forwarded") };
+      },
+    },
+  };
+  const chunk = new Uint8Array(4_096).fill(0x20);
+  const total = 1_048_576;
+  let pulled = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (pulled >= total) {
+        controller.close();
+        return;
+      }
+      pulled += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+  });
+  const request = new Request("https://worker.example/v1/session", {
+    method: "POST",
+    headers: {
+      [TIMESTAMP_HEADER]: "2026-01-01T00:00:00.000Z",
+      [MAC_HEADER]: "0".repeat(64),
+    },
+    body,
+    duplex: "half",
+  } as RequestInit);
+  const response = await handleWorkerFetch(request, env);
+  expect(response.status).toBe(401);
+  expect(addressed).toEqual([]);
+  expect(pulled).toBeLessThan(total / 2);
+});

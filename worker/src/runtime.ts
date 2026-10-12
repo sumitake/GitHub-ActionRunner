@@ -80,7 +80,10 @@ export async function handleWorkerFetch(
   if (fleets === null) {
     return rejected();
   }
-  const fleetId = fleetIdFromBody(await request.clone().text());
+  // Bound the read before routing: an unsigned request must not make the
+  // Worker buffer an arbitrary body.
+  const body = await readBoundedBody(request.clone());
+  const fleetId = body === null ? null : fleetIdFromBody(body);
   if (fleetId === null || !bindings.inventoriedFleetIds.includes(fleetId)) {
     return rejected();
   }

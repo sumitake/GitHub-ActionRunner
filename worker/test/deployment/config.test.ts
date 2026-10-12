@@ -14,6 +14,8 @@ import { spawnSync } from "node:child_process";
 
 import { afterEach, expect, test } from "vitest";
 
+import { MAX_LEASE_DURATION_MS } from "../../src/protocol/messages";
+
 const repositoryRoot = join(
   dirname(fileURLToPath(import.meta.url)),
   "../../..",
@@ -353,6 +355,10 @@ test("renderer rejects a partial or malformed authority block", () => {
     ["extra field", { ...authorityBlock(), enabled: true }],
     ["zero lease", { ...authorityBlock(), leaseDurationMs: 0 }],
     [
+      "lease above the Worker maximum",
+      { ...authorityBlock(), leaseDurationMs: MAX_LEASE_DURATION_MS + 1 },
+    ],
+    [
       "string margin",
       { ...authorityBlock(), hostedTransitionSafetyMarginMs: "1" },
     ],
@@ -368,4 +374,19 @@ test("renderer rejects a partial or malformed authority block", () => {
     expect(result.status, name).not.toBe(0);
     expect(() => statSync(output), name).toThrow();
   }
+});
+
+test("renderer accepts the Worker's maximum lease duration", () => {
+  const root = mkdtempSync(join(tmpdir(), "pghar-worker-config-"));
+  temporaryRoots.push(root);
+  const { output, result } = runRenderer(root, {
+    ...validDescriptor(),
+    authority: { ...authorityBlock(), leaseDurationMs: MAX_LEASE_DURATION_MS },
+  });
+  expect(result.status, result.stderr).toBe(0);
+  const vars = JSON.parse(readFileSync(output, "utf8")).vars as Record<
+    string,
+    string
+  >;
+  expect(vars.LEASE_DURATION_MS).toBe(String(MAX_LEASE_DURATION_MS));
 });
