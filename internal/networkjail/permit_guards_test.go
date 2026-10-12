@@ -139,6 +139,23 @@ func TestStateLedgerReferenceGuardReportsSlotsHeldByRecoverableAssignments(t *te
 		t.Fatalf("slot 4 referenced/error = %v/%v, want false", referenced, err)
 	}
 
+	reserved, _ := NewStateLedgerReferenceGuard(fakeRecoverableLister{rows: []state.RecoverableAssignment{
+		{Admission: state.AdmissionProjection{Valid: true, SlotID: 5}},
+		{Admission: state.AdmissionProjection{Valid: false, SlotID: 6}},
+	}})
+	if referenced, err := reserved.HasLedgerReferences(context.Background(), 5); err != nil || !referenced {
+		t.Fatalf("admission-reserved slot 5 referenced/error = %v/%v, want true", referenced, err)
+	}
+	if referenced, err := reserved.HasLedgerReferences(context.Background(), 6); err != nil || referenced {
+		t.Fatalf("slot 6 from an invalid admission referenced/error = %v/%v, want false", referenced, err)
+	}
+	conflicting, _ := NewStateLedgerReferenceGuard(fakeRecoverableLister{rows: []state.RecoverableAssignment{
+		{Slot: controller.RunnerSlot{CapacitySlotID: 3}, Admission: state.AdmissionProjection{Valid: true, SlotID: 4}},
+	}})
+	if _, err := conflicting.HasLedgerReferences(context.Background(), 9); !errors.Is(err, ErrPermitAuthorityUnavailable) {
+		t.Fatalf("conflicting slots error = %v, want ErrPermitAuthorityUnavailable", err)
+	}
+
 	failing, _ := NewStateLedgerReferenceGuard(fakeRecoverableLister{err: errors.New("store closed")})
 	if _, err := failing.HasLedgerReferences(context.Background(), 3); !errors.Is(err, ErrPermitAuthorityUnavailable) {
 		t.Fatalf("store error = %v, want ErrPermitAuthorityUnavailable", err)

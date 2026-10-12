@@ -204,9 +204,11 @@ type RecoverableLister interface {
 }
 
 // StateLedgerReferenceGuard reports a slot as referenced while any
-// recoverable assignment (any state but destroyed) holds it, so the permit
-// ledger for that slot is never collected under a live job. Store errors fail
-// closed.
+// recoverable assignment (any state but destroyed) holds it, either as its
+// runner slot or, before the runner slot exists, as its admission
+// reservation. The permit ledger for that slot is then never collected under
+// a live job. Store errors, and an assignment whose two slot identities
+// disagree, fail closed.
 type StateLedgerReferenceGuard struct {
 	store RecoverableLister
 }
@@ -229,12 +231,21 @@ func (guard *StateLedgerReferenceGuard) HasLedgerReferences(
 	if err != nil {
 		return false, ErrPermitAuthorityUnavailable
 	}
+	referenced := false
 	for _, assignment := range recoverable {
-		if CapacitySlotID(assignment.Slot.CapacitySlotID) == slot {
-			return true, nil
+		runnerSlot := CapacitySlotID(assignment.Slot.CapacitySlotID)
+		admissionSlot := CapacitySlotID(0)
+		if assignment.Admission.Valid {
+			admissionSlot = CapacitySlotID(assignment.Admission.SlotID)
+		}
+		if runnerSlot != 0 && admissionSlot != 0 && runnerSlot != admissionSlot {
+			return false, ErrPermitAuthorityUnavailable
+		}
+		if runnerSlot == slot || admissionSlot == slot {
+			referenced = true
 		}
 	}
-	return false, nil
+	return referenced, nil
 }
 
 // RejectEmptyConntrackRebase refuses every rebase proof. Production has no
