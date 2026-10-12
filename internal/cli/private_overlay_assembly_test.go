@@ -191,3 +191,50 @@ func TestRunPrivateOverlayAssemblyAcceptsOnlyExactGrammar(t *testing.T) {
 		}
 	}
 }
+
+func TestRunPrivateOverlayAssemblyReplacesExistingOutput(t *testing.T) {
+	t.Parallel()
+	templatePath, manifestPath, outputPath := assemblyFixture(t, nil)
+	privateOverlayTestFile(t, outputPath, []byte("{}"))
+
+	receipt, err := RunPrivateOverlayAssembly(
+		assemblyArgs(templatePath, manifestPath, outputPath),
+	)
+	if err != nil {
+		t.Fatalf("RunPrivateOverlayAssembly() error = %v", err)
+	}
+	if _, revision, err := LoadPrivateOverlayFile(outputPath); err != nil ||
+		revision != receipt.PrivateOverlayRevision {
+		t.Fatalf("LoadPrivateOverlayFile(output) = %s, %v; want %s",
+			revision, err, receipt.PrivateOverlayRevision)
+	}
+}
+
+func TestRunPrivateOverlayAssemblyKeepsExistingOutputWhenReadBackFails(t *testing.T) {
+	t.Parallel()
+	templatePath, manifestPath, _ := assemblyFixture(t, nil)
+	// The template's control files live under the fixture root, so an output
+	// in a second private root binds and stages but fails the read-back.
+	otherRoot := privateOverlayTestRoot(t)
+	outputPath := filepath.Join(otherRoot, "controller-runtime.json")
+	previous := []byte(`{"previous":"overlay"}`)
+	privateOverlayTestFile(t, outputPath, previous)
+
+	_, err := RunPrivateOverlayAssembly(
+		assemblyArgs(templatePath, manifestPath, outputPath),
+	)
+	if !errors.Is(err, ErrHostCommandFailed) {
+		t.Fatalf("error = %v, want %v", err, ErrHostCommandFailed)
+	}
+	current, err := os.ReadFile(outputPath)
+	if err != nil || string(current) != string(previous) {
+		t.Fatalf("existing output = %q, %v; want it unchanged", current, err)
+	}
+	entries, err := os.ReadDir(otherRoot)
+	if err != nil {
+		t.Fatalf("ReadDir(root) error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("root entries = %d, want only the existing output", len(entries))
+	}
+}

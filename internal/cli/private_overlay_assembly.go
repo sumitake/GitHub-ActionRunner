@@ -28,9 +28,11 @@ type PrivateOverlayAssemblyReceipt struct {
 //
 // Every release-derived field (manifest path and digest, policy manifest
 // digest, five image IDs) comes from M; see hostruntime.BindRuntimeManifest.
-// The overlay is written atomically with mode 0600 and then read back through
-// the same loader the deploy command uses, so a successful receipt means
-// "deploy --private O" will accept the file.
+// The overlay is staged as a mode 0600 sibling of O and read back through the
+// same private-tree checks the deploy command applies to O. Only a staged file
+// that passes is renamed over O, so a failure never removes or changes an
+// existing overlay, and a successful receipt means "deploy --private O" will
+// accept the file.
 func RunPrivateOverlayAssembly(
 	args []string,
 ) (PrivateOverlayAssemblyReceipt, error) {
@@ -64,18 +66,16 @@ func RunPrivateOverlayAssembly(
 	if err != nil {
 		return PrivateOverlayAssemblyReceipt{}, ErrHostCommandFailed
 	}
-	if _, parsedRevision, err := hostruntime.ParsePrivateOverlay(
-		document,
-		maxPrivateOverlayBytes,
-	); err != nil || parsedRevision != revision {
-		return PrivateOverlayAssemblyReceipt{}, ErrHostCommandFailed
+	// The staged file shares the output's directory, so the deploy loader's
+	// private-root checks apply to it exactly as they will to the output.
+	verify := func(stagedPath string) error {
+		_, stagedRevision, err := LoadPrivateOverlayFile(stagedPath)
+		if err != nil || stagedRevision != revision {
+			return ErrHostCommandFailed
+		}
+		return nil
 	}
-	if err := writeFileAtomic(outputPath, document); err != nil {
-		return PrivateOverlayAssemblyReceipt{}, ErrHostCommandFailed
-	}
-	if _, readRevision, err := LoadPrivateOverlayFile(outputPath); err != nil ||
-		readRevision != revision {
-		_ = os.Remove(outputPath)
+	if err := writeFileAtomic(outputPath, document, verify); err != nil {
 		return PrivateOverlayAssemblyReceipt{}, ErrHostCommandFailed
 	}
 	return PrivateOverlayAssemblyReceipt{
@@ -85,13 +85,13 @@ func RunPrivateOverlayAssembly(
 	}, nil
 }
 
-// loadPrivateOverlayTemplate decodes exactly one overlay object with no
-// unknown fields. Release-derived fields may be empty; completeness is
-// checked after binding.
+// loadPrivateOverlayTemplate reads the template through the private-tree
+// checks and decodes exactly one overlay object with no unknown fields.
+// Release-derived fields may be empty; completeness is checked after binding.
 func loadPrivateOverlayTemplate(path string) (hostruntime.PrivateOverlay, error) {
-	document, err := readBoundedFile(path, maxPrivateOverlayBytes)
+	document, err := readPrivateOverlayDocument(path, maxPrivateOverlayBytes)
 	if err != nil {
-		return hostruntime.PrivateOverlay{}, err
+		return hostruntime.PrivateOverlay{}, ErrHostCommandFailed
 	}
 	decoder := json.NewDecoder(bytes.NewReader(document))
 	decoder.DisallowUnknownFields()
@@ -106,9 +106,16 @@ func loadPrivateOverlayTemplate(path string) (hostruntime.PrivateOverlay, error)
 	return template, nil
 }
 
-// writeFileAtomic writes document to path through a new sibling file, so a
-// reader sees either the previous file or the complete new one.
-func writeFileAtomic(path string, document []byte) error {
+// writeFileAtomic stages document in a new sibling file, runs verify on the
+// staged path, and only then renames it over path, so a reader sees either the
+// previous file or the complete, verified new one. A failed directory sync
+// after the rename is still reported: the new file may already be in place,
+// and re-running the same assembly is idempotent.
+func writeFileAtomic(
+	path string,
+	document []byte,
+	verify func(stagedPath string) error,
+) error {
 	directory := filepath.Dir(path)
 	temporary, err := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -134,6 +141,9 @@ func writeFileAtomic(path string, document []byte) error {
 		return ErrHostCommandFailed
 	}
 	if err := temporary.Close(); err != nil {
+		return ErrHostCommandFailed
+	}
+	if err := verify(temporaryPath); err != nil {
 		return ErrHostCommandFailed
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {

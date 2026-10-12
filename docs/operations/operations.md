@@ -28,10 +28,17 @@ portable-ghar assemble-private-overlay \
 The command copies the manifest path and digest, the policy manifest digest,
 and the five image IDs (`sha256:` plus each image's config digest) from the
 manifest. A template field that is already set must equal the derived value.
-The overlay is validated, written atomically with mode `0600`, and read back
-through the same loader `deploy` uses. The receipt prints only the overlay
-revision and the manifest digest. Re-running it with the same inputs produces
-the same bytes.
+The template is read through the same private-tree checks as the overlay, so
+it belongs in the private root. The overlay is staged as a mode `0600` file
+beside the output and read back through the same loader `deploy` uses. Only
+a staged file that passes replaces the output, so a failure leaves any
+existing overlay unchanged. The receipt prints only the overlay revision and
+the manifest digest. Re-running it with the same inputs produces the same
+bytes.
+
+The overlay records the `--manifest` path as given. The control host and the
+target both open that path, so the manifest must sit at the same absolute
+path on each.
 
 The command does not observe the target host. Host identity, storage, and
 other live observations stay the operator's inputs in the template.
