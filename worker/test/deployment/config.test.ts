@@ -359,6 +359,13 @@ test("renderer rejects a partial or malformed authority block", () => {
       { ...authorityBlock(), leaseDurationMs: MAX_LEASE_DURATION_MS + 1 },
     ],
     [
+      "margin above the Worker maximum",
+      {
+        ...authorityBlock(),
+        hostedTransitionSafetyMarginMs: MAX_LEASE_DURATION_MS + 1,
+      },
+    ],
+    [
       "string margin",
       { ...authorityBlock(), hostedTransitionSafetyMarginMs: "1" },
     ],

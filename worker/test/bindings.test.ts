@@ -89,6 +89,14 @@ test("worker bindings fail closed when any required term is unset", () => {
   expect(
     parseWorkerBindings({ ...validEnv(), FLEET_IDS: "Example" }),
   ).toBeNull();
+  // The margin is added to protocol timestamps, so it shares the lease
+  // duration's bound and can never push a timestamp past Date's range.
+  expect(
+    parseWorkerBindings({
+      ...validEnv(),
+      HOSTED_TRANSITION_SAFETY_MARGIN_MS: "9223372036855",
+    }),
+  ).toBeNull();
 });
 
 test("worker fetch uses the gateway when bindings parse", async () => {

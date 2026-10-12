@@ -95,7 +95,8 @@ export function parseWorkerBindings(
     leaseDurationMs > MAX_LEASE_DURATION_MS ||
     archiveEvidenceMaxAgeMs === null ||
     selectorEvidenceMaxAgeMs === null ||
-    hostedTransitionSafetyMarginMs === null
+    hostedTransitionSafetyMarginMs === null ||
+    hostedTransitionSafetyMarginMs > MAX_LEASE_DURATION_MS
   ) {
     return null;
   }

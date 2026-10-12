@@ -140,12 +140,13 @@ const DESCRIPTOR_FIELDS = [
 // session, heartbeat, and admin authority. Without it the rendered
 // deployment stays address-only, byte for byte.
 // Mirrors MAX_LEASE_DURATION_MS in worker/src/protocol/messages.ts, which
-// the Worker enforces when it parses its bindings.
+// the Worker enforces when it parses its bindings. It also bounds the
+// safety margin, which the Worker adds to protocol timestamps.
 const MAX_LEASE_DURATION_MS = 9_223_372_036_854;
 
-function leaseDuration(value) {
+function boundedDuration(value) {
   if (positiveSafeInteger(value) > MAX_LEASE_DURATION_MS) {
-    throw new Error("lease duration rejected");
+    throw new Error("duration rejected");
   }
   return value;
 }
@@ -159,7 +160,7 @@ function validateAuthority(authority) {
   ]);
   return {
     WORKER_AUTHORITY: "enabled",
-    LEASE_DURATION_MS: String(leaseDuration(authority.leaseDurationMs)),
+    LEASE_DURATION_MS: String(boundedDuration(authority.leaseDurationMs)),
     ARCHIVE_EVIDENCE_MAX_AGE_MS: String(
       positiveSafeInteger(authority.archiveEvidenceMaxAgeMs),
     ),
@@ -167,7 +168,7 @@ function validateAuthority(authority) {
       positiveSafeInteger(authority.selectorEvidenceMaxAgeMs),
     ),
     HOSTED_TRANSITION_SAFETY_MARGIN_MS: String(
-      positiveSafeInteger(authority.hostedTransitionSafetyMarginMs),
+      boundedDuration(authority.hostedTransitionSafetyMarginMs),
     ),
   };
 }
