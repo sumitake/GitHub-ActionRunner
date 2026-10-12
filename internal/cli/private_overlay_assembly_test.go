@@ -288,6 +288,17 @@ func TestRunPrivateOverlayAssemblyCarriesExternalSections(t *testing.T) {
 			"operation_timeout":       "1m0s",
 			"response_header_timeout": "55s",
 		}
+		template["jail"] = map[string]any{
+			"adapter_broker_user":         "1001:1001",
+			"runner_user":                 "0:0",
+			"verifier_user":               "1002:1002",
+			"seccomp_profile_path":        "/opt/portable/seccomp/jail.json",
+			"container_log_max_bytes":     1048576,
+			"container_log_max_files":     2,
+			"dial_reservation_block_size": 4,
+			"dial_authority_max_clients":  1,
+			"dial_authority_timeout":      "2s",
+		}
 	})
 	if _, err := RunPrivateOverlayAssembly(
 		assemblyArgs(templatePath, manifestPath, outputPath),
@@ -299,7 +310,8 @@ func TestRunPrivateOverlayAssemblyCarriesExternalSections(t *testing.T) {
 		t.Fatalf("LoadPrivateOverlayFile(output) error = %v", err)
 	}
 	if overlay.Worker == nil || overlay.Worker.FleetID != "example-fleet" ||
-		overlay.GitHub == nil || overlay.GitHub.MaxResponseBytes != 1048576 {
-		t.Fatalf("external sections not carried: %+v %+v", overlay.Worker, overlay.GitHub)
+		overlay.GitHub == nil || overlay.GitHub.MaxResponseBytes != 1048576 ||
+		overlay.Jail == nil || overlay.Jail.VerifierUser != "1002:1002" {
+		t.Fatalf("external sections not carried: %+v %+v %+v", overlay.Worker, overlay.GitHub, overlay.Jail)
 	}
 }

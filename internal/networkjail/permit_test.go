@@ -214,6 +214,44 @@ func TestPermitAuthorityCollectRequiresElapsedTailAndNoReferences(t *testing.T) 
 	}
 }
 
+// A controller crash loses the job generation Deactivate needs, so the ledger
+// stays active and blocks the slot for every later job. At startup,
+// DeactivateUnreferenced releases it once no recoverable assignment holds
+// the slot.
+func TestPermitAuthorityDeactivateUnreferencedReleasesACrashedLedger(t *testing.T) {
+	ctx := context.Background()
+	fixture := newPermitFixture(t, 2)
+	if err := fixture.authority.DeactivateUnreferenced(ctx, fixture.slot); err != nil {
+		t.Fatalf("DeactivateUnreferenced without a ledger: %v", err)
+	}
+	fixture.activate(7)
+	if err := fixture.authority.Activate(ctx, fixture.slot, 9); !errors.Is(err, ErrPermitAssignment) {
+		t.Fatalf("Activate over a crashed ledger = %v, want ErrPermitAssignment", err)
+	}
+
+	fixture.references.set(true)
+	if err := fixture.authority.DeactivateUnreferenced(ctx, fixture.slot); !errors.Is(err, ErrLedgerReferenced) {
+		t.Fatalf("referenced DeactivateUnreferenced = %v, want ErrLedgerReferenced", err)
+	}
+	if err := fixture.authority.Activate(ctx, fixture.slot, 9); !errors.Is(err, ErrPermitAssignment) {
+		t.Fatalf("referenced ledger was released: Activate = %v", err)
+	}
+
+	fixture.references.set(false)
+	if err := fixture.authority.DeactivateUnreferenced(ctx, fixture.slot); err != nil {
+		t.Fatalf("DeactivateUnreferenced: %v", err)
+	}
+	if err := fixture.authority.DeactivateUnreferenced(ctx, fixture.slot); err != nil {
+		t.Fatalf("DeactivateUnreferenced on an inactive ledger: %v", err)
+	}
+	if err := fixture.authority.Activate(ctx, fixture.slot, 9); err != nil {
+		t.Fatalf("Activate after release: %v", err)
+	}
+	if err := fixture.authority.DeactivateUnreferenced(ctx, 0); !errors.Is(err, ErrPermitAssignment) {
+		t.Fatalf("DeactivateUnreferenced(0) = %v, want ErrPermitAssignment", err)
+	}
+}
+
 func TestPermitAuthorityConcurrentDuplicateSequenceIssuesOnce(t *testing.T) {
 	fixture := newPermitFixture(t, 8)
 	fixture.activate(7)
