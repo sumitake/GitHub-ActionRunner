@@ -248,6 +248,12 @@ type Client interface {
 	// a session-creation failure, or context cancellation.
 	Open(ctx context.Context, fleet Fleet) (Session, error)
 
+	// EnsureScaleSet creates fleet.ScaleSetName when it does not exist, then
+	// re-reads it and applies Open's identity and compatibility checks. It
+	// reports whether it created the scale set. It never updates or deletes
+	// an existing one, and it opens no message session.
+	EnsureScaleSet(ctx context.Context, fleet Fleet) (ScaleSetCompatibilityReport, bool, error)
+
 	// Probe runs the startup compatibility check (see probe.go) and
 	// returns its CompatibilityReport. It does not depend on Fleet or any
 	// live GitHub API call -- it inspects only this binary's own linked
