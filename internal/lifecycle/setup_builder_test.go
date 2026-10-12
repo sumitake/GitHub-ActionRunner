@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"reflect"
 	"strings"
@@ -231,6 +232,11 @@ func TestWithSlotDirectoriesCreatesDirectoriesBeforePrepare(t *testing.T) {
 	if _, err := wrapped.Prepare(context.Background(), prepared); !errors.Is(err, inner.err) ||
 		len(removed) != 1 || removed[0] != prepared.Broker.SlotIdentity {
 		t.Fatalf("failed Prepare = %v, removed %v; want the inner error and one rollback", err, removed)
+	}
+	removed = nil
+	inner.err = fmt.Errorf("adapter remove: %w", networkjail.ErrSetupCleanup)
+	if _, err := wrapped.Prepare(context.Background(), prepared); !errors.Is(err, networkjail.ErrSetupCleanup) || len(removed) != 0 {
+		t.Fatalf("unproven cleanup = %v, removed %v; want the directories kept for recovery", err, removed)
 	}
 	inner.err = nil
 	inner.prepared = 1

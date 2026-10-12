@@ -109,6 +109,17 @@ func TestCreateSlotDirectoriesFailsClosed(t *testing.T) {
 			}
 			return root, slot, uid
 		},
+		"broker root under a symlinked component": func(t *testing.T) (string, string, uint32) {
+			real := t.TempDir()
+			if err := os.Mkdir(filepath.Join(real, "broker"), 0o700); err != nil {
+				t.Fatalf("Mkdir: %v", err)
+			}
+			link := filepath.Join(t.TempDir(), "current")
+			if err := os.Symlink(real, link); err != nil {
+				t.Fatalf("Symlink: %v", err)
+			}
+			return filepath.Join(link, "broker"), slot, uid
+		},
 		"broker root is a symlink": func(t *testing.T) (string, string, uint32) {
 			link := filepath.Join(t.TempDir(), "link")
 			if err := os.Symlink(newSlotBrokerRoot(t), link); err != nil {
@@ -221,5 +232,21 @@ func TestRemoveEmptySlotDirectoriesKeepsAnythingInUse(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(root, testSlotIdentity, "relay")); !os.IsNotExist(err) {
 		t.Fatalf("empty relay directory was kept: %v", err)
+	}
+}
+
+func TestCreateSlotDirectoriesRemovesTheSlotItCreatedOnFailure(t *testing.T) {
+	uid, gid := slotTestUser()
+	root := newSlotBrokerRoot(t)
+	// A root-owned broker user that cannot be chowned to fails after the slot
+	// directory and relay exist; run only where chown to another user fails.
+	if os.Geteuid() == 0 {
+		t.Skip("root can chown to any user")
+	}
+	if err := CreateSlotDirectories(root, testSlotIdentity, uid+1, gid); err == nil {
+		t.Fatal("CreateSlotDirectories succeeded with an unchownable broker user")
+	}
+	if err := proveBrokerRootEmpty(root); err != nil {
+		t.Fatalf("broker root not empty after a failed creation: %v", err)
 	}
 }

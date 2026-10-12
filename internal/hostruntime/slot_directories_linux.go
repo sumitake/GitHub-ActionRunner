@@ -31,44 +31,69 @@ func CreateSlotDirectories(brokerRoot, slotIdentity string, brokerUID, brokerGID
 		return errSlotDirectories
 	}
 	owner := uint32(os.Geteuid())
-	rootFD, err := unix.Open(brokerRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	rootFD, root, err := openBrokerRoot(brokerRoot)
 	if err != nil {
 		return errSlotDirectories
 	}
 	defer unix.Close(rootFD)
-	root, err := privateDirectoryStat(rootFD, owner, owner, false)
-	if err != nil {
+
+	slotCreated := false
+	if err := unix.Mkdirat(rootFD, slotIdentity, 0o700); err == nil {
+		slotCreated = true
+	} else if !errors.Is(err, unix.EEXIST) {
 		return errSlotDirectories
 	}
-
-	if err := unix.Mkdirat(rootFD, slotIdentity, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
+	// rollback removes only what this call created, the slot directory last.
+	var created []string
+	rollback := func(slotFD int) error {
+		if slotFD >= 0 {
+			for index := len(created) - 1; index >= 0; index-- {
+				_ = unix.Unlinkat(slotFD, created[index], unix.AT_REMOVEDIR)
+			}
+			_ = unix.Fsync(slotFD)
+		}
+		if slotCreated {
+			_ = unix.Unlinkat(rootFD, slotIdentity, unix.AT_REMOVEDIR)
+			_ = unix.Fsync(rootFD)
+		}
 		return errSlotDirectories
 	}
 	slotFD, err := openBeneath(rootFD, slotIdentity)
 	if err != nil {
-		return errSlotDirectories
+		return rollback(-1)
 	}
 	defer unix.Close(slotFD)
 	slot, err := privateDirectoryStat(slotFD, owner, 0, false)
 	if err != nil || slot.Dev != root.Dev {
-		return errSlotDirectories
+		return rollback(slotFD)
 	}
-
-	var created []string
 	for _, name := range slotChildDirectories {
 		made, err := createBrokerDirectory(slotFD, name, brokerUID, brokerGID, root.Dev)
 		if made {
 			created = append(created, name)
 		}
 		if err != nil {
-			for index := len(created) - 1; index >= 0; index-- {
-				_ = unix.Unlinkat(slotFD, created[index], unix.AT_REMOVEDIR)
-			}
-			_ = unix.Fsync(slotFD)
-			return errSlotDirectories
+			return rollback(slotFD)
 		}
 	}
 	return nil
+}
+
+// openBrokerRoot opens the broker root the same way the quiescence proof
+// does: one component at a time without following any symlink, ending in a
+// 0700 directory owned by this process's user.
+func openBrokerRoot(path string) (int, unix.Stat_t, error) {
+	fd, _, err := openLifecycleAbsoluteDirectory(path)
+	if err != nil {
+		return -1, unix.Stat_t{}, errSlotDirectories
+	}
+	owner := uint32(os.Geteuid())
+	stat, err := privateDirectoryStat(fd, owner, 0, false)
+	if err != nil {
+		_ = unix.Close(fd)
+		return -1, unix.Stat_t{}, errSlotDirectories
+	}
+	return fd, stat, nil
 }
 
 // createBrokerDirectory reports whether it created name, so a failed call
@@ -82,7 +107,7 @@ func RemoveEmptySlotDirectories(brokerRoot, slotIdentity string) error {
 	if !validSlotDirectoryName(slotIdentity) {
 		return errSlotDirectories
 	}
-	rootFD, err := unix.Open(brokerRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	rootFD, _, err := openBrokerRoot(brokerRoot)
 	if err != nil {
 		return errSlotDirectories
 	}
