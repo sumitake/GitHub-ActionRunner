@@ -4,9 +4,19 @@
 the QTS target in `canary-only` mode, then stop. Production routing, full
 capacity, and retirement of the existing runner remain out of scope.
 
-**Status:** proposal for operator review, revised after an adversarial
-review. No production code is written until the decisions in section 2 are
-made.
+**Status:** approved by the operator on 2026-10-12. Every decision in
+section 2 is taken as recommended. Two limits from the standing rules still
+apply:
+
+- The Worker is not redeployed without a separate, explicit operator go at
+  that step, even after its code merges (D3).
+- Steps that run on the target, read live host state, or change GitHub
+  settings are operator actions (D2, D5, D7). Each phase ships the exact
+  commands; nothing here runs them.
+
+**Design rule:** reliable and simple first. Reuse the library code that
+already exists and is tested. Add no new framework, service, or abstraction
+unless a phase cannot work without it. When a phase can be smaller, it is.
 
 ## 1. Where the source stands (main @ ecd645c)
 
@@ -62,7 +72,7 @@ The Task 11 spec is internally inconsistent here. It says pending reports
 canary that acquires a real job (lines 1292-1305). No option satisfies both
 sentences, so every option is a spec change.
 
-Recommendation: (c), adopted as an explicit, reviewed amendment to the Task 11
+Decision: (c), adopted as an explicit, reviewed amendment to the Task 11
 invariant. It keeps the case's meaning. The exception must be bound to one
 job, not to a mode: `AcquisitionConformanceRequest` carries only build,
 profile, fleet generation, and mode (`internal/conformance/gate.go:28-33`),
@@ -82,27 +92,30 @@ canary workflow narrows exposure but does not replace the binding.
 `conformance.HostProfile` (`tests/integration/conformance_test.go:14-35`), and
 Task 11 defined an operator-gated target run for it. Recommendation: run the
 existing harness on the QTS target first, with no new code, to learn which
-cases pass. Build a production profile only after that.
+cases pass. Build a production profile only after that. Decision: as
+recommended.
 
 **D3. Worker authority and canary route.** The Worker must leave address-only
 mode, accept session and heartbeat, and gain an operator command that moves
 one fleet `HOSTED → PORTABLE_CANARY` with a named scale set and back. This is
 a Worker code change and redeploy, and its canary route writes repository
-variables, which needs a routing credential. This needs explicit approval.
+variables, which needs a routing credential. Decision: write and test the
+Worker change. Redeploy only on a separate operator go.
 
 **D4. Watchdog during the canary.** The watchdog stops any controller that is
 not disabled. Options: suspend the watchdog for the canary window and re-arm
 it after (no restart supervision during the job), or teach it to supervise
-`canary-only`. Recommendation: suspend for the canary, as a recorded runbook
+`canary-only`. Decision: suspend for the canary, as a recorded runbook
 step.
 
 **D5. Fence and legacy coexistence.** Acquisition needs the portable fence.
 The legacy fleet on the target must be suspended and the fence handed to
 Portable for the canary window, with a tested rollback. The live fence state
-must be read before this is designed.
+must be read before this is designed. Decision: as described; the read is
+an operator step.
 
 **D6. Hosted and replay stubs.** For a single canary job, a stale offer would
-end the controller process. Recommendation: accept fail-stop for the canary.
+end the controller process. Decision: accept fail-stop for the canary.
 Implement real hosted routing only before `enabled` mode.
 
 **D7. GitHub prerequisites.** The scale set must already exist in the default
@@ -110,7 +123,7 @@ runner group with a single-name label and `DisableUpdate=true`; no code
 creates it (`internal/githubscale/client.go:397-413,475-489`). The canary
 workflow must target that label. The client supports a personal access token
 only; whether a fine-grained PAT can use the scale-set API is not yet
-verified.
+verified. Decision: the operator creates the scale set and the token.
 
 ## 3. Phases
 
