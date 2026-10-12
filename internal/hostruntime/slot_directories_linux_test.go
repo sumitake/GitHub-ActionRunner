@@ -250,3 +250,50 @@ func TestCreateSlotDirectoriesRemovesTheSlotItCreatedOnFailure(t *testing.T) {
 		t.Fatalf("broker root not empty after a failed creation: %v", err)
 	}
 }
+
+// A crash after an assignment reached its terminal record but before its
+// slot directory was removed leaves the slot behind. The startup sweep
+// removes it, keeps a referenced slot, and then the broker root is empty.
+func TestRemoveUnreferencedSlotDirectoriesReclaimsACrashedSlot(t *testing.T) {
+	uid, gid := slotTestUser()
+	root := newSlotBrokerRoot(t)
+	const live = "slot-live"
+	for _, slot := range []string{testSlotIdentity, live} {
+		if err := CreateSlotDirectories(root, slot, uid, gid); err != nil {
+			t.Fatalf("CreateSlotDirectories(%s): %v", slot, err)
+		}
+	}
+	if err := RemoveUnreferencedSlotDirectories(root, map[string]bool{live: true}); err != nil {
+		t.Fatalf("RemoveUnreferencedSlotDirectories: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, testSlotIdentity)); !os.IsNotExist(err) {
+		t.Fatalf("unreferenced slot was kept: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, live, "authority")); err != nil {
+		t.Fatalf("referenced slot was removed: %v", err)
+	}
+	if err := RemoveUnreferencedSlotDirectories(root, nil); err != nil {
+		t.Fatalf("RemoveUnreferencedSlotDirectories with no references: %v", err)
+	}
+	if err := proveBrokerRootEmpty(root); err != nil {
+		t.Fatalf("broker root not empty: %v", err)
+	}
+}
+
+func TestRemoveUnreferencedSlotDirectoriesKeepsABusySlot(t *testing.T) {
+	uid, gid := slotTestUser()
+	root := newSlotBrokerRoot(t)
+	if err := CreateSlotDirectories(root, testSlotIdentity, uid, gid); err != nil {
+		t.Fatalf("CreateSlotDirectories: %v", err)
+	}
+	socket := filepath.Join(root, testSlotIdentity, "authority", "dial-authority.sock")
+	if err := os.WriteFile(socket, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := RemoveUnreferencedSlotDirectories(root, nil); err == nil {
+		t.Fatal("RemoveUnreferencedSlotDirectories reported a busy slot as removed")
+	}
+	if _, err := os.Lstat(socket); err != nil {
+		t.Fatalf("busy slot was changed: %v", err)
+	}
+}

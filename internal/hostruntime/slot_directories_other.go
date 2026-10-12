@@ -13,3 +13,9 @@ func CreateSlotDirectories(string, string, uint32, uint32) error {
 func RemoveEmptySlotDirectories(string, string) error {
 	return errors.New("hostruntime: slot directories require linux")
 }
+
+// RemoveUnreferencedSlotDirectories is Linux-only; elsewhere it always fails
+// closed.
+func RemoveUnreferencedSlotDirectories(string, map[string]bool) error {
+	return errors.New("hostruntime: slot directories require linux")
+}

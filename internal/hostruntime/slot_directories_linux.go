@@ -137,6 +137,43 @@ func RemoveEmptySlotDirectories(brokerRoot, slotIdentity string) error {
 	return nil
 }
 
+// maxBrokerRootEntries bounds the startup listing of the broker root, which
+// holds at most one directory per capacity slot.
+const maxBrokerRootEntries = 4096
+
+// RemoveUnreferencedSlotDirectories removes, at startup and before any work
+// is admitted, every slot directory under brokerRoot whose name is not in
+// referenced. A crash between an assignment's terminal record and its
+// directory cleanup leaves such a slot behind. Each removal is
+// RemoveEmptySlotDirectories, so a slot that still holds anything stays in
+// place and the call fails.
+func RemoveUnreferencedSlotDirectories(brokerRoot string, referenced map[string]bool) error {
+	rootFD, _, err := openBrokerRoot(brokerRoot)
+	if err != nil {
+		return errSlotDirectories
+	}
+	duplicate, err := unix.Dup(rootFD)
+	unix.Close(rootFD)
+	if err != nil {
+		return errSlotDirectories
+	}
+	directory := os.NewFile(uintptr(duplicate), "broker-root")
+	names, err := directory.Readdirnames(maxBrokerRootEntries + 1)
+	directory.Close()
+	if (err != nil && !errors.Is(err, io.EOF)) || len(names) > maxBrokerRootEntries {
+		return errSlotDirectories
+	}
+	for _, name := range names {
+		if referenced[name] {
+			continue
+		}
+		if err := RemoveEmptySlotDirectories(brokerRoot, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func removeEmptyDirectory(parentFD int, name string) error {
 	err := unix.Unlinkat(parentFD, name, unix.AT_REMOVEDIR)
 	if err == nil || errors.Is(err, unix.ENOENT) {

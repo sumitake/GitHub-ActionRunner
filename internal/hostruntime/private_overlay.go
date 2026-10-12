@@ -48,6 +48,9 @@ type PrivateOverlay struct {
 	// neither, and overlays written before they existed stay canonical.
 	Worker *WorkerOverlay `json:"worker,omitempty"`
 	GitHub *GitHubOverlay `json:"github,omitempty"`
+	// Jail holds the job-jail settings an acquiring controller needs beyond
+	// the resource vectors. Optional for the same reason.
+	Jail *JailOverlay `json:"jail,omitempty"`
 }
 
 type TargetIdentityOverlay struct {
@@ -397,6 +400,21 @@ type GitHubOverlay struct {
 	ResponseHeaderTimeout string `json:"response_header_timeout"`
 }
 
+// JailOverlay holds the container users, seccomp profile, and limits an
+// acquiring controller passes to each job's jail. Users are numeric
+// "uid:gid"; the adapter and broker share one user.
+type JailOverlay struct {
+	AdapterBrokerUser        string `json:"adapter_broker_user"`
+	RunnerUser               string `json:"runner_user"`
+	VerifierUser             string `json:"verifier_user"`
+	SeccompProfilePath       string `json:"seccomp_profile_path"`
+	ContainerLogMaxBytes     uint64 `json:"container_log_max_bytes"`
+	ContainerLogMaxFiles     uint64 `json:"container_log_max_files"`
+	DialReservationBlockSize uint64 `json:"dial_reservation_block_size"`
+	DialAuthorityMaxClients  uint64 `json:"dial_authority_max_clients"`
+	DialAuthorityTimeout     string `json:"dial_authority_timeout"`
+}
+
 func ParsePrivateOverlay(document []byte, maxBytes int) (PrivateOverlay, string, error) {
 	if maxBytes <= 0 || len(document) == 0 || len(document) > maxBytes {
 		return PrivateOverlay{}, "", ErrInvalidPrivateOverlay
@@ -474,7 +492,8 @@ func validatePrivateOverlay(overlay PrivateOverlay) error {
 		!validLegacyOverlay(overlay.Legacy) ||
 		!validAllowedActions(overlay.AllowedActions) ||
 		!validWorkerOverlay(overlay.Worker, overlay) ||
-		!validGitHubOverlay(overlay.GitHub, overlay) {
+		!validGitHubOverlay(overlay.GitHub, overlay) ||
+		!validJailOverlay(overlay.Jail, overlay) {
 		return ErrInvalidPrivateOverlay
 	}
 	return nil
@@ -1091,6 +1110,78 @@ func validGitHubOverlay(github *GitHubOverlay, overlay PrivateOverlay) bool {
 		}
 	}
 	return true
+}
+
+// maxDialAuthorityTimeout bounds how long a jailed process may wait on its
+// dial authority.
+const maxDialAuthorityTimeout = 30 * time.Second
+
+// longLivedLogContainers counts each slot's containers that keep logs: the
+// adapter, the broker, and the runner.
+const longLivedLogContainers = 3
+
+func validJailOverlay(jail *JailOverlay, overlay PrivateOverlay) bool {
+	if jail == nil {
+		return true
+	}
+	adapterUID, _, adapterErr := ParseNumericUser(jail.AdapterBrokerUser)
+	verifierUID, _, verifierErr := ParseNumericUser(jail.VerifierUser)
+	runnerUID, runnerGID, runnerErr := ParseNumericUser(jail.RunnerUser)
+	if adapterErr != nil || verifierErr != nil || runnerErr != nil ||
+		adapterUID == 0 || verifierUID == 0 {
+		return false
+	}
+	// The runner is unprivileged on a strict host and must be root on the
+	// capless-root profile, where the jail itself drops every capability.
+	switch HostProfile(overlay.Target.ProfileID) {
+	case HostProfileStrictLinux:
+		if runnerUID == 0 {
+			return false
+		}
+	case HostProfileQTSCaplessRoot:
+		if runnerUID != 0 || runnerGID != 0 {
+			return false
+		}
+	default:
+		return false
+	}
+	timeout, timeoutOK := canonicalDuration(jail.DialAuthorityTimeout)
+	authority := overlay.Resources.SlotResources.DialAuthority
+	return jailLogsFit(*jail, overlay.Resources) &&
+		validCanonicalAbsolutePath(jail.SeccompProfilePath) &&
+		validateDescendant(
+			overlay.Paths.SeccompRoot,
+			jail.SeccompProfilePath,
+			"seccomp profile",
+		) == nil &&
+		jail.DialReservationBlockSize > 0 &&
+		jail.DialReservationBlockSize <= math.MaxUint32 &&
+		jail.DialAuthorityMaxClients > 0 &&
+		jail.DialAuthorityMaxClients <= math.MaxUint32 &&
+		jail.DialAuthorityMaxClients <= authority.PIDs &&
+		jail.DialAuthorityMaxClients <= authority.FileDescriptors &&
+		timeoutOK &&
+		timeout%time.Millisecond == 0 &&
+		timeout <= maxDialAuthorityTimeout
+}
+
+// jailLogsFit reports whether every slot's long-lived containers, rotating
+// their logs at the jail limits, fit the log filesystem's remaining budget
+// at full capacity.
+func jailLogsFit(jail JailOverlay, resources ResourceOverlay) bool {
+	if jail.ContainerLogMaxBytes == 0 || jail.ContainerLogMaxFiles == 0 {
+		return false
+	}
+	perContainer, perContainerOK := checkedMul(jail.ContainerLogMaxBytes, jail.ContainerLogMaxFiles)
+	containers, containersOK := checkedMul(longLivedLogContainers, resources.MaxCapacity)
+	fleetBytes, bytesOK := checkedMul(perContainer, containers)
+	fleetFiles, filesOK := checkedMul(jail.ContainerLogMaxFiles, containers)
+	bounds := resources.Storage.LogBounds
+	return perContainerOK && containersOK && bytesOK && filesOK &&
+		bounds.UsedBytes <= bounds.MaxBytes &&
+		bounds.UsedFiles <= bounds.MaxFiles &&
+		fleetBytes <= bounds.MaxBytes-bounds.UsedBytes &&
+		fleetFiles <= bounds.MaxFiles-bounds.UsedFiles
 }
 
 // uniqueFileSecret reports whether name resolves to exactly one file secret

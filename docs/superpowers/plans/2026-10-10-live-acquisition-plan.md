@@ -177,6 +177,11 @@ Operator steps ship as exact commands and run only on the operator's go.
    that composes `controller.Service` from existing parts, with a fatal
    terminator, a log event sink, and the capacity-1 provider. It starts
    disabled and refuses to run unless the portable fleet holds the fence.
+   Split in two: 5a adds the overlay `jail` section and two startup helpers
+   that clear crash leftovers no recoverable assignment references (empty
+   slot directories, a dial ledger left active); 5b is the composition. It
+   never calls `Collect`: each slot keeps one ledger row, which `Activate`
+   reuses.
 6. **Canary authority (D1).** The Task 11 amendment, a canary gate that accepts
    only a report with cases 1-14 passing and case 15 pending, and a single-use
    authority row in the existing SQLite store, consumed by compare-and-swap at

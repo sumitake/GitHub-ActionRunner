@@ -322,6 +322,54 @@ func (authority *PermitAuthority) Deactivate(
 	if !found || current.ActiveJobGeneration != generation {
 		return ErrPermitAssignment
 	}
+	return authority.deactivateLocked(ctx, slot, current, observation)
+}
+
+// DeactivateUnreferenced releases a ledger that a crashed controller left
+// active. Deactivate needs the job generation, which a crash loses; this
+// acts only when no recoverable assignment references the slot, so it never
+// releases a live job's ledger. A slot with no ledger, or none active, is
+// left as is. Call it at startup, before admission resumes: the reference
+// check and the release are not atomic with admission.
+func (authority *PermitAuthority) DeactivateUnreferenced(
+	ctx context.Context,
+	slot CapacitySlotID,
+) error {
+	if slot == 0 {
+		return ErrPermitAssignment
+	}
+	authority.mu.Lock()
+	defer authority.mu.Unlock()
+
+	observation, err := authority.observe(ctx)
+	if err != nil {
+		return err
+	}
+	current, found, err := authority.load(ctx, slot)
+	if err != nil {
+		return err
+	}
+	if !found || current.ActiveJobGeneration == 0 {
+		return nil
+	}
+	referenced, err := authority.references.HasLedgerReferences(ctx, slot)
+	if err != nil {
+		return err
+	}
+	if referenced {
+		return ErrLedgerReferenced
+	}
+	return authority.deactivateLocked(ctx, slot, current, observation)
+}
+
+// deactivateLocked ends current's active job. The caller holds mu and has
+// loaded current under it.
+func (authority *PermitAuthority) deactivateLocked(
+	ctx context.Context,
+	slot CapacitySlotID,
+	current permitLedger,
+	observation ClockObservation,
+) error {
 	if err := validateObservation(current, observation); err != nil {
 		return err
 	}
