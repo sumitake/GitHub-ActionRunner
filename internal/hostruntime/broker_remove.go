@@ -82,6 +82,14 @@ func (c *DockerCLI) removeBrokerResources(
 		if err := c.removeBrokerDirectory(record.spec.RelayParent); err != nil {
 			return err
 		}
+		if err := removeSlotDirectory(
+			c.cfg.BrokerRoot,
+			record.spec.SlotIdentity,
+			record.spec.RelayParent,
+			record.spec.AuthorityParent,
+		); err != nil {
+			return err
+		}
 		c.mu.Lock()
 		record.directoriesGone = true
 		c.mu.Unlock()
@@ -129,6 +137,54 @@ func (c *DockerCLI) removeBrokerDirectory(path string) error {
 	}
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("hostruntime: broker cleanup not confirmed")
+	}
+	return nil
+}
+
+// removeSlotDirectory removes <broker root>/<slot identity> once relay and
+// authority, its only expected entries, are gone, so the broker root can
+// return to empty. It acts only on that exact directory; a relay or authority
+// parent anywhere else is not one this package created and is left alone.
+// Anything still inside the slot directory fails cleanup, so it stays
+// unproven and is retried.
+func removeSlotDirectory(brokerRoot, slotIdentity, relayParent, authorityParent string) error {
+	if slotIdentity == "" || strings.ContainsAny(slotIdentity, "/\x00") ||
+		slotIdentity == "." || slotIdentity == ".." {
+		return errors.New("hostruntime: broker cleanup slot identity invalid")
+	}
+	slot := filepath.Join(filepath.Clean(brokerRoot), slotIdentity)
+	if filepath.Dir(relayParent) != slot || filepath.Dir(authorityParent) != slot {
+		return nil
+	}
+	info, err := os.Lstat(slot)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// Already removed, possibly by an attempt that crashed before the
+		// sync below; sync again.
+	case err != nil || !info.IsDir():
+		return errors.New("hostruntime: broker cleanup slot directory invalid")
+	default:
+		entries, err := os.ReadDir(slot)
+		if err != nil {
+			return errors.New("hostruntime: broker cleanup slot directory unavailable")
+		}
+		if len(entries) != 0 {
+			return errors.New("hostruntime: broker cleanup slot directory not empty")
+		}
+		if err := os.Remove(slot); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errors.New("hostruntime: broker cleanup failed")
+		}
+	}
+	// Make the removal durable before cleanup reports success: a slot entry
+	// that reappeared after a crash would block quiescence for an assignment
+	// already recorded as destroyed.
+	root, err := os.Open(filepath.Clean(brokerRoot))
+	if err != nil {
+		return errors.New("hostruntime: broker cleanup root unavailable")
+	}
+	syncErr := root.Sync()
+	if closeErr := root.Close(); syncErr != nil || closeErr != nil {
+		return errors.New("hostruntime: broker cleanup not durable")
 	}
 	return nil
 }

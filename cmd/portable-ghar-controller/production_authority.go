@@ -6,13 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"math"
-	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
+	"github.com/sumitake/portable-ghar/internal/lifecycle"
 )
 
 type productionAuthorityState interface {
@@ -163,37 +162,16 @@ func validOptionalContainerID(value string) bool {
 func (worker *productionCleanupWorker) recoverySpec(
 	assignment controller.RecoverableAssignment,
 ) (hostruntime.RecoverySpec, error) {
-	const prefix = "pghar-slot-"
-	slot := assignment.Slot
-	if !strings.HasPrefix(slot.OpaqueName, prefix) {
+	spec, err := lifecycle.RecoverySpecFor(
+		assignment.Slot,
+		worker.buildID,
+		worker.generation,
+		worker.brokerRoot,
+	)
+	if err != nil {
 		return hostruntime.RecoverySpec{}, errDisabledProjectionIncomplete
 	}
-	suffix := strings.TrimPrefix(slot.OpaqueName, prefix)
-	decoded, err := hex.DecodeString(suffix)
-	if err != nil || len(decoded) != 16 || strings.ToLower(suffix) != suffix {
-		return hostruntime.RecoverySpec{}, errDisabledProjectionIncomplete
-	}
-	return hostruntime.RecoverySpec{
-		SlotIdentity:      slot.OpaqueName,
-		BuildID:           worker.buildID,
-		FleetGeneration:   worker.generation,
-		AdapterName:       "pghar-adapter-" + suffix,
-		BrokerName:        "pghar-broker-" + suffix,
-		RunnerName:        "pghar-runner-" + suffix,
-		ExpectedAdapterID: slot.AdapterContainerID,
-		ExpectedBrokerID:  slot.BrokerContainerID,
-		ExpectedRunnerID:  slot.RunnerContainerID,
-		RelayParent: filepath.Join(
-			worker.brokerRoot,
-			slot.OpaqueName,
-			"relay",
-		),
-		AuthorityParent: filepath.Join(
-			worker.brokerRoot,
-			slot.OpaqueName,
-			"authority",
-		),
-	}, nil
+	return spec, nil
 }
 
 type productionLocalAuthorityConfig struct {
