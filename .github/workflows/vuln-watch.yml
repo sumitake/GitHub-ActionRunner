@@ -84,7 +84,7 @@ jobs:
         run: 'set -euo pipefail; out="$RUNNER_TEMP/runner-observation"; mkdir -m 700 "$out"; set +e; scripts/release/observe-runner-release.sh --current-manifest release/manifest.json --output "$out/runner-release.json"; observer_rc=$?; set -e; if [ "$observer_rc" -eq 3 ]; then printf "pinned runner %s is the latest official release\n" "$(jq -er ''.runtime.runner_release.version'' release/manifest.json)"; printf "newer=false\n" >>"$GITHUB_OUTPUT"; exit 0; fi; test "$observer_rc" -eq 0; test -f "$out/runner-release.json"; printf "newer=true\n" >>"$GITHUB_OUTPUT"'
       - name: Upload the observed runner release entry
         if: steps.observe.outputs.newer == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runner-release-observation
           path: ${{ runner.temp }}/runner-observation/runner-release.json

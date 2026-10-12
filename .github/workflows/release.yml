@@ -34,7 +34,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: 'set -euo pipefail; if [ "$GITHUB_REF_TYPE" != "tag" ]; then echo "signed tag required"; exit 1; fi; if ! [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then echo "signed tag required"; exit 1; fi; source_commit="$(git rev-parse HEAD)"; source_tree="$(git rev-parse "HEAD^{tree}")"; test "$source_commit" = "$GITHUB_SHA" || exit 1; gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" >"$RUNNER_TEMP/tag-ref.json"; tag_object="$(jq -er ''.object | select(.type == "tag") | .sha'' "$RUNNER_TEMP/tag-ref.json")"; gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" >"$RUNNER_TEMP/tag-object.json"; jq -e --arg tag "$GITHUB_REF_NAME" --arg commit "$source_commit" ''.tag == $tag and .object.type == "commit" and .object.sha == $commit and .verification.verified == true'' "$RUNNER_TEMP/tag-object.json" >/dev/null; version="${GITHUB_REF_NAME#v}"; mkdir -m 700 "$RUNNER_TEMP/release-admission"; jq -cS ''.runtime.runner_release'' release/manifest.json >"$RUNNER_TEMP/release-admission/runner-release.json"; test "$(wc -l <"$RUNNER_TEMP/release-admission/runner-release.json")" -eq 1; printf "version=%s\nsource_commit=%s\nsource_tree=%s\ntag_object=%s\n" "$version" "$source_commit" "$source_tree" "$tag_object" >>"$GITHUB_OUTPUT"'
       - name: Upload exact baseline runner manifest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-runner-manifest
           path: ${{ runner.temp }}/release-admission/runner-release.json
@@ -83,7 +83,7 @@ jobs:
         id: package
         run: 'set -euo pipefail; export GOCACHE="$RUNNER_TEMP/workflow-go-build-a" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-a"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind product --version "$RELEASE_VERSION" --runner-manifest "$RUNNER_TEMP/release-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
       - name: Upload rebuild A
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-rebuild-a
           path: ${{ runner.temp }}/publication-tree.tar
@@ -132,7 +132,7 @@ jobs:
         id: package
         run: 'set -euo pipefail; export GOCACHE="$RUNNER_TEMP/workflow-go-build-b" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-b"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind product --version "$RELEASE_VERSION" --runner-manifest "$RUNNER_TEMP/release-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
       - name: Upload rebuild B
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-rebuild-b
           path: ${{ runner.temp }}/publication-tree.tar
@@ -185,7 +185,7 @@ jobs:
           subject-checksums: ${{ runner.temp }}/attestation-checksums.txt
           show-summary: true
       - name: Upload comparator-validated publication bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-publication-bundle
           path: ${{ runner.temp }}/publication-bundle.tar

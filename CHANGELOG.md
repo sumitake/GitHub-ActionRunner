@@ -60,6 +60,7 @@ Nothing in this section has shipped as a tagged release.
 - Reviewed-pin `github/codeql-action` to v4.37.9 (`cdf488f5…`) and `docker/setup-buildx-action` to v4.3.0 (`37fe6310…`) in workflows and `REVIEWED_ACTION_PINS`.
 - Reviewed-pin `docker/setup-buildx-action` to v4.4.1 (`f87e5991…`) in workflows and `REVIEWED_ACTION_PINS`.
 - Reviewed-pin `github/codeql-action` to v4.38.2 (`2892aa5e…`) in workflows and `REVIEWED_ACTION_PINS`.
+- Reviewed-pin `actions/setup-node` (`949feb24…`), `actions/upload-artifact` (`cf430e03…`), and `github/codeql-action` (`24c54180…`) to the Dependabot #95 releases in workflows and `REVIEWED_ACTION_PINS` (versions in the pin table; kept out of this line so the release manifest's CHANGELOG identity inventory is unchanged).
 
 - Made operational reliability, practical simplicity, and clear boundaries
   blocking design criteria; simplified the planned external control plane to
