@@ -15,6 +15,7 @@ import (
 	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/githubscale"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
+	"github.com/sumitake/portable-ghar/internal/lifecycle"
 )
 
 const maxGitHubCredentialBytes = 4096
@@ -171,6 +172,32 @@ func closePollTargets(ctx context.Context, targets []controller.PollTarget) erro
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// pollTargetSessions serves lifecycle.SessionProvider from the opened poll
+// targets, so polling and runner operations share one GitHub session per
+// repository. It never opens a session itself.
+type pollTargetSessions map[string]githubscale.Session
+
+var _ lifecycle.SessionProvider = pollTargetSessions(nil)
+
+func newPollTargetSessions(targets []controller.PollTarget) pollTargetSessions {
+	sessions := make(pollTargetSessions, len(targets))
+	for _, target := range targets {
+		sessions[target.Fleet.RepositoryAlias] = target.Session
+	}
+	return sessions
+}
+
+func (sessions pollTargetSessions) Session(
+	_ context.Context,
+	repositoryAlias string,
+) (githubscale.Session, error) {
+	session, ok := sessions[repositoryAlias]
+	if !ok || session == nil {
+		return nil, errors.New("no session for repository")
+	}
+	return session, nil
 }
 
 type githubProbeResult struct {

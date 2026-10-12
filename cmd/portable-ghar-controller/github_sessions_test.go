@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/githubscale"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
 )
@@ -322,5 +323,20 @@ func TestParseCredential(t *testing.T) {
 		if _, err := parseCredential([]byte(input)); !errors.Is(err, errCommandUnavailable) {
 			t.Errorf("parseCredential(%q) error = %v, want rejection", input, err)
 		}
+	}
+}
+
+func TestPollTargetSessionsServesOnlyOpenedRepositories(t *testing.T) {
+	alpha := &fakeGitHubSession{}
+	sessions := newPollTargetSessions([]controller.PollTarget{{
+		Fleet:   githubscale.Fleet{RepositoryAlias: "alpha"},
+		Session: alpha,
+	}})
+	got, err := sessions.Session(context.Background(), "alpha")
+	if err != nil || got != alpha {
+		t.Fatalf("Session(alpha) = %v, %v; want the opened session", got, err)
+	}
+	if got, err := sessions.Session(context.Background(), "beta"); err == nil || got != nil {
+		t.Fatalf("Session(beta) = %v, %v; want an error", got, err)
 	}
 }
