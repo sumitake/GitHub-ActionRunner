@@ -25,6 +25,8 @@ unit tests. Nothing joins them in the production process.
 | Conformance gate | `canary-only` needs a fully passing 15-case report, checked at transition and before every guarded poll, acquire, and JIT call. The report binds BuildID, runtime manifest, private overlay, and fleet generation. No production report producer exists; `SealActualGitHubTransport` is called only by tests. | `internal/conformance/gate.go:62-125`; `registry.go:68-82`; `report.go:72-86,397-420,475-520` |
 | Network jail authority | Production has no `PermitPeerValidator`, `LedgerReferenceGuard`, or `EmptyConntrackValidator`. The test environment has the first two and a reject-only stub for the third. | `internal/networkjail/permit_proof.go:28-54`; `tests/integration/testenv/permit_guard.go:163-177` |
 | Lifecycle runtime | `lifecycle.Service` is constructed only in its own tests. No `SessionProvider` or `SetupBuilder` exists outside a unit-test fake. | `internal/lifecycle/service.go:131`; `service_test.go:482` |
+| Controller service dependencies | `NewService` rejects a nil value for any of 16 dependencies. Several have no production implementation, including the fatal terminator and the event sink. | `internal/controller/service.go:665-700`; `TerminateAfterPersist` is implemented only in `service_test.go` |
+| Case 15 evidence | `SealActualGitHubTransport` accepts a caller-supplied assertion count and digest. No collector produces the evidence the spec lists, and the target profile always returns pending. | `internal/conformance/report.go:410-427` |
 | Hosted and replay routes | Stubs only. A stale, oversized, or untimed offer ends the poll loop and so the controller process. | `internal/controller/service.go:2026-2046`; `runtime.go:146-193` |
 | Watchdog | Every cycle requires `disabled` mode and capacity 0, and safe-stops the controller otherwise. It only launches the disabled path. | `internal/watchdog/watchdog.go:235-253`; `internal/productionruntime/controller_probe.go:64-72` |
 | Fence | Acquisition needs the portable fence guard. The QTS install keeps the legacy fleet active. The live fence state on the target is not recorded here. | `internal/controller/acquisition.go:58-61`; `internal/cli/host.go:627-635` |
@@ -53,11 +55,16 @@ without changing the gate. Options:
 - (b) Let `canary-only` run with case 15 pending in general.
 - (c) One-shot canary authority: accept a report with cases 1-14 passing and
   case 15 pending only for one operator-approved, capacity-1 canary, and seal
-  case 15 from that job. This is the spec's own stated intent.
+  case 15 from that job.
 
-Recommendation: (c). It keeps the case's meaning. It still needs a new gate
-constructor, which `gate.go` currently says does not exist, so it is an
-approved amendment to the gate, not a bypass.
+The Task 11 spec is internally inconsistent here. It says pending reports
+"can never enable acquisition" (line 74), yet case 15 can only pass during a
+canary that acquires a real job (lines 1292-1305). No option satisfies both
+sentences, so every option is a spec change.
+
+Recommendation: (c), adopted as an explicit, reviewed amendment to the Task 11
+invariant, then implemented as a new gate constructor. It keeps the case's
+meaning and confines the exception to one approved, capacity-1 job.
 
 **D2. Cases 1-14 on the target.** The test harness already implements
 `conformance.HostProfile` (`tests/integration/conformance_test.go:14-35`), and
@@ -114,22 +121,36 @@ existing code on the target. Effort per phase is not yet estimated.
    permit-peer, ledger-reference, and empty-conntrack validators, a lifecycle
    `SetupBuilder`, and a `SessionProvider`. This is new security-critical code,
    not a port, and needs a security review.
-7. **Production conformance profile and canary gate (D1).** Implement the
-   profile for the target and the approved one-shot canary gate constructor.
-8. **Enabled controller process.** Compose `controller.Service` with the
-   lifecycle runtime, the Worker permit provider, and the conformance gate in
-   a separate process path. Acquisition stays `disabled` by default.
-9. **Fence handover and watchdog (D4, D5).** Suspend legacy and hand the
-   fence to Portable for the canary window, with rollback. Suspend and re-arm
-   the watchdog around it.
-10. **Release and qualify.** Cut a release from the frozen code, assemble the
+7. **Production conformance profile and canary gate (D1).** Amend the Task 11
+   invariant after review, then implement the profile for the target and the
+   one-shot canary gate constructor.
+8. **Case 15 evidence path.** A dedicated canary workflow that runs every
+   proxy-sensitive tool and a checkout, plus a collector that records the
+   in-run `Compatibility()` result and live `DisableUpdate`, JIT absence after
+   parsing, deregistration, and reclamation, and derives the observation
+   digest bound to the report run. `SealActualGitHubTransport` consumes only
+   this output.
+9. **Remaining controller adapters.** Production implementations for every
+   `NewService` dependency that has none today, including the fatal
+   terminator (process exit after the durable write) and the event sink.
+10. **Enabled controller process.** Compose `controller.Service` with the
+    lifecycle runtime, the Worker permit provider, the conformance gate, and
+    the adapters from phase 9 in a separate process path. Acquisition stays
+    `disabled` by default.
+11. **Fence handover and watchdog (D4, D5).** Suspend legacy and hand the
+    fence to Portable for the canary window, with rollback. Suspend and re-arm
+    the watchdog around it.
+12. **Release and qualify.** Cut a release from the frozen code, assemble the
     overlay, deploy, run conformance cases 1-14 on the target, and install the
     report. The report's binding is invalidated by any later build or overlay
     change, so this comes last.
-11. **Canary runbook script.** A thin script that records each step before it
-    runs: suspend the watchdog, hand over the fence, set `canary-only` on one
-    scale set, dispatch one job, wait for one terminal result, seal case 15,
-    verify zero residue, set `disabled`, restore the fence and watchdog.
+13. **Canary runbook script.** A thin script that records each step before it
+    runs: suspend the watchdog, hand over the fence, move the Worker fleet
+    `HOSTED → PORTABLE_CANARY` (a fleet left in `HOSTED` gets no lease, per
+    `worker/src/engine/heartbeat.ts:246-250`), set `canary-only` on one scale
+    set, dispatch one job, wait for one terminal result, collect the case 15
+    evidence and seal it, verify zero residue, set `disabled`, return the
+    Worker fleet to `HOSTED`, and restore the fence and watchdog.
 
 ## 4. Alternatives
 
