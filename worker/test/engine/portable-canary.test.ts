@@ -11,6 +11,7 @@ import {
   hexToBytes,
   signCanonical,
 } from "../../src/protocol/auth";
+import { executeDueWork, type GitHubClient } from "../../src/github/outbox";
 import { canonicalize } from "../../src/protocol/canonical";
 import { MemoryFleetStore } from "../../src/state/memory";
 
@@ -386,6 +387,35 @@ test("stop drains to hosted only after the last lease and margin expire", async 
   );
   expect(restart.status).toBe(200);
   expect(store.fleet.routingState).toBe("PORTABLE_CANARY");
+});
+
+// A controller can re-enroll while the fleet drains. The accepted session
+// advances the lease generation (handleSession), and the drain must still
+// complete, through the stop command and through the due-work runner alike.
+test("a session replacement during the drain still lets it complete", async () => {
+  const due = "2026-01-01T00:03:01.000Z";
+  for (const path of ["stop", "due-work"] as const) {
+    const clock = { now: commandTime };
+    const store = makeStore(clock);
+    expect((await admin(store, startCommand())).status).toBe(200);
+    expect((await admin(store, stopCommand(commandTime))).status).toBe(200);
+    expect(store.fleet.routingState).toBe("DRAINING_TO_HOSTED");
+    store.fleet.leaseGeneration += 1;
+
+    clock.now = due;
+    if (path === "stop") {
+      const stop = await admin(store, stopCommand(due));
+      expect(stop.status).toBe(200);
+      expect(JSON.parse(stop.body).status).toBe("hosted");
+    } else {
+      await executeDueWork(
+        store,
+        {} as GitHubClient,
+        store.claimReady(due, 8, 5_000),
+      );
+    }
+    expect(store.fleet.routingState).toBe("HOSTED");
+  }
 });
 
 test("stop is refused outside a portable canary or without a safety margin", async () => {
