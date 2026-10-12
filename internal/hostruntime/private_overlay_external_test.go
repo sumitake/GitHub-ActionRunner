@@ -136,6 +136,12 @@ func TestPrivateOverlayRejectsInvalidExternalSections(t *testing.T) {
 			overlay.Worker.HMACCredentialName =
 				overlay.Repositories[0].CredentialName
 		},
+		"HMAC file shared with a repository credential": func(overlay *PrivateOverlay) {
+			shareSecretRef(overlay, "worker-hmac", overlay.Repositories[0].CredentialName)
+		},
+		"HMAC file shared with the management credential": func(overlay *PrivateOverlay) {
+			shareSecretRef(overlay, "worker-hmac", overlay.ManagementTransport.CredentialName)
+		},
 		"HMAC from environment": func(overlay *PrivateOverlay) {
 			for index := range overlay.Secrets {
 				if overlay.Secrets[index].Name == "worker-hmac" {
@@ -194,5 +200,21 @@ func TestPrivateOverlayRejectsInvalidExternalSections(t *testing.T) {
 				t.Fatalf("MarshalPrivateOverlay() error = %v", err)
 			}
 		})
+	}
+}
+
+// shareSecretRef points the secret named target at the same reference as the
+// secret named source.
+func shareSecretRef(overlay *PrivateOverlay, target, source string) {
+	var ref SecretRefOverlay
+	for _, secret := range overlay.Secrets {
+		if secret.Name == source {
+			ref = secret.Ref
+		}
+	}
+	for index := range overlay.Secrets {
+		if overlay.Secrets[index].Name == target {
+			overlay.Secrets[index].Ref = ref
+		}
 	}
 }

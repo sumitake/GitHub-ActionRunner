@@ -1044,8 +1044,15 @@ func validWorkerOverlay(worker *WorkerOverlay, overlay PrivateOverlay) bool {
 		) {
 		return false
 	}
+	// The HMAC key must not be readable as any other credential: compare the
+	// resolved references, not only the names.
+	hmacRef, _ := namedSecretRef(worker.HMACCredentialName, overlay.Secrets)
+	others := []string{overlay.ManagementTransport.CredentialName}
 	for _, repository := range overlay.Repositories {
-		if repository.CredentialName == worker.HMACCredentialName {
+		others = append(others, repository.CredentialName)
+	}
+	for _, name := range others {
+		if ref, ok := namedSecretRef(name, overlay.Secrets); name == worker.HMACCredentialName || (ok && ref == hmacRef) {
 			return false
 		}
 	}
@@ -1090,6 +1097,15 @@ func validGitHubOverlay(github *GitHubOverlay, overlay PrivateOverlay) bool {
 
 // uniqueFileSecret reports whether name resolves to exactly one file secret
 // and is not the management transport's own credential.
+func namedSecretRef(name string, secrets []NamedSecretRef) (SecretRefOverlay, bool) {
+	for _, secret := range secrets {
+		if secret.Name == name {
+			return secret.Ref, true
+		}
+	}
+	return SecretRefOverlay{}, false
+}
+
 func uniqueFileSecret(
 	name string,
 	secrets []NamedSecretRef,
