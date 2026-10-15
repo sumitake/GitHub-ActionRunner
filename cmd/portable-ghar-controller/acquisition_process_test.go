@@ -56,7 +56,7 @@ func (service *fakeAcquisitionService) Ready() bool { return service.ready.Load(
 type acquisitionProcessFixture struct {
 	process    *acquisitionControllerProcess
 	service    *fakeAcquisitionService
-	guard      chan error
+	fenceLost  chan struct{}
 	resources  *testCloser
 	ownership  *testOwnershipLease
 	adminPath  string
@@ -80,7 +80,7 @@ func newAcquisitionProcessFixture(t *testing.T) *acquisitionProcessFixture {
 	fixture := &acquisitionProcessFixture{
 		process:    &acquisitionControllerProcess{},
 		service:    newFakeAcquisitionService(),
-		guard:      make(chan error, 1),
+		fenceLost:  make(chan struct{}),
 		resources:  &testCloser{},
 		ownership:  &testOwnershipLease{},
 		adminPath:  filepath.Join(root, "admin.sock"),
@@ -88,7 +88,7 @@ func newAcquisitionProcessFixture(t *testing.T) *acquisitionProcessFixture {
 	}
 	if err := fixture.process.init(acquisitionProcessConfig{
 		Service:          fixture.service,
-		GuardFailure:     fixture.guard,
+		FenceLost:        fixture.fenceLost,
 		Resources:        fixture.resources,
 		Ownership:        fixture.ownership,
 		AdminSocketPath:  fixture.adminPath,
@@ -211,13 +211,7 @@ func TestAcquisitionProcessExitsWithAnErrorUnlessSignaled(t *testing.T) {
 			want: errAcquisitionFatal,
 		},
 		"lost fence guard": {
-			stop: func(fixture *acquisitionProcessFixture) {
-				fixture.guard <- errors.New("renew failed")
-			},
-			want: errAcquisitionFenceLost,
-		},
-		"closed fence guard": {
-			stop: func(fixture *acquisitionProcessFixture) { close(fixture.guard) },
+			stop: func(fixture *acquisitionProcessFixture) { close(fixture.fenceLost) },
 			want: errAcquisitionFenceLost,
 		},
 	}

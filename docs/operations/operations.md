@@ -78,7 +78,7 @@ It refuses to start unless:
 
 When it refuses, the error names the startup step that failed.
 
-At startup it holds a portable fence guard for the whole run. It then
+At startup it takes one portable fence guard and holds it for the whole run. Every later acquisition and heartbeat uses that guard, since the fence records one holder per process. It then
 releases any dial ledger and removes any empty slot directory that no
 recoverable assignment references, and opens one GitHub message session per
 repository. On a new database it first records the disabled policy, so the

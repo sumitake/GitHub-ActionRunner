@@ -148,6 +148,9 @@ func openProductionAcquisitionController(
 	if !ok || failureSource.Failure() == nil {
 		return fail(startupStep("watch portable fence guard", nil))
 	}
+	// Every later guard in this process is a view of this one.
+	fence := newSharedFenceGuard(failureSource.Failure())
+	resources.Add(fence)
 
 	docker, err := hostruntime.NewDockerCLI(
 		hostruntime.DockerCLIConfig{
@@ -263,7 +266,7 @@ func openProductionAcquisitionController(
 	worker, err := newProductionWorkerClients(productionWorkerConfig{
 		Overlay:         overlay,
 		HMACKeyHex:      hmacKey,
-		FleetGuards:     fleetGuards,
+		FleetGuards:     fence,
 		BuildID:         manifest.BuildID,
 		Fence:           manifest.FleetGeneration,
 		AttemptInterval: timings.reconciliationCadence + timings.reconciliation,
@@ -322,7 +325,7 @@ func openProductionAcquisitionController(
 		Events:                runtime,
 		Replay:                external,
 		Hosted:                external,
-		FleetGuards:           fleetGuards,
+		FleetGuards:           fence,
 		Permits:               worker.Permits,
 		Conformance:           conformance.NewUnavailableAcquisitionGate(),
 		HostCapacity:          fixedHostCapacity{capacity: int(overlay.Resources.MaxCapacity), evidence: loaded.overlayDigest, now: time.Now},
@@ -357,7 +360,7 @@ func openProductionAcquisitionController(
 	jit.Set(acquiring)
 	if err := process.init(acquisitionProcessConfig{
 		Service:          acquiring,
-		GuardFailure:     failureSource.Failure(),
+		FenceLost:        fence.Lost(),
 		Resources:        resources,
 		Ownership:        ownership,
 		AdminSocketPath:  overlay.Paths.AdminSocketPath,

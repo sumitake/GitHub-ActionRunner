@@ -25,7 +25,7 @@ type acquisitionService interface {
 
 type acquisitionProcessConfig struct {
 	Service          acquisitionService
-	GuardFailure     <-chan error
+	FenceLost        <-chan struct{}
 	Resources        io.Closer
 	Ownership        controllerOwnershipLease
 	AdminSocketPath  string
@@ -101,11 +101,11 @@ func (process *acquisitionControllerProcess) Run(parent context.Context) error {
 
 	serviceDone := make(chan error, 1)
 	go func() { serviceDone <- process.config.Service.Run(runCtx) }()
-	if guardFailure := process.config.GuardFailure; guardFailure != nil {
+	if lost := process.config.FenceLost; lost != nil {
 		go func() {
 			select {
-			case err := <-guardFailure:
-				process.stop(errors.Join(errAcquisitionFenceLost, err))
+			case <-lost:
+				process.stop(errAcquisitionFenceLost)
 			case <-runCtx.Done():
 			}
 		}()
