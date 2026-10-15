@@ -280,6 +280,7 @@ func openProductionAcquisitionController(
 		Fence:           manifest.FleetGeneration,
 		AttemptInterval: timings.reconciliationCadence + timings.reconciliation,
 		Clock:           authorityClock,
+		OnLeaseOverrun:  (&leaseOverrunExit{logs: logs, exit: os.Exit}).Fire,
 	})
 	if err != nil {
 		return fail(startupStep("build Worker clients", err))
@@ -393,6 +394,25 @@ func openProductionAcquisitionController(
 		return failWithTargets(startupStep("ownership lease lost", nil))
 	}
 	return process, nil
+}
+
+// leaseOverrunExit is the Worker client's lease overrun hook. A permit still
+// open that close to its lease deadline means shutdown itself has run too
+// long, so the process exits at once rather than stopping gracefully: no
+// acquisition effect may outlive the Worker lease.
+type leaseOverrunExit struct {
+	once sync.Once
+	logs io.Writer
+	exit func(int)
+}
+
+func (overrun *leaseOverrunExit) Fire(binding controller.AcquisitionPermitBinding) {
+	overrun.once.Do(func() {
+		fmt.Fprintf(overrun.logs,
+			"portable-ghar-controller: %s operation %s outlived its lease budget; exiting\n",
+			binding.OperationKind, binding.OperationID)
+		overrun.exit(1)
+	})
 }
 
 // productionServiceTimings are the service timings the disabled observer

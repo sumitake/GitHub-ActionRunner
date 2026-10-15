@@ -360,3 +360,19 @@ func TestControllerCLIRunAcquisitionSignalWithOpenSessionIsAFailure(t *testing.T
 		t.Fatalf("exit %d, stderr %q; want the open session reported", exit, stderr.String())
 	}
 }
+
+func TestLeaseOverrunExitLogsAndExitsOnce(t *testing.T) {
+	var logs bytes.Buffer
+	var codes []int
+	overrun := &leaseOverrunExit{logs: &logs, exit: func(code int) { codes = append(codes, code) }}
+	binding := controller.AcquisitionPermitBinding{OperationKind: "acquire", OperationID: "op-1"}
+	overrun.Fire(binding)
+	overrun.Fire(binding)
+	if len(codes) != 1 || codes[0] == 0 {
+		t.Fatalf("exit codes = %v; want one non-zero exit", codes)
+	}
+	if got := logs.String(); !strings.Contains(got, "acquire operation op-1 outlived its lease budget") ||
+		strings.Count(got, "\n") != 1 {
+		t.Fatalf("logs = %q", got)
+	}
+}
