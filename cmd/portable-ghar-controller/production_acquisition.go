@@ -399,11 +399,26 @@ type leaseOverrunExit struct {
 	exit func(int)
 }
 
+// leaseOverrunLogWait bounds how long the overrun exit waits for its log
+// line: a blocked stderr must not hold the process past the lease. It is a
+// small fraction of the two-second overrun slice.
+const leaseOverrunLogWait = 100 * time.Millisecond
+
 func (overrun *leaseOverrunExit) Fire(binding controller.AcquisitionPermitBinding) {
 	overrun.once.Do(func() {
-		fmt.Fprintf(overrun.logs,
-			"portable-ghar-controller: %s operation %s outlived its lease budget; exiting\n",
-			binding.OperationKind, binding.OperationID)
+		logged := make(chan struct{})
+		go func() {
+			defer close(logged)
+			fmt.Fprintf(overrun.logs,
+				"portable-ghar-controller: %s operation %s outlived its lease budget; exiting\n",
+				binding.OperationKind, binding.OperationID)
+		}()
+		timer := time.NewTimer(leaseOverrunLogWait)
+		defer timer.Stop()
+		select {
+		case <-logged:
+		case <-timer.C:
+		}
 		overrun.exit(1)
 	})
 }

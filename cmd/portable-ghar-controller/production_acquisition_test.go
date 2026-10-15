@@ -395,3 +395,28 @@ func TestProductionResourcesFailMarksACleanupFailure(t *testing.T) {
 type failingCloser struct{}
 
 func (failingCloser) Close() error { return errors.New("close failed") }
+
+// blockedWriter never completes a write until released, like a stderr pipe
+// nobody drains.
+type blockedWriter struct{ release chan struct{} }
+
+func (writer blockedWriter) Write(p []byte) (int, error) {
+	<-writer.release
+	return len(p), nil
+}
+
+func TestLeaseOverrunExitDoesNotWaitOnABlockedLog(t *testing.T) {
+	writer := blockedWriter{release: make(chan struct{})}
+	t.Cleanup(func() { close(writer.release) })
+	exited := make(chan int, 1)
+	overrun := &leaseOverrunExit{logs: writer, exit: func(code int) { exited <- code }}
+	go overrun.Fire(controller.AcquisitionPermitBinding{OperationKind: "acquire", OperationID: "op-1"})
+	select {
+	case code := <-exited:
+		if code == 0 {
+			t.Fatal("overrun exited with status 0")
+		}
+	case <-time.After(10 * leaseOverrunLogWait):
+		t.Fatal("overrun exit waited on a blocked log writer")
+	}
+}
