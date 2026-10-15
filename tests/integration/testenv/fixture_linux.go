@@ -27,6 +27,11 @@ func StartDockerFixture(t *testing.T) *Fixture {
 	if decision.Skip {
 		t.Skip(decision.Reason)
 	}
+	report, err := OpenReportOutput(decision.ReportPath, os.Geteuid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = report.Close() })
 
 	lease, err := acquireConformanceInputLease(
 		decision.InputPath,
@@ -151,5 +156,6 @@ func StartDockerFixture(t *testing.T) *Fixture {
 		_ = authorization.Close()
 		t.Fatal(err)
 	}
+	fixture.report = report
 	return fixture
 }

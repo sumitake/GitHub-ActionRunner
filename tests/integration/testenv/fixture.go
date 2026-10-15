@@ -25,9 +25,10 @@ var (
 )
 
 type FixtureStartupDecision struct {
-	Skip      bool
-	Reason    string
-	InputPath string
+	Skip       bool
+	Reason     string
+	InputPath  string
+	ReportPath string
 }
 
 type FixtureHostFacts struct {
@@ -112,6 +113,7 @@ type fixtureStartDependencies struct {
 // machine. Its handles are opaque outside testenv and are removed only by
 // exact identity in reverse creation order.
 type Fixture struct {
+	report    *ReportOutput
 	input     ConformanceInput
 	binding   conformance.Binding
 	cases     fixtureCaseExecutor
@@ -146,7 +148,8 @@ func decideFixtureStartup(
 	}
 	dockerValue, dockerPresent := lookup("PGHAR_INTEGRATION_DOCKER")
 	inputPath, inputPresent := lookup("PGHAR_CONFORMANCE_INPUT")
-	if !dockerPresent && !inputPresent {
+	reportPath, reportPresent := lookup("PGHAR_CONFORMANCE_REPORT")
+	if !dockerPresent && !inputPresent && !reportPresent {
 		return FixtureStartupDecision{
 			Skip:   true,
 			Reason: unsupportedHostSkip,
@@ -155,10 +158,12 @@ func decideFixtureStartup(
 	if !dockerPresent ||
 		dockerValue != "1" ||
 		!inputPresent ||
-		!validAbsolutePath(inputPath) {
+		!validAbsolutePath(inputPath) ||
+		!validAbsolutePath(reportPath) ||
+		reportPath == inputPath {
 		return FixtureStartupDecision{}, ErrFixtureOptIn
 	}
-	return FixtureStartupDecision{InputPath: inputPath}, nil
+	return FixtureStartupDecision{InputPath: inputPath, ReportPath: reportPath}, nil
 }
 
 func startFixtureCore(
@@ -409,4 +414,13 @@ func (f *Fixture) Cleanup(
 
 func durationMilliseconds(value uint64) time.Duration {
 	return time.Duration(value) * time.Millisecond
+}
+
+// WriteReport stores the run's canonical report at the output checked at
+// startup.
+func (fixture *Fixture) WriteReport(report conformance.Report) error {
+	if fixture == nil {
+		return ErrReportOutput
+	}
+	return fixture.report.Write(report)
 }

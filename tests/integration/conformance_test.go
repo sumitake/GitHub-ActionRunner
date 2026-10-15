@@ -14,6 +14,11 @@ import (
 func TestPortableGHARConformance(t *testing.T) {
 	fixture := testenv.StartDockerFixture(t)
 	report := conformance.Run(context.Background(), fixture)
+	// Write before judging the report, so a failed run still records which
+	// cases passed.
+	if err := fixture.WriteReport(report); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
 	if err := testenv.ValidateConformanceTerminalReport(report); err != nil {
 		t.Fatalf("terminal report: %v", err)
 	}

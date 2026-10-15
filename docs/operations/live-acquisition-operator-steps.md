@@ -195,20 +195,45 @@ whitespace.
 
 ## D2. Conformance cases 1-14 on the target
 
-**Blocked until plan phase 6 merges.** The harness preflight requires a
-`vcs.revision` stamp that matches the run's `source_commit`, and test binaries
-carry none. Building with `-buildvcs=true` was tried and does not stamp them
-either. The harness also never writes its report out. Phase 6 adds a source
-commit check that works for test binaries, and a report writer. The exact D2
-commands ship with phase 6.
+The harness runs every case on the target and writes its report. For the
+canary, the expected result is cases 1-14 passed and case 15 pending. A run
+that fails still writes its report, which records the cases that passed.
 
-Facts that hold either way, for planning:
+Prerequisites:
 
-- The run consumes its input file: the harness deletes it. Keep a private
-  copy, mode `0400`, owned by the euid the run expects.
-- The input names the runtime manifest, overlay, policy, CA, and seccomp files
+- A regular clone of the repository on the target, owned by the euid the
+  input expects, checked out at the input's `runtime.source_commit`, with a
+  clean tree. Do not use a git worktree: in a worktree, `-buildvcs=true`
+  silently leaves out the commit stamp, and the preflight then refuses to run.
+- The approved input file, mode `0400`, owned by that euid, outside the
+  checkout. The run consumes it: the harness deletes it, so keep a private
+  copy. It names the runtime manifest, overlay, policy, CA, and seccomp files
   by path and digest, and a nonzero fleet generation. Every named file must be
   a regular file owned by that euid, with no group or other write access.
-- The test locates the Task 11 plan through its own source path. It must
-  therefore run from a checkout owned by that euid, built without
-  `-trimpath`.
+- A report path outside the checkout whose file does not exist yet, in a
+  directory owned by that euid that no group or other user can write. Once
+  the canary gate lands, `run-acquisition` reads the report from
+  `<state_root>/conformance-report.json`, so writing it there saves a copy.
+
+Check the checkout, then run the harness as that euid:
+
+```sh
+cd <checkout>
+git status --porcelain=v1 --untracked-files=all
+git rev-parse HEAD
+PGHAR_INTEGRATION_DOCKER=1 \
+  PGHAR_CONFORMANCE_INPUT=<input_path> \
+  PGHAR_CONFORMANCE_REPORT=<report_path> \
+  go test -tags=integration -buildvcs=true -count=1 -v \
+  -run '^TestPortableGHARConformance$' ./tests/integration
+```
+
+- `git status` must print nothing, and `git rev-parse HEAD` must print the
+  input's `runtime.source_commit`. The preflight checks both again from the
+  binary's build stamp.
+- `-buildvcs=true` is required: `go test` leaves out the commit stamp by
+  default. Do not add `-trimpath`; the test finds the Task 11 plan through its
+  own source path.
+- The report is written before the test judges it, in its exact canonical
+  form, mode `0600`. The harness refuses an existing file or a symlink at the
+  report path, and checks the path before it consumes the input.

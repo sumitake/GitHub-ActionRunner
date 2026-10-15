@@ -139,10 +139,12 @@ Operator steps ship as exact commands and run only on the operator's go.
   repository variables (`worker/src/github/outbox.ts:263-315`), and the
   Worker's GitHub executor has no production caller. For the canary the Worker
   is a pure lease authority over a fleet with zero repository records.
-- **D2 cannot run today.** Its preflight requires `vcs.revision` in the build
-  info (`tests/integration/testenv/static_preflight_linux.go:490-515`), and
-  `go test` binaries carry none (verified with `go version -m`). The harness
-  also never writes its report out.
+- **D2 needed one fix, not two.** Its preflight requires `vcs.revision` in
+  the build info (`tests/integration/testenv/static_preflight_linux.go:490-515`).
+  `go test -buildvcs=true` stamps it in a regular clone; a git worktree
+  silently leaves it out, which is what an earlier check had used. The harness
+  never wrote its report out; phase 6 adds the report writer
+  (`PGHAR_CONFORMANCE_REPORT`).
 - **D7 needs a tool.** A runner scale set cannot be created in the GitHub UI or
   REST API, and nothing in the repo creates one.
 - **Production rollback is a stub** (`internal/productionruntime/system_lifecycle.go:1856-1866`),
