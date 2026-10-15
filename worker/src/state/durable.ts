@@ -193,8 +193,10 @@ export class FleetDurableObject extends DurableObject<WorkerEnv> {
       return rejected();
     }
     const copy = request.clone();
+    // The gateway checks inventory; storeFor below refuses any fleet other
+    // than this object's own.
     const fleetId = this.objectName ?? fleetIdFromBody(await copy.text());
-    if (fleetId === null || !bindings.inventoriedFleetIds.includes(fleetId)) {
+    if (fleetId === null) {
       return rejected();
     }
     const store = loadFleetStore(this.sql, fleetId, {
@@ -205,11 +207,15 @@ export class FleetDurableObject extends DurableObject<WorkerEnv> {
       secrets: bindings.secrets,
       storeFor: (id) => (id === store.fleet.fleetId ? store : undefined),
     });
-    // A rejected request writes nothing: no protocol handler changes fleet
-    // state before it rejects (the admin handler rolls back first), and the
-    // store is reloaded for every request. Rejections cover bad or stale
-    // signatures, replays, and refused commands alike.
-    if (response.status !== 401) {
+    // One rule: a rejected request persists only if its handler recorded
+    // an audit row (session-rejected-*, including nonce replays). No
+    // protocol handler changes fleet state before it rejects (the admin
+    // handler rolls back first). A request with a bad or missing signature
+    // never reaches a handler (gateway pre-verify), so it writes nothing.
+    if (
+      response.status !== 401 ||
+      store.auditPersistenceState().pendingEvents > 0
+    ) {
       saveFleetStore(this.sql, store);
     }
     return response;

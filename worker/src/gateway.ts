@@ -72,8 +72,9 @@ export async function dispatchFleetRequest(
     return rejected();
   }
   // Authenticate before handing out the fleet store: a request that fails
-  // here never reaches a handler, so it writes nothing. Each handler
-  // verifies again and checks its own binding, window, and nonce.
+  // here never reaches a handler, so it records no audit row and the
+  // Durable Object writes nothing. Each handler verifies again and checks
+  // its own binding, window, and nonce (and audits those rejections).
   try {
     await verifyCanonical(
       gateway.secrets.hmacKey,
