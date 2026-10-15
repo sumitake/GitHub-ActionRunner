@@ -383,3 +383,20 @@ func TestAcquisitionProcessTreatsASignalDuringStartupAsACleanStop(t *testing.T) 
 		}
 	})
 }
+
+func TestAcquisitionProcessKeepsResourcesWhenServiceLoopsDidNotJoin(t *testing.T) {
+	fixture := newAcquisitionProcessFixture(t)
+	fixture.service.runErr = fmt.Errorf("%w: loop join deadline", controller.ErrRuntimeShutdown)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := fixture.startWith(t, ctx)
+	cancel()
+	if err := waitForRun(t, result); !errors.Is(err, controller.ErrRuntimeShutdown) {
+		t.Fatalf("Run = %v, want the shutdown failure", err)
+	}
+	if err := fixture.process.Close(); !errors.Is(err, controller.ErrRuntimeShutdown) {
+		t.Fatalf("Close = %v, want a refusal", err)
+	}
+	if fixture.resources.Count() != 0 || fixture.ownership.CountClosed() != 0 {
+		t.Fatal("Close released resources while service loops may still run")
+	}
+}

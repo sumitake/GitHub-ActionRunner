@@ -142,7 +142,13 @@ func (process *acquisitionControllerProcess) Run(parent context.Context) error {
 	}
 	process.mu.Lock()
 	reason := process.stopReason
-	process.safeToClose = closeErr == nil
+	// Service.Run reports ErrRuntimeShutdown when its loops missed the join
+	// deadline, and also when a later shutdown step failed. A loop that has
+	// not joined may still hold the store or a fence view, so Close keeps
+	// every resource and the process exits holding them: the kernel then
+	// drops the fence and ownership locks, as for any crash.
+	process.safeToClose = closeErr == nil &&
+		!errors.Is(runErr, controller.ErrRuntimeShutdown)
 	process.mu.Unlock()
 	// A signal that lands while the service or the servers are still
 	// starting is the same clean stop as one after startup, provided nothing

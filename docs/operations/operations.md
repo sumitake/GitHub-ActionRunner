@@ -105,7 +105,7 @@ health sockets are the same as `run`; health reports ready only after
 startup recovery.
 
 A signal stops it cleanly: the service records a disabled epoch and closes
-its GitHub sessions on the way out, even when the signal arrives before startup finishes. A persisted fatal state, a lost fence guard, a database ownership lock that no longer validates (checked every reconciliation cadence), a local server failure, or a lease overrun also stops it, with a non-zero exit.
+its GitHub sessions on the way out, even when the signal arrives before startup finishes. A persisted fatal state, a lost fence guard, a database ownership lock that no longer validates (checked every reconciliation cadence), a local server failure, or a lease overrun also stops it, with a non-zero exit. If the service cannot shut down cleanly, for example because its loops miss the join deadline, the process exits without releasing its store, fence guard, or ownership lock, and the kernel drops the locks with the process.
 
 ## Watchdog restart authority
 
