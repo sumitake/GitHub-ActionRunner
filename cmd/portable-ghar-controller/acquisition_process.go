@@ -122,7 +122,7 @@ func (process *acquisitionControllerProcess) Run(parent context.Context) error {
 	go func() { serviceDone <- process.config.Service.Run(runCtx) }()
 	go process.watch(runCtx)
 	admin, health, serverErr := process.startServers(runCtx)
-	if serverErr != nil {
+	if serverErr != nil && !errors.Is(serverErr, context.Canceled) {
 		process.stop(errAcquisitionServer)
 	}
 	runErr := <-serviceDone
@@ -144,7 +144,19 @@ func (process *acquisitionControllerProcess) Run(parent context.Context) error {
 	reason := process.stopReason
 	process.safeToClose = closeErr == nil
 	process.mu.Unlock()
+	// A signal that lands while the service or the servers are still
+	// starting is the same clean stop as one after startup, provided nothing
+	// else stopped the run, cleanup succeeded, and every remaining error is
+	// that cancellation. Any other error keeps the exit non-zero.
+	if parent.Err() != nil && reason == nil && sessionErr == nil && closeErr == nil &&
+		onlyCancelled(serverErr) && onlyCancelled(runErr) {
+		return nil
+	}
 	return errors.Join(reason, serverErr, runErr, sessionErr, closeErr)
+}
+
+func onlyCancelled(err error) bool {
+	return err == nil || errors.Is(err, context.Canceled)
 }
 
 // watch stops the run when the fence guard is lost or the ownership lock no
@@ -242,11 +254,12 @@ func (process *acquisitionControllerProcess) startServers(
 	if err != nil {
 		return admin, nil, err
 	}
-	if err := admin.Start(ctx); err != nil {
-		return admin, health, err
-	}
-	if err := health.Start(ctx); err != nil {
-		return admin, health, err
+	for _, server := range []*localServer{admin, health} {
+		if err := server.Start(ctx); err != nil {
+			// Start refuses a cancelled context; report the cancellation
+			// itself so Run can tell it from a server failure.
+			return admin, health, errors.Join(err, ctx.Err())
+		}
 	}
 	return admin, health, nil
 }

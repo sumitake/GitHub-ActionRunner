@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -333,6 +334,52 @@ func TestAcquisitionProcessClosesSessionsOnEveryPath(t *testing.T) {
 		}
 		if fixture.resources.Count() != 1 || fixture.ownership.CountClosed() != 1 {
 			t.Fatal("Close after an unstarted run did not release resources")
+		}
+	})
+}
+
+func TestAcquisitionProcessTreatsASignalDuringStartupAsACleanStop(t *testing.T) {
+	cancelledStartup := fmt.Errorf("%w: persist startup zero: %w",
+		controller.ErrStartupRestore, context.Canceled)
+	t.Run("service startup", func(t *testing.T) {
+		fixture := newAcquisitionProcessFixture(t)
+		fixture.service.runErr = cancelledStartup
+		ctx, cancel := context.WithCancel(context.Background())
+		result := fixture.startWith(t, ctx)
+		cancel()
+		if err := waitForRun(t, result); err != nil {
+			t.Fatalf("Run = %v, want a clean stop", err)
+		}
+		if err := fixture.process.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	})
+	t.Run("not when session cleanup fails", func(t *testing.T) {
+		fixture := newAcquisitionProcessFixture(t)
+		fixture.service.runErr = cancelledStartup
+		closeFailure := errors.New("session close failed")
+		fixture.process.config.CloseSessions = func() error { return closeFailure }
+		ctx, cancel := context.WithCancel(context.Background())
+		result := fixture.startWith(t, ctx)
+		cancel()
+		if err := waitForRun(t, result); !errors.Is(err, closeFailure) {
+			t.Fatalf("Run = %v, want the session close failure", err)
+		}
+	})
+	t.Run("server startup reports the cancellation", func(t *testing.T) {
+		fixture := newAcquisitionProcessFixture(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		admin, health, err := fixture.process.startServers(ctx)
+		for _, server := range []*localServer{admin, health} {
+			if server != nil {
+				if closeErr := server.Close(context.Background()); closeErr != nil {
+					t.Fatalf("close server: %v", closeErr)
+				}
+			}
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("startServers = %v, want the cancellation", err)
 		}
 	})
 }

@@ -27,10 +27,6 @@ import (
 	"github.com/sumitake/portable-ghar/internal/state"
 )
 
-// errStartupCleanup marks a composition failure whose cleanup also failed:
-// something it opened, such as a GitHub message session, may still be held.
-var errStartupCleanup = errors.New("portable-ghar-controller: startup cleanup failed")
-
 // maxProductionPolicyBytes matches the decision graph's own size bound.
 const maxProductionPolicyBytes = 128 << 10
 
@@ -102,10 +98,7 @@ func openProductionAcquisitionController(
 
 	resources := &productionControllerResources{}
 	fail := func(primary error) (controllerProcess, error) {
-		if cleanupErr := resources.Close(); cleanupErr != nil {
-			return nil, errors.Join(primary, errStartupCleanup, cleanupErr)
-		}
-		return nil, primary
+		return nil, resources.Fail(primary)
 	}
 	store, err := state.OpenWithHistoryLimits(databasePath, loaded.history)
 	if err != nil {

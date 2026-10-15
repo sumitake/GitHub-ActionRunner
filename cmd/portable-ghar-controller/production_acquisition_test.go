@@ -376,3 +376,22 @@ func TestLeaseOverrunExitLogsAndExitsOnce(t *testing.T) {
 		t.Fatalf("logs = %q", got)
 	}
 }
+
+func TestProductionResourcesFailMarksACleanupFailure(t *testing.T) {
+	primary := errors.New("open failed")
+	clean := &productionControllerResources{}
+	clean.Add(&testCloser{})
+	if err := clean.Fail(primary); err != primary {
+		t.Fatalf("Fail with clean cleanup = %v, want the primary error alone", err)
+	}
+	dirty := &productionControllerResources{}
+	dirty.Add(failingCloser{})
+	err := dirty.Fail(primary)
+	if !errors.Is(err, primary) || !errors.Is(err, errStartupCleanup) {
+		t.Fatalf("Fail with failed cleanup = %v, want primary and errStartupCleanup", err)
+	}
+}
+
+type failingCloser struct{}
+
+func (failingCloser) Close() error { return errors.New("close failed") }

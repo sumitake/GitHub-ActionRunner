@@ -254,7 +254,7 @@ func openProductionDisabledObserver(
 
 	resources := &productionControllerResources{}
 	fail := func(primary error) (controllerProcess, error) {
-		return nil, errors.Join(primary, resources.Close())
+		return nil, resources.Fail(primary)
 	}
 	store, err := state.OpenWithHistoryLimits(
 		databasePath,
@@ -683,6 +683,10 @@ func portablePID(fleet fleetfence.Fleet, pid int) int {
 	return 0
 }
 
+// errStartupCleanup marks a composition failure whose cleanup also failed:
+// something it opened, such as a GitHub message session, may still be held.
+var errStartupCleanup = errors.New("portable-ghar-controller: startup cleanup failed")
+
 type productionControllerResources struct {
 	closers []io.Closer
 }
@@ -701,6 +705,16 @@ func (resources *productionControllerResources) Close() error {
 	}
 	resources.closers = nil
 	return result
+}
+
+// Fail releases everything opened so far for a composition that failed with
+// primary. A cleanup failure is marked errStartupCleanup, so a signal that
+// interrupted composition is never mistaken for a clean stop.
+func (resources *productionControllerResources) Fail(primary error) error {
+	if cleanupErr := resources.Close(); cleanupErr != nil {
+		return errors.Join(primary, errStartupCleanup, cleanupErr)
+	}
+	return primary
 }
 
 func controllerManifestMatchesOverlay(
