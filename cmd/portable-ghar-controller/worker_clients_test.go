@@ -32,10 +32,10 @@ func testWorkerConfig() productionWorkerConfig {
 				LostRenewals:       2,
 				TerminationTail:    "30s",
 			},
-			GitHub: &hostruntime.GitHubOverlay{
-				MaxResponseBytes:      1 << 20,
-				OperationTimeout:      "30s",
-				ResponseHeaderTimeout: "15s",
+			Controller: hostruntime.ControllerTimingOverlay{
+				OperationTimeout:      "20s",
+				TransitionJoinTimeout: "10s",
+				DurableFinishTimeout:  "11s",
 			},
 		},
 		HMACKeyHex:      strings.Repeat("0b", 32),
@@ -55,7 +55,7 @@ func TestProductionWorkerClientsComposeFromTheOverlay(t *testing.T) {
 	if clients.Health == nil || clients.session == nil ||
 		clients.Permits.Fence != 7 ||
 		clients.Permits.Holder != failoverclient.HolderPortable ||
-		clients.Permits.CallDuration != 30*time.Second ||
+		clients.Permits.CallDuration != 20*time.Second ||
 		clients.Permits.TerminationTail != 30*time.Second {
 		t.Fatalf("clients = %+v", clients)
 	}
@@ -67,7 +67,12 @@ func TestProductionWorkerClientsComposeFromTheOverlay(t *testing.T) {
 func TestProductionWorkerClientsRejectAnUnsafeConfiguration(t *testing.T) {
 	tests := map[string]func(*productionWorkerConfig){
 		"no worker section": func(config *productionWorkerConfig) { config.Overlay.Worker = nil },
-		"no github section": func(config *productionWorkerConfig) { config.Overlay.GitHub = nil },
+		"tail leaves no termination slice": func(config *productionWorkerConfig) {
+			config.Overlay.Worker.TerminationTail = "21s"
+		},
+		"malformed operation timeout": func(config *productionWorkerConfig) {
+			config.Overlay.Controller.OperationTimeout = "soon"
+		},
 		// (2 lost renewals + 1) x 40s + 10s + 5s exceeds the 2m lease.
 		"lease shorter than the heartbeat budget": func(config *productionWorkerConfig) {
 			config.AttemptInterval = 40 * time.Second

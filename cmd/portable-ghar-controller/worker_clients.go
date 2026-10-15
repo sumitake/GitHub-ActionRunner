@@ -41,8 +41,7 @@ func newProductionWorkerClients(
 	config productionWorkerConfig,
 ) (productionWorkerClients, error) {
 	worker := config.Overlay.Worker
-	github := config.Overlay.GitHub
-	if worker == nil || github == nil || config.AttemptInterval <= 0 {
+	if worker == nil || config.AttemptInterval <= 0 {
 		return productionWorkerClients{}, errCommandUnavailable
 	}
 	hmacKey, err := decodeWorkerHMACKey(config.HMACKeyHex)
@@ -55,7 +54,20 @@ func newProductionWorkerClients(
 	deadline, _ := time.ParseDuration(worker.HeartbeatDeadline)
 	margin, _ := time.ParseDuration(worker.ShorteningMargin)
 	tail, _ := time.ParseDuration(worker.TerminationTail)
-	callDuration, _ := time.ParseDuration(github.OperationTimeout)
+	// A permit lasts as long as the controller operation that holds it: the
+	// call plus its durable and acknowledgement work.
+	callDuration, callErr := time.ParseDuration(config.Overlay.Controller.OperationTimeout)
+	// The tail before the lease deadline holds, in order, the join of a call
+	// that ignores cancellation, the durable fatal write, and process
+	// termination. The first two are the controller's own bounds, so the
+	// tail must exceed their sum to leave termination a slice.
+	join, joinErr := time.ParseDuration(config.Overlay.Controller.TransitionJoinTimeout)
+	finish, finishErr := time.ParseDuration(config.Overlay.Controller.DurableFinishTimeout)
+	if callErr != nil || joinErr != nil || finishErr != nil ||
+		callDuration <= 0 || join <= 0 || finish <= 0 ||
+		tail <= join+finish {
+		return productionWorkerClients{}, errCommandUnavailable
+	}
 
 	client, err := failoverclient.NewProtocolClient(failoverclient.ProtocolClientConfig{
 		BaseURL:         worker.BaseURL,
