@@ -124,6 +124,9 @@ func NewBroker(config Config) (PolicyBroker, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateProfilesFit(config.Repositories, config.TransientMode, config.Ceiling); err != nil {
+		return nil, err
+	}
 
 	queues := make(map[string][]*queuedOffer, len(aliases))
 	for _, alias := range aliases {
@@ -888,6 +891,9 @@ func (b *brokerImpl) ApplyPolicyRevision(revision PolicyRevision) error {
 	}
 	policies, aliases, err := validatePolicies(revision.Repositories, b.transientMode)
 	if err != nil {
+		return err
+	}
+	if err := validateProfilesFit(revision.Repositories, b.transientMode, b.ceiling); err != nil {
 		return err
 	}
 

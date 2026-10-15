@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -26,8 +27,36 @@ func templateOverlay(t *testing.T) hostruntime.PrivateOverlay {
 	return overlay
 }
 
-func TestProductionAdmissionAndPolicyComposeIntoAWorkingBroker(t *testing.T) {
+// admittingOverlay is the template with an admission ceiling that holds one
+// complete slot. The template sizes every component vector at the ceiling,
+// so a slot's complete charge (four stable components plus the serialized
+// helper or verifier) is five ceilings.
+func admittingOverlay(t *testing.T) hostruntime.PrivateOverlay {
+	t.Helper()
 	overlay := templateOverlay(t)
+	ceiling := &overlay.Resources.AdmissionCeiling
+	for _, value := range []*uint64{
+		&ceiling.MilliCPU, &ceiling.MemoryBytes, &ceiling.PIDs,
+		&ceiling.FileDescriptors, &ceiling.TmpfsBytes, &ceiling.ScratchBytes,
+		&ceiling.SocketStateBytes, &ceiling.DurableStateBytes, &ceiling.Inodes,
+	} {
+		*value *= 5
+	}
+	return overlay
+}
+
+func TestProductionAdmissionRejectsACeilingNoSlotFits(t *testing.T) {
+	config, err := productionAdmissionConfig(templateOverlay(t), 4, time.Now)
+	if err != nil {
+		t.Fatalf("productionAdmissionConfig: %v", err)
+	}
+	if _, err := admission.NewBroker(config); !errors.Is(err, admission.ErrInvalidConfig) {
+		t.Fatalf("NewBroker = %v, want ErrInvalidConfig for the template ceiling", err)
+	}
+}
+
+func TestProductionAdmissionAndPolicyComposeIntoAWorkingBroker(t *testing.T) {
+	overlay := admittingOverlay(t)
 	config, err := productionAdmissionConfig(overlay, 4, time.Now)
 	if err != nil {
 		t.Fatalf("productionAdmissionConfig: %v", err)
