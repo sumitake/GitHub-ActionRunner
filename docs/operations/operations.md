@@ -66,6 +66,9 @@ against one database at once. The systemd unit still runs `run`.
 It refuses to start unless:
 
 - the overlay has the `worker`, `github`, and `jail` sections;
+- every repository's `slot_resources` equals `resources.slot_resources`, the
+  vector each job's containers are sized from, and one complete slot fits
+  the admission ceiling;
 - the fence names the portable fleet at the manifest's generation. It does
   not take over a legacy fence; hand the fence over first;
 - the decision graph at `policy_path`, a root-owned mode `0600` file, is the
