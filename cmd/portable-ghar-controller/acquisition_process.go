@@ -24,8 +24,12 @@ type acquisitionService interface {
 }
 
 type acquisitionProcessConfig struct {
-	Service          acquisitionService
-	FenceLost        <-chan struct{}
+	Service   acquisitionService
+	FenceLost <-chan struct{}
+	// CloseSessions closes the GitHub sessions the service owns. The process
+	// calls it on every path out of Run; closing an already closed session
+	// does nothing.
+	CloseSessions    func() error
 	Resources        io.Closer
 	Ownership        controllerOwnershipLease
 	AdminSocketPath  string
@@ -58,6 +62,7 @@ var _ controllerProcess = (*acquisitionControllerProcess)(nil)
 
 func (process *acquisitionControllerProcess) init(config acquisitionProcessConfig) error {
 	if config.Service == nil ||
+		config.CloseSessions == nil ||
 		config.Resources == nil ||
 		config.Ownership == nil ||
 		config.AdminSocketPath == config.HealthSocketPath ||
@@ -85,7 +90,7 @@ func (process *acquisitionControllerProcess) stop(reason error) {
 }
 
 func (process *acquisitionControllerProcess) Run(parent context.Context) error {
-	if process == nil || process.config.Service == nil || parent == nil || parent.Err() != nil {
+	if process == nil || process.config.Service == nil || parent == nil {
 		return errCommandUnavailable
 	}
 	process.mu.Lock()
@@ -94,6 +99,13 @@ func (process *acquisitionControllerProcess) Run(parent context.Context) error {
 		return errCommandUnavailable
 	}
 	process.started = true
+	if parent.Err() != nil {
+		// Stopped before it started: nothing is serving, so only the
+		// sessions need closing before Close releases the rest.
+		process.safeToClose = true
+		process.mu.Unlock()
+		return errors.Join(errCommandUnavailable, parent.Err(), process.config.CloseSessions())
+	}
 	runCtx, runCancel := context.WithCancel(parent)
 	process.runCancel = runCancel
 	process.mu.Unlock()
@@ -116,6 +128,7 @@ func (process *acquisitionControllerProcess) Run(parent context.Context) error {
 	}
 	runErr := <-serviceDone
 	runCancel()
+	sessionErr := process.config.CloseSessions()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(
 		context.Background(),
@@ -132,7 +145,7 @@ func (process *acquisitionControllerProcess) Run(parent context.Context) error {
 	reason := process.stopReason
 	process.safeToClose = closeErr == nil
 	process.mu.Unlock()
-	return errors.Join(reason, serverErr, runErr, closeErr)
+	return errors.Join(reason, serverErr, runErr, sessionErr, closeErr)
 }
 
 // Close releases the store, fence guard, Worker session, and ownership only

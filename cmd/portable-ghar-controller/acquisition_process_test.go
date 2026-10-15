@@ -57,6 +57,7 @@ type acquisitionProcessFixture struct {
 	process    *acquisitionControllerProcess
 	service    *fakeAcquisitionService
 	fenceLost  chan struct{}
+	sessions   *sessionCloseCounter
 	resources  *testCloser
 	ownership  *testOwnershipLease
 	adminPath  string
@@ -81,6 +82,7 @@ func newAcquisitionProcessFixture(t *testing.T) *acquisitionProcessFixture {
 		process:    &acquisitionControllerProcess{},
 		service:    newFakeAcquisitionService(),
 		fenceLost:  make(chan struct{}),
+		sessions:   &sessionCloseCounter{},
 		resources:  &testCloser{},
 		ownership:  &testOwnershipLease{},
 		adminPath:  filepath.Join(root, "admin.sock"),
@@ -89,6 +91,7 @@ func newAcquisitionProcessFixture(t *testing.T) *acquisitionProcessFixture {
 	if err := fixture.process.init(acquisitionProcessConfig{
 		Service:          fixture.service,
 		FenceLost:        fixture.fenceLost,
+		CloseSessions:    fixture.sessions.Close,
 		Resources:        fixture.resources,
 		Ownership:        fixture.ownership,
 		AdminSocketPath:  fixture.adminPath,
@@ -255,6 +258,7 @@ func TestAcquisitionProcessKeepsResourcesUntilRunHasClosedItsServers(t *testing.
 func TestAcquisitionProcessInitRejectsAnIncompleteConfig(t *testing.T) {
 	valid := acquisitionProcessConfig{
 		Service:          newFakeAcquisitionService(),
+		CloseSessions:    func() error { return nil },
 		Resources:        &testCloser{},
 		Ownership:        &testOwnershipLease{},
 		AdminSocketPath:  "/run/a.sock",
@@ -268,12 +272,13 @@ func TestAcquisitionProcessInitRejectsAnIncompleteConfig(t *testing.T) {
 		t.Fatalf("init(valid) = %v", err)
 	}
 	tests := map[string]func(*acquisitionProcessConfig){
-		"no service":       func(config *acquisitionProcessConfig) { config.Service = nil },
-		"no resources":     func(config *acquisitionProcessConfig) { config.Resources = nil },
-		"no ownership":     func(config *acquisitionProcessConfig) { config.Ownership = nil },
-		"one socket path":  func(config *acquisitionProcessConfig) { config.HealthSocketPath = config.AdminSocketPath },
-		"no admission":     func(config *acquisitionProcessConfig) { config.AdmissionLimit = 0 },
-		"no shutdown time": func(config *acquisitionProcessConfig) { config.ShutdownTimeout = 0 },
+		"no service":        func(config *acquisitionProcessConfig) { config.Service = nil },
+		"no session closer": func(config *acquisitionProcessConfig) { config.CloseSessions = nil },
+		"no resources":      func(config *acquisitionProcessConfig) { config.Resources = nil },
+		"no ownership":      func(config *acquisitionProcessConfig) { config.Ownership = nil },
+		"one socket path":   func(config *acquisitionProcessConfig) { config.HealthSocketPath = config.AdminSocketPath },
+		"no admission":      func(config *acquisitionProcessConfig) { config.AdmissionLimit = 0 },
+		"no shutdown time":  func(config *acquisitionProcessConfig) { config.ShutdownTimeout = 0 },
 	}
 	for name, mutate := range tests {
 		config := valid
@@ -282,4 +287,43 @@ func TestAcquisitionProcessInitRejectsAnIncompleteConfig(t *testing.T) {
 			t.Errorf("%s: init accepted the config", name)
 		}
 	}
+}
+
+type sessionCloseCounter struct{ calls atomic.Int32 }
+
+func (counter *sessionCloseCounter) Close() error {
+	counter.calls.Add(1)
+	return nil
+}
+
+func TestAcquisitionProcessClosesSessionsOnEveryPath(t *testing.T) {
+	t.Run("after the service returns", func(t *testing.T) {
+		fixture := newAcquisitionProcessFixture(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		result := fixture.startWith(t, ctx)
+		cancel()
+		if err := waitForRun(t, result); err != nil {
+			t.Fatalf("Run = %v", err)
+		}
+		if got := fixture.sessions.calls.Load(); got != 1 {
+			t.Fatalf("session closes = %d, want 1", got)
+		}
+	})
+	t.Run("when stopped before it started", func(t *testing.T) {
+		fixture := newAcquisitionProcessFixture(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := fixture.process.Run(ctx); err == nil {
+			t.Fatal("Run on a canceled context succeeded")
+		}
+		if got := fixture.sessions.calls.Load(); got != 1 {
+			t.Fatalf("session closes = %d, want 1", got)
+		}
+		if err := fixture.process.Close(); err != nil {
+			t.Fatalf("Close after an unstarted run: %v", err)
+		}
+		if fixture.resources.Count() != 1 || fixture.ownership.CountClosed() != 1 {
+			t.Fatal("Close after an unstarted run did not release resources")
+		}
+	})
 }

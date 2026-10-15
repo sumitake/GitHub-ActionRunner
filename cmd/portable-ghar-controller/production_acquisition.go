@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/admission"
@@ -19,6 +20,7 @@ import (
 	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/failoverclient"
 	"github.com/sumitake/portable-ghar/internal/fleetfence"
+	"github.com/sumitake/portable-ghar/internal/githubscale"
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
 	"github.com/sumitake/portable-ghar/internal/lifecycle"
 	"github.com/sumitake/portable-ghar/internal/networkjail"
@@ -283,6 +285,9 @@ func openProductionAcquisitionController(
 	if err != nil {
 		return fail(startupStep("open GitHub sessions", err))
 	}
+	for index := range targets {
+		targets[index].Session = &closeOnceSession{Session: targets[index].Session}
+	}
 	failWithTargets := func(primary error) (controllerProcess, error) {
 		return fail(errors.Join(primary, closePollTargets(ctx, targets)))
 	}
@@ -359,8 +364,11 @@ func openProductionAcquisitionController(
 	}
 	jit.Set(acquiring)
 	if err := process.init(acquisitionProcessConfig{
-		Service:          acquiring,
-		FenceLost:        fence.Lost(),
+		Service:   acquiring,
+		FenceLost: fence.Lost(),
+		CloseSessions: func() error {
+			return closePollTargets(context.Background(), targets)
+		},
 		Resources:        resources,
 		Ownership:        ownership,
 		AdminSocketPath:  overlay.Paths.AdminSocketPath,
@@ -381,6 +389,22 @@ func openProductionAcquisitionController(
 
 // productionServiceTimings are the service timings the disabled observer
 // does not use. The overlay schema already checked each is canonical.
+// closeOnceSession sends only the first Close to GitHub. Service.Run closes
+// its sessions on the way out, but returns before doing so when its context
+// is already canceled, so the process closes them again on every path. GitHub
+// allows one message session per scale set, so a leaked one blocks the next
+// start until it expires.
+type closeOnceSession struct {
+	githubscale.Session
+	once sync.Once
+}
+
+func (session *closeOnceSession) Close(ctx context.Context) error {
+	var err error
+	session.once.Do(func() { err = session.Session.Close(ctx) })
+	return err
+}
+
 type productionServiceTimings struct {
 	ack                  time.Duration
 	pollCycle            time.Duration

@@ -97,7 +97,7 @@ health sockets are the same as `run`; health reports ready only after
 startup recovery.
 
 A signal stops it cleanly: the service records a disabled epoch and closes
-its GitHub sessions on the way out. A persisted fatal state, a lost fence
+its GitHub sessions on the way out, even when the signal arrives before startup finishes. A persisted fatal state, a lost fence
 guard, or a local server failure also stops it, with a non-zero exit.
 
 ## Watchdog restart authority

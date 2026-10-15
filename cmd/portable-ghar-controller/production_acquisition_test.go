@@ -11,6 +11,7 @@ import (
 
 	"github.com/sumitake/portable-ghar/internal/admission"
 	"github.com/sumitake/portable-ghar/internal/controller"
+	"github.com/sumitake/portable-ghar/internal/githubscale"
 	"github.com/sumitake/portable-ghar/internal/networkjail"
 	"github.com/sumitake/portable-ghar/internal/state"
 )
@@ -229,5 +230,28 @@ func TestControllerCLIRunAcquisitionUsesItsOwnOpenerAndRunsLock(t *testing.T) {
 		context.Background(), []string{"run-acquisition"}, &stdout, &stderr, deps,
 	); exit != 2 {
 		t.Fatalf("missing opener exit = %d, want usage", exit)
+	}
+}
+
+type countingSession struct {
+	githubscale.Session
+	closes int
+}
+
+func (session *countingSession) Close(context.Context) error {
+	session.closes++
+	return nil
+}
+
+func TestCloseOnceSessionSendsOnlyTheFirstClose(t *testing.T) {
+	inner := &countingSession{}
+	session := &closeOnceSession{Session: inner}
+	for range 3 {
+		if err := session.Close(context.Background()); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}
+	if inner.closes != 1 {
+		t.Fatalf("upstream closes = %d, want 1", inner.closes)
 	}
 }
