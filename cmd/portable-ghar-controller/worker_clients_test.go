@@ -31,7 +31,7 @@ func testWorkerConfig() productionWorkerConfig {
 				HeartbeatDeadline:  "10s",
 				ShorteningMargin:   "5s",
 				LostRenewals:       2,
-				TerminationTail:    "43s",
+				TerminationTail:    "73s",
 			},
 			Controller: hostruntime.ControllerTimingOverlay{
 				OperationTimeout:      "20s",
@@ -57,7 +57,7 @@ func TestProductionWorkerClientsComposeFromTheOverlay(t *testing.T) {
 		clients.Permits.Fence != 7 ||
 		clients.Permits.Holder != failoverclient.HolderPortable ||
 		clients.Permits.CallDuration != 20*time.Second ||
-		clients.Permits.TerminationTail != 43*time.Second {
+		clients.Permits.TerminationTail != 73*time.Second {
 		t.Fatalf("clients = %+v", clients)
 	}
 	if err := clients.Close(); err != nil {
@@ -68,12 +68,16 @@ func TestProductionWorkerClientsComposeFromTheOverlay(t *testing.T) {
 func TestProductionWorkerClientsRejectAnUnsafeConfiguration(t *testing.T) {
 	tests := map[string]func(*productionWorkerConfig){
 		"no worker section": func(config *productionWorkerConfig) { config.Overlay.Worker = nil },
-		// Join 10s and finish 11s: the fatal path can take 2*(10+11) = 42s.
+		// Join 10s and finish 11s: the fatal path can take 5*10 + 2*11 = 72s.
 		"tail leaves no termination slice": func(config *productionWorkerConfig) {
-			config.Overlay.Worker.TerminationTail = "42s"
+			config.Overlay.Worker.TerminationTail = "72s"
 		},
-		"tail covers only one join": func(config *productionWorkerConfig) {
-			config.Overlay.Worker.TerminationTail = "31s"
+		"tail covers only the late-return path": func(config *productionWorkerConfig) {
+			config.Overlay.Worker.TerminationTail = "43s"
+		},
+		// The lease is 2m with a 5s margin, so a local lease ends at 115s.
+		"tail consumes the whole local lease": func(config *productionWorkerConfig) {
+			config.Overlay.Worker.TerminationTail = "115s"
 		},
 		"malformed operation timeout": func(config *productionWorkerConfig) {
 			config.Overlay.Controller.OperationTimeout = "soon"
@@ -106,9 +110,9 @@ func TestProductionWorkerClientsRejectAnUnsafeConfiguration(t *testing.T) {
 	}
 }
 
-func TestFatalPathBoundIsTwoJoinsAndTwoFinishes(t *testing.T) {
-	if bound, ok := fatalPathBound(10*time.Second, 11*time.Second); !ok || bound != 42*time.Second {
-		t.Fatalf("fatalPathBound = %v, %v; want 42s", bound, ok)
+func TestFatalPathBoundIsFiveJoinsAndTwoFinishes(t *testing.T) {
+	if bound, ok := fatalPathBound(10*time.Second, 11*time.Second); !ok || bound != 72*time.Second {
+		t.Fatalf("fatalPathBound = %v, %v; want 72s", bound, ok)
 	}
 	for _, terms := range [][2]time.Duration{
 		{0, time.Second},
