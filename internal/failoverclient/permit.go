@@ -42,6 +42,11 @@ type leaseGuard struct {
 	waitErr      error
 	state        leasePermitState
 	dropCause    error
+	closed       bool
+	// cancelOverrun and overrunDone stop and join the overrun watcher; both
+	// are nil when the provider has no OnLeaseOverrun hook.
+	cancelOverrun context.CancelFunc
+	overrunDone   chan struct{}
 }
 
 func (guard *leaseGuard) Binding() controller.AcquisitionPermitBinding {
@@ -107,6 +112,7 @@ func (guard *leaseGuard) Close() error {
 	}
 	guard.closeOnce.Do(func() {
 		guard.mu.Lock()
+		guard.closed = true
 		if guard.state == leasePermitActive {
 			guard.dropLocked(fmt.Errorf("%w: closed", ErrLeasePermit))
 		}
@@ -115,8 +121,33 @@ func (guard *leaseGuard) Close() error {
 			guard.cancel(fmt.Errorf("%w: closed", ErrLeasePermit))
 		}
 		guard.stopAndJoinWaiter()
+		if guard.cancelOverrun != nil {
+			guard.cancelOverrun()
+			<-guard.overrunDone
+		}
 	})
 	return nil
+}
+
+// watchOverrun enforces the lease on the process. A permit that is neither
+// closed nor admitted at its original local lease deadline less the overrun
+// slice may still back a call that ignored cancellation, and no later
+// renewal extends it. The hook must then stop the process before the
+// Worker lease expires. A clock failure fires the hook too, since the
+// deadline can no longer be proven.
+func (guard *leaseGuard) watchOverrun(ctx context.Context, deadline time.Time) {
+	defer close(guard.overrunDone)
+	_ = guard.provider.Clock.WaitUntil(ctx, deadline)
+	if ctx.Err() != nil {
+		return
+	}
+	guard.mu.Lock()
+	open := !guard.closed && guard.state != leasePermitAdmitted
+	binding := guard.binding
+	guard.mu.Unlock()
+	if open {
+		guard.provider.OnLeaseOverrun(binding)
+	}
 }
 
 func (guard *leaseGuard) validateCurrentLocked() error {
@@ -202,6 +233,13 @@ type CachedLeasePermitProvider struct {
 	Fence           uint64
 	CallDuration    time.Duration
 	TerminationTail time.Duration
+	// OverrunSlice and OnLeaseOverrun are set together or not at all. With
+	// them, a permit still open at its original local lease deadline less
+	// OverrunSlice calls OnLeaseOverrun, which must stop the process. The
+	// slice must be shorter than TerminationTail, so the permit's own
+	// deadline comes first.
+	OverrunSlice   time.Duration
+	OnLeaseOverrun func(controller.AcquisitionPermitBinding)
 }
 
 type CachedLeasePermitConfig struct {
@@ -211,6 +249,13 @@ type CachedLeasePermitConfig struct {
 	Fence           uint64
 	CallDuration    time.Duration
 	TerminationTail time.Duration
+	// OverrunSlice and OnLeaseOverrun are set together or not at all. With
+	// them, a permit still open at its original local lease deadline less
+	// OverrunSlice calls OnLeaseOverrun, which must stop the process. The
+	// slice must be shorter than TerminationTail, so the permit's own
+	// deadline comes first.
+	OverrunSlice   time.Duration
+	OnLeaseOverrun func(controller.AcquisitionPermitBinding)
 }
 
 func NewCachedLeasePermitProvider(
@@ -224,6 +269,11 @@ func NewCachedLeasePermitProvider(
 		config.TerminationTail <= 0 ||
 		(config.Holder != HolderPortable && config.Holder != HolderLegacy) {
 		return CachedLeasePermitProvider{}, fmt.Errorf("%w: incomplete", ErrLeasePermit)
+	}
+	if (config.OnLeaseOverrun != nil) != (config.OverrunSlice > 0) ||
+		config.OverrunSlice < 0 ||
+		config.OverrunSlice >= config.TerminationTail {
+		return CachedLeasePermitProvider{}, fmt.Errorf("%w: overrun enforcement", ErrLeasePermit)
 	}
 	return CachedLeasePermitProvider(config), nil
 }
@@ -305,7 +355,17 @@ func (provider CachedLeasePermitProvider) Acquire(
 		waitDone:     make(chan struct{}),
 		state:        leasePermitActive,
 	}
+	var overrunCtx context.Context
+	if provider.OnLeaseOverrun != nil {
+		// The watcher outlives the caller's context on purpose: a call that
+		// ignored cancellation is exactly what it must catch.
+		overrunCtx, guard.cancelOverrun = context.WithCancel(context.Background())
+		guard.overrunDone = make(chan struct{})
+	}
 	go guard.waitForDeadline()
+	if overrunCtx != nil {
+		go guard.watchOverrun(overrunCtx, entry.LocalDeadline.Add(-provider.OverrunSlice))
+	}
 	return guard, nil
 }
 
