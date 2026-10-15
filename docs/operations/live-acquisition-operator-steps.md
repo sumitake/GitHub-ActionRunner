@@ -106,15 +106,17 @@ target itself.
 - A controller binary built from `main`. No tagged release includes these
   commands: both releases predate them.
 
-**Build on the workstation, from a clean checkout of `main`.** Match the
-target's architecture: `uname -m` on the target reports `x86_64` for `amd64`
-and `aarch64` for `arm64`. The binary is pure Go and needs no C toolchain.
+**Build on the workstation, from a clean checkout of `main`.** The overlay
+schema accepts only `amd64` targets, and the commands refuse to run unless the
+binary's architecture matches the overlay. Check that `uname -m` on the target
+reports `x86_64`; if it reports anything else, stop. The binary is pure Go and
+needs no C toolchain.
 
 ```sh
 git -C <checkout> fetch origin main
 git -C <checkout> checkout --detach origin/main
 cd <checkout>
-CGO_ENABLED=0 GOOS=linux GOARCH=<amd64|arm64> \
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -trimpath -o <workstation_out>/portable-ghar-controller \
   ./cmd/portable-ghar-controller
 ```
@@ -136,8 +138,9 @@ creates anything, so a token without access fails at a named step.
 Write the file with terminal echo off, so the token never reaches the screen,
 shell history, or a recorded transcript. Paste the token and press Enter;
 nothing is shown. `read` and `printf` are shell builtins, so the token never
-appears in a process's argument list. The trap restores echo even if the step
-is interrupted.
+appears in a process's argument list. Echo is restored on every exit. An
+interrupt, end of input, or an empty line ends the step before the file is
+created.
 
 The step refuses to write over an existing path, including a symlink. With
 `set -C` the shell also refuses to truncate a file that appears in between. To
@@ -152,9 +155,11 @@ with `rm -- <token_path>` first.
     echo 'token path exists; check and remove the old file first' >&2
     exit 1
   fi
-  trap 'stty echo' EXIT INT TERM
+  trap 'stty echo' EXIT
+  trap 'exit 1' INT TERM
   stty -echo
-  IFS= read -r token
+  IFS= read -r token || exit 1
+  [ -n "$token" ] || exit 1
   printf '%s\n' "$token" > <token_path>
 )
 echo
