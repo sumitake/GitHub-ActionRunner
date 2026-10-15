@@ -1,6 +1,10 @@
 import { expect, test } from "vitest";
 
-import { parseCronBindings, parseWorkerBindings } from "../src/bindings";
+import {
+  authorityEnabled,
+  parseCronBindings,
+  parseWorkerBindings,
+} from "../src/bindings";
 import { handleWorkerFetch } from "../src/runtime";
 import {
   ADMIN_STATUS_PATH,
@@ -84,6 +88,14 @@ test("worker bindings fail closed when any required term is unset", () => {
   ).toBeNull();
   expect(
     parseWorkerBindings({ ...validEnv(), FLEET_IDS: "Example" }),
+  ).toBeNull();
+  // The margin is added to protocol timestamps, so it shares the lease
+  // duration's bound and can never push a timestamp past Date's range.
+  expect(
+    parseWorkerBindings({
+      ...validEnv(),
+      HOSTED_TRANSITION_SAFETY_MARGIN_MS: "9223372036855",
+    }),
   ).toBeNull();
 });
 
@@ -388,4 +400,102 @@ test("Cron bindings enforce distinct keys, canonical inventory, and safe budget"
       MAX_FLEETS: "9007199254740992",
     }),
   ).toBeNull();
+});
+
+test("authority stays off unless WORKER_AUTHORITY is exactly enabled", () => {
+  expect(authorityEnabled(validEnv())).toBe(false);
+  for (const value of ["", "true", "Enabled", "enabled ", "1"]) {
+    expect(authorityEnabled({ ...validEnv(), WORKER_AUTHORITY: value })).toBe(
+      false,
+    );
+  }
+  expect(authorityEnabled({ ...validEnv(), WORKER_AUTHORITY: "enabled" })).toBe(
+    true,
+  );
+});
+
+test("enabled runtime addresses only inventoried fleet Durable Objects", async () => {
+  const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");
+  const addressed: string[] = [];
+  const env = {
+    ...validEnv(),
+    WORKER_AUTHORITY: "enabled",
+    FLEET: {
+      getByName(name: string) {
+        addressed.push(name);
+        return { fetch: async () => new Response("forwarded") };
+      },
+    },
+  };
+  const requestFor = async (fleetId: string) => {
+    const body = canonicalize({
+      fleetId,
+      nonce: "e".repeat(64),
+      protocolVersion: 1,
+      timestamp,
+    });
+    const mac = await signCanonical(
+      hexToBytes(keyHex),
+      "POST",
+      "/v1/session",
+      timestamp,
+      body,
+    );
+    return new Request("https://worker.example/v1/session", {
+      method: "POST",
+      headers: { [TIMESTAMP_HEADER]: timestamp, [MAC_HEADER]: mac },
+      body,
+    });
+  };
+
+  const outside = await handleWorkerFetch(await requestFor("other-fleet"), env);
+  expect(outside.status).toBe(401);
+  expect(addressed).toEqual([]);
+
+  const inside = await handleWorkerFetch(
+    await requestFor("example-fleet"),
+    env,
+  );
+  expect(await inside.text()).toBe("forwarded");
+  expect(addressed).toEqual(["example-fleet"]);
+});
+
+test("enabled runtime stops reading an oversized body before routing", async () => {
+  const addressed: string[] = [];
+  const env = {
+    ...validEnv(),
+    WORKER_AUTHORITY: "enabled",
+    FLEET: {
+      getByName(name: string) {
+        addressed.push(name);
+        return { fetch: async () => new Response("forwarded") };
+      },
+    },
+  };
+  const chunk = new Uint8Array(4_096).fill(0x20);
+  const total = 1_048_576;
+  let pulled = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (pulled >= total) {
+        controller.close();
+        return;
+      }
+      pulled += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+  });
+  const request = new Request("https://worker.example/v1/session", {
+    method: "POST",
+    headers: {
+      [TIMESTAMP_HEADER]: "2026-01-01T00:00:00.000Z",
+      [MAC_HEADER]: "0".repeat(64),
+    },
+    body,
+    duplex: "half",
+  } as RequestInit);
+  const response = await handleWorkerFetch(request, env);
+  expect(response.status).toBe(401);
+  expect(addressed).toEqual([]);
+  expect(pulled).toBeLessThan(total / 2);
 });

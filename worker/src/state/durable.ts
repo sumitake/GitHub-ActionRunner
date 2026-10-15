@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 
 import {
+  authorityEnabled,
   parseCronBindings,
   parseWorkerBindings,
   type WorkerEnv,
@@ -26,7 +27,6 @@ import {
 } from "../protocol/address-status";
 import { canonicalize } from "../protocol/canonical";
 import {
-  ADDRESS_ONLY_AUTHORITY_DISABLED,
   CRON_PATH,
   deadlineForTick,
   inventoryDigest,
@@ -185,7 +185,7 @@ export class FleetDurableObject extends DurableObject<WorkerEnv> {
         return rejected();
       }
     }
-    if (ADDRESS_ONLY_AUTHORITY_DISABLED) {
+    if (!authorityEnabled(this.workerEnv)) {
       return rejected();
     }
     const bindings = parseWorkerBindings(this.workerEnv);
@@ -194,7 +194,7 @@ export class FleetDurableObject extends DurableObject<WorkerEnv> {
     }
     const copy = request.clone();
     const fleetId = this.objectName ?? fleetIdFromBody(await copy.text());
-    if (fleetId === null) {
+    if (fleetId === null || !bindings.inventoriedFleetIds.includes(fleetId)) {
       return rejected();
     }
     const store = loadFleetStore(this.sql, fleetId, {
@@ -205,7 +205,13 @@ export class FleetDurableObject extends DurableObject<WorkerEnv> {
       secrets: bindings.secrets,
       storeFor: (id) => (id === store.fleet.fleetId ? store : undefined),
     });
-    saveFleetStore(this.sql, store);
+    // A rejected request writes nothing: no protocol handler changes fleet
+    // state before it rejects (the admin handler rolls back first), and the
+    // store is reloaded for every request. Rejections cover bad or stale
+    // signatures, replays, and refused commands alike.
+    if (response.status !== 401) {
+      saveFleetStore(this.sql, store);
+    }
     return response;
   }
 

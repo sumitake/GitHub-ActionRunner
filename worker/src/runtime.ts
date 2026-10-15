@@ -1,4 +1,5 @@
 import {
+  authorityEnabled,
   parseCronBindings,
   parseWorkerBindings,
   type FleetNamespace,
@@ -28,7 +29,6 @@ import {
   verifyAddressStatusRequest,
 } from "./protocol/address-status";
 import {
-  ADDRESS_ONLY_AUTHORITY_DISABLED,
   CRON_ADDRESS_PROTOCOL_VERSION,
   CRON_PATH,
   deadlineForTick,
@@ -54,7 +54,7 @@ export async function handleWorkerFetch(
   if (storeFor === undefined && url.pathname === ADDRESS_STATUS_PATH) {
     return handleWorkerAddressStatusFetch(request, url, env);
   }
-  if (storeFor === undefined && ADDRESS_ONLY_AUTHORITY_DISABLED) {
+  if (storeFor === undefined && !authorityEnabled(env)) {
     return rejected();
   }
   const bindings = parseWorkerBindings(env);
@@ -80,8 +80,11 @@ export async function handleWorkerFetch(
   if (fleets === null) {
     return rejected();
   }
-  const fleetId = fleetIdFromBody(await request.clone().text());
-  if (fleetId === null) {
+  // Bound the read before routing: an unsigned request must not make the
+  // Worker buffer an arbitrary body.
+  const body = await readBoundedBody(request.clone());
+  const fleetId = body === null ? null : fleetIdFromBody(body);
+  if (fleetId === null || !bindings.inventoriedFleetIds.includes(fleetId)) {
     return rejected();
   }
   return fleets.getByName(fleetId).fetch(request);

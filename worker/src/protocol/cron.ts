@@ -4,7 +4,6 @@ import { FLEET_ID, HEX64 } from "./messages";
 
 export const CRON_PATH = "/v1/internal/cron";
 export const CRON_ADDRESS_PROTOCOL_VERSION = 1 as const;
-export const ADDRESS_ONLY_AUTHORITY_DISABLED = true;
 
 const INVENTORY_PROTOCOL = "cron-address-v1";
 const MAX_UINT64 = 18_446_744_073_709_551_615n;

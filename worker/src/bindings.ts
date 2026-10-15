@@ -60,6 +60,14 @@ function parseFleetIds(raw: unknown): string[] | null {
   return fleetIds;
 }
 
+// authorityEnabled reports whether this deployment serves session,
+// heartbeat, and admin requests. It is off unless the deployment explicitly
+// sets WORKER_AUTHORITY to "enabled", so an address-only deployment keeps
+// rejecting them after a code update.
+export function authorityEnabled(env: WorkerEnv): boolean {
+  return env.WORKER_AUTHORITY === "enabled";
+}
+
 export function parseWorkerBindings(
   env: WorkerEnv,
 ): ParsedWorkerBindings | null {
@@ -87,7 +95,8 @@ export function parseWorkerBindings(
     leaseDurationMs > MAX_LEASE_DURATION_MS ||
     archiveEvidenceMaxAgeMs === null ||
     selectorEvidenceMaxAgeMs === null ||
-    hostedTransitionSafetyMarginMs === null
+    hostedTransitionSafetyMarginMs === null ||
+    hostedTransitionSafetyMarginMs > MAX_LEASE_DURATION_MS
   ) {
     return null;
   }

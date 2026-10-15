@@ -1121,7 +1121,8 @@ function settleCanaryBoundary(
   }
   if (
     store.fleet.routingState !== "DRAINING_TO_HOSTED" ||
-    owned.payload.transitionRevision !== String(store.fleet.leaseGeneration)
+    (!isPortableBoundary(owned) &&
+      owned.payload.transitionRevision !== String(store.fleet.leaseGeneration))
   ) {
     finishWork(owned, "failed");
     store.recordAudit(`canary-boundary-superseded:${owned.id}`);
@@ -1133,6 +1134,46 @@ function settleCanaryBoundary(
   store.fleet.routingState = "HOSTED";
   finishWork(owned, "done");
   store.recordAudit("canary-boundary-hosted");
+}
+
+// A portable drain's boundary is not tied to the lease generation. A
+// controller may re-enroll while the fleet drains, which advances the
+// generation, but no lease is issued while draining, so the boundary's due
+// time still covers the last issued lease. A start requires no unresolved
+// boundary, so at most one portable boundary is ever open.
+function isPortableBoundary(row: DueWorkRecord): boolean {
+  return (
+    row.kind === "canary-boundary" && row.payload.from === "PORTABLE_CANARY"
+  );
+}
+
+// settlePortableCanaryDrain completes a portable canary's drain without the
+// due-work runner: once the open portable boundary is due, the fleet returns
+// to HOSTED. It reports the state after the call.
+export function settlePortableCanaryDrain(
+  store: MemoryFleetStore,
+  now: string,
+): "hosted" | "draining" {
+  if (store.fleet.routingState !== "DRAINING_TO_HOSTED") {
+    throw new Error("portable canary drain requires DRAINING_TO_HOSTED");
+  }
+  const boundary = store.dueWork.find(
+    (row) => isPortableBoundary(row) && row.status === "ready",
+  );
+  if (boundary === undefined) {
+    throw new Error("portable canary drain has no current boundary");
+  }
+  if (now < boundary.dueAt) {
+    return "draining";
+  }
+  assertTransition("DRAINING_TO_HOSTED", "HOSTED");
+  store.transitions.push(
+    nextTransitionRecord(store, "DRAINING_TO_HOSTED", "HOSTED"),
+  );
+  store.fleet.routingState = "HOSTED";
+  finishWork(boundary, "done");
+  store.recordAudit("canary-boundary-hosted");
+  return "hosted";
 }
 
 function failPendingCanaryWork(store: MemoryFleetStore, keepId?: string): void {
