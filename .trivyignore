@@ -1,0 +1,9 @@
+# Temporary Trivy exceptions. Every entry carries an expiry date; once it
+# passes, Trivy reports the finding again, so no exception outlives its review.
+#
+# The pinned upstream Actions runner bundles System.Security.Cryptography.Pkcs
+# 10.0.12 in its bin/*.deps.json files, which this advisory covers. No runner
+# release with a fixed Pkcs build existed when this was added (2026-10-15).
+# Remove the entry when the runner pin moves to a release that bundles a fixed
+# version, or extend the date only after re-checking upstream.
+CVE-2026-84008 exp:2026-11-14
