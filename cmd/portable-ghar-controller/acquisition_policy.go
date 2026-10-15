@@ -42,6 +42,9 @@ func productionEnabledPolicyTemplate(
 // bounds, poll timings, and repository profiles to the admission broker.
 // The broker starts at the durable policy epoch: the service's first act is
 // to persist a zeroed policy at the next epoch and apply it to the broker.
+// The lifecycle sizes every job's containers from the overlay's one slot
+// vector, so a repository profile must equal it: admission then charges
+// exactly what each job is given.
 func productionAdmissionConfig(
 	overlay hostruntime.PrivateOverlay,
 	policyEpoch uint64,
@@ -60,7 +63,7 @@ func productionAdmissionConfig(
 	for index, repository := range overlay.Repositories {
 		aging, err := time.ParseDuration(repository.AgingThreshold)
 		profile, profileOK := admissionSlotResources(repository.SlotResources)
-		if err != nil || !profileOK {
+		if err != nil || !profileOK || repository.SlotResources != resources.SlotResources {
 			return admission.Config{}, errCommandUnavailable
 		}
 		repositories[index] = admission.RepositoryPolicy{
