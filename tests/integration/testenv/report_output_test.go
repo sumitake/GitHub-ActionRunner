@@ -20,6 +20,7 @@ func TestReportOutputWritesExactCanonicalBytesOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenReportOutput: %v", err)
 	}
+	t.Cleanup(func() { _ = output.Close() })
 	report := conformance.Run(context.Background(), newReportShapeProfile(t, false))
 	if err := output.Write(report); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -82,7 +83,9 @@ func TestOpenReportOutputRefusesUnsafePaths(t *testing.T) {
 		"parent owned by other": {path: filepath.Join(directory, "r.json"), euid: os.Geteuid() + 1},
 	}
 	for name, test := range tests {
-		if _, err := OpenReportOutput(test.path, test.euid); !errors.Is(err, ErrReportOutput) {
+		output, err := OpenReportOutput(test.path, test.euid)
+		if !errors.Is(err, ErrReportOutput) {
+			_ = output.Close()
 			t.Errorf("%s: OpenReportOutput = %v, want a refusal", name, err)
 		}
 	}
@@ -97,6 +100,7 @@ func TestReportOutputRefusesAFileCreatedAfterStartup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenReportOutput: %v", err)
 	}
+	t.Cleanup(func() { _ = output.Close() })
 	target := filepath.Join(directory, "target")
 	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
@@ -110,6 +114,66 @@ func TestReportOutputRefusesAFileCreatedAfterStartup(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(target); string(got) != "keep" {
 		t.Fatalf("symlink target changed to %q", got)
+	}
+}
+
+func TestReportOutputWritesIntoTheDirectoryCheckedAtStartup(t *testing.T) {
+	t.Parallel()
+
+	base := privateReportDirectory(t)
+	checked := filepath.Join(base, "checked")
+	if err := os.Mkdir(checked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output, err := OpenReportOutput(filepath.Join(checked, "report.json"), os.Geteuid())
+	if err != nil {
+		t.Fatalf("OpenReportOutput: %v", err)
+	}
+	t.Cleanup(func() { _ = output.Close() })
+
+	// Swap the checked directory for a symlink to another directory, as a
+	// writer of an ancestor could during the run.
+	moved := filepath.Join(base, "moved")
+	if err := os.Rename(checked, moved); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := filepath.Join(base, "elsewhere")
+	if err := os.Mkdir(elsewhere, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, checked); err != nil {
+		t.Fatal(err)
+	}
+
+	report := conformance.Run(context.Background(), newReportShapeProfile(t, false))
+	if err := output.Write(report); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(moved, "report.json")); err != nil {
+		t.Fatalf("report not in the directory checked at startup: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(elsewhere, "report.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("report followed the swapped path: %v", err)
+	}
+}
+
+func TestReportOutputCloseIsIdempotentAndBlocksWrites(t *testing.T) {
+	t.Parallel()
+
+	directory := privateReportDirectory(t)
+	output, err := OpenReportOutput(filepath.Join(directory, "report.json"), os.Geteuid())
+	if err != nil {
+		t.Fatalf("OpenReportOutput: %v", err)
+	}
+	if err := output.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := output.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	report := conformance.Run(context.Background(), newReportShapeProfile(t, false))
+	if err := output.Write(report); !errors.Is(err, ErrReportOutput) {
+		t.Fatalf("Write after Close = %v, want a refusal", err)
 	}
 }
 

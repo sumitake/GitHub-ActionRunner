@@ -113,7 +113,7 @@ type fixtureStartDependencies struct {
 // machine. Its handles are opaque outside testenv and are removed only by
 // exact identity in reverse creation order.
 type Fixture struct {
-	report    ReportOutput
+	report    *ReportOutput
 	input     ConformanceInput
 	binding   conformance.Binding
 	cases     fixtureCaseExecutor

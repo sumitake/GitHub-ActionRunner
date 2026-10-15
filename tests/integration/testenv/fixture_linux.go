@@ -31,6 +31,7 @@ func StartDockerFixture(t *testing.T) *Fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = report.Close() })
 
 	lease, err := acquireConformanceInputLease(
 		decision.InputPath,
