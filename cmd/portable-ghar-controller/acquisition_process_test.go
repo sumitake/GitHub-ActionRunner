@@ -322,8 +322,8 @@ func TestAcquisitionProcessClosesSessionsOnEveryPath(t *testing.T) {
 		fixture := newAcquisitionProcessFixture(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		if err := fixture.process.Run(ctx); err == nil {
-			t.Fatal("Run on a canceled context succeeded")
+		if err := fixture.process.Run(ctx); err != nil {
+			t.Fatalf("Run after a pre-start signal = %v, want a clean stop", err)
 		}
 		if got := fixture.sessions.calls.Load(); got != 1 {
 			t.Fatalf("session closes = %d, want 1", got)

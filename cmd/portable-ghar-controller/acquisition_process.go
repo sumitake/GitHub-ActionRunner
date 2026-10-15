@@ -106,11 +106,12 @@ func (process *acquisitionControllerProcess) Run(parent context.Context) error {
 	}
 	process.started = true
 	if parent.Err() != nil {
-		// Stopped before it started: nothing is serving, so only the
-		// sessions need closing before Close releases the rest.
+		// A signal before startup is the same clean stop as one after it:
+		// nothing is serving, so only the sessions need closing before Close
+		// releases the rest.
 		process.safeToClose = true
 		process.mu.Unlock()
-		return errors.Join(errCommandUnavailable, parent.Err(), process.config.CloseSessions())
+		return process.config.CloseSessions()
 	}
 	runCtx, runCancel := context.WithCancel(parent)
 	process.runCancel = runCancel
