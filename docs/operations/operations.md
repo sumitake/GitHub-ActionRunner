@@ -56,6 +56,44 @@ jail's rotation limits, must fit the remaining `log_bounds` budget at
 The command does not observe the target host. Host identity, storage, and
 other live observations stay the operator's inputs in the template.
 
+## Running the acquiring controller
+
+`portable-ghar-controller run-acquisition --config <overlay> --database <db>`
+runs the acquiring controller. It takes the same flags as `run`, needs root,
+and takes the same ownership lock, so `run` and `run-acquisition` never run
+against one database at once. The systemd unit still runs `run`.
+
+It refuses to start unless:
+
+- the overlay has the `worker`, `github`, and `jail` sections;
+- the fence names the portable fleet at the manifest's generation. It does
+  not take over a legacy fence; hand the fence over first;
+- the decision graph at `policy_path`, a root-owned mode `0600` file, is the
+  graph the overlay names in `compiled_graph_digest`;
+- the Worker HMAC secret is a root-owned mode `0600` file holding the
+  lowercase hex the Worker binds.
+
+When it refuses, the error names the startup step that failed.
+
+At startup it holds a portable fence guard for the whole run. It then
+releases any dial ledger and removes any empty slot directory that no
+recoverable assignment references, and opens one GitHub message session per
+repository. On a new database it first records the disabled policy, so the
+admission broker has an epoch to start from.
+
+The service starts disabled. It sends a Worker heartbeat every
+reconciliation cycle, starting while still disabled, so the first one is the
+Worker check. A failed heartbeat fails the cycle and stops the run, so enable
+the Worker's lease authority before starting this command. Enabling takes an operator
+transition through the usual `acquisition` command, and the conformance gate
+refuses every active mode until a passing report exists. The admin and
+health sockets are the same as `run`; health reports ready only after
+startup recovery.
+
+A signal stops it cleanly: the service records a disabled epoch and closes
+its GitHub sessions on the way out. A persisted fatal state, a lost fence
+guard, or a local server failure also stops it, with a non-zero exit.
+
 ## Watchdog restart authority
 
 The host watchdog's authority is deliberately narrow, and it is a

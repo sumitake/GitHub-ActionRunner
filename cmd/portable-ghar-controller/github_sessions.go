@@ -98,13 +98,8 @@ func githubClientFor(
 	if err != nil {
 		return nil, errors.New("invalid github response header timeout")
 	}
-	credentialPath := ""
-	for _, secret := range overlay.Secrets {
-		if secret.Name == repository.CredentialName && secret.Ref.Source == "file" {
-			credentialPath = secret.Ref.Ref
-		}
-	}
-	if credentialPath == "" {
+	credentialPath, ok := fileSecretPath(overlay, repository.CredentialName)
+	if !ok {
 		return nil, errors.New("repository credential is not a file secret")
 	}
 	token, err := access.ReadSecret(credentialPath)
@@ -123,6 +118,17 @@ func githubClientFor(
 		ResponseHeaderTimeout: headerTimeout,
 		MaxResponseBytes:      int64(overlay.GitHub.MaxResponseBytes),
 	})
+}
+
+// fileSecretPath returns the file that holds the overlay secret with this
+// name. The overlay schema keeps secret names unique.
+func fileSecretPath(overlay hostruntime.PrivateOverlay, name string) (string, bool) {
+	for _, secret := range overlay.Secrets {
+		if secret.Name == name && secret.Ref.Source == "file" {
+			return secret.Ref.Ref, true
+		}
+	}
+	return "", false
 }
 
 func fleetFor(repository hostruntime.RepositoryOverlay) githubscale.Fleet {

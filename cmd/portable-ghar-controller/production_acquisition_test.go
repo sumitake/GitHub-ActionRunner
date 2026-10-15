@@ -1,0 +1,233 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"math"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/sumitake/portable-ghar/internal/admission"
+	"github.com/sumitake/portable-ghar/internal/controller"
+	"github.com/sumitake/portable-ghar/internal/networkjail"
+	"github.com/sumitake/portable-ghar/internal/state"
+)
+
+type fakeRecoverableLister struct {
+	assignments []state.RecoverableAssignment
+	err         error
+}
+
+func (lister fakeRecoverableLister) ListRecoverable(context.Context) ([]state.RecoverableAssignment, error) {
+	return lister.assignments, lister.err
+}
+
+type fakeLedgerReleaser struct {
+	slots      []networkjail.CapacitySlotID
+	referenced map[networkjail.CapacitySlotID]bool
+	err        error
+}
+
+func (releaser *fakeLedgerReleaser) DeactivateUnreferenced(
+	_ context.Context,
+	slot networkjail.CapacitySlotID,
+) error {
+	releaser.slots = append(releaser.slots, slot)
+	if releaser.referenced[slot] {
+		return networkjail.ErrLedgerReferenced
+	}
+	return releaser.err
+}
+
+func TestClearUnreferencedSlotsReleasesOnlyWhatNoAssignmentReferences(t *testing.T) {
+	key := controller.AssignmentKey{RepositoryAlias: "repo-a", RunnerRequestID: 7}
+	lister := fakeRecoverableLister{assignments: []state.RecoverableAssignment{{Key: key}}}
+	ledgers := &fakeLedgerReleaser{referenced: map[networkjail.CapacitySlotID]bool{2: true}}
+	var removedRoot string
+	var keep map[string]bool
+	remove := func(root string, referenced map[string]bool) error {
+		removedRoot, keep = root, referenced
+		return nil
+	}
+	if err := clearUnreferencedSlots(
+		context.Background(), lister, ledgers, "/srv/brokers", 3, remove,
+	); err != nil {
+		t.Fatalf("clearUnreferencedSlots: %v", err)
+	}
+	if len(ledgers.slots) != 3 || ledgers.slots[0] != 1 || ledgers.slots[2] != 3 {
+		t.Fatalf("ledger slots = %v, want 1..3", ledgers.slots)
+	}
+	if removedRoot != "/srv/brokers" || len(keep) != 1 || !keep[controller.OpaqueSlotName(key)] {
+		t.Fatalf("directory sweep = %q %v, want the referenced slot kept", removedRoot, keep)
+	}
+}
+
+func TestClearUnreferencedSlotsFailsClosed(t *testing.T) {
+	remove := func(string, map[string]bool) error { return nil }
+	listFailure := errors.New("list failed")
+	if err := clearUnreferencedSlots(
+		context.Background(), fakeRecoverableLister{err: listFailure},
+		&fakeLedgerReleaser{}, "/srv/brokers", 1, remove,
+	); !errors.Is(err, listFailure) {
+		t.Fatalf("list failure = %v", err)
+	}
+	ledgerFailure := errors.New("ledger failed")
+	removed := false
+	if err := clearUnreferencedSlots(
+		context.Background(), fakeRecoverableLister{},
+		&fakeLedgerReleaser{err: ledgerFailure}, "/srv/brokers", 1,
+		func(string, map[string]bool) error { removed = true; return nil },
+	); !errors.Is(err, ledgerFailure) || removed {
+		t.Fatalf("ledger failure = %v, removed %v", err, removed)
+	}
+	directoryFailure := errors.New("slot not empty")
+	if err := clearUnreferencedSlots(
+		context.Background(), fakeRecoverableLister{}, &fakeLedgerReleaser{}, "/srv/brokers", 1,
+		func(string, map[string]bool) error { return directoryFailure },
+	); !errors.Is(err, directoryFailure) {
+		t.Fatalf("directory failure = %v", err)
+	}
+	for _, capacity := range []uint64{0, math.MaxUint32 + 1} {
+		if err := clearUnreferencedSlots(
+			context.Background(), fakeRecoverableLister{}, &fakeLedgerReleaser{},
+			"/srv/brokers", capacity, remove,
+		); err == nil {
+			t.Fatalf("capacity %d accepted", capacity)
+		}
+	}
+}
+
+type fakePolicyStore struct {
+	current     controller.AcquisitionPolicy
+	transitions []controller.AcquisitionPolicy
+}
+
+func (store *fakePolicyStore) Snapshot(context.Context) (controller.AcquisitionPolicy, error) {
+	return store.current, nil
+}
+
+func (store *fakePolicyStore) Transition(
+	_ context.Context,
+	expected uint64,
+	next controller.AcquisitionPolicy,
+) (controller.AcquisitionPolicy, error) {
+	if expected != store.current.Epoch {
+		return store.current, controller.ErrAcquisitionEpochMismatch
+	}
+	store.transitions = append(store.transitions, next)
+	next.Epoch = expected + 1
+	store.current = next
+	return next, nil
+}
+
+func TestDurablePolicyEpochSeedsANewDatabaseWithTheDisabledPolicy(t *testing.T) {
+	overlay := templateOverlay(t)
+	fresh := &fakePolicyStore{}
+	epoch, err := durablePolicyEpoch(context.Background(), fresh, overlay)
+	if err != nil || epoch != 1 || len(fresh.transitions) != 1 ||
+		fresh.transitions[0].Mode != controller.AcquisitionDisabled {
+		t.Fatalf("fresh database = epoch %d, %v, transitions %+v", epoch, err, fresh.transitions)
+	}
+	// The broker built at that epoch accepts the next one, which the
+	// service's startup records.
+	config, err := productionAdmissionConfig(overlay, epoch, time.Now)
+	if err != nil {
+		t.Fatalf("productionAdmissionConfig: %v", err)
+	}
+	broker, err := admission.NewBroker(config)
+	if err != nil {
+		t.Fatalf("NewBroker: %v", err)
+	}
+	adapter, err := admission.NewControllerAdapter(
+		broker, broker.(admission.LiveHistory), config.Repositories, config.TransientMode,
+	)
+	if err != nil {
+		t.Fatalf("NewControllerAdapter: %v", err)
+	}
+	startup := fresh.transitions[0]
+	startup.Epoch = epoch + 1
+	if err := adapter.ApplyAcquisitionPolicy(startup); err != nil {
+		t.Fatalf("broker rejected the startup epoch: %v", err)
+	}
+
+	existing := &fakePolicyStore{current: controller.AcquisitionPolicy{Epoch: 9}}
+	if epoch, err := durablePolicyEpoch(context.Background(), existing, overlay); err != nil ||
+		epoch != 9 || len(existing.transitions) != 0 {
+		t.Fatalf("existing database = epoch %d, %v, transitions %d", epoch, err, len(existing.transitions))
+	}
+	exhausted := &fakePolicyStore{current: controller.AcquisitionPolicy{Epoch: math.MaxUint64}}
+	if _, err := durablePolicyEpoch(context.Background(), exhausted, overlay); err == nil {
+		t.Fatal("durablePolicyEpoch accepted an exhausted epoch")
+	}
+}
+
+func TestJailUserIDTakesANonRootUID(t *testing.T) {
+	if uid, err := jailUserID("10001:10001"); err != nil || uid != 10001 {
+		t.Fatalf("jailUserID = %d, %v", uid, err)
+	}
+	for _, user := range []string{"0:0", "10001", ":10001", "-1:0", "4294967296:0", "abc:0", ""} {
+		if _, err := jailUserID(user); err == nil {
+			t.Errorf("jailUserID(%q) accepted", user)
+		}
+	}
+}
+
+func TestProductionServiceTimingsComeFromTheOverlay(t *testing.T) {
+	overlay := templateOverlay(t)
+	timings, err := parseProductionServiceTimings(overlay.Controller)
+	if err != nil {
+		t.Fatalf("parseProductionServiceTimings: %v", err)
+	}
+	if timings.ack <= 0 || timings.pollCadence <= 0 || timings.hostCapacityMaxAge <= 0 {
+		t.Fatalf("timings = %+v", timings)
+	}
+	overlay.Controller.DrainPollCadence = "often"
+	if _, err := parseProductionServiceTimings(overlay.Controller); err == nil {
+		t.Fatal("parseProductionServiceTimings accepted a malformed duration")
+	}
+}
+
+func TestControllerCLIRunAcquisitionUsesItsOwnOpenerAndRunsLock(t *testing.T) {
+	var opened []string
+	deps := testCommandDeps()
+	deps.OpenController = func(
+		context.Context, string, string, controllerOwnershipLease,
+	) (controllerProcess, error) {
+		opened = append(opened, "run")
+		return nil, errCommandUnavailable
+	}
+	var lockPath string
+	deps.AcquireOwnership = func(path string) (controllerOwnershipLease, error) {
+		lockPath = path
+		return &testOwnershipLease{}, nil
+	}
+	deps.OpenAcquisitionController = func(
+		_ context.Context, config string, database string, _ controllerOwnershipLease,
+	) (controllerProcess, error) {
+		opened = append(opened, "run-acquisition:"+config+":"+database)
+		return nil, startupStep("open fence store", nil)
+	}
+	var stdout, stderr bytes.Buffer
+	exit := runWithDependencies(
+		context.Background(),
+		[]string{"run-acquisition", "--config", "/etc/o.json", "--database", "/var/s.db"},
+		&stdout,
+		&stderr,
+		deps,
+	)
+	if exit != 1 || len(opened) != 1 || opened[0] != "run-acquisition:/etc/o.json:/var/s.db" ||
+		lockPath != "/var/s.db.owner.lock" ||
+		!strings.Contains(stderr.String(), "run-acquisition unavailable") ||
+		!strings.Contains(stderr.String(), "open fence store") {
+		t.Fatalf("exit %d, opened %v, lock %q, stderr %q", exit, opened, lockPath, stderr.String())
+	}
+	deps.OpenAcquisitionController = nil
+	stderr.Reset()
+	if exit := runWithDependencies(
+		context.Background(), []string{"run-acquisition"}, &stdout, &stderr, deps,
+	); exit != 2 {
+		t.Fatalf("missing opener exit = %d, want usage", exit)
+	}
+}

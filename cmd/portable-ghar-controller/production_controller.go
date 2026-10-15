@@ -142,12 +142,23 @@ func dialProductionAdmin(
 	return combined, combined, nil
 }
 
-func openProductionDisabledObserver(
+// productionRuntime is the verified input both controller commands start
+// from: the pinned overlay and manifest, bound to this host, this build, and
+// the database path, with the controller timings and history limits parsed.
+type productionRuntime struct {
+	overlay       hostruntime.PrivateOverlay
+	overlayDigest string
+	manifest      hostruntime.RuntimeManifest
+	timings       productionControllerTimings
+	history       state.HistoryLimits
+}
+
+func loadProductionRuntime(
 	ctx context.Context,
 	configPath string,
 	databasePath string,
 	ownership controllerOwnershipLease,
-) (controllerProcess, error) {
+) (productionRuntime, error) {
 	if ctx == nil ||
 		ctx.Err() != nil ||
 		ownership == nil ||
@@ -155,7 +166,7 @@ func openProductionDisabledObserver(
 		!canonicalAbsolutePath(configPath) ||
 		!canonicalAbsolutePath(databasePath) ||
 		configPath == databasePath {
-		return nil, errCommandUnavailable
+		return productionRuntime{}, errCommandUnavailable
 	}
 	configDocument, err := readPinnedRootFile(
 		configPath,
@@ -163,20 +174,20 @@ func openProductionDisabledObserver(
 		maxProductionConfigBytes,
 	)
 	if err != nil {
-		return nil, errCommandUnavailable
+		return productionRuntime{}, errCommandUnavailable
 	}
-	overlay, _, err := hostruntime.ParsePrivateOverlay(
+	overlay, overlayDigest, err := hostruntime.ParsePrivateOverlay(
 		configDocument,
 		maxProductionConfigBytes,
 	)
 	if err != nil {
-		return nil, errCommandUnavailable
+		return productionRuntime{}, errCommandUnavailable
 	}
 	if runtime.GOOS != overlay.Target.OS ||
 		runtime.GOARCH != overlay.Target.Architecture ||
 		uint64(os.Geteuid()) != overlay.Target.ExpectedEUID ||
 		databasePath != overlay.Paths.DatabasePath {
-		return nil, errCommandUnavailable
+		return productionRuntime{}, errCommandUnavailable
 	}
 	manifestDocument, err := readPinnedRootFile(
 		overlay.Manifest.Path,
@@ -184,7 +195,7 @@ func openProductionDisabledObserver(
 		maxProductionManifestBytes,
 	)
 	if err != nil {
-		return nil, errCommandUnavailable
+		return productionRuntime{}, errCommandUnavailable
 	}
 	manifest, manifestDigest, err := hostruntime.ParseRuntimeManifest(
 		manifestDocument,
@@ -193,29 +204,50 @@ func openProductionDisabledObserver(
 	if err != nil ||
 		manifestDigest != overlay.Manifest.Digest ||
 		!controllerManifestMatchesOverlay(manifest, overlay) {
-		return nil, errCommandUnavailable
+		return productionRuntime{}, errCommandUnavailable
 	}
 	executableDigest, err := currentControllerExecutableDigest()
 	if err != nil || executableDigest != manifest.ControllerSHA256 {
-		return nil, errCommandUnavailable
+		return productionRuntime{}, errCommandUnavailable
 	}
 	if err := validateProductionControllerPaths(
 		overlay,
 		uint32(overlay.Target.ExpectedEUID),
 	); err != nil {
-		return nil, errCommandUnavailable
+		return productionRuntime{}, errCommandUnavailable
 	}
 	timings, err := parseProductionControllerTimings(overlay)
 	if err != nil ||
 		overlay.Resources.MaxCapacity == 0 ||
 		overlay.Resources.MaxCapacity > uint64(math.MaxInt) {
-		return nil, errCommandUnavailable
-	}
-	desired, err := productionDisabledPolicy(overlay)
-	if err != nil {
-		return nil, errCommandUnavailable
+		return productionRuntime{}, errCommandUnavailable
 	}
 	historyLimits, err := productionHistoryLimits(overlay)
+	if err != nil {
+		return productionRuntime{}, errCommandUnavailable
+	}
+	return productionRuntime{
+		overlay:       overlay,
+		overlayDigest: overlayDigest,
+		manifest:      manifest,
+		timings:       timings,
+		history:       historyLimits,
+	}, nil
+}
+
+func openProductionDisabledObserver(
+	ctx context.Context,
+	configPath string,
+	databasePath string,
+	ownership controllerOwnershipLease,
+) (controllerProcess, error) {
+	loaded, err := loadProductionRuntime(ctx, configPath, databasePath, ownership)
+	if err != nil {
+		return nil, err
+	}
+	overlay, manifest, timings := loaded.overlay, loaded.manifest, loaded.timings
+	historyLimits := loaded.history
+	desired, err := productionDisabledPolicy(overlay)
 	if err != nil {
 		return nil, errCommandUnavailable
 	}

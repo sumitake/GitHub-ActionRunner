@@ -30,16 +30,24 @@ type controllerOwnershipLease interface {
 	Close() error
 }
 
+// controllerOpener composes a controller process from the overlay path, the
+// database path, and the ownership lease the command already holds.
+type controllerOpener func(context.Context, string, string, controllerOwnershipLease) (controllerProcess, error)
+
 type commandDependencies struct {
-	Clock             func() time.Time
-	IsRoot            func() bool
-	AcquireOwnership  func(string) (controllerOwnershipLease, error)
-	OpenController    func(context.Context, string, string, controllerOwnershipLease) (controllerProcess, error)
-	DialAdmin         func(context.Context) (controller.LiveAdmin, io.Closer, error)
-	GitHub            githubAccess
-	AdminTimeout      time.Duration
-	DrainTimeout      time.Duration
-	StatusReadTimeout time.Duration
+	Clock            func() time.Time
+	IsRoot           func() bool
+	AcquireOwnership func(string) (controllerOwnershipLease, error)
+	OpenController   controllerOpener
+	// OpenAcquisitionController composes the acquiring controller for
+	// run-acquisition. It shares run's ownership lock, so the two never run
+	// against one database at once.
+	OpenAcquisitionController controllerOpener
+	DialAdmin                 func(context.Context) (controller.LiveAdmin, io.Closer, error)
+	GitHub                    githubAccess
+	AdminTimeout              time.Duration
+	DrainTimeout              time.Duration
+	StatusReadTimeout         time.Duration
 }
 
 func productionCommandDependencies(clock func() time.Time) commandDependencies {
@@ -58,6 +66,20 @@ func productionCommandDependencies(clock func() time.Time) commandDependencies {
 				configPath,
 				databasePath,
 				ownership,
+			)
+		},
+		OpenAcquisitionController: func(
+			ctx context.Context,
+			configPath string,
+			databasePath string,
+			ownership controllerOwnershipLease,
+		) (controllerProcess, error) {
+			return openProductionAcquisitionController(
+				ctx,
+				configPath,
+				databasePath,
+				ownership,
+				os.Stderr,
 			)
 		},
 		DialAdmin:         dialProductionAdmin,
@@ -96,7 +118,16 @@ func runWithDependencies(
 	}
 	switch args[0] {
 	case "run":
-		return executeRun(ctx, args[1:], stderr, deps)
+		return executeRun(ctx, "run", deps.OpenController, args[1:], stderr, deps)
+	case "run-acquisition":
+		return executeRun(
+			ctx,
+			"run-acquisition",
+			deps.OpenAcquisitionController,
+			args[1:],
+			stderr,
+			deps,
+		)
 	case "probe":
 		if len(args) != 1 {
 			return commandUsage(stderr)
@@ -182,6 +213,7 @@ func validCommandDependencies(deps commandDependencies) bool {
 		deps.IsRoot != nil &&
 		deps.AcquireOwnership != nil &&
 		deps.OpenController != nil &&
+		deps.OpenAcquisitionController != nil &&
 		deps.DialAdmin != nil &&
 		deps.GitHub.valid() &&
 		deps.AdminTimeout > 0 &&
@@ -191,6 +223,8 @@ func validCommandDependencies(deps commandDependencies) bool {
 
 func executeRun(
 	ctx context.Context,
+	command string,
+	open controllerOpener,
 	args []string,
 	stderr io.Writer,
 	deps commandDependencies,
@@ -203,17 +237,17 @@ func executeRun(
 		return commandUsage(stderr)
 	}
 	if !deps.IsRoot() {
-		return commandFailure(stderr, "run")
+		return commandFailure(stderr, command)
 	}
 	ownership, err := deps.AcquireOwnership(flags["database"] + ".owner.lock")
 	if err != nil || ownership == nil {
-		return commandFailure(stderr, "run")
+		return commandFailure(stderr, command)
 	}
 	if err := ownership.Validate(); err != nil {
 		_ = ownership.Close()
-		return commandFailure(stderr, "run")
+		return commandFailure(stderr, command)
 	}
-	process, openErr := deps.OpenController(
+	process, openErr := open(
 		ctx,
 		flags["config"],
 		flags["database"],
@@ -221,12 +255,15 @@ func executeRun(
 	)
 	if openErr != nil || process == nil {
 		_ = ownership.Close()
-		return commandFailure(stderr, "run")
+		if openErr == nil {
+			return commandFailure(stderr, command)
+		}
+		return commandFailureReason(stderr, command, openErr)
 	}
 	runErr := process.Run(ctx)
 	processCloseErr := process.Close()
 	if runErr != nil || processCloseErr != nil {
-		return commandFailure(stderr, "run")
+		return commandFailureReason(stderr, command, errors.Join(runErr, processCloseErr))
 	}
 	return 0
 }
