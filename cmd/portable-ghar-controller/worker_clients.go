@@ -60,8 +60,11 @@ func newProductionWorkerClients(
 	join, joinErr := time.ParseDuration(config.Overlay.Controller.TransitionJoinTimeout)
 	finish, finishErr := time.ParseDuration(config.Overlay.Controller.DurableFinishTimeout)
 	fatalPath, fatalOK := fatalPathBound(join, finish)
+	// Every installed lease ends at lease - margin locally; a tail that
+	// reaches that far leaves no permit any slack.
 	if callErr != nil || joinErr != nil || finishErr != nil ||
-		callDuration <= 0 || !fatalOK || tail <= fatalPath {
+		callDuration <= 0 || !fatalOK || tail <= fatalPath ||
+		margin >= lease || tail >= lease-margin {
 		return productionWorkerClients{}, errCommandUnavailable
 	}
 
@@ -130,24 +133,27 @@ func (clients productionWorkerClients) Close() error {
 }
 
 // fatalPathBound is the longest the controller can take, after a permit's
-// cancel deadline, to persist the fatal state and reach the terminator. The
-// worst path is an acquisition whose call returns late: the tracked call's
-// join (J), the durable completion (F), marking the batch ambiguous (F),
-// then the fatal transition (J). Other paths (a call that never returns:
-// J+F+J; JIT or a policy transition owner: J+J) are shorter. The
-// termination tail must exceed this bound so termination keeps a slice
-// before the Worker lease expires.
+// cancel deadline, to reach the terminator. J is the transition join
+// timeout and F the durable finish timeout. The worst path is an
+// acquisition whose call ignores cancellation and never returns: the
+// tracked call's join (J), marking the batch ambiguous (F), the fatal
+// transition's compare-and-set under the caller's join (J), its wait for
+// the still-open old epoch (J), the post-CAS failure's second wait (J), and
+// the secondary fatal persist (J): 5J + F. A call that returns late takes
+// at most J + F + F + J. The bound 5J + 2F covers both. The termination tail
+// must exceed it so termination keeps a slice before the Worker lease
+// expires.
 func fatalPathBound(join, finish time.Duration) (time.Duration, bool) {
 	if join <= 0 || finish <= 0 {
 		return 0, false
 	}
-	step := join + finish
-	if step < join {
-		return 0, false
-	}
-	total := step + step
-	if total < step {
-		return 0, false
+	var total time.Duration
+	for _, term := range []time.Duration{join, join, join, join, join, finish, finish} {
+		next := total + term
+		if next < total {
+			return 0, false
+		}
+		total = next
 	}
 	return total, true
 }
