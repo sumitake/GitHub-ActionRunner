@@ -74,7 +74,10 @@ It refuses to start unless:
 - the decision graph at `policy_path`, a root-owned mode `0600` file, is the
   graph the overlay names in `compiled_graph_digest`;
 - the Worker HMAC secret is a root-owned mode `0600` file holding the
-  lowercase hex the Worker binds.
+  lowercase hex the Worker binds;
+- the Worker `termination_tail` exceeds `transition_join_timeout` plus
+  `durable_finish_timeout`, so a call that ignores cancellation is joined and
+  the fatal state persisted before the Worker lease expires.
 
 When it refuses, the error names the startup step that failed.
 
