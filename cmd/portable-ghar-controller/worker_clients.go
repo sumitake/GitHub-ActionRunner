@@ -35,13 +35,23 @@ type productionWorkerConfig struct {
 	AttemptInterval time.Duration
 	Clock           failoverclient.AuthorityClock
 	Transport       http.RoundTripper
+	// OnLeaseOverrun ends the process. It runs when a permit is still open
+	// leaseOverrunSlice before its lease ends locally, so a controller that
+	// has not finished terminating stops before the Worker lease expires.
+	OnLeaseOverrun func(controller.AcquisitionPermitBinding)
 }
+
+// leaseOverrunSlice is how long before a permit's local lease deadline the
+// process exits if the permit is still open. The termination tail must
+// exceed it: a permit stops granting at the tail, and the controller has
+// until the slice to finish terminating on its own.
+const leaseOverrunSlice = 2 * time.Second
 
 func newProductionWorkerClients(
 	config productionWorkerConfig,
 ) (productionWorkerClients, error) {
 	worker := config.Overlay.Worker
-	if worker == nil || config.AttemptInterval <= 0 {
+	if worker == nil || config.AttemptInterval <= 0 || config.OnLeaseOverrun == nil {
 		return productionWorkerClients{}, errCommandUnavailable
 	}
 	hmacKey, err := decodeWorkerHMACKey(config.HMACKeyHex)
@@ -57,13 +67,9 @@ func newProductionWorkerClients(
 	// A permit lasts as long as the controller operation that holds it: the
 	// call plus its durable and acknowledgement work.
 	callDuration, callErr := time.ParseDuration(config.Overlay.Controller.OperationTimeout)
-	join, joinErr := time.ParseDuration(config.Overlay.Controller.TransitionJoinTimeout)
-	finish, finishErr := time.ParseDuration(config.Overlay.Controller.DurableFinishTimeout)
-	fatalPath, fatalOK := fatalPathBound(join, finish)
 	// Every installed lease ends at lease - margin locally; a tail that
 	// reaches that far leaves no permit any slack.
-	if callErr != nil || joinErr != nil || finishErr != nil ||
-		callDuration <= 0 || !fatalOK || tail <= fatalPath ||
+	if callErr != nil || callDuration <= 0 || tail <= leaseOverrunSlice ||
 		margin >= lease || tail >= lease-margin {
 		return productionWorkerClients{}, errCommandUnavailable
 	}
@@ -113,6 +119,8 @@ func newProductionWorkerClients(
 			Fence:           config.Fence,
 			CallDuration:    callDuration,
 			TerminationTail: tail,
+			OverrunSlice:    leaseOverrunSlice,
+			OnLeaseOverrun:  config.OnLeaseOverrun,
 		},
 	)
 	if err != nil {
@@ -130,32 +138,6 @@ func (clients productionWorkerClients) Close() error {
 		return nil
 	}
 	return clients.session.Close()
-}
-
-// fatalPathBound is the longest the controller can take, after a permit's
-// cancel deadline, to reach the terminator. J is the transition join
-// timeout and F the durable finish timeout. The worst path is an
-// acquisition whose call ignores cancellation and never returns: the
-// tracked call's join (J), marking the batch ambiguous (F), the fatal
-// transition's compare-and-set under the caller's join (J), its wait for
-// the still-open old epoch (J), the post-CAS failure's second wait (J), and
-// the secondary fatal persist (J): 5J + F. A call that returns late takes
-// at most J + F + F + J. The bound 5J + 2F covers both. The termination tail
-// must exceed it so termination keeps a slice before the Worker lease
-// expires.
-func fatalPathBound(join, finish time.Duration) (time.Duration, bool) {
-	if join <= 0 || finish <= 0 {
-		return 0, false
-	}
-	var total time.Duration
-	for _, term := range []time.Duration{join, join, join, join, join, finish, finish} {
-		next := total + term
-		if next < total {
-			return 0, false
-		}
-		total = next
-	}
-	return total, true
 }
 
 // decodeWorkerHMACKey reads the Worker's HMAC_KEY credential: lowercase hex

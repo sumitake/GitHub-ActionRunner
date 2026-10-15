@@ -779,3 +779,180 @@ func TestNewCachedLeasePermitProviderRejectsIncompleteConfig(t *testing.T) {
 		t.Fatal("unset call duration accepted")
 	}
 }
+
+// overrunTestClock blocks the permit's own deadline wait until its context
+// ends, and releases the overrun wait only when the test fires it.
+type overrunTestClock struct {
+	now       time.Time
+	overrunAt time.Time
+	watching  chan struct{}
+	fire      chan struct{}
+}
+
+func (clock *overrunTestClock) Capable() bool           { return true }
+func (clock *overrunTestClock) Now() (time.Time, error) { return clock.now, nil }
+
+func (clock *overrunTestClock) WaitUntil(ctx context.Context, deadline time.Time) error {
+	if !deadline.Equal(clock.overrunAt) {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	clock.watching <- struct{}{}
+	select {
+	case <-clock.fire:
+		return context.DeadlineExceeded
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func newOverrunFixture(t *testing.T) (
+	*cachedPermitFixture,
+	*overrunTestClock,
+	chan controller.AcquisitionPermitBinding,
+) {
+	t.Helper()
+	fixture := newCachedPermitFixture(t, LeaseEnabled)
+	now, _ := fixture.clock.Now()
+	slice := 500 * time.Millisecond
+	clock := &overrunTestClock{
+		now:       now,
+		overrunAt: fixture.deadline.Add(-slice),
+		watching:  make(chan struct{}, 1),
+		fire:      make(chan struct{}),
+	}
+	overruns := make(chan controller.AcquisitionPermitBinding, 1)
+	provider, err := NewCachedLeasePermitProvider(CachedLeasePermitConfig{
+		Cache:           fixture.cache,
+		Clock:           clock,
+		Holder:          HolderPortable,
+		Fence:           7,
+		CallDuration:    2 * time.Second,
+		TerminationTail: time.Second,
+		OverrunSlice:    slice,
+		OnLeaseOverrun: func(binding controller.AcquisitionPermitBinding) {
+			overruns <- binding
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewCachedLeasePermitProvider: %v", err)
+	}
+	fixture.provider = provider
+	return fixture, clock, overruns
+}
+
+func TestLeasePermitOverrunFiresForAnOpenPermit(t *testing.T) {
+	fixture, clock, overruns := newOverrunFixture(t)
+	guard := fixture.acquire(t)
+	<-clock.watching
+	close(clock.fire)
+	select {
+	case binding := <-overruns:
+		if binding.OperationID != fixture.request.OperationID ||
+			!binding.OriginalLocalDeadline.Equal(fixture.deadline) {
+			t.Fatalf("overrun binding = %+v", binding)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("an open permit at the overrun deadline did not fire the hook")
+	}
+	if err := guard.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestLeasePermitOverrunSkipsAdmittedAndClosedPermits(t *testing.T) {
+	t.Run("admitted", func(t *testing.T) {
+		fixture, clock, overruns := newOverrunFixture(t)
+		guard := fixture.acquire(t)
+		<-clock.watching
+		if err := guard.Admit(); err != nil {
+			t.Fatalf("Admit: %v", err)
+		}
+		close(clock.fire)
+		<-guard.(*leaseGuard).overrunDone
+		select {
+		case <-overruns:
+			t.Fatal("an admitted permit fired the overrun hook")
+		default:
+		}
+		if err := guard.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		select {
+		case <-overruns:
+			t.Fatal("an admitted permit fired the overrun hook")
+		default:
+		}
+	})
+	t.Run("closing when the deadline passes", func(t *testing.T) {
+		fixture, clock, overruns := newOverrunFixture(t)
+		guard := fixture.acquire(t)
+		lease := guard.(*leaseGuard)
+		<-clock.watching
+		// Close marks the guard before it cancels the watcher; a deadline
+		// passing in between must not fire.
+		lease.mu.Lock()
+		lease.closed = true
+		lease.mu.Unlock()
+		close(clock.fire)
+		<-lease.overrunDone
+		select {
+		case <-overruns:
+			t.Fatal("a closing permit fired the overrun hook")
+		default:
+		}
+		lease.mu.Lock()
+		lease.closed = false
+		lease.mu.Unlock()
+		if err := guard.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	})
+	t.Run("closed", func(t *testing.T) {
+		fixture, clock, overruns := newOverrunFixture(t)
+		guard := fixture.acquire(t)
+		<-clock.watching
+		if err := guard.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		select {
+		case <-overruns:
+			t.Fatal("a closed permit fired the overrun hook")
+		default:
+		}
+	})
+}
+
+func TestNewCachedLeasePermitProviderRejectsPartialOverrunEnforcement(t *testing.T) {
+	clock := NewFakeAuthorityClock(time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC))
+	hook := func(controller.AcquisitionPermitBinding) {}
+	base := CachedLeasePermitConfig{
+		Cache:           &LeaseCache{},
+		Clock:           clock,
+		Holder:          HolderPortable,
+		Fence:           7,
+		CallDuration:    time.Second,
+		TerminationTail: time.Second,
+	}
+	tests := map[string]func(*CachedLeasePermitConfig){
+		"hook without slice": func(config *CachedLeasePermitConfig) { config.OnLeaseOverrun = hook },
+		"slice without hook": func(config *CachedLeasePermitConfig) { config.OverrunSlice = time.Millisecond },
+		"slice not inside the tail": func(config *CachedLeasePermitConfig) {
+			config.OnLeaseOverrun = hook
+			config.OverrunSlice = time.Second
+		},
+	}
+	for name, mutate := range tests {
+		config := base
+		mutate(&config)
+		if _, err := NewCachedLeasePermitProvider(config); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	config := base
+	config.OnLeaseOverrun = hook
+	config.OverrunSlice = 500 * time.Millisecond
+	if _, err := NewCachedLeasePermitProvider(config); err != nil {
+		t.Fatalf("complete overrun enforcement rejected: %v", err)
+	}
+}
