@@ -57,15 +57,11 @@ func newProductionWorkerClients(
 	// A permit lasts as long as the controller operation that holds it: the
 	// call plus its durable and acknowledgement work.
 	callDuration, callErr := time.ParseDuration(config.Overlay.Controller.OperationTimeout)
-	// The tail before the lease deadline holds, in order, the join of a call
-	// that ignores cancellation, the durable fatal write, and process
-	// termination. The first two are the controller's own bounds, so the
-	// tail must exceed their sum to leave termination a slice.
 	join, joinErr := time.ParseDuration(config.Overlay.Controller.TransitionJoinTimeout)
 	finish, finishErr := time.ParseDuration(config.Overlay.Controller.DurableFinishTimeout)
+	fatalPath, fatalOK := fatalPathBound(join, finish)
 	if callErr != nil || joinErr != nil || finishErr != nil ||
-		callDuration <= 0 || join <= 0 || finish <= 0 ||
-		tail <= join+finish {
+		callDuration <= 0 || !fatalOK || tail <= fatalPath {
 		return productionWorkerClients{}, errCommandUnavailable
 	}
 
@@ -131,6 +127,29 @@ func (clients productionWorkerClients) Close() error {
 		return nil
 	}
 	return clients.session.Close()
+}
+
+// fatalPathBound is the longest the controller can take, after a permit's
+// cancel deadline, to persist the fatal state and reach the terminator. The
+// worst path is an acquisition whose call returns late: the tracked call's
+// join (J), the durable completion (F), marking the batch ambiguous (F),
+// then the fatal transition (J). Other paths (a call that never returns:
+// J+F+J; JIT or a policy transition owner: J+J) are shorter. The
+// termination tail must exceed this bound so termination keeps a slice
+// before the Worker lease expires.
+func fatalPathBound(join, finish time.Duration) (time.Duration, bool) {
+	if join <= 0 || finish <= 0 {
+		return 0, false
+	}
+	step := join + finish
+	if step < join {
+		return 0, false
+	}
+	total := step + step
+	if total < step {
+		return 0, false
+	}
+	return total, true
 }
 
 // decodeWorkerHMACKey reads the Worker's HMAC_KEY credential: lowercase hex

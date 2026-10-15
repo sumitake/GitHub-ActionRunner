@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func testWorkerConfig() productionWorkerConfig {
 				HeartbeatDeadline:  "10s",
 				ShorteningMargin:   "5s",
 				LostRenewals:       2,
-				TerminationTail:    "30s",
+				TerminationTail:    "43s",
 			},
 			Controller: hostruntime.ControllerTimingOverlay{
 				OperationTimeout:      "20s",
@@ -56,7 +57,7 @@ func TestProductionWorkerClientsComposeFromTheOverlay(t *testing.T) {
 		clients.Permits.Fence != 7 ||
 		clients.Permits.Holder != failoverclient.HolderPortable ||
 		clients.Permits.CallDuration != 20*time.Second ||
-		clients.Permits.TerminationTail != 30*time.Second {
+		clients.Permits.TerminationTail != 43*time.Second {
 		t.Fatalf("clients = %+v", clients)
 	}
 	if err := clients.Close(); err != nil {
@@ -67,8 +68,12 @@ func TestProductionWorkerClientsComposeFromTheOverlay(t *testing.T) {
 func TestProductionWorkerClientsRejectAnUnsafeConfiguration(t *testing.T) {
 	tests := map[string]func(*productionWorkerConfig){
 		"no worker section": func(config *productionWorkerConfig) { config.Overlay.Worker = nil },
+		// Join 10s and finish 11s: the fatal path can take 2*(10+11) = 42s.
 		"tail leaves no termination slice": func(config *productionWorkerConfig) {
-			config.Overlay.Worker.TerminationTail = "21s"
+			config.Overlay.Worker.TerminationTail = "42s"
+		},
+		"tail covers only one join": func(config *productionWorkerConfig) {
+			config.Overlay.Worker.TerminationTail = "31s"
 		},
 		"malformed operation timeout": func(config *productionWorkerConfig) {
 			config.Overlay.Controller.OperationTimeout = "soon"
@@ -98,5 +103,20 @@ func TestProductionWorkerClientsRejectAnUnsafeConfiguration(t *testing.T) {
 				t.Fatal("newProductionWorkerClients accepted an unsafe configuration")
 			}
 		})
+	}
+}
+
+func TestFatalPathBoundIsTwoJoinsAndTwoFinishes(t *testing.T) {
+	if bound, ok := fatalPathBound(10*time.Second, 11*time.Second); !ok || bound != 42*time.Second {
+		t.Fatalf("fatalPathBound = %v, %v; want 42s", bound, ok)
+	}
+	for _, terms := range [][2]time.Duration{
+		{0, time.Second},
+		{time.Second, 0},
+		{math.MaxInt64 / 2, math.MaxInt64 / 2},
+	} {
+		if _, ok := fatalPathBound(terms[0], terms[1]); ok {
+			t.Errorf("fatalPathBound(%v, %v) accepted", terms[0], terms[1])
+		}
 	}
 }
