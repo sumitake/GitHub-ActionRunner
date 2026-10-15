@@ -36,7 +36,9 @@ designed. Every command in this step only reads.
    cat <fence_root>/fleet.json
    ```
 
-   Do not edit or remove any of these files.
+   The `.` line of the first listing shows the root's owner and mode; it
+   must be owned by root with mode `drwx------`. Do not edit or remove any of
+   these files.
 
 3. If a `portable-ghar-fleet-fence` binary is present, read the fence through
    it as well. `inspect` takes a shared lock, so it can run beside live
@@ -63,12 +65,14 @@ designed. Every command in this step only reads.
 
 What the result decides:
 
-| Fence state                       | Meaning for the canary                                                                                                               |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Root absent or files missing      | No fence exists. The handover starts from `none` at generation 0, and nothing currently guards the target against a second acquirer. |
-| `legacy` at generation N          | Legacy work must be suspended and its guards gone before a `legacy` to `portable` handover at expected generation N.                 |
-| `portable` at generation N        | Unexpected before any Portable deployment. Stop and report.                                                                          |
-| `none` at generation N, N above 0 | A fence that was handed back. Record N; the handover expects it.                                                                     |
+| Fence state                                                                           | Meaning for the canary                                                                                                                                                            |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Root absent                                                                           | No fence exists. The handover must first create the root as a root-owned mode `0700` directory. Nothing currently guards the target against a second acquirer.                    |
+| Root is a root-owned mode `0700` directory, and none of the three names exist         | Never set up. The handover starts from `none` at generation 0.                                                                                                                    |
+| One or two of the three names exist, or the root is not a root-owned `0700` directory | Partial or invalid state. The fence store rejects it, and the files present may belong to a live or earlier guard. Stop and report. Do not hand over, create, or remove anything. |
+| `legacy` at generation N                                                              | Legacy work must be suspended and its guards gone before a `legacy` to `portable` handover at expected generation N.                                                              |
+| `portable` at generation N                                                            | Unexpected before any Portable deployment. Stop and report.                                                                                                                       |
+| `none` at generation N, N above 0                                                     | A fence that was handed back. Record N; the handover expects it.                                                                                                                  |
 
 The handover itself is not part of D5. It belongs to the canary runbook and
 waits for its own go.
