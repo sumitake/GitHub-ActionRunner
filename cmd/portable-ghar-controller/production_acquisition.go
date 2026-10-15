@@ -315,9 +315,13 @@ func openProductionAcquisitionController(
 		return failWithTargets(startupStep("build reconciler", err))
 	}
 
+	// The run's own log lines go through a non-blocking queue, so a stalled
+	// stderr cannot hold reconciliation or a fatal stop. The overrun exit
+	// keeps the raw writer with its own bounded wait.
+	runLog := newNonBlockingLog(logs)
 	process := &acquisitionControllerProcess{}
 	terminator := &processTerminator{
-		stderr: logs,
+		stderr: runLog,
 		cancel: func() { process.stop(errAcquisitionFatal) },
 	}
 	external := newUnavailableExternalGraph()
@@ -337,7 +341,7 @@ func openProductionAcquisitionController(
 		HostCapacity:          fixedHostCapacity{capacity: int(overlay.Resources.MaxCapacity), evidence: loaded.overlayDigest, now: time.Now},
 		HistoryPressure:       pressure,
 		HealthPublisher:       worker.Health,
-		EventSink:             &logEventSink{out: logs},
+		EventSink:             &logEventSink{out: runLog},
 		Reconciler:            reconciler,
 		FleetAlias:            overlay.Worker.FleetID,
 		HostProfileID:         overlay.Target.ProfileID,

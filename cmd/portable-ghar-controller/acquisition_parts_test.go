@@ -100,3 +100,62 @@ func TestJITAuthorizerSlotRefusesUntilSet(t *testing.T) {
 		t.Fatalf("set slot = %v, calls %d", err, target.calls)
 	}
 }
+
+func TestNonBlockingLogNeverBlocksAndKeepsOrder(t *testing.T) {
+	blocked := blockedWriter{release: make(chan struct{})}
+	stalled := newNonBlockingLog(blocked)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 2 * nonBlockingLogDepth {
+			if n, err := stalled.Write([]byte("line\n")); n != 5 || err != nil {
+				t.Errorf("Write = %d, %v", n, err)
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Write blocked on a stalled writer")
+	}
+	close(blocked.release)
+
+	lines := make(chan string, 3)
+	ordered := newNonBlockingLog(writerFunc(func(p []byte) (int, error) {
+		lines <- string(p)
+		return len(p), nil
+	}))
+	for _, line := range []string{"a\n", "b\n", "c\n"} {
+		_, _ = ordered.Write([]byte(line))
+	}
+	for _, want := range []string{"a\n", "b\n", "c\n"} {
+		select {
+		case got := <-lines:
+			if got != want {
+				t.Fatalf("line = %q, want %q", got, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("line %q not written", want)
+		}
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (write writerFunc) Write(p []byte) (int, error) { return write(p) }
+
+func TestProcessTerminatorCancelsBeforeLogging(t *testing.T) {
+	cancelled := false
+	var loggedAfterCancel bool
+	terminator := &processTerminator{
+		stderr: writerFunc(func(p []byte) (int, error) {
+			loggedAfterCancel = cancelled
+			return len(p), nil
+		}),
+		cancel: func() { cancelled = true },
+	}
+	terminator.TerminateAfterPersist(controller.ReasonCode(3))
+	if !cancelled || !loggedAfterCancel {
+		t.Fatalf("cancelled %v, logged after cancel %v", cancelled, loggedAfterCancel)
+	}
+}
