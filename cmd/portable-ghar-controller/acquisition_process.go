@@ -14,6 +14,7 @@ var (
 	errAcquisitionFatal     = errors.New("portable-ghar-controller: fatal state persisted")
 	errAcquisitionFenceLost = errors.New("portable-ghar-controller: portable fence guard lost")
 	errAcquisitionServer    = errors.New("portable-ghar-controller: local server failed")
+	errAcquisitionOwnership = errors.New("portable-ghar-controller: database ownership lost")
 )
 
 // acquisitionService is what the process needs from controller.Service.
@@ -37,8 +38,12 @@ type acquisitionProcessConfig struct {
 	ExpectedUID      uint32
 	AdmissionLimit   int
 	OperationTimeout time.Duration
-	DrainTimeout     time.Duration
-	ShutdownTimeout  time.Duration
+	// OwnershipCheck is how often the run re-validates the database
+	// ownership lock, so a replaced lock stops it before a second controller
+	// can open the same database.
+	OwnershipCheck  time.Duration
+	DrainTimeout    time.Duration
+	ShutdownTimeout time.Duration
 }
 
 // acquisitionControllerProcess runs the acquiring service and serves the same
@@ -68,6 +73,7 @@ func (process *acquisitionControllerProcess) init(config acquisitionProcessConfi
 		config.AdminSocketPath == config.HealthSocketPath ||
 		config.AdmissionLimit <= 0 ||
 		config.OperationTimeout <= 0 ||
+		config.OwnershipCheck <= 0 ||
 		config.DrainTimeout <= 0 ||
 		config.ShutdownTimeout <= 0 {
 		return errCommandUnavailable
@@ -113,15 +119,7 @@ func (process *acquisitionControllerProcess) Run(parent context.Context) error {
 
 	serviceDone := make(chan error, 1)
 	go func() { serviceDone <- process.config.Service.Run(runCtx) }()
-	if lost := process.config.FenceLost; lost != nil {
-		go func() {
-			select {
-			case <-lost:
-				process.stop(errAcquisitionFenceLost)
-			case <-runCtx.Done():
-			}
-		}()
-	}
+	go process.watch(runCtx)
 	admin, health, serverErr := process.startServers(runCtx)
 	if serverErr != nil {
 		process.stop(errAcquisitionServer)
@@ -146,6 +144,27 @@ func (process *acquisitionControllerProcess) Run(parent context.Context) error {
 	process.safeToClose = closeErr == nil
 	process.mu.Unlock()
 	return errors.Join(reason, serverErr, runErr, sessionErr, closeErr)
+}
+
+// watch stops the run when the fence guard is lost or the ownership lock no
+// longer validates.
+func (process *acquisitionControllerProcess) watch(ctx context.Context) {
+	ticker := time.NewTicker(process.config.OwnershipCheck)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-process.config.FenceLost:
+			process.stop(errAcquisitionFenceLost)
+			return
+		case <-ticker.C:
+			if err := process.config.Ownership.Validate(); err != nil {
+				process.stop(errors.Join(errAcquisitionOwnership, err))
+				return
+			}
+		}
+	}
 }
 
 // Close releases the store, fence guard, Worker session, and ownership only

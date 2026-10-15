@@ -99,6 +99,7 @@ func newAcquisitionProcessFixture(t *testing.T) *acquisitionProcessFixture {
 		ExpectedUID:      uint32(os.Geteuid()),
 		AdmissionLimit:   2,
 		OperationTimeout: time.Second,
+		OwnershipCheck:   5 * time.Millisecond,
 		DrainTimeout:     time.Second,
 		ShutdownTimeout:  time.Second,
 	}); err != nil {
@@ -217,6 +218,12 @@ func TestAcquisitionProcessExitsWithAnErrorUnlessSignaled(t *testing.T) {
 			stop: func(fixture *acquisitionProcessFixture) { close(fixture.fenceLost) },
 			want: errAcquisitionFenceLost,
 		},
+		"lost ownership lock": {
+			stop: func(fixture *acquisitionProcessFixture) {
+				fixture.ownership.SetValidateError(errors.New("lock replaced"))
+			},
+			want: errAcquisitionOwnership,
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -265,6 +272,7 @@ func TestAcquisitionProcessInitRejectsAnIncompleteConfig(t *testing.T) {
 		HealthSocketPath: "/run/h.sock",
 		AdmissionLimit:   1,
 		OperationTimeout: time.Second,
+		OwnershipCheck:   time.Second,
 		DrainTimeout:     time.Second,
 		ShutdownTimeout:  time.Second,
 	}
@@ -272,13 +280,14 @@ func TestAcquisitionProcessInitRejectsAnIncompleteConfig(t *testing.T) {
 		t.Fatalf("init(valid) = %v", err)
 	}
 	tests := map[string]func(*acquisitionProcessConfig){
-		"no service":        func(config *acquisitionProcessConfig) { config.Service = nil },
-		"no session closer": func(config *acquisitionProcessConfig) { config.CloseSessions = nil },
-		"no resources":      func(config *acquisitionProcessConfig) { config.Resources = nil },
-		"no ownership":      func(config *acquisitionProcessConfig) { config.Ownership = nil },
-		"one socket path":   func(config *acquisitionProcessConfig) { config.HealthSocketPath = config.AdminSocketPath },
-		"no admission":      func(config *acquisitionProcessConfig) { config.AdmissionLimit = 0 },
-		"no shutdown time":  func(config *acquisitionProcessConfig) { config.ShutdownTimeout = 0 },
+		"no service":         func(config *acquisitionProcessConfig) { config.Service = nil },
+		"no session closer":  func(config *acquisitionProcessConfig) { config.CloseSessions = nil },
+		"no resources":       func(config *acquisitionProcessConfig) { config.Resources = nil },
+		"no ownership":       func(config *acquisitionProcessConfig) { config.Ownership = nil },
+		"one socket path":    func(config *acquisitionProcessConfig) { config.HealthSocketPath = config.AdminSocketPath },
+		"no admission":       func(config *acquisitionProcessConfig) { config.AdmissionLimit = 0 },
+		"no shutdown time":   func(config *acquisitionProcessConfig) { config.ShutdownTimeout = 0 },
+		"no ownership check": func(config *acquisitionProcessConfig) { config.OwnershipCheck = 0 },
 	}
 	for name, mutate := range tests {
 		config := valid

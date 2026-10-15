@@ -376,6 +376,7 @@ func openProductionAcquisitionController(
 		ExpectedUID:      uint32(overlay.Target.ExpectedEUID),
 		AdmissionLimit:   int(overlay.Resources.MaxCapacity),
 		OperationTimeout: timings.operation,
+		OwnershipCheck:   timings.reconciliationCadence,
 		DrainTimeout:     timings.shutdown,
 		ShutdownTimeout:  timings.shutdown,
 	}); err != nil {
