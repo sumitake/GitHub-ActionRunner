@@ -52,8 +52,13 @@ func newSharedFenceGuard(failure <-chan error) *sharedFenceGuard {
 func (shared *sharedFenceGuard) AcquirePortable(
 	ctx context.Context,
 ) (controller.AcquisitionGuard, error) {
-	if ctx == nil || ctx.Err() != nil {
+	if ctx == nil {
 		return nil, errAcquisitionFenceLost
+	}
+	// A cancelled caller gets its cancellation back, not a fence loss, so a
+	// signal during shutdown stays a clean stop.
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	select {
 	case <-shared.lost:

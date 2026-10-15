@@ -23,8 +23,8 @@ func TestFixedHostCapacityReportsTheOverlayCapacity(t *testing.T) {
 	}
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := provider.Evaluate(canceled); err == nil {
-		t.Fatal("Evaluate succeeded on a canceled context")
+	if _, err := provider.Evaluate(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Evaluate on a canceled context = %v, want the cancellation", err)
 	}
 }
 

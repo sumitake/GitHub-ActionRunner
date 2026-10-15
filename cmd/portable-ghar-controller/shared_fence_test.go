@@ -40,8 +40,9 @@ func TestSharedFenceGuardLendsConcurrentViewsOfOneGuard(t *testing.T) {
 	}
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := shared.AcquirePortable(canceled); err == nil {
-		t.Fatal("view granted on a canceled context")
+	if _, err := shared.AcquirePortable(canceled); !errors.Is(err, context.Canceled) ||
+		errors.Is(err, errAcquisitionFenceLost) {
+		t.Fatalf("view on a canceled context = %v, want the cancellation alone", err)
 	}
 }
 

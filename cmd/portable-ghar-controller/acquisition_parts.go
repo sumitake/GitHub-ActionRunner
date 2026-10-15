@@ -25,8 +25,13 @@ type fixedHostCapacity struct {
 func (provider fixedHostCapacity) Evaluate(
 	ctx context.Context,
 ) (controller.HostCapacityReport, error) {
-	if ctx == nil || ctx.Err() != nil || provider.capacity <= 0 {
+	if ctx == nil || provider.capacity <= 0 {
 		return controller.HostCapacityReport{}, controller.ErrServiceNotReady
+	}
+	// A cancelled caller gets its cancellation back, which the service's
+	// loops treat as a stop rather than a failure.
+	if err := ctx.Err(); err != nil {
+		return controller.HostCapacityReport{}, err
 	}
 	return controller.HostCapacityReport{
 		State:             controller.HostCapacityNormal,
