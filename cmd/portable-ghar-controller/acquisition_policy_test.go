@@ -94,12 +94,13 @@ func TestProductionAdmissionAndPolicyComposeIntoAWorkingBroker(t *testing.T) {
 	}
 }
 
-func TestProductionAdmissionConfigRejectsUnrepresentableValues(t *testing.T) {
+func TestProductionAdmissionConfigRejectsUnusableValues(t *testing.T) {
 	tests := map[string]func(*hostruntime.PrivateOverlay){
 		"ceiling beyond int64": func(overlay *hostruntime.PrivateOverlay) {
 			overlay.Resources.AdmissionCeiling.MemoryBytes = 1 << 63
 		},
 		"profile beyond int64": func(overlay *hostruntime.PrivateOverlay) {
+			overlay.Resources.SlotResources.Runner.PIDs = 1 << 63
 			overlay.Repositories[0].SlotResources.Runner.PIDs = 1 << 63
 		},
 		"malformed poll lease": func(overlay *hostruntime.PrivateOverlay) {
@@ -107,6 +108,11 @@ func TestProductionAdmissionConfigRejectsUnrepresentableValues(t *testing.T) {
 		},
 		"malformed aging threshold": func(overlay *hostruntime.PrivateOverlay) {
 			overlay.Repositories[0].AgingThreshold = "later"
+		},
+		// The lifecycle applies the overlay's slot vector to every job, so a
+		// smaller repository profile would undercharge admission.
+		"repository profile differs from the applied slot vector": func(overlay *hostruntime.PrivateOverlay) {
+			overlay.Repositories[0].SlotResources.Runner.MemoryBytes--
 		},
 	}
 	if _, err := productionAdmissionConfig(templateOverlay(t), 0, time.Now); err == nil {
@@ -117,7 +123,7 @@ func TestProductionAdmissionConfigRejectsUnrepresentableValues(t *testing.T) {
 			overlay := templateOverlay(t)
 			mutate(&overlay)
 			if _, err := productionAdmissionConfig(overlay, 4, time.Now); err == nil {
-				t.Fatal("productionAdmissionConfig accepted an unrepresentable value")
+				t.Fatal("productionAdmissionConfig accepted the overlay")
 			}
 		})
 	}
