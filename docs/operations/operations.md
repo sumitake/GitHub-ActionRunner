@@ -100,7 +100,12 @@ reconciliation cycle, starting while still disabled, so the first one is the
 Worker check. A failed heartbeat fails the cycle and stops the run, so enable
 the Worker's lease authority before starting this command. Enabling takes an operator
 transition through the usual `acquisition` command, and the conformance gate
-refuses every active mode until a passing report exists. The admin and
+refuses every active mode until a report exists at
+`<state_root>/conformance-report.json`: a root-owned mode `0600` file. A report
+whose cases 1-14 passed and whose case 15 is pending allows `canary-only`
+only; `enabled` needs every case to pass. Without a report the gate refuses;
+a report that exists but cannot be read or parsed, or grants nothing, stops
+startup. The admin and
 health sockets are the same as `run`; health reports ready only after
 startup recovery.
 

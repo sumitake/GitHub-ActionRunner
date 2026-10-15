@@ -89,11 +89,25 @@ func TestFullReportKeepsActualGitHubPendingAgainstAllSourceEvidence(
 		actual.Failure() != conformance.FailureActualProofPending {
 		t.Fatalf("actual GitHub case = %+v", actual)
 	}
-	if _, err := conformance.NewAcquisitionGate(report); !errors.Is(
+	gate, err := conformance.NewAcquisitionGate(report)
+	if err != nil {
+		t.Fatalf("pending report acquisition gate error = %v", err)
+	}
+	request := conformance.AcquisitionConformanceRequest{
+		BuildID:         report.Binding().BuildID(),
+		HostProfileID:   report.Binding().ProfileID(),
+		FleetGeneration: report.Binding().FleetGeneration(),
+		Mode:            conformance.AcquisitionCanaryOnly,
+	}
+	if err := gate.Verify(context.Background(), request); err != nil {
+		t.Fatalf("pending report refused canary-only: %v", err)
+	}
+	request.Mode = conformance.AcquisitionEnabled
+	if err := gate.Verify(context.Background(), request); !errors.Is(
 		err,
 		conformance.ErrAcquisitionConformanceUnavailable,
 	) {
-		t.Fatalf("pending report acquisition gate error = %v", err)
+		t.Fatalf("pending report enabled = %v, want unavailable", err)
 	}
 }
 

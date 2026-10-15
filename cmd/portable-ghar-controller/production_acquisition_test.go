@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/admission"
+	"github.com/sumitake/portable-ghar/internal/conformance"
 	"github.com/sumitake/portable-ghar/internal/controller"
 	"github.com/sumitake/portable-ghar/internal/githubscale"
 	"github.com/sumitake/portable-ghar/internal/networkjail"
@@ -418,5 +421,62 @@ func TestLeaseOverrunExitDoesNotWaitOnABlockedLog(t *testing.T) {
 		}
 	case <-time.After(10 * leaseOverrunLogWait):
 		t.Fatal("overrun exit waited on a blocked log writer")
+	}
+}
+
+func TestProductionConformanceGateWithoutAReportRefusesActiveModes(t *testing.T) {
+	gate, err := productionConformanceGate(t.TempDir())
+	if err != nil {
+		t.Fatalf("productionConformanceGate: %v", err)
+	}
+	err = gate.Verify(context.Background(), conformance.AcquisitionConformanceRequest{
+		BuildID:         strings.Repeat("a", 64),
+		HostProfileID:   "qts-capless-root",
+		FleetGeneration: 1,
+		Mode:            conformance.AcquisitionCanaryOnly,
+	})
+	if !errors.Is(err, conformance.ErrAcquisitionConformanceUnavailable) {
+		t.Fatalf("Verify = %v, want unavailable", err)
+	}
+}
+
+func TestProductionConformanceGateRefusesABadReport(t *testing.T) {
+	tests := map[string]func(t *testing.T, path string){
+		"unparsable": func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"readable by others": func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"symlink": func(t *testing.T, path string) {
+			target := path + ".target"
+			if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"directory": func(t *testing.T, path string) {
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, setup := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			setup(t, filepath.Join(root, conformanceReportName))
+			if gate, err := productionConformanceGate(root); err == nil {
+				t.Fatalf("productionConformanceGate accepted a bad report: %v", gate)
+			}
+		})
 	}
 }

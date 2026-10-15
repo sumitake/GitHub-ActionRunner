@@ -32,8 +32,8 @@ type AcquisitionConformanceRequest struct {
 	Mode            AcquisitionMode
 }
 
-// AcquisitionConformance is the sole neutral production consumer of a fully
-// passing conformance report.
+// AcquisitionConformance is the sole neutral production consumer of a
+// conformance report.
 type AcquisitionConformance interface {
 	Verify(context.Context, AcquisitionConformanceRequest) error
 }
@@ -44,14 +44,29 @@ type acquisitionGate struct {
 
 type unavailableAcquisitionGate struct{}
 
-// NewAcquisitionGate creates active acquisition authority only from a fully
-// passing, internally self-consistent report. There is no pending, source-only,
-// digest-only, warning, force, or development constructor.
+// NewAcquisitionGate creates active acquisition authority from an internally
+// self-consistent report. A fully passing report allows every active mode. A
+// report whose cases 1-14 passed and whose case 15, the actual GitHub
+// transport, is still pending allows canary-only: case 15 can only pass
+// during a canary that acquires a real job. Every other report is refused.
+// There is no source-only, digest-only, warning, force, or development
+// constructor.
 func NewAcquisitionGate(report Report) (AcquisitionConformance, error) {
-	if err := validatePassingReport(report); err != nil {
+	if _, err := reportAuthority(report); err != nil {
 		return nil, ErrAcquisitionConformanceUnavailable
 	}
 	return acquisitionGate{report: report}, nil
+}
+
+// RequireFullPass accepts only a fully passing, internally self-consistent
+// report: every case, case 15 included, and cleanup passed. Anything that
+// needs proof of the whole target, not canary authority, uses this.
+func RequireFullPass(report Report) error {
+	allowed, err := reportAuthority(report)
+	if err != nil || allowed != AcquisitionEnabled {
+		return ErrAcquisitionConformanceUnavailable
+	}
+	return nil
 }
 
 // NewUnavailableAcquisitionGate returns an explicit fail-closed composition
@@ -70,7 +85,8 @@ func (g acquisitionGate) Verify(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := validatePassingReport(g.report); err != nil {
+	allowed, err := reportAuthority(g.report)
+	if err != nil {
 		return ErrAcquisitionConformanceUnavailable
 	}
 	binding := g.report.Binding()
@@ -80,6 +96,9 @@ func (g acquisitionGate) Verify(
 		request.HostProfileID != binding.ProfileID() ||
 		request.FleetGeneration != binding.FleetGeneration() {
 		return ErrAcquisitionConformanceMismatch
+	}
+	if request.Mode == AcquisitionEnabled && allowed != AcquisitionEnabled {
+		return ErrAcquisitionConformanceUnavailable
 	}
 	return nil
 }
@@ -91,36 +110,57 @@ func (unavailableAcquisitionGate) Verify(
 	return ErrAcquisitionConformanceUnavailable
 }
 
-func validatePassingReport(report Report) error {
-	if validateReport(report) != nil ||
-		report.Status() != StatusPassed ||
-		report.Failure() != FailureNone {
-		return ErrAcquisitionConformanceUnavailable
+// reportAuthority returns the most active authority a report allows:
+// AcquisitionEnabled for a full pass, AcquisitionCanaryOnly when only case 15
+// is pending, and an error for anything else.
+func reportAuthority(report Report) (AcquisitionMode, error) {
+	if validateReport(report) != nil {
+		return "", ErrAcquisitionConformanceUnavailable
+	}
+	var full bool
+	switch {
+	case report.Status() == StatusPassed && report.Failure() == FailureNone:
+		full = true
+	case report.Status() == StatusPending &&
+		report.Failure() == FailureActualProofPending:
+		full = false
+	default:
+		return "", ErrAcquisitionConformanceUnavailable
 	}
 	cases := report.Cases()
 	if len(cases) != len(requiredCaseRegistry) {
-		return ErrAcquisitionConformanceUnavailable
+		return "", ErrAcquisitionConformanceUnavailable
 	}
+	last := len(cases) - 1
 	for index, definition := range requiredCaseRegistry {
 		evidence := cases[index]
 		if evidence.ID() != definition.id ||
-			evidence.Layer() != definition.layer ||
-			evidence.Status() != StatusPassed ||
+			evidence.Layer() != definition.layer {
+			return "", ErrAcquisitionConformanceUnavailable
+		}
+		// validateReport already pins a pending report's case 15 to the fixed
+		// pending evidence and allows no other pending case.
+		if index == last && !full {
+			continue
+		}
+		if evidence.Status() != StatusPassed ||
 			evidence.Failure() != FailureNone ||
 			evidence.AssertionCount() == 0 {
-			return ErrAcquisitionConformanceUnavailable
+			return "", ErrAcquisitionConformanceUnavailable
 		}
 	}
-	actualGitHub := cases[len(cases)-1]
-	if actualGitHub.ID() != CaseActualGitHubTransport ||
-		actualGitHub.Layer() != LayerActualGitHubTransport {
-		return ErrAcquisitionConformanceUnavailable
+	if cases[last].ID() != CaseActualGitHubTransport ||
+		cases[last].Layer() != LayerActualGitHubTransport {
+		return "", ErrAcquisitionConformanceUnavailable
 	}
 	cleanup := report.Cleanup()
 	if cleanup.Status() != StatusPassed ||
 		cleanup.Failure() != FailureNone ||
 		cleanup.AssertionCount() == 0 {
-		return ErrAcquisitionConformanceUnavailable
+		return "", ErrAcquisitionConformanceUnavailable
 	}
-	return nil
+	if full {
+		return AcquisitionEnabled, nil
+	}
+	return AcquisitionCanaryOnly, nil
 }
