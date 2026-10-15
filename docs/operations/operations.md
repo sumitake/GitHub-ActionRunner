@@ -75,9 +75,10 @@ It refuses to start unless:
   graph the overlay names in `compiled_graph_digest`;
 - the Worker HMAC secret is a root-owned mode `0600` file holding the
   lowercase hex the Worker binds;
-- the Worker `termination_tail` exceeds `transition_join_timeout` plus
-  `durable_finish_timeout`, so a call that ignores cancellation is joined and
-  the fatal state persisted before the Worker lease expires.
+- the Worker `termination_tail` exceeds twice the sum of
+  `transition_join_timeout` and `durable_finish_timeout`, the longest the
+  controller can take after a permit's deadline to persist the fatal state,
+  so termination still fits before the Worker lease expires.
 
 When it refuses, the error names the startup step that failed.
 
