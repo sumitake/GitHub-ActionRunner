@@ -235,12 +235,34 @@ func TestControllerCLIRunAcquisitionUsesItsOwnOpenerAndRunsLock(t *testing.T) {
 
 type countingSession struct {
 	githubscale.Session
-	closes int
+	closes   int
+	failures int
 }
 
 func (session *countingSession) Close(context.Context) error {
 	session.closes++
+	if session.failures > 0 {
+		session.failures--
+		return errors.New("close timed out")
+	}
 	return nil
+}
+
+func TestCloseOnceSessionRetriesAFailedClose(t *testing.T) {
+	inner := &countingSession{failures: 1}
+	session := &closeOnceSession{Session: inner}
+	if err := session.Close(context.Background()); err == nil {
+		t.Fatal("first Close hid the upstream failure")
+	}
+	if err := session.Close(context.Background()); err != nil {
+		t.Fatalf("retry Close: %v", err)
+	}
+	if err := session.Close(context.Background()); err != nil {
+		t.Fatalf("Close after success: %v", err)
+	}
+	if inner.closes != 2 {
+		t.Fatalf("upstream closes = %d, want 2", inner.closes)
+	}
 }
 
 func TestCloseOnceSessionSendsOnlyTheFirstClose(t *testing.T) {
@@ -277,5 +299,27 @@ func TestControllerCLIRunAcquisitionSignalDuringOpenIsACleanStop(t *testing.T) {
 	)
 	if exit != 0 || stderr.Len() != 0 || lease.CountClosed() != 1 {
 		t.Fatalf("exit %d, stderr %q, lease closes %d", exit, stderr.String(), lease.CountClosed())
+	}
+}
+
+func TestControllerCLIRunAcquisitionSignalWithFailedCleanupIsAFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	deps := testCommandDeps()
+	deps.OpenAcquisitionController = func(
+		context.Context, string, string, controllerOwnershipLease,
+	) (controllerProcess, error) {
+		cancel()
+		return nil, errors.Join(context.Canceled, errStartupCleanup, errors.New("session close failed"))
+	}
+	var stdout, stderr bytes.Buffer
+	exit := runWithDependencies(
+		ctx,
+		[]string{"run-acquisition", "--config", "/etc/o.json", "--database", "/var/s.db"},
+		&stdout,
+		&stderr,
+		deps,
+	)
+	if exit != 1 || !strings.Contains(stderr.String(), "startup cleanup failed") {
+		t.Fatalf("exit %d, stderr %q; want the cleanup failure reported", exit, stderr.String())
 	}
 }

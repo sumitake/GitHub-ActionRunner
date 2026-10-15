@@ -27,6 +27,10 @@ import (
 	"github.com/sumitake/portable-ghar/internal/state"
 )
 
+// errStartupCleanup marks a composition failure whose cleanup also failed:
+// something it opened, such as a GitHub message session, may still be held.
+var errStartupCleanup = errors.New("portable-ghar-controller: startup cleanup failed")
+
 // maxProductionPolicyBytes matches the decision graph's own size bound.
 const maxProductionPolicyBytes = 128 << 10
 
@@ -98,7 +102,10 @@ func openProductionAcquisitionController(
 
 	resources := &productionControllerResources{}
 	fail := func(primary error) (controllerProcess, error) {
-		return nil, errors.Join(primary, resources.Close())
+		if cleanupErr := resources.Close(); cleanupErr != nil {
+			return nil, errors.Join(primary, errStartupCleanup, cleanupErr)
+		}
+		return nil, primary
 	}
 	store, err := state.OpenWithHistoryLimits(databasePath, loaded.history)
 	if err != nil {
@@ -289,7 +296,10 @@ func openProductionAcquisitionController(
 		targets[index].Session = &closeOnceSession{Session: targets[index].Session}
 	}
 	failWithTargets := func(primary error) (controllerProcess, error) {
-		return fail(errors.Join(primary, closePollTargets(ctx, targets)))
+		if closeErr := closePollTargets(ctx, targets); closeErr != nil {
+			primary = errors.Join(primary, errStartupCleanup, closeErr)
+		}
+		return fail(primary)
 	}
 	jit := &jitAuthorizerSlot{}
 	runtime, err := lifecycle.NewService(
@@ -397,13 +407,23 @@ func openProductionAcquisitionController(
 // start until it expires.
 type closeOnceSession struct {
 	githubscale.Session
-	once sync.Once
+	mu     sync.Mutex
+	closed bool
 }
 
+// Close counts the session as closed only once GitHub accepts the close, so
+// a failed close (a timeout, say) is retried by the next caller.
 func (session *closeOnceSession) Close(ctx context.Context) error {
-	var err error
-	session.once.Do(func() { err = session.Session.Close(ctx) })
-	return err
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.closed {
+		return nil
+	}
+	if err := session.Session.Close(ctx); err != nil {
+		return err
+	}
+	session.closed = true
+	return nil
 }
 
 type productionServiceTimings struct {
