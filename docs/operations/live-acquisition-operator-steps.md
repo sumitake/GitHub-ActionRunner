@@ -125,12 +125,23 @@ expiry the canary allows. A fine-grained token needs repository
 "Administration: read and write"; a classic token needs `repo`. Whether a
 fine-grained token can use the scale-set API is not yet verified, so try it
 first. `create-scale-set` reads the runner group and the scale set before it
-creates anything, so a token without access fails at a named step. Write the
-file without putting the token in shell history: paste it, press Enter once,
-then Ctrl-D.
+creates anything, so a token without access fails at a named step.
+
+Write the file with terminal echo off, so the token never reaches the screen,
+shell history, or a recorded transcript. Paste the token and press Enter;
+nothing is shown. `read` and `printf` are shell builtins, so the token never
+appears in a process's argument list. The trap restores echo even if the step
+is interrupted.
 
 ```sh
-(umask 077; cat > <token_path>)
+(
+  umask 077
+  trap 'stty echo' EXIT INT TERM
+  stty -echo
+  IFS= read -r token
+  printf '%s\n' "$token" > <token_path>
+)
+echo
 chown root:root <token_path>
 chmod 0600 <token_path>
 ```
