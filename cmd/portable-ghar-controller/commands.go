@@ -258,6 +258,11 @@ func executeRun(
 		if openErr == nil {
 			return commandFailure(stderr, command)
 		}
+		// A signal during composition is the same clean stop as one after
+		// it: the opener has released what it opened.
+		if ctx.Err() != nil {
+			return 0
+		}
 		return commandFailureReason(stderr, command, openErr)
 	}
 	runErr := process.Run(ctx)

@@ -255,3 +255,27 @@ func TestCloseOnceSessionSendsOnlyTheFirstClose(t *testing.T) {
 		t.Fatalf("upstream closes = %d, want 1", inner.closes)
 	}
 }
+
+func TestControllerCLIRunAcquisitionSignalDuringOpenIsACleanStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	lease := &testOwnershipLease{}
+	deps := testCommandDeps()
+	deps.AcquireOwnership = func(string) (controllerOwnershipLease, error) { return lease, nil }
+	deps.OpenAcquisitionController = func(
+		context.Context, string, string, controllerOwnershipLease,
+	) (controllerProcess, error) {
+		cancel()
+		return nil, startupStep("open GitHub sessions", context.Canceled)
+	}
+	var stdout, stderr bytes.Buffer
+	exit := runWithDependencies(
+		ctx,
+		[]string{"run-acquisition", "--config", "/etc/o.json", "--database", "/var/s.db"},
+		&stdout,
+		&stderr,
+		deps,
+	)
+	if exit != 0 || stderr.Len() != 0 || lease.CountClosed() != 1 {
+		t.Fatalf("exit %d, stderr %q, lease closes %d", exit, stderr.String(), lease.CountClosed())
+	}
+}
