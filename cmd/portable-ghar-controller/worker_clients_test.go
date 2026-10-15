@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"math"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +44,7 @@ func testWorkerConfig() productionWorkerConfig {
 		Fence:           7,
 		AttemptInterval: 20 * time.Second,
 		Clock:           failoverclient.NewFakeAuthorityClock(time.Unix(1_800_000_000, 0)),
+		OnLeaseOverrun:  func(controller.AcquisitionPermitBinding) {},
 	}
 }
 
@@ -57,7 +57,9 @@ func TestProductionWorkerClientsComposeFromTheOverlay(t *testing.T) {
 		clients.Permits.Fence != 7 ||
 		clients.Permits.Holder != failoverclient.HolderPortable ||
 		clients.Permits.CallDuration != 20*time.Second ||
-		clients.Permits.TerminationTail != 73*time.Second {
+		clients.Permits.TerminationTail != 73*time.Second ||
+		clients.Permits.OverrunSlice != leaseOverrunSlice ||
+		clients.Permits.OnLeaseOverrun == nil {
 		t.Fatalf("clients = %+v", clients)
 	}
 	if err := clients.Close(); err != nil {
@@ -68,12 +70,9 @@ func TestProductionWorkerClientsComposeFromTheOverlay(t *testing.T) {
 func TestProductionWorkerClientsRejectAnUnsafeConfiguration(t *testing.T) {
 	tests := map[string]func(*productionWorkerConfig){
 		"no worker section": func(config *productionWorkerConfig) { config.Overlay.Worker = nil },
-		// Join 10s and finish 11s: the fatal path can take 5*10 + 2*11 = 72s.
-		"tail leaves no termination slice": func(config *productionWorkerConfig) {
-			config.Overlay.Worker.TerminationTail = "72s"
-		},
-		"tail covers only the late-return path": func(config *productionWorkerConfig) {
-			config.Overlay.Worker.TerminationTail = "43s"
+		"no overrun hook":   func(config *productionWorkerConfig) { config.OnLeaseOverrun = nil },
+		"tail inside the overrun slice": func(config *productionWorkerConfig) {
+			config.Overlay.Worker.TerminationTail = "2s"
 		},
 		// The lease is 2m with a 5s margin, so a local lease ends at 115s.
 		"tail consumes the whole local lease": func(config *productionWorkerConfig) {
@@ -107,20 +106,5 @@ func TestProductionWorkerClientsRejectAnUnsafeConfiguration(t *testing.T) {
 				t.Fatal("newProductionWorkerClients accepted an unsafe configuration")
 			}
 		})
-	}
-}
-
-func TestFatalPathBoundIsFiveJoinsAndTwoFinishes(t *testing.T) {
-	if bound, ok := fatalPathBound(10*time.Second, 11*time.Second); !ok || bound != 72*time.Second {
-		t.Fatalf("fatalPathBound = %v, %v; want 72s", bound, ok)
-	}
-	for _, terms := range [][2]time.Duration{
-		{0, time.Second},
-		{time.Second, 0},
-		{math.MaxInt64 / 2, math.MaxInt64 / 2},
-	} {
-		if _, ok := fatalPathBound(terms[0], terms[1]); ok {
-			t.Errorf("fatalPathBound(%v, %v) accepted", terms[0], terms[1])
-		}
 	}
 }
