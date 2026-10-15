@@ -698,3 +698,77 @@ test("enabled Durable Object persists a portable canary start", async () => {
     { routing_state: "PORTABLE_CANARY", fence_generation: 7 },
   ]);
 });
+
+async function signedSession(nonce: string, macHex?: string): Promise<Request> {
+  const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");
+  const body = canonicalize({
+    protocolVersion: 1,
+    fleetId: "example-fleet",
+    nonce,
+    timestamp,
+    buildId: "b".repeat(64),
+  });
+  const mac =
+    macHex ??
+    (await signCanonical(
+      hexToBytes(keyHex),
+      "POST",
+      "/v1/session",
+      timestamp,
+      body,
+    ));
+  return new Request("https://worker.example/v1/session", {
+    method: "POST",
+    headers: { [TIMESTAMP_HEADER]: timestamp, [MAC_HEADER]: mac },
+    body,
+  });
+}
+
+function auditRows(db: DatabaseSync): string[] {
+  return (
+    db.prepare("SELECT event FROM audit_events ORDER BY seq").all() as Array<{
+      event: string;
+    }>
+  ).map((row) => row.event);
+}
+
+test("enabled Durable Object persists the audit row for a replayed session nonce", async () => {
+  const shared = sharedSql();
+  const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");
+  const store = new MemoryFleetStore("example-fleet", { now: () => timestamp });
+  store.fleet.inventoried = true;
+  saveFleetStore(shared.persist, store);
+  const durable = enabledDurable("example-fleet", shared);
+  const nonce = "9".repeat(64);
+
+  expect((await durable.fetch(await signedSession(nonce))).status).toBe(200);
+  const afterFirst = shared.db
+    .prepare("SELECT epoch, session_id FROM fleet_state")
+    .get();
+  const replay = await durable.fetch(await signedSession(nonce));
+
+  expect(replay.status).toBe(401);
+  expect(auditRows(shared.db)).toContain("session-rejected-nonce");
+  // The rejection persists the audit row only, not a new session.
+  expect(
+    shared.db.prepare("SELECT epoch, session_id FROM fleet_state").get(),
+  ).toEqual(afterFirst);
+});
+
+test("enabled Durable Object writes nothing for a session request with a bad MAC", async () => {
+  // Guards the gateway pre-verify: without it the session handler would
+  // record session-rejected-auth and the rejection would be persisted.
+  const shared = sharedSql();
+  const timestamp = new Date().toISOString().replace(/\.\d+Z$/, ".000Z");
+  const store = new MemoryFleetStore("example-fleet", { now: () => timestamp });
+  store.fleet.inventoried = true;
+  saveFleetStore(shared.persist, store);
+  const before = durableSnapshot(shared.db);
+
+  const response = await enabledDurable("example-fleet", shared).fetch(
+    await signedSession("a".repeat(64), "0".repeat(64)),
+  );
+
+  expect(response.status).toBe(401);
+  expect(durableSnapshot(shared.db)).toEqual(before);
+});
