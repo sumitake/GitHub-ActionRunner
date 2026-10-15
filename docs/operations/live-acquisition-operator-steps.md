@@ -40,10 +40,14 @@ designed. Every command in this step only reads.
    must be owned by root with mode `drwx------`. Do not edit or remove any of
    these files.
 
-3. If a `portable-ghar-fleet-fence` binary is present, read the fence through
-   it as well. `inspect` takes a shared lock, so it can run beside live
-   guards, and it writes nothing. The arguments must be exactly these three,
-   in this order.
+3. When all three names exist, read the fence through `inspect`. The fleet
+   and generation come only from an `inspect` that exits 0, never from the
+   `cat` above, which is a diagnostic. `inspect` takes a shared lock, so it can
+   run beside live guards, and it writes nothing. If no
+   `portable-ghar-fleet-fence` binary is installed, build one from `main` the
+   way D7 builds the controller (`./cmd/portable-ghar-fleet-fence`) and copy it
+   to the staging directory; that copy is the only thing this step writes. The
+   arguments must be exactly these three, in this order.
 
    ```sh
    <fence_binary> inspect --state-dir <fence_root> --json; echo "exit=$?"
@@ -63,13 +67,15 @@ designed. Every command in this step only reads.
 
    A missing `/proc/<holder_pid>` means that holder's process is gone.
 
-What the result decides:
+What the result decides. The fleet and generation in the last three rows come
+only from an `inspect` that exited 0.
 
 | Fence state                                                                           | Meaning for the canary                                                                                                                                                            |
 | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Root absent                                                                           | No fence exists. The handover must first create the root as a root-owned mode `0700` directory. Nothing currently guards the target against a second acquirer.                    |
 | Root is a root-owned mode `0700` directory, and none of the three names exist         | Never set up. The handover starts from `none` at generation 0.                                                                                                                    |
 | One or two of the three names exist, or the root is not a root-owned `0700` directory | Partial or invalid state. The fence store rejects it, and the files present may belong to a live or earlier guard. Stop and report. Do not hand over, create, or remove anything. |
+| All three names exist, but `inspect` exits 1                                          | Corrupt or unreadable state, such as a malformed header, a wrong mode or type, or an invalid holder record. Stop and report. Do not hand over, create, or remove anything.        |
 | `legacy` at generation N                                                              | Legacy work must be suspended and its guards gone before a `legacy` to `portable` handover at expected generation N.                                                              |
 | `portable` at generation N                                                            | Unexpected before any Portable deployment. Stop and report.                                                                                                                       |
 | `none` at generation N, N above 0                                                     | A fence that was handed back. Record N; the handover expects it.                                                                                                                  |
@@ -133,21 +139,31 @@ nothing is shown. `read` and `printf` are shell builtins, so the token never
 appears in a process's argument list. The trap restores echo even if the step
 is interrupted.
 
+The step refuses to write over an existing path, including a symlink. With
+`set -C` the shell also refuses to truncate a file that appears in between. To
+replace a token, check the old file with `ls -l <token_path>` and remove it
+with `rm -- <token_path>` first.
+
 ```sh
 (
   umask 077
+  set -C
+  if [ -e <token_path> ] || [ -L <token_path> ]; then
+    echo 'token path exists; check and remove the old file first' >&2
+    exit 1
+  fi
   trap 'stty echo' EXIT INT TERM
   stty -echo
   IFS= read -r token
   printf '%s\n' "$token" > <token_path>
 )
 echo
-chown root:root <token_path>
-chmod 0600 <token_path>
+ls -l <token_path>
 ```
 
-The file must be root-owned, mode `0600`, at most 4096 bytes, and may end with
-one newline but hold no other whitespace.
+The listing must show a regular file owned by root with mode `-rw-------`. The
+file must be at most 4096 bytes, and may end with one newline but hold no other
+whitespace.
 
 **Create and verify.**
 
@@ -159,9 +175,12 @@ one newline but hold no other whitespace.
 <staging_dir>/portable-ghar-controller external-probe --config=<overlay_path>
 ```
 
-- The first `create-scale-set` prints `"created":true` on success.
-- The second must print `"created":false` with the same scale set. That proves
-  the command is idempotent against the real API.
+- Both runs must name the same scale set with `"single_name_label":true` and
+  `"disable_update":true`.
+- The first run prints `"created":true` if it made the scale set, or
+  `"created":false` if a compatible one already existed and passed the same
+  verification. The second run must print `"created":false`, which proves the
+  command is idempotent against the real API.
 - `external-probe` must list every overlay repository. It fails while a
   controller holds a session, so run it with no controller running.
 - Failures print a step name, never GitHub's response text. A failure at
