@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,13 @@ import (
 // maxProductionPolicyBytes matches the decision graph's own size bound.
 const maxProductionPolicyBytes = 128 << 10
 
+// conformanceReportName is the conformance report run-acquisition reads from
+// the overlay's state root. The target conformance run writes it there.
+const conformanceReportName = "conformance-report.json"
+
+// maxConformanceReportBytes bounds the report read.
+const maxConformanceReportBytes = 1 << 20
+
 // startupStep names the startup step that failed, so the operator sees where
 // run-acquisition stopped. A cause is attached only where it is known to
 // carry no secret: construction and validation errors, never a credential
@@ -46,7 +54,8 @@ func startupStep(name string, cause error) error {
 // the fence at the manifest's generation, and it holds a portable guard for
 // the whole run, so no handover can complete while it runs. The service it
 // builds starts disabled; only an operator transition enables acquisition,
-// and the conformance gate refuses every active mode until a report exists.
+// and the conformance gate refuses every active mode until a report exists
+// in the state root.
 func openProductionAcquisitionController(
 	ctx context.Context,
 	configPath string,
@@ -78,6 +87,10 @@ func openProductionAcquisitionController(
 	graph, policy, err := readProductionPolicy(overlay)
 	if err != nil {
 		return nil, startupStep("read decision graph", nil)
+	}
+	gate, err := productionConformanceGate(overlay.Paths.StateRoot)
+	if err != nil {
+		return nil, startupStep("read conformance report", nil)
 	}
 	enabledTemplate, err := productionEnabledPolicyTemplate(overlay)
 	if err != nil {
@@ -337,7 +350,7 @@ func openProductionAcquisitionController(
 		Hosted:                external,
 		FleetGuards:           fence,
 		Permits:               worker.Permits,
-		Conformance:           conformance.NewUnavailableAcquisitionGate(),
+		Conformance:           gate,
 		HostCapacity:          fixedHostCapacity{capacity: int(overlay.Resources.MaxCapacity), evidence: loaded.overlayDigest, now: time.Now},
 		HistoryPressure:       pressure,
 		HealthPublisher:       worker.Health,
@@ -607,4 +620,24 @@ func acquisitionCycleID() string {
 		return ""
 	}
 	return "acquisition-" + hex.EncodeToString(nonce[:])
+}
+
+// productionConformanceGate reads the conformance report from the state root.
+// Without a report every active mode stays refused. A report that exists but
+// is not a root-owned mode 0600 file, does not parse, or grants nothing stops
+// startup, so a bad report is never mistaken for a missing one.
+func productionConformanceGate(stateRoot string) (conformance.AcquisitionConformance, error) {
+	path := filepath.Join(stateRoot, conformanceReportName)
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return conformance.NewUnavailableAcquisitionGate(), nil
+	}
+	document, err := readPinnedRootFile(path, 0o600, maxConformanceReportBytes)
+	if err != nil {
+		return nil, err
+	}
+	report, err := conformance.ParseReport(document, maxConformanceReportBytes)
+	if err != nil {
+		return nil, err
+	}
+	return conformance.NewAcquisitionGate(report)
 }

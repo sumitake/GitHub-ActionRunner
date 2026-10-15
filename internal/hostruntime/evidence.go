@@ -54,7 +54,7 @@ func recordSourceVerification(binding EvidenceBinding, digest string) (SourceVer
 func NewTargetConformanceFromReport(
 	report conformance.Report,
 ) (TargetConformance, error) {
-	if _, err := conformance.NewAcquisitionGate(report); err != nil {
+	if err := conformance.RequireFullPass(report); err != nil {
 		return TargetConformance{}, errors.New(
 			"hostruntime: full target conformance missing",
 		)

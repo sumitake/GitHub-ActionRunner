@@ -52,6 +52,11 @@ The target harness has three disjoint proof layers:
    case, and an actual runner version inspection can never satisfy synthetic
    cleanup cases.
 
+   _Amended 2026-10-15 (live acquisition plan, D1):_ case 15 can only pass
+   during a canary that acquires a real job, so a report whose cases 1-14
+   passed and whose case 15 is pending authorizes `canary-only` and nothing
+   else. `enabled` still requires every case to pass.
+
 `conformance.Run` calls every required case in canonical order, always invokes
 the fixture's one idempotent cleanup authority on a fresh context, and produces
 a passing report only when every actual case and cleanup proof passes. A build
@@ -69,8 +74,10 @@ may import `internal/conformance` only to construct the existing opaque target
 proof. The gate
 revalidates the exact case registry, proof layers, cleanup, build seal, build,
 profile, and fleet generation before every canary/enabled transition and
-before each acquisition batch. Pending/source-only reports and stale bindings
-can therefore never enable acquisition. The Task 10 disabled-observer
+before each acquisition batch. Source-only reports and stale bindings can
+therefore never enable acquisition, and a pending report can enable only
+`canary-only`, and only when case 15 is its sole pending case (amendment
+above). The Task 10 disabled-observer
 composition is a separate zero-capacity type with no active acquisition
 service and remains dark.
 

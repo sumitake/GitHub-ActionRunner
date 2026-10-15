@@ -50,13 +50,24 @@ func TestAcquisitionGateRejectsIncompleteOrTamperedReport(t *testing.T) {
 	tampered := passed
 	tampered.reportDigest = testDigestD
 
+	pendingEarlyCase := pending
+	pendingEarlyCase.cases = cloneCaseEvidence(pending.cases)
+	pendingEarlyCase.cases[0].status = StatusPending
+	pendingEarlyCase.cases[0].failure = FailureActualProofPending
+	pendingTampered := pending
+	pendingTampered.reportDigest = testDigestD
+	notRun := pending
+	notRun.status = StatusNotRun
+
 	for name, report := range map[string]Report{
-		"pending":     pending,
-		"failed":      failed,
-		"missing":     missing,
-		"reordered":   reordered,
-		"cross-layer": crossLayer,
-		"tampered":    tampered,
+		"pending earlier case": pendingEarlyCase,
+		"pending tampered":     pendingTampered,
+		"not run":              notRun,
+		"failed":               failed,
+		"missing":              missing,
+		"reordered":            reordered,
+		"cross-layer":          crossLayer,
+		"tampered":             tampered,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := NewAcquisitionGate(report); !errors.Is(
@@ -131,5 +142,56 @@ func TestUnavailableAcquisitionGateAlwaysFailsClosed(t *testing.T) {
 		Mode:            AcquisitionCanaryOnly,
 	}); !errors.Is(err, ErrAcquisitionConformanceUnavailable) {
 		t.Fatalf("Verify = %v, want unavailable", err)
+	}
+}
+
+func TestAcquisitionGateAllowsOnlyCanaryOnlyWhileCase15IsPending(t *testing.T) {
+	t.Parallel()
+
+	report := Run(context.Background(), validProfile(t, false))
+	if report.Status() != StatusPending {
+		t.Fatalf("report status = %q, want pending", report.Status())
+	}
+	gate, err := NewAcquisitionGate(report)
+	if err != nil {
+		t.Fatalf("NewAcquisitionGate(pending): %v", err)
+	}
+	request := AcquisitionConformanceRequest{
+		BuildID:         report.Binding().BuildID(),
+		HostProfileID:   report.Binding().ProfileID(),
+		FleetGeneration: report.Binding().FleetGeneration(),
+		Mode:            AcquisitionCanaryOnly,
+	}
+	if err := gate.Verify(context.Background(), request); err != nil {
+		t.Fatalf("Verify(canary-only): %v", err)
+	}
+	request.Mode = AcquisitionEnabled
+	if err := gate.Verify(context.Background(), request); !errors.Is(
+		err,
+		ErrAcquisitionConformanceUnavailable,
+	) {
+		t.Fatalf("Verify(enabled) = %v, want unavailable", err)
+	}
+	request.Mode = AcquisitionCanaryOnly
+	request.FleetGeneration++
+	if err := gate.Verify(context.Background(), request); !errors.Is(
+		err,
+		ErrAcquisitionConformanceMismatch,
+	) {
+		t.Fatalf("Verify(wrong generation) = %v, want mismatch", err)
+	}
+}
+
+func TestRequireFullPassRefusesAPendingReport(t *testing.T) {
+	t.Parallel()
+
+	if err := RequireFullPass(Run(context.Background(), validProfile(t, true))); err != nil {
+		t.Fatalf("RequireFullPass(passed) = %v", err)
+	}
+	if err := RequireFullPass(Run(context.Background(), validProfile(t, false))); !errors.Is(
+		err,
+		ErrAcquisitionConformanceUnavailable,
+	) {
+		t.Fatalf("RequireFullPass(pending) = %v, want unavailable", err)
 	}
 }

@@ -72,23 +72,24 @@ The Task 11 spec is internally inconsistent here. It says pending reports
 canary that acquires a real job (lines 1292-1305). No option satisfies both
 sentences, so every option is a spec change.
 
-Decision: (c), adopted as an explicit, reviewed amendment to the Task 11
-invariant. It keeps the case's meaning. The exception must be bound to one
-job, not to a mode: `AcquisitionConformanceRequest` carries only build,
-profile, fleet generation, and mode (`internal/conformance/gate.go:28-33`),
-and `canary-only` capacity 1 limits concurrency, not count. So the normal
-gate stays unchanged, and a separate authority is:
+Decision (revised 2026-10-15): (b), limited to `canary-only`, adopted as an
+explicit amendment to the Task 11 invariant. The gate accepts a report whose
+cases 1-14 passed and whose case 15 is pending only for `canary-only`;
+`enabled` still requires all 15. Nothing else is added: no authority table,
+no per-job binding.
 
-- durable and single-use, consumed atomically at acquisition;
-- bound to the exact approved repository, workflow, revision, and run across
-  poll, acquire, and JIT;
-- void after one job, success or failure.
+Scoping found that the per-job binding (c) asked for could not be built as
+specified: the scale-set protocol carries no head SHA, the run ID is known
+only after dispatch, and poll sees no job identity. Each extra mechanism was
+another way to fail the deploy, so the operator chose the smallest rule.
 
-After the canary, the same report, completed with the sealed case 15
-evidence, must pass the normal gate before any further acquisition. A fresh
-run cannot do this: case 15 is pending in every run until a canary seals it,
-so a new run would need a new canary. A dedicated label used only by the
-canary workflow narrows exposure but does not replace the binding.
+What bounds the canary instead: `canary-only` caps capacity at 1 and allows
+one eligible scale set; D7 creates that scale set with a single label used
+only by the canary workflow; and the runbook sets `canary-only`, dispatches
+one job, and sets `disabled` after it. The "one job" bound is procedural: if
+several jobs target the canary label while `canary-only` is on, each can run.
+After the canary, a report completed with the sealed case 15 evidence must
+pass the normal gate before `enabled`.
 
 **D2. Cases 1-14 on the target.** The test harness already implements
 `conformance.HostProfile` (`tests/integration/conformance_test.go:14-35`), and
@@ -185,13 +186,11 @@ Operator steps ship as exact commands and run only on the operator's go.
    thresholds, and small runtime adapters); 5d is the composition and the
    command. It never calls `Collect`: each slot keeps one ledger row, which
    `Activate` reuses.
-6. **Canary authority (D1).** The Task 11 amendment, a canary gate that accepts
-   only a report with cases 1-14 passing and case 15 pending, and a single-use
-   authority row in the existing SQLite store, consumed by compare-and-swap at
-   acquisition and checked at poll and JIT. The D2 harness gains a source
-   commit check that works for test binaries and writes its report out.
-   Security review.
-7. **Case 15 evidence.** Record the job result for the consumed key, a
+6. **Canary gate (D1).** The Task 11 amendment, and one gate rule: a report
+   with cases 1-14 passing and case 15 pending allows `canary-only` only.
+   `run-acquisition` reads the report from `<state_root>/conformance-report.json`.
+   The D2 harness writes its report out (6a). Security review.
+7. **Case 15 evidence.** Record the canary job's result, a
    `canary-seal` command that derives the evidence only from durable state,
    completion of the same pending report, and the canary workflow. Includes the
    JIT hand-over fix if the probe needs it.
