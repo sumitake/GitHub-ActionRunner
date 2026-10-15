@@ -351,6 +351,22 @@ func validatePolicies(policies []RepositoryPolicy, mode TransientMode) (map[stri
 	return byAlias, aliases, nil
 }
 
+// validateProfilesFit rejects a repository profile whose complete charge
+// exceeds an empty ceiling. The broker would accept its offers but never
+// admit one, so the misconfiguration would show only as a stalled queue.
+func validateProfilesFit(policies []RepositoryPolicy, mode TransientMode, ceiling Resources) error {
+	for _, policy := range policies {
+		full, _, err := policy.Profile.charges(mode)
+		if err != nil {
+			return fmt.Errorf("%w: repository %q: %v", ErrInvalidConfig, policy.Alias, err)
+		}
+		if !resourcesFit(Resources{}, full, ceiling) {
+			return fmt.Errorf("%w: repository %q profile exceeds the admission ceiling", ErrInvalidConfig, policy.Alias)
+		}
+	}
+	return nil
+}
+
 func (s SlotResources) charges(mode TransientMode) (Resources, Resources, error) {
 	stable, err := addResources(s.Runner, s.Adapter, s.Broker, s.DialAuthority)
 	if err != nil {

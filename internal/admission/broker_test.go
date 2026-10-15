@@ -295,14 +295,10 @@ func TestBrokerSerializedVersusConcurrentTransientCharge(t *testing.T) {
 		config := testConfig(clock, 1, Resources{MemoryBytes: 7},
 			policy("repo-a", 1, 1, EligibilityActive, profile))
 		config.TransientMode = TransientConcurrent
-		broker := mustBroker(t, config)
-		enqueueAll(t, broker, offer("repo-a", 1, clock.Now()))
-		decisions, err := broker.Admit(clock.Now())
-		if err != nil {
-			t.Fatalf("Admit: %v", err)
-		}
-		if len(decisions) != 0 {
-			t.Fatalf("concurrent Admit decisions = %d, want 0 when helper+verifier were not both charged", len(decisions))
+		// Charging helper and verifier together needs 13, so the profile
+		// can never fit and the configuration is rejected up front.
+		if _, err := NewBroker(config); !errors.Is(err, ErrInvalidConfig) {
+			t.Fatalf("NewBroker = %v, want ErrInvalidConfig for a profile above the ceiling", err)
 		}
 	})
 
@@ -398,14 +394,19 @@ func TestBrokerSkipsNonFittingHeadWithoutCrossRepositoryStarvation(t *testing.T)
 	clock := newFakeClock()
 	broker := mustBroker(t, testConfig(
 		clock,
-		2,
+		3,
 		Resources{MemoryBytes: 10},
-		policy("repo-a", 100, 2, EligibilityActive, memoryProfile(11)),
+		policy("repo-a", 100, 2, EligibilityActive, memoryProfile(6)),
 		policy("repo-b", 1, 2, EligibilityActive, memoryProfile(5)),
 	))
+	enqueueAll(t, broker, offer("repo-b", 1, clock.Now()))
+	if first, err := broker.Admit(clock.Now()); err != nil || len(first) != 1 {
+		t.Fatalf("first Admit = (%d, %v), want one repo-b decision", len(first), err)
+	}
+	// repo-a fits an empty ceiling but not the 5 that remain; repo-b does.
 	enqueueAll(t, broker,
-		offer("repo-a", 1, clock.Now().Add(-2*time.Hour)),
-		offer("repo-b", 2, clock.Now()),
+		offer("repo-a", 2, clock.Now().Add(-2*time.Hour)),
+		offer("repo-b", 3, clock.Now()),
 	)
 	decisions, err := broker.Admit(clock.Now())
 	if err != nil {
@@ -413,6 +414,29 @@ func TestBrokerSkipsNonFittingHeadWithoutCrossRepositoryStarvation(t *testing.T)
 	}
 	if got := decisionAliases(decisions); len(got) != 1 || got[0] != "repo-b" {
 		t.Fatalf("non-fitting head selection = %v, want fitting [repo-b]", got)
+	}
+}
+
+func TestBrokerRejectsAProfileThatCannotFitAnEmptyCeiling(t *testing.T) {
+	clock := newFakeClock()
+	config := testConfig(
+		clock,
+		2,
+		Resources{MemoryBytes: 10},
+		policy("repo-a", 1, 1, EligibilityActive, memoryProfile(11)),
+	)
+	if _, err := NewBroker(config); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("NewBroker = %v, want ErrInvalidConfig", err)
+	}
+	config.Repositories[0].Profile = memoryProfile(10)
+	broker := mustBroker(t, config)
+	oversized := policy("repo-a", 1, 1, EligibilityActive, memoryProfile(11))
+	if err := broker.ApplyPolicyRevision(PolicyRevision{
+		Epoch:             config.PolicyRevision + 1,
+		EffectiveCapacity: 1,
+		Repositories:      []RepositoryPolicy{oversized},
+	}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("ApplyPolicyRevision = %v, want ErrInvalidConfig", err)
 	}
 }
 

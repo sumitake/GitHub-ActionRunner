@@ -123,7 +123,7 @@ func (store *fakePolicyStore) Transition(
 }
 
 func TestDurablePolicyEpochSeedsANewDatabaseWithTheDisabledPolicy(t *testing.T) {
-	overlay := templateOverlay(t)
+	overlay := admittingOverlay(t)
 	fresh := &fakePolicyStore{}
 	epoch, err := durablePolicyEpoch(context.Background(), fresh, overlay)
 	if err != nil || epoch != 1 || len(fresh.transitions) != 1 ||
