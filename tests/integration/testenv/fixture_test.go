@@ -243,6 +243,7 @@ func TestFixtureStartupDecisionIsExplicitAndFailClosed(t *testing.T) {
 			values: map[string]string{
 				"PGHAR_INTEGRATION_DOCKER": "1",
 				"PGHAR_CONFORMANCE_INPUT":  "/private/input.json",
+				"PGHAR_CONFORMANCE_REPORT": "/private/report.json",
 			},
 		},
 		{
@@ -251,6 +252,44 @@ func TestFixtureStartupDecisionIsExplicitAndFailClosed(t *testing.T) {
 			values: map[string]string{
 				"PGHAR_INTEGRATION_DOCKER": "true",
 				"PGHAR_CONFORMANCE_INPUT":  "/private/input.json",
+				"PGHAR_CONFORMANCE_REPORT": "/private/report.json",
+			},
+			wantErr: true,
+		},
+		{
+			name: "no report path",
+			goos: "linux",
+			values: map[string]string{
+				"PGHAR_INTEGRATION_DOCKER": "1",
+				"PGHAR_CONFORMANCE_INPUT":  "/private/input.json",
+			},
+			wantErr: true,
+		},
+		{
+			name: "relative report path",
+			goos: "linux",
+			values: map[string]string{
+				"PGHAR_INTEGRATION_DOCKER": "1",
+				"PGHAR_CONFORMANCE_INPUT":  "/private/input.json",
+				"PGHAR_CONFORMANCE_REPORT": "report.json",
+			},
+			wantErr: true,
+		},
+		{
+			name: "report path is the input",
+			goos: "linux",
+			values: map[string]string{
+				"PGHAR_INTEGRATION_DOCKER": "1",
+				"PGHAR_CONFORMANCE_INPUT":  "/private/input.json",
+				"PGHAR_CONFORMANCE_REPORT": "/private/input.json",
+			},
+			wantErr: true,
+		},
+		{
+			name: "report path alone",
+			goos: "linux",
+			values: map[string]string{
+				"PGHAR_CONFORMANCE_REPORT": "/private/report.json",
 			},
 			wantErr: true,
 		},
@@ -288,6 +327,10 @@ func TestFixtureStartupDecisionIsExplicitAndFailClosed(t *testing.T) {
 			}
 			if test.skip && decision.Reason != unsupportedHostSkip {
 				t.Fatalf("skip reason = %q", decision.Reason)
+			}
+			if !test.skip && !test.wantErr &&
+				decision.ReportPath != test.values["PGHAR_CONFORMANCE_REPORT"] {
+				t.Fatalf("report path = %q", decision.ReportPath)
 			}
 		})
 	}
