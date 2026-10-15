@@ -98,13 +98,8 @@ func githubClientFor(
 	if err != nil {
 		return nil, errors.New("invalid github response header timeout")
 	}
-	credentialPath := ""
-	for _, secret := range overlay.Secrets {
-		if secret.Name == repository.CredentialName && secret.Ref.Source == "file" {
-			credentialPath = secret.Ref.Ref
-		}
-	}
-	if credentialPath == "" {
+	credentialPath, ok := fileSecretPath(overlay, repository.CredentialName)
+	if !ok {
 		return nil, errors.New("repository credential is not a file secret")
 	}
 	token, err := access.ReadSecret(credentialPath)
@@ -123,6 +118,17 @@ func githubClientFor(
 		ResponseHeaderTimeout: headerTimeout,
 		MaxResponseBytes:      int64(overlay.GitHub.MaxResponseBytes),
 	})
+}
+
+// fileSecretPath returns the file that holds the overlay secret with this
+// name. The overlay schema keeps secret names unique.
+func fileSecretPath(overlay hostruntime.PrivateOverlay, name string) (string, bool) {
+	for _, secret := range overlay.Secrets {
+		if secret.Name == name && secret.Ref.Source == "file" {
+			return secret.Ref.Ref, true
+		}
+	}
+	return "", false
 }
 
 func fleetFor(repository hostruntime.RepositoryOverlay) githubscale.Fleet {
@@ -175,8 +181,16 @@ func closePollTargets(ctx context.Context, targets []controller.PollTarget) erro
 			errs = append(errs, fmt.Errorf("%s: close session: %w", target.Fleet.RepositoryAlias, err))
 		}
 	}
-	return errors.Join(errs...)
+	if len(errs) == 0 {
+		return nil
+	}
+	return errors.Join(append([]error{errSessionCleanup}, errs...)...)
 }
+
+// errSessionCleanup marks a failure to close a GitHub message session. GitHub
+// allows one per scale set, so a session left open blocks the next start
+// until it expires.
+var errSessionCleanup = errors.New("portable-ghar-controller: GitHub session cleanup failed")
 
 // pollTargetSessions serves lifecycle.SessionProvider from the opened poll
 // targets, so polling and runner operations share one GitHub session per

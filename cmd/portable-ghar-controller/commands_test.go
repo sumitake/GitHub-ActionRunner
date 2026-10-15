@@ -185,6 +185,14 @@ func testCommandDeps() commandDependencies {
 		) (controllerProcess, error) {
 			return &testControllerProcess{}, nil
 		},
+		OpenAcquisitionController: func(
+			context.Context,
+			string,
+			string,
+			controllerOwnershipLease,
+		) (controllerProcess, error) {
+			return &testControllerProcess{}, nil
+		},
 		DialAdmin: func(context.Context) (controller.LiveAdmin, io.Closer, error) {
 			return &testLiveAdmin{}, &testCloser{}, nil
 		},

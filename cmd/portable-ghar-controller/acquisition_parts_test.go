@@ -23,8 +23,8 @@ func TestFixedHostCapacityReportsTheOverlayCapacity(t *testing.T) {
 	}
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := provider.Evaluate(canceled); err == nil {
-		t.Fatal("Evaluate succeeded on a canceled context")
+	if _, err := provider.Evaluate(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Evaluate on a canceled context = %v, want the cancellation", err)
 	}
 }
 
@@ -98,5 +98,64 @@ func TestJITAuthorizerSlotRefusesUntilSet(t *testing.T) {
 		controller.JITAuthorizationRequest{},
 	); err != nil || target.calls != 1 {
 		t.Fatalf("set slot = %v, calls %d", err, target.calls)
+	}
+}
+
+func TestNonBlockingLogNeverBlocksAndKeepsOrder(t *testing.T) {
+	blocked := blockedWriter{release: make(chan struct{})}
+	stalled := newNonBlockingLog(blocked)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 2 * nonBlockingLogDepth {
+			if n, err := stalled.Write([]byte("line\n")); n != 5 || err != nil {
+				t.Errorf("Write = %d, %v", n, err)
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Write blocked on a stalled writer")
+	}
+	close(blocked.release)
+
+	lines := make(chan string, 3)
+	ordered := newNonBlockingLog(writerFunc(func(p []byte) (int, error) {
+		lines <- string(p)
+		return len(p), nil
+	}))
+	for _, line := range []string{"a\n", "b\n", "c\n"} {
+		_, _ = ordered.Write([]byte(line))
+	}
+	for _, want := range []string{"a\n", "b\n", "c\n"} {
+		select {
+		case got := <-lines:
+			if got != want {
+				t.Fatalf("line = %q, want %q", got, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("line %q not written", want)
+		}
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (write writerFunc) Write(p []byte) (int, error) { return write(p) }
+
+func TestProcessTerminatorCancelsBeforeLogging(t *testing.T) {
+	cancelled := false
+	var loggedAfterCancel bool
+	terminator := &processTerminator{
+		stderr: writerFunc(func(p []byte) (int, error) {
+			loggedAfterCancel = cancelled
+			return len(p), nil
+		}),
+		cancel: func() { cancelled = true },
+	}
+	terminator.TerminateAfterPersist(controller.ReasonCode(3))
+	if !cancelled || !loggedAfterCancel {
+		t.Fatalf("cancelled %v, logged after cancel %v", cancelled, loggedAfterCancel)
 	}
 }

@@ -25,8 +25,13 @@ type fixedHostCapacity struct {
 func (provider fixedHostCapacity) Evaluate(
 	ctx context.Context,
 ) (controller.HostCapacityReport, error) {
-	if ctx == nil || ctx.Err() != nil || provider.capacity <= 0 {
+	if ctx == nil || provider.capacity <= 0 {
 		return controller.HostCapacityReport{}, controller.ErrServiceNotReady
+	}
+	// A cancelled caller gets its cancellation back, which the service's
+	// loops treat as a stop rather than a failure.
+	if err := ctx.Err(); err != nil {
+		return controller.HostCapacityReport{}, err
 	}
 	return controller.HostCapacityReport{
 		State:             controller.HostCapacityNormal,
@@ -37,7 +42,7 @@ func (provider fixedHostCapacity) Evaluate(
 }
 
 // processTerminator ends the run once the service has persisted a fatal
-// state: it logs the reason and cancels the run. Service.Run treats a
+// state: it cancels the run, then logs the reason. Service.Run treats a
 // canceled context as a clean stop, so the process checks Fired and exits
 // with an error instead.
 type processTerminator struct {
@@ -54,14 +59,43 @@ func (terminator *processTerminator) TerminateAfterPersist(reason controller.Rea
 		return
 	}
 	terminator.reason = &reason
-	fmt.Fprintf(terminator.stderr, "portable-ghar-controller: fatal reason %d persisted; stopping\n", reason)
 	terminator.cancel()
+	fmt.Fprintf(terminator.stderr, "portable-ghar-controller: fatal reason %d persisted; stopping\n", reason)
 }
 
 func (terminator *processTerminator) Fired() bool {
 	terminator.mu.Lock()
 	defer terminator.mu.Unlock()
 	return terminator.reason != nil
+}
+
+// nonBlockingLog hands each write to one goroutine that copies it to out.
+// Write never blocks: when the queue is full the line is dropped. A stalled
+// stderr can then lose log lines, but never stall reconciliation, a fatal
+// stop, or shutdown, which all write here.
+type nonBlockingLog struct {
+	lines chan []byte
+}
+
+// nonBlockingLogDepth is how many lines may wait for a slow stderr.
+const nonBlockingLogDepth = 256
+
+func newNonBlockingLog(out io.Writer) *nonBlockingLog {
+	log := &nonBlockingLog{lines: make(chan []byte, nonBlockingLogDepth)}
+	go func() {
+		for line := range log.lines {
+			_, _ = out.Write(line)
+		}
+	}()
+	return log
+}
+
+func (log *nonBlockingLog) Write(p []byte) (int, error) {
+	select {
+	case log.lines <- append([]byte(nil), p...):
+	default:
+	}
+	return len(p), nil
 }
 
 // logEventSink writes each validated observability event as one JSON line.

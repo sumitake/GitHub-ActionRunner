@@ -56,6 +56,57 @@ jail's rotation limits, must fit the remaining `log_bounds` budget at
 The command does not observe the target host. Host identity, storage, and
 other live observations stay the operator's inputs in the template.
 
+## Running the acquiring controller
+
+`portable-ghar-controller run-acquisition --config <overlay> --database <db>`
+runs the acquiring controller. It takes the same flags as `run`, needs root,
+and takes the same ownership lock, so `run` and `run-acquisition` never run
+against one database at once. The systemd unit still runs `run`.
+
+It refuses to start unless:
+
+- the overlay has the `worker`, `github`, and `jail` sections;
+- every repository's `slot_resources` equals `resources.slot_resources`, the
+  vector each job's containers are sized from, and one complete slot fits
+  the admission ceiling;
+- the fence names the portable fleet at the manifest's generation. It does
+  not take over a legacy fence; hand the fence over first;
+- the decision graph at `policy_path`, a root-owned mode `0600` file, is the
+  graph the overlay names in `compiled_graph_digest`;
+- the Worker HMAC secret is a root-owned mode `0600` file holding the
+  lowercase hex the Worker binds;
+- the Worker `termination_tail` exceeds the fixed two-second lease overrun
+  slice and stays shorter than `lease_duration` less `shortening_margin`, so
+  permits keep usable slack.
+
+When it refuses, the error names the startup step that failed.
+
+A permit stops granting `termination_tail` before its local lease deadline.
+If any permit is still open two seconds before that deadline, the process
+logs the operation and exits at once with a non-zero status, so no
+acquisition effect outlives the Worker lease, whatever path shutdown takes.
+To let the controller reach its own fatal state first, set the tail above
+five `transition_join_timeout`s plus two `durable_finish_timeout`s plus the
+two-second slice.
+
+At startup it takes one portable fence guard and holds it for the whole run. Every later acquisition and heartbeat uses that guard, since the fence records one holder per process. It then
+releases any dial ledger and removes any empty slot directory that no
+recoverable assignment references, and opens one GitHub message session per
+repository. On a new database it first records the disabled policy, so the
+admission broker has an epoch to start from.
+
+The service starts disabled. It sends a Worker heartbeat every
+reconciliation cycle, starting while still disabled, so the first one is the
+Worker check. A failed heartbeat fails the cycle and stops the run, so enable
+the Worker's lease authority before starting this command. Enabling takes an operator
+transition through the usual `acquisition` command, and the conformance gate
+refuses every active mode until a passing report exists. The admin and
+health sockets are the same as `run`; health reports ready only after
+startup recovery.
+
+A signal stops it cleanly: the service records a disabled epoch and closes
+its GitHub sessions on the way out, even when the signal arrives before startup finishes. A persisted fatal state, a lost fence guard, a database ownership lock that no longer validates (checked every reconciliation cadence), a local server failure, or a lease overrun also stops it, with a non-zero exit. If the service cannot shut down cleanly, for example because its loops miss the join deadline, the process exits without releasing its store, fence guard, or ownership lock, and the kernel drops the locks with the process.
+
 ## Watchdog restart authority
 
 The host watchdog's authority is deliberately narrow, and it is a

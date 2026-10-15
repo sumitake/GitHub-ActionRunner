@@ -476,6 +476,18 @@ func (service *disabledAdminService) HandleLocal(
 	ctx context.Context,
 	request localRequest,
 ) localResponse {
+	return handleLocalAdmin(ctx, service, service.Health, request)
+}
+
+// handleLocalAdmin maps one local socket request to the controller's admin
+// methods and its health check, and the result to the wire status. Both the
+// disabled observer and the acquiring controller serve their sockets with it.
+func handleLocalAdmin(
+	ctx context.Context,
+	service controller.LiveAdmin,
+	health func(context.Context) error,
+	request localRequest,
+) localResponse {
 	response := localResponse{SchemaVersion: localProtocolSchemaVersion}
 	var err error
 	switch request.Method {
@@ -516,7 +528,7 @@ func (service *disabledAdminService) HandleLocal(
 			}
 		}
 	case localMethodHealth:
-		err = service.Health(ctx)
+		err = health(ctx)
 	default:
 		err = errDisabledMethodUnavailable
 	}
