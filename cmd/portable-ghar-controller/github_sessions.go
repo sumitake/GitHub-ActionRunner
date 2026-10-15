@@ -181,8 +181,16 @@ func closePollTargets(ctx context.Context, targets []controller.PollTarget) erro
 			errs = append(errs, fmt.Errorf("%s: close session: %w", target.Fleet.RepositoryAlias, err))
 		}
 	}
-	return errors.Join(errs...)
+	if len(errs) == 0 {
+		return nil
+	}
+	return errors.Join(append([]error{errSessionCleanup}, errs...)...)
 }
+
+// errSessionCleanup marks a failure to close a GitHub message session. GitHub
+// allows one per scale set, so a session left open blocks the next start
+// until it expires.
+var errSessionCleanup = errors.New("portable-ghar-controller: GitHub session cleanup failed")
 
 // pollTargetSessions serves lifecycle.SessionProvider from the opened poll
 // targets, so polling and runner operations share one GitHub session per

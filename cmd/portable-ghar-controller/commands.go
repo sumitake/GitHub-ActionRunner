@@ -260,7 +260,9 @@ func executeRun(
 		}
 		// A signal during composition is the same clean stop as one after
 		// it, provided the opener released everything it opened.
-		if ctx.Err() != nil && !errors.Is(openErr, errStartupCleanup) {
+		if ctx.Err() != nil &&
+			!errors.Is(openErr, errStartupCleanup) &&
+			!errors.Is(openErr, errSessionCleanup) {
 			return 0
 		}
 		return commandFailureReason(stderr, command, openErr)

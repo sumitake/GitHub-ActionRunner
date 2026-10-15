@@ -62,7 +62,7 @@ func (shared *sharedFenceGuard) AcquirePortable(
 		shared.mu.Unlock()
 		return nil, errors.Join(errAcquisitionFenceLost, cause)
 	default:
-		return fenceView{}, nil
+		return fenceView{shared: shared}, nil
 	}
 }
 
@@ -75,6 +75,20 @@ func (shared *sharedFenceGuard) Close() error {
 	return nil
 }
 
-type fenceView struct{}
+// fenceView is one borrower's hold on the shared guard. Close releases
+// nothing, but reports a guard lost while the view was held: the service
+// treats a guard-close error as lost host authority, so an operation or
+// heartbeat that spanned the loss is not accepted.
+type fenceView struct{ shared *sharedFenceGuard }
 
-func (fenceView) Close() error { return nil }
+func (view fenceView) Close() error {
+	select {
+	case <-view.shared.lost:
+		view.shared.mu.Lock()
+		cause := view.shared.cause
+		view.shared.mu.Unlock()
+		return errors.Join(errAcquisitionFenceLost, cause)
+	default:
+		return nil
+	}
+}

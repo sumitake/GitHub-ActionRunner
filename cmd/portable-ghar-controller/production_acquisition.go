@@ -296,10 +296,7 @@ func openProductionAcquisitionController(
 		targets[index].Session = &closeOnceSession{Session: targets[index].Session}
 	}
 	failWithTargets := func(primary error) (controllerProcess, error) {
-		if closeErr := closePollTargets(ctx, targets); closeErr != nil {
-			primary = errors.Join(primary, errStartupCleanup, closeErr)
-		}
-		return fail(primary)
+		return fail(errors.Join(primary, closePollTargets(ctx, targets)))
 	}
 	jit := &jitAuthorizerSlot{}
 	runtime, err := lifecycle.NewService(

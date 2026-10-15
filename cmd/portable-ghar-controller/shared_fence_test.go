@@ -76,3 +76,18 @@ func TestSharedFenceGuardCloseStopsWatchingWithoutReportingLoss(t *testing.T) {
 	case <-time.After(10 * time.Millisecond):
 	}
 }
+
+func TestSharedFenceViewReportsALossThatHappenedWhileHeld(t *testing.T) {
+	failure := make(chan error, 1)
+	shared := newSharedFenceGuard(failure)
+	defer shared.Close()
+	view, err := shared.AcquirePortable(context.Background())
+	if err != nil {
+		t.Fatalf("AcquirePortable: %v", err)
+	}
+	failure <- errors.New("renew failed")
+	<-shared.Lost()
+	if err := view.Close(); !errors.Is(err, errAcquisitionFenceLost) {
+		t.Fatalf("view Close after loss = %v, want the fence-lost error", err)
+	}
+}

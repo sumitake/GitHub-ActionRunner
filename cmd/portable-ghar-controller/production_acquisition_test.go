@@ -323,3 +323,40 @@ func TestControllerCLIRunAcquisitionSignalWithFailedCleanupIsAFailure(t *testing
 		t.Fatalf("exit %d, stderr %q; want the cleanup failure reported", exit, stderr.String())
 	}
 }
+
+type failingCloseSession struct{ githubscale.Session }
+
+func (failingCloseSession) Close(context.Context) error { return errors.New("close timed out") }
+
+func TestClosePollTargetsMarksAFailedClose(t *testing.T) {
+	targets := []controller.PollTarget{{Session: failingCloseSession{}}}
+	if err := closePollTargets(context.Background(), targets); !errors.Is(err, errSessionCleanup) {
+		t.Fatalf("closePollTargets = %v, want errSessionCleanup", err)
+	}
+	if err := closePollTargets(context.Background(), nil); err != nil {
+		t.Fatalf("closePollTargets(no targets) = %v", err)
+	}
+}
+
+func TestControllerCLIRunAcquisitionSignalWithOpenSessionIsAFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	deps := testCommandDeps()
+	deps.OpenAcquisitionController = func(
+		context.Context, string, string, controllerOwnershipLease,
+	) (controllerProcess, error) {
+		cancel()
+		// A partial open whose own cleanup failed, as openGitHubPollTargets
+		// reports it.
+		return nil, errors.Join(context.Canceled, errSessionCleanup)
+	}
+	var stdout, stderr bytes.Buffer
+	if exit := runWithDependencies(
+		ctx,
+		[]string{"run-acquisition", "--config", "/etc/o.json", "--database", "/var/s.db"},
+		&stdout,
+		&stderr,
+		deps,
+	); exit != 1 {
+		t.Fatalf("exit %d, stderr %q; want the open session reported", exit, stderr.String())
+	}
+}
