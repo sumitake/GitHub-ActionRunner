@@ -159,10 +159,17 @@ func loadProductionRuntime(
 	databasePath string,
 	ownership controllerOwnershipLease,
 ) (productionRuntime, error) {
-	if ctx == nil ||
-		ctx.Err() != nil ||
-		ownership == nil ||
-		ownership.Validate() != nil ||
+	if ctx == nil || ctx.Err() != nil || ownership == nil || ownership.Validate() != nil {
+		return productionRuntime{}, errCommandUnavailable
+	}
+	return readProductionRuntime(ctx, configPath, databasePath)
+}
+
+// readProductionRuntime validates the same durable runtime anchors without
+// acquiring ownership or contacting Docker, the fence, GitHub, or the Worker.
+// Readback commands use it; run entrypoints still require their ownership lease.
+func readProductionRuntime(ctx context.Context, configPath, databasePath string) (productionRuntime, error) {
+	if ctx == nil || ctx.Err() != nil ||
 		!canonicalAbsolutePath(configPath) ||
 		!canonicalAbsolutePath(databasePath) ||
 		configPath == databasePath {
@@ -780,11 +787,11 @@ func currentControllerExecutableDigest() (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func readPinnedRootFile(
-	path string,
-	mode uint32,
-	maxBytes int,
-) ([]byte, error) {
+func readPinnedRootFile(path string, mode uint32, maxBytes int) ([]byte, error) {
+	return readPinnedOwnedFile(path, mode, maxBytes, 0)
+}
+
+func readPinnedOwnedFile(path string, mode uint32, maxBytes int, expectedUID uint32) ([]byte, error) {
 	if !canonicalAbsolutePath(path) || maxBytes <= 0 {
 		return nil, errCommandUnavailable
 	}
@@ -802,7 +809,7 @@ func readPinnedRootFile(
 		return nil, errCommandUnavailable
 	}
 	defer file.Close()
-	before, err := pinnedRootFileIdentity(fd, mode)
+	before, err := pinnedOwnedFileIdentity(fd, mode, expectedUID)
 	if err != nil || before.size <= 0 || before.size > int64(maxBytes) {
 		return nil, errCommandUnavailable
 	}
@@ -810,7 +817,7 @@ func readPinnedRootFile(
 	if err != nil || len(document) == 0 || len(document) > maxBytes {
 		return nil, errCommandUnavailable
 	}
-	after, err := pinnedRootFileIdentity(fd, mode)
+	after, err := pinnedOwnedFileIdentity(fd, mode, expectedUID)
 	if err != nil || before != after || int64(len(document)) != before.size {
 		return nil, errCommandUnavailable
 	}
@@ -818,7 +825,7 @@ func readPinnedRootFile(
 	if err := unix.Lstat(path, &pathStat); err != nil {
 		return nil, errCommandUnavailable
 	}
-	pathIdentity, err := validatePinnedRootStat(&pathStat, mode)
+	pathIdentity, err := validatePinnedOwnedStat(&pathStat, mode, expectedUID)
 	if err != nil || pathIdentity != before {
 		return nil, errCommandUnavailable
 	}
@@ -833,25 +840,31 @@ type pinnedRootIdentity struct {
 	size   int64
 }
 
-func pinnedRootFileIdentity(
+func pinnedRootFileIdentity(fd int, mode uint32) (pinnedRootIdentity, error) {
+	return pinnedOwnedFileIdentity(fd, mode, 0)
+}
+
+func pinnedOwnedFileIdentity(
 	fd int,
 	mode uint32,
+	expectedUID uint32,
 ) (pinnedRootIdentity, error) {
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
 		return pinnedRootIdentity{}, errCommandUnavailable
 	}
-	return validatePinnedRootStat(&stat, mode)
+	return validatePinnedOwnedStat(&stat, mode, expectedUID)
 }
 
-func validatePinnedRootStat(
-	stat *unix.Stat_t,
-	mode uint32,
-) (pinnedRootIdentity, error) {
+func validatePinnedRootStat(stat *unix.Stat_t, mode uint32) (pinnedRootIdentity, error) {
+	return validatePinnedOwnedStat(stat, mode, 0)
+}
+
+func validatePinnedOwnedStat(stat *unix.Stat_t, mode, expectedUID uint32) (pinnedRootIdentity, error) {
 	statMode := uint32(stat.Mode)
 	if statMode&unix.S_IFMT != unix.S_IFREG ||
 		statMode&0o777 != mode ||
-		stat.Uid != 0 ||
+		stat.Uid != expectedUID ||
 		uint64(stat.Nlink) != 1 ||
 		stat.Ino == 0 ||
 		int64(stat.Size) < 0 {

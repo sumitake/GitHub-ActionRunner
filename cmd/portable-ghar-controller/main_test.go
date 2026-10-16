@@ -290,3 +290,14 @@ func sortStrings(values []string) {
 		}
 	}
 }
+
+func TestHistoryStatusIncludesBoundedCanaryEvidence(t *testing.T) {
+	usage := state.HistoryUsage{CanaryEvidenceRows: 1, CanaryEvidenceLogicalBytes: 8192}
+	status, err := buildHistoryStatus(time.Now(), usage, statusTestLimits(), 2, 4, 4000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.HistoryRows != 1 || status.HistoryLogicalBytes != 8192 {
+		t.Fatal("canary evidence missing from storage status")
+	}
+}

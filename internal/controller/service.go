@@ -392,22 +392,24 @@ type HostedEffectRecord struct {
 }
 
 type HistoryUsage struct {
-	LiveRows                  uint64
-	LiveLogicalBytes          uint64
-	ProtectedTerminalRows     uint64
-	ProtectedTerminalBytes    uint64
-	MessageReceiptRows        uint64
-	MessageReceiptBytes       uint64
-	AcquisitionRows           uint64
-	AcquisitionLogicalBytes   uint64
-	TombstoneRows             uint64
-	TombstoneLogicalBytes     uint64
-	NetworkLedgerRows         uint64
-	NetworkLedgerLogicalBytes uint64
-	InflightAssignments       uint64
-	ReservedRows              uint64
-	ReservedLogicalBytes      uint64
-	OldestRetainedAt          time.Time
+	CanaryEvidenceRows         uint64
+	CanaryEvidenceLogicalBytes uint64
+	LiveRows                   uint64
+	LiveLogicalBytes           uint64
+	ProtectedTerminalRows      uint64
+	ProtectedTerminalBytes     uint64
+	MessageReceiptRows         uint64
+	MessageReceiptBytes        uint64
+	AcquisitionRows            uint64
+	AcquisitionLogicalBytes    uint64
+	TombstoneRows              uint64
+	TombstoneLogicalBytes      uint64
+	NetworkLedgerRows          uint64
+	NetworkLedgerLogicalBytes  uint64
+	InflightAssignments        uint64
+	ReservedRows               uint64
+	ReservedLogicalBytes       uint64
+	OldestRetainedAt           time.Time
 }
 
 // DurableState is the acyclic controller-owned persistence port implemented
@@ -1315,6 +1317,7 @@ func (s *Service) EvaluateHistoryPressure(ctx context.Context) (health.HistorySn
 	}
 
 	historyRows, rowsOverflow := addHistoryTotals(
+		usage.CanaryEvidenceRows,
 		usage.LiveRows,
 		usage.ProtectedTerminalRows,
 		usage.MessageReceiptRows,
@@ -1323,6 +1326,7 @@ func (s *Service) EvaluateHistoryPressure(ctx context.Context) (health.HistorySn
 		usage.ReservedRows,
 	)
 	historyBytes, bytesOverflow := addHistoryTotals(
+		usage.CanaryEvidenceLogicalBytes,
 		usage.LiveLogicalBytes,
 		usage.ProtectedTerminalBytes,
 		usage.MessageReceiptBytes,

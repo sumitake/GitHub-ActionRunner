@@ -95,6 +95,7 @@ func buildHistoryStatus(
 		return historyStatus{}, errors.New("history status reserve is invalid")
 	}
 	historyRows, rowsOK := addStatusTotals(
+		usage.CanaryEvidenceRows,
 		usage.LiveRows,
 		usage.ProtectedTerminalRows,
 		usage.MessageReceiptRows,
@@ -103,6 +104,7 @@ func buildHistoryStatus(
 		usage.ReservedRows,
 	)
 	historyBytes, bytesOK := addStatusTotals(
+		usage.CanaryEvidenceLogicalBytes,
 		usage.LiveLogicalBytes,
 		usage.ProtectedTerminalBytes,
 		usage.MessageReceiptBytes,

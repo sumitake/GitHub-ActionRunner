@@ -120,6 +120,8 @@ jobs:
         run: 'node -e "const {parseAllDocuments} = require(''yaml''); const fs = require(''fs''); const {execSync} = require(''child_process''); const files = execSync(''git ls-files'').toString(''utf8'').split(''\n'').filter(f => /\.(json|jsonc|ya?ml)$/.test(f)); let failed = false; for (const f of files) { const text = fs.readFileSync(f, ''utf8''); const docs = parseAllDocuments(text, {strict: true}); for (const d of docs) { if (d.errors && d.errors.length) { failed = true; console.error(f + '': '' + d.errors.length + '' parse error(s)''); } } } if (failed) process.exit(1); console.log(''validated '' + files.length + '' JSON/YAML files'');"'
       - name: Schema tests
         run: npm run schema:test && npm run schema:validate
+      - name: Canary observation tests
+        run: npm run canary:test
       - name: actionlint
         run: go tool actionlint .github/workflows/*.yml
       - name: Docs lint

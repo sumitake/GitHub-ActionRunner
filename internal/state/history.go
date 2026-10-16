@@ -122,26 +122,28 @@ type HistoryMaintenanceResult struct {
 
 // HistoryUsage is an aggregate, identity-free history/storage snapshot.
 type HistoryUsage struct {
-	LiveRows                  uint64
-	LiveLogicalBytes          uint64
-	ProtectedTerminalRows     uint64
-	ProtectedTerminalBytes    uint64
-	MessageReceiptRows        uint64
-	MessageReceiptBytes       uint64
-	AcquisitionRows           uint64
-	AcquisitionLogicalBytes   uint64
-	TombstoneRows             uint64
-	TombstoneLogicalBytes     uint64
-	NetworkLedgerRows         uint64
-	NetworkLedgerLogicalBytes uint64
-	InflightAssignments       uint64
-	ReservedRows              uint64
-	ReservedLogicalBytes      uint64
-	OldestRetainedAt          time.Time
-	ActivePageBytes           uint64
-	FreelistBytes             uint64
-	WALBytes                  uint64
-	Maintenance               HistoryMaintenanceResult
+	CanaryEvidenceRows         uint64
+	CanaryEvidenceLogicalBytes uint64
+	LiveRows                   uint64
+	LiveLogicalBytes           uint64
+	ProtectedTerminalRows      uint64
+	ProtectedTerminalBytes     uint64
+	MessageReceiptRows         uint64
+	MessageReceiptBytes        uint64
+	AcquisitionRows            uint64
+	AcquisitionLogicalBytes    uint64
+	TombstoneRows              uint64
+	TombstoneLogicalBytes      uint64
+	NetworkLedgerRows          uint64
+	NetworkLedgerLogicalBytes  uint64
+	InflightAssignments        uint64
+	ReservedRows               uint64
+	ReservedLogicalBytes       uint64
+	OldestRetainedAt           time.Time
+	ActivePageBytes            uint64
+	FreelistBytes              uint64
+	WALBytes                   uint64
+	Maintenance                HistoryMaintenanceResult
 }
 
 // OperationalSummary is the identity-free live-assignment aggregate consumed
