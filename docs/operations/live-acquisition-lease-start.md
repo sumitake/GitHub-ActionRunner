@@ -6,9 +6,12 @@ for the new policy. A positive-capacity poll can reach the cache between those
 two events; that interval is normal and must not end the canary process.
 
 The controller skips only that pre-effect poll when the non-poisoned cache is
-empty. It makes no GitHub poll, acquisition, JIT request, or acquisition/receipt write, and
+empty because of that local transition. A successful authenticated heartbeat
+that denies a lease clears that distinction and retains the existing
+invalid-authority pressure/fail-stop path. It makes no GitHub poll, acquisition, JIT request, or acquisition/receipt write, and
 leaves the selected policy unchanged. The existing poll cadence tries again
-later, after the existing heartbeat can supply authority. There is no delay
+later, after the existing heartbeat can supply authority. One private cause bit in the existing cache distinguishes a transition clear
+from a denial; both use its existing revision/CAS fence. There is no delay
 constant, background service, authority table, or fallback permit.
 
 The distinction is deliberately narrow:

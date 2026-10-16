@@ -2,4 +2,4 @@ package failoverclient
 
 import "errors"
 
-var errLeaseCacheEmpty = errors.New("failoverclient: no current lease")
+var errLeaseCacheAwaiting = errors.New("failoverclient: awaiting transition lease")
