@@ -8,6 +8,7 @@ import (
 
 	"github.com/sumitake/portable-ghar/internal/conformance"
 	"github.com/sumitake/portable-ghar/internal/controller"
+	"github.com/sumitake/portable-ghar/internal/failoverclient"
 )
 
 type canaryPlanReceipt struct {
@@ -43,10 +44,13 @@ func buildCanaryPlan(runtime productionRuntime, report conformance.Report, statu
 	if !validLocalPolicyStatus(&status) || status.Mode != controller.AcquisitionDisabled || status.WorkerLeaseGeneration == 0 || status.CanaryReportDigest != report.Digest() || runtime.overlay.Worker == nil || report.Status() != conformance.StatusPending || !reportMatchesCanaryRuntime(report, runtime) {
 		return canaryPlanReceipt{}, errCommandUnavailable
 	}
+	if !failoverclient.ValidWorkerAlias(scaleSet) {
+		return canaryPlanReceipt{}, errCommandUnavailable
+	}
 	alias := ""
 	for _, repo := range runtime.overlay.Repositories {
 		if repo.ScaleSetName == scaleSet {
-			if alias != "" {
+			if alias != "" || repo.Eligibility != "active" || !failoverclient.ValidWorkerAlias(repo.Alias) {
 				return canaryPlanReceipt{}, errCommandUnavailable
 			}
 			alias = repo.Alias

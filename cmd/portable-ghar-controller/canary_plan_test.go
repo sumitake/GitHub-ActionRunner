@@ -84,3 +84,36 @@ func TestCanaryPlanRequiresTheRunningControllersOriginalReport(t *testing.T) {
 		}
 	}
 }
+
+func TestCanaryPlanRequiresAnActiveWorkerCompatibleRepository(t *testing.T) {
+	for _, scenario := range []string{"archived-disabled", "pending-reactivation", "uppercase alias", "unicode alias", "uppercase scale set", "unicode scale set", "long scale set"} {
+		t.Run(scenario, func(t *testing.T) {
+			report := pendingCanaryFixture(t)
+			runtime := canaryRuntimeFixture(report)
+			overlay := templateOverlay(t)
+			overlay.Worker = &hostruntime.WorkerOverlay{FleetID: "example-fleet"}
+			overlay.Target.ProfileID = report.Binding().ProfileID()
+			overlay.Manifest.Digest = report.Binding().RuntimeManifestDigest()
+			runtime.overlay = overlay
+			repo := &runtime.overlay.Repositories[0]
+			switch scenario {
+			case "archived-disabled", "pending-reactivation":
+				repo.Eligibility = scenario
+			case "uppercase alias":
+				repo.Alias = "Example"
+			case "unicode alias":
+				repo.Alias = "exämple"
+			case "uppercase scale set":
+				repo.ScaleSetName = "Example"
+			case "unicode scale set":
+				repo.ScaleSetName = "exämple"
+			case "long scale set":
+				repo.ScaleSetName = strings.Repeat("a", 65)
+			}
+			status := localPolicyStatus{Mode: controller.AcquisitionDisabled, Epoch: 2, Digest: strings.Repeat("a", 64), WorkerLeaseGeneration: 9, CanaryReportDigest: report.Digest()}
+			if _, err := buildCanaryPlan(runtime, report, status, repo.ScaleSetName); err == nil {
+				t.Fatal("planned work that the controller or Worker cannot admit")
+			}
+		})
+	}
+}
