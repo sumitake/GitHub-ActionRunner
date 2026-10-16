@@ -32,6 +32,17 @@ class RunnerImageReproducibilityContractTest(unittest.TestCase):
                         ),
                     )
 
+    def test_unused_root_home_is_absent_for_unprivileged_projection_probe(self):
+        for relative, dockerfile in self.dockerfiles.items():
+            with self.subTest(relative=relative):
+                self.assertIn("rm -rf /root", dockerfile)
+                self.assertLess(
+                    dockerfile.index("verify-image-overlay"),
+                    dockerfile.index("rm -rf /root"),
+                )
+                self.assertIn("ENV HOME=/runner", dockerfile)
+                self.assertIn("USER 65532:65532", dockerfile)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.dockerfiles = {

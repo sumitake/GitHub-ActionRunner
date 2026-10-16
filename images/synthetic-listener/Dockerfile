@@ -70,7 +70,8 @@ RUN chmod 0555 /opt/actions-runner /opt/portable-ghar/seed-cache \
     && /usr/local/bin/portable-ghar-runner-gate verify-image-overlay \
     && test "$(find /opt/actions-runner -type f -print | wc -l)" -eq 1 \
     && test -z "$(find /opt/actions-runner/externals -mindepth 1 -print -quit)" \
-    && install -d -m 0700 -o 65532 -g 65532 /runner /tmp /scratch
+    && install -d -m 0700 -o 65532 -g 65532 /runner /tmp /scratch \
+    && rm -rf /root
 
 ENV HOME=/runner \
     LANG=C.UTF-8 \
