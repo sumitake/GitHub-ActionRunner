@@ -209,9 +209,11 @@ current state with the operator.
    The result table decides the handover. Record N.
 2. **D7, scale set and token.** Same document, D7. `create-scale-set` twice
    (the second must print `"created":false`), then `external-probe`.
-3. **D2, conformance cases 1-14 on the target.** Same document, D2. Write the
-   report straight to `<state_root>/conformance-report.json`. Expect cases
-   1-14 passed and case 15 pending. Resolve the generation question in
+3. **D2, conformance cases 1-14 on the target.** Same document, D2. The
+   report must end up at `<state_root>/conformance-report.json` as a
+   root-owned, mode `0600` file. If the input's euid is 0, write it there
+   directly. Otherwise write it elsewhere and install a root-owned copy with
+   the same bytes. Expect cases 1-14 passed and case 15 pending. Resolve the generation question in
    section 3 first.
 4. **Worker redeploy** with the `authority` block. Needs its own explicit go.
 5. **The canary**, through the phase 8 runbook.
