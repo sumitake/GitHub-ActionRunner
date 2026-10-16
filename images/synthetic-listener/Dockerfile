@@ -64,6 +64,9 @@ RUN chmod 0555 /opt/actions-runner /opt/portable-ghar/seed-cache \
     && test "$(/usr/local/bin/portable-ghar-runner-gate verify-image)" = "$expected_version" \
     && ln -s /runner/_diag /opt/actions-runner/_diag \
     && ln -s /runner/_work /opt/actions-runner/_work \
+    && ln -s /runner/.runner /opt/actions-runner/.runner \
+    && ln -s /runner/.credentials /opt/actions-runner/.credentials \
+    && ln -s /runner/.credentials_rsaparams /opt/actions-runner/.credentials_rsaparams \
     && /usr/local/bin/portable-ghar-runner-gate verify-image-overlay \
     && test "$(find /opt/actions-runner -type f -print | wc -l)" -eq 1 \
     && test -z "$(find /opt/actions-runner/externals -mindepth 1 -print -quit)" \

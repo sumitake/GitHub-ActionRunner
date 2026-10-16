@@ -19,6 +19,19 @@ def _normalized_shell(text: str) -> str:
 
 
 class RunnerImageReproducibilityContractTest(unittest.TestCase):
+    def test_jit_configuration_links_target_only_ephemeral_runner_root(self):
+        for relative, dockerfile in self.dockerfiles.items():
+            for name in (".runner", ".credentials", ".credentials_rsaparams"):
+                with self.subTest(relative=relative, name=name):
+                    link = f"ln -s /runner/{name} /opt/actions-runner/{name}"
+                    self.assertIn(link, dockerfile)
+                    self.assertLess(
+                        dockerfile.index(link),
+                        dockerfile.index(
+                            "/usr/local/bin/portable-ghar-runner-gate verify-image-overlay"
+                        ),
+                    )
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.dockerfiles = {

@@ -3071,5 +3071,12 @@
     "rule": "PATH001",
     "sha256": "205e96057328302f581bc2634a14a8160d7584223184ccce43696ddc434259fa",
     "reason": "Immutable public-history instance of an inspected container-internal build-path fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "images/runner/Dockerfile",
+    "line": 104,
+    "rule": "PATH001",
+    "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
+    "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
   }
 ]
