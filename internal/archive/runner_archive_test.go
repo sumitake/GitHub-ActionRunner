@@ -729,6 +729,10 @@ func TestRunnerImageRuntimeOverlayIsExactAndDigestNeutral(t *testing.T) {
 			t.Fatalf("Symlink work overlay: %v", err)
 		}
 	})
+	if _, err := verifyRunnerImageDirectoryWithRuntimeOverlayForOwner(output, manifest, 47, uid, gid); err == nil {
+		t.Fatal("overlay verifier accepted missing configuration links")
+	}
+	addRunnerImageObject(t, output, func() { addRunnerConfigLinks(t, output) })
 	overlaid, err := verifyRunnerImageDirectoryWithRuntimeOverlayForOwner(
 		output,
 		manifest,
@@ -822,7 +826,10 @@ func TestRunnerImageRuntimeOverlayRejectsEveryOtherObject(t *testing.T) {
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			output, manifest, _ := installedRunnerImageFixture(t)
-			addRunnerImageObject(t, output, func() { mutate(t, output) })
+			addRunnerImageObject(t, output, func() {
+				addRunnerConfigLinks(t, output)
+				mutate(t, output)
+			})
 			if _, err := verifyRunnerImageDirectoryWithRuntimeOverlayForOwner(
 				output,
 				manifest,

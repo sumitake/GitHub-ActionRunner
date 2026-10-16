@@ -95,6 +95,19 @@ several jobs target the canary label while `canary-only` is on, each can run.
 After the canary, a report completed with the sealed case 15 evidence must
 pass the normal gate before `enabled`.
 
+Credential-proof amendment, explicitly selected by the operator: case 15
+uses bounded one-job credential exposure. A job may observe its own listener's
+original exec environment through `/proc`, or the decoded runner configuration
+in that container's `/runner` tmpfs. Record those observations without printing
+credential bytes; they are not a secrecy failure. The listener must remove the
+bootstrap variable before creating job processes. The JIT must never enter
+Docker configuration, controller arguments, host files, logs, reports, or
+another container, and no reusable controller credential may enter the runner.
+The job runs once, then deregistration and complete container/tmpfs reclamation
+must be proved. This replaces Task 11's stronger post-parse/all-job-surfaces
+absence requirement and aligns the canary with the bounded-credential model
+in `docs/security/trust-boundaries.md`.
+
 **D2. Cases 1-14 on the target.** The test harness already implements
 `conformance.HostProfile` (`tests/integration/conformance_test.go:14-35`), and
 Task 11 defined an operator-gated target run for it. Recommendation: run the
@@ -154,10 +167,12 @@ Operator steps ship as exact commands and run only on the operator's go.
 - **Production rollback is a stub** (`internal/productionruntime/system_lifecycle.go:1856-1866`),
   so the fence handover uses the existing fence `handoff` command, rehearsed
   in a fixture and logged by the runbook.
-- **The JIT is likely visible to the job.** It is passed in the listener's exec
-  environment (`internal/runtimeenv/environment.go:52-56`), which stays readable
-  in `/proc`. The canary workflow probes this; if it is present, the runner
-  gate must hand the JIT over another way before case 15 can pass.
+- **The JIT is bounded, not hidden from its own job.** The listener's exec
+  environment may remain readable through `/proc` after .NET removes the
+  variable. The canary records that exposure under the operator's credential
+  amendment above. The pinned listener also writes decoded configuration
+  files; fixed image links put those files in `/runner` tmpfs while preserving
+  the read-only code tree.
 - **No production host-capacity source exists.** The canary uses a capacity-1
   provider read from the overlay.
 

@@ -96,10 +96,14 @@ RUN chmod 0555 /opt/actions-runner /opt/portable-ghar/seed-cache \
     && test "$(/usr/local/bin/portable-ghar-runner-gate verify-image)" = "$expected_version" \
     && ln -s /runner/_diag /opt/actions-runner/_diag \
     && ln -s /runner/_work /opt/actions-runner/_work \
+    && ln -s /runner/.runner /opt/actions-runner/.runner \
+    && ln -s /runner/.credentials /opt/actions-runner/.credentials \
+    && ln -s /runner/.credentials_rsaparams /opt/actions-runner/.credentials_rsaparams \
     && /usr/local/bin/portable-ghar-runner-gate verify-image-overlay \
     && test ! -e /portable-ghar-bootstrap-ca.pem \
     && test -r /usr/share/portable-ghar/dpkg-manifest.tsv \
-    && install -d -m 0700 -o 65532 -g 65532 /runner /tmp /scratch
+    && install -d -m 0700 -o 65532 -g 65532 /runner /tmp /scratch \
+    && rm -rf /root
 
 ENV HOME=/runner \
     LANG=C.UTF-8 \
