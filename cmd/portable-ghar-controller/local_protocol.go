@@ -71,10 +71,11 @@ type localRequest struct {
 }
 
 type localPolicyStatus struct {
-	Mode     controller.AcquisitionMode `json:"mode"`
-	Epoch    uint64                     `json:"epoch"`
-	Digest   string                     `json:"digest"`
-	Capacity int                        `json:"capacity"`
+	WorkerLeaseGeneration uint64                     `json:"worker_lease_generation,omitempty"`
+	Mode                  controller.AcquisitionMode `json:"mode"`
+	Epoch                 uint64                     `json:"epoch"`
+	Digest                string                     `json:"digest"`
+	Capacity              int                        `json:"capacity"`
 }
 
 type localCycleReceipt struct {
@@ -298,6 +299,7 @@ func validLocalReason(reason localReason) bool {
 
 func validLocalPolicyStatus(status *localPolicyStatus) bool {
 	if status == nil ||
+		status.WorkerLeaseGeneration > 9007199254740991 ||
 		status.Epoch == 0 ||
 		len(status.Digest) != 64 {
 		return false

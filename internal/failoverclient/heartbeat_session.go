@@ -432,3 +432,18 @@ func heartbeatModeFromHealth(mode health.AcquisitionMode) (AcquisitionMode, erro
 func wholeMillisecondTime(value time.Time) bool {
 	return !value.IsZero() && value.Equal(value.UTC().Truncate(time.Millisecond))
 }
+
+// CurrentLeaseGeneration reads authenticated enrollment/maintenance metadata.
+// It makes no request and grants no authority. Zero means no live enrollment;
+// a concurrent Worker change is still rejected by the admin start precondition.
+func (session *HeartbeatSession) CurrentLeaseGeneration() uint64 {
+	if session == nil {
+		return 0
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.enrollment == nil {
+		return 0
+	}
+	return session.enrollment.generation
+}

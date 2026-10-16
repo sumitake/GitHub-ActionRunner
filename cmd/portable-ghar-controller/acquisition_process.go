@@ -25,8 +25,9 @@ type acquisitionService interface {
 }
 
 type acquisitionProcessConfig struct {
-	Service   acquisitionService
-	FenceLost <-chan struct{}
+	WorkerLeaseGeneration func() uint64
+	Service               acquisitionService
+	FenceLost             <-chan struct{}
 	// CloseSessions closes the GitHub sessions the service owns. The process
 	// calls it on every path out of Run; closing an already closed session
 	// does nothing.
@@ -224,7 +225,11 @@ func (process *acquisitionControllerProcess) startServers(
 	}
 	admission := make(chan struct{}, config.AdmissionLimit)
 	handler := func(ctx context.Context, request localRequest) localResponse {
-		return handleLocalAdmin(ctx, config.Service, process.health, request)
+		response := handleLocalAdmin(ctx, config.Service, process.health, request)
+		if request.Method == localMethodProbe && response.Policy != nil && config.WorkerLeaseGeneration != nil {
+			response.Policy.WorkerLeaseGeneration = config.WorkerLeaseGeneration()
+		}
+		return response
 	}
 	fatal := func() { process.stop(errAcquisitionServer) }
 	admin, err := newLocalServer(localServerConfig{
