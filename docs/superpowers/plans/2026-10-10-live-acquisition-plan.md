@@ -14,6 +14,10 @@ apply:
   settings are operator actions (D2, D5, D7). Each phase ships the exact
   commands; nothing here runs them.
 
+**Progress (2026-10-16):** phases 1-6 are merged. Phases 7 and 8 and every
+operator step remain. Current state and open items:
+`2026-10-16-codex-live-acquisition-handoff.md`.
+
 **Design rule:** reliable and simple first. Reuse the library code that
 already exists and is tested. Add no new framework, service, or abstraction
 unless a phase cannot work without it. When a phase can be smaller, it is.

@@ -211,9 +211,12 @@ Prerequisites:
   by path and digest, and a nonzero fleet generation. Every named file must be
   a regular file owned by that euid, with no group or other write access.
 - A report path outside the checkout whose file does not exist yet, in a
-  directory owned by that euid that no group or other user can write. Once
-  the canary gate lands, `run-acquisition` reads the report from
-  `<state_root>/conformance-report.json`, so writing it there saves a copy.
+  directory owned by that euid that no group or other user can write.
+  `run-acquisition` reads the report from
+  `<state_root>/conformance-report.json` and accepts only a root-owned, mode
+  `0600` regular file with one link. When the input's euid is 0, write the
+  report there directly. Otherwise write it elsewhere and install a root-owned
+  copy there, with the same bytes and mode `0600`.
 
 Check the checkout, then run the harness as that euid:
 
