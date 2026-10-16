@@ -122,16 +122,15 @@ relying on it.
    count, an observation digest, and measurements. Case 15 allows only
    `job_count` and `tool_count` (`allowedMeasurement`, around line 1243).
    Nothing produces its input yet.
-3. **No API completes an existing report.** `conformance.Run` builds a whole
-   report from a `HostProfile`. A report carries `reportDigest` and a
-   `buildSeal` over `BuildID`, the binding digest, and the report digest
-   (`computeBuildSeal`). Completing the pending report therefore needs a new
-   function in `internal/conformance`. It should take the parsed pending
-   report and an `ActualGitHubResult`, replace only case 15, recompute status,
-   report digest, and build seal, and run `validateReport` on the result.
-   Decide whether completion keeps the original binding unchanged (simplest,
-   and it is what the plan means by "the same pending report"). Test it with
-   the existing report test helpers.
+3. **Report completion API.** `conformance.CompleteActualGitHubTransport`
+   (`internal/conformance/completion.go`) takes the parsed pending report and
+   a sealed `ActualGitHubResult`. It requires validated canary-only authority,
+   replaces only case 15, recomputes status, report digest, and build seal,
+   and validates the result. It preserves the entire original binding,
+   cases 1-14, target observations, and cleanup. It rejects already-completed,
+   failed, or corrupt reports and pending or invalid results. The collector
+   still must derive its result from durable observations tied to that same
+   report; this low-level API does not collect evidence or run a canary.
 4. **Durable state as the only source.** `canary-seal` must read the
    controller's store, not live GitHub or process memory. Identify which
    store records prove each case 15 item (acquisition, JIT consumption,
