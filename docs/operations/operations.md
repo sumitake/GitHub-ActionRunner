@@ -13,6 +13,11 @@ behavior below is live against a deployed host today.
 
 ## Assembling the private overlay
 
+First prepare the host runtime manifest for the next handover generation,
+using the [D2 preparation steps](live-acquisition-operator-steps.md#bind-the-handover-generation-before-preparing-the-input).
+`assemble-runtime-manifest` serializes an approved identity template; release
+publication emits a different document and does not choose this generation.
+
 The host overlay (`controller-runtime.json`) must name the exact release it
 deploys. Do not type release identities into it by hand. Write a template
 with every operator and host value, leave the release-derived fields empty,
