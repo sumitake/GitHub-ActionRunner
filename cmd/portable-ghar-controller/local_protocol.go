@@ -71,6 +71,7 @@ type localRequest struct {
 }
 
 type localPolicyStatus struct {
+	CanaryReportDigest    string                     `json:"canary_report_digest,omitempty"`
 	WorkerLeaseGeneration uint64                     `json:"worker_lease_generation,omitempty"`
 	Mode                  controller.AcquisitionMode `json:"mode"`
 	Epoch                 uint64                     `json:"epoch"`
@@ -300,6 +301,7 @@ func validLocalReason(reason localReason) bool {
 func validLocalPolicyStatus(status *localPolicyStatus) bool {
 	if status == nil ||
 		status.WorkerLeaseGeneration > 9007199254740991 ||
+		(status.CanaryReportDigest != "" && !validLowerDigest(status.CanaryReportDigest)) ||
 		status.Epoch == 0 ||
 		len(status.Digest) != 64 {
 		return false

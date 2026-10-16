@@ -392,6 +392,7 @@ func openProductionAcquisitionController(
 	jit.Set(acquiring)
 	if err := process.init(acquisitionProcessConfig{
 		WorkerLeaseGeneration: worker.session.CurrentLeaseGeneration,
+		CanaryReportDigest:    report.Digest(),
 		Service:               acquiring,
 		FenceLost:             fence.Lost(),
 		CloseSessions: func() error {

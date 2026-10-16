@@ -40,7 +40,7 @@ func executeCanaryPlan(ctx context.Context, args []string, stdout, stderr io.Wri
 }
 
 func buildCanaryPlan(runtime productionRuntime, report conformance.Report, status localPolicyStatus, scaleSet string) (canaryPlanReceipt, error) {
-	if !validLocalPolicyStatus(&status) || status.Mode != controller.AcquisitionDisabled || status.WorkerLeaseGeneration == 0 || runtime.overlay.Worker == nil || report.Status() != conformance.StatusPending || !reportMatchesCanaryRuntime(report, runtime) {
+	if !validLocalPolicyStatus(&status) || status.Mode != controller.AcquisitionDisabled || status.WorkerLeaseGeneration == 0 || status.CanaryReportDigest != report.Digest() || runtime.overlay.Worker == nil || report.Status() != conformance.StatusPending || !reportMatchesCanaryRuntime(report, runtime) {
 		return canaryPlanReceipt{}, errCommandUnavailable
 	}
 	alias := ""

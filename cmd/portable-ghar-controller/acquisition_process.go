@@ -25,6 +25,8 @@ type acquisitionService interface {
 }
 
 type acquisitionProcessConfig struct {
+	// Captured at startup; pending reports were matched to this runtime.
+	CanaryReportDigest    string
 	WorkerLeaseGeneration func() uint64
 	Service               acquisitionService
 	FenceLost             <-chan struct{}
@@ -228,6 +230,7 @@ func (process *acquisitionControllerProcess) startServers(
 		response := handleLocalAdmin(ctx, config.Service, process.health, request)
 		if request.Method == localMethodProbe && response.Policy != nil && config.WorkerLeaseGeneration != nil {
 			response.Policy.WorkerLeaseGeneration = config.WorkerLeaseGeneration()
+			response.Policy.CanaryReportDigest = config.CanaryReportDigest
 		}
 		return response
 	}

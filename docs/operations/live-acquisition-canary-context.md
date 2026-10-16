@@ -15,7 +15,11 @@ while still `disabled`, read the exact pending runtime and intended policy:
 The root-only command reads the pinned manifest/overlay and pending D2 report,
 then queries the existing root-local admin probe. It requires a current
 `disabled` policy, an authenticated nonzero Worker lease generation, and exactly
-one overlay repository naming the selected scale set. It does not open another
+one overlay repository naming the selected scale set. The probe must also name
+that same pending report digest, captured when the process matched it to its
+runtime at startup. That digest commits its build, manifest, overlay, fleet
+counter, and report run; replacing files beside an older process cannot produce
+a plan from mixed inputs. It does not open another
 Worker session, read a credential, change policy, dispatch work, or consume
 input/evidence. An unready or unavailable session yields an error; a later
 read-only query is safe.

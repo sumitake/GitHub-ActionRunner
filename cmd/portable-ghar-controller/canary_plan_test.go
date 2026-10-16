@@ -15,7 +15,7 @@ func TestCanaryPlanUsesThePendingRuntimeAndAuthenticatedSessionCounter(t *testin
 	runtime.overlay = overlay
 	runtime.overlay.Target.ProfileID = report.Binding().ProfileID()
 	runtime.overlay.Manifest.Digest = report.Binding().RuntimeManifestDigest()
-	status := localPolicyStatus{Mode: controller.AcquisitionDisabled, Epoch: 2, Digest: strings.Repeat("a", 64), Capacity: 0, WorkerLeaseGeneration: 9}
+	status := localPolicyStatus{Mode: controller.AcquisitionDisabled, Epoch: 2, Digest: strings.Repeat("a", 64), Capacity: 0, WorkerLeaseGeneration: 9, CanaryReportDigest: report.Digest()}
 	plan, err := buildCanaryPlan(runtime, report, status, overlay.Repositories[0].ScaleSetName)
 	if err != nil || plan.LeaseGeneration != 9 || plan.FenceGeneration != report.Binding().FleetGeneration() || plan.ReportDigest != report.Digest() || len(plan.PolicyDigest) != 64 {
 		t.Fatal("canary plan did not bind actual inputs", plan, err)
@@ -44,7 +44,7 @@ func TestCanaryPlanRefusesRuntimeDriftNonpendingOrAmbiguousScaleSet(t *testing.T
 			overlay.Manifest.Digest = report.Binding().RuntimeManifestDigest()
 			runtime.overlay = overlay
 			scale := overlay.Repositories[0].ScaleSetName
-			status := localPolicyStatus{Mode: controller.AcquisitionDisabled, Epoch: 1, Digest: strings.Repeat("a", 64), WorkerLeaseGeneration: 9}
+			status := localPolicyStatus{Mode: controller.AcquisitionDisabled, Epoch: 1, Digest: strings.Repeat("a", 64), WorkerLeaseGeneration: 9, CanaryReportDigest: report.Digest()}
 			switch scenario {
 			case "runtime drift":
 				runtime.manifest.FleetGeneration++
@@ -60,10 +60,27 @@ func TestCanaryPlanRefusesRuntimeDriftNonpendingOrAmbiguousScaleSet(t *testing.T
 				if err != nil {
 					t.Fatal(err)
 				}
+				status.CanaryReportDigest = report.Digest()
 			}
 			if _, err := buildCanaryPlan(runtime, report, status, scale); err == nil {
 				t.Fatal("unbound or ambiguous plan accepted")
 			}
 		})
+	}
+}
+
+func TestCanaryPlanRequiresTheRunningControllersOriginalReport(t *testing.T) {
+	report := pendingCanaryFixture(t)
+	runtime := canaryRuntimeFixture(report)
+	overlay := templateOverlay(t)
+	overlay.Worker = &hostruntime.WorkerOverlay{FleetID: "example-fleet"}
+	overlay.Target.ProfileID = report.Binding().ProfileID()
+	overlay.Manifest.Digest = report.Binding().RuntimeManifestDigest()
+	runtime.overlay = overlay
+	for _, digest := range []string{"", strings.Repeat("c", 64)} {
+		status := localPolicyStatus{Mode: controller.AcquisitionDisabled, Epoch: 2, Digest: strings.Repeat("a", 64), WorkerLeaseGeneration: 9, CanaryReportDigest: digest}
+		if _, err := buildCanaryPlan(runtime, report, status, overlay.Repositories[0].ScaleSetName); err == nil {
+			t.Fatal("mixed the running session with a different on-disk runtime/report")
+		}
 	}
 }
