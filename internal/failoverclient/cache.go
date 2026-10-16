@@ -47,6 +47,8 @@ type LeaseCache struct {
 	entry            *leaseCacheEntry
 	mutationRevision uint64
 	poisoned         bool
+	// Cause of the last empty write; this bit never grants authority.
+	transitionClear bool
 }
 
 func (cache *LeaseCache) Snapshot() (*CachedLeaseSnapshot, error) {
@@ -119,6 +121,16 @@ func (cache *LeaseCache) invalidate() (uint64, error) {
 	return cache.compareAndSwapLocked(cache.mutationRevision, nil)
 }
 
+// invalidateForTransition uses the same revision/CAS fence as every other
+// cache write, but distinguishes a local policy handover from remote denial.
+func (cache *LeaseCache) invalidateForTransition() (uint64, error) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	revision, err := cache.compareAndSwapLocked(cache.mutationRevision, nil)
+	cache.transitionClear = err == nil
+	return revision, err
+}
+
 func (cache *LeaseCache) compareAndSwapLocked(
 	expectedRevision uint64,
 	prepared *CachedLease,
@@ -137,6 +149,7 @@ func (cache *LeaseCache) compareAndSwapLocked(
 
 	nextRevision := cache.mutationRevision + 1
 	if prepared == nil {
+		cache.transitionClear = false
 		cache.entry = nil
 		cache.mutationRevision = nextRevision
 		return nextRevision, nil
@@ -211,7 +224,13 @@ func validateCacheTransition(current, next CachedLease) error {
 }
 
 func (cache *LeaseCache) snapshotLocked() (*CachedLeaseSnapshot, error) {
-	if cache.poisoned || cache.entry == nil {
+	if cache.poisoned {
+		return nil, fmt.Errorf("%w: poisoned", ErrLeaseCache)
+	}
+	if cache.entry == nil {
+		if cache.transitionClear {
+			return nil, fmt.Errorf("%w: %w", ErrLeaseCache, errLeaseCacheAwaiting)
+		}
 		return nil, fmt.Errorf("%w: empty", ErrLeaseCache)
 	}
 	return &CachedLeaseSnapshot{
