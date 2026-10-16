@@ -15,6 +15,10 @@ Nothing in this section has shipped as a tagged release.
 
 ### Added
 
+- Wait for the first authenticated Worker lease after a policy transition by
+  skipping an empty-cache pre-effect poll. Invalid authority, failed guard
+  cleanup, issued-permit revalidation, and post-poll failures still fail closed.
+
 - Bounded durable case 15 observations, `canary-status` and `canary-seal`,
   completion of the original pending report, and a manual dedicated-repository
   canary template that runs every current proxy-sensitive tool. Evidence grants

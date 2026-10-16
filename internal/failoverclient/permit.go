@@ -299,6 +299,9 @@ func (provider CachedLeasePermitProvider) Acquire(
 		return nil, err
 	}
 	entry, err := provider.Cache.Snapshot()
+	if errors.Is(err, errLeaseCacheEmpty) {
+		return nil, fmt.Errorf("%w: %w: %w", errLeasePermitAuthority, controller.ErrAcquisitionLeasePending, err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: cache: %w", errLeasePermitAuthority, err)
 	}

@@ -1021,6 +1021,15 @@ func TestAcquireDurableFinishTimeoutStartsAfterExplicitResult(t *testing.T) {
 }
 
 func TestPollPermitFailureAbortsBeforeAcquireAndLeavesServiceReady(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		cause error
+	}{{"invalid", errors.New("permit unavailable")}, {"pending after poll", ErrAcquisitionLeasePending}} {
+		t.Run(testCase.name, func(t *testing.T) { assertPendingAcquireFailure(t, testCase.cause) })
+	}
+}
+
+func assertPendingAcquireFailure(t *testing.T, cause error) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 28, 22, 50, 0, 0, time.UTC)
@@ -1057,7 +1066,7 @@ func TestPollPermitFailureAbortsBeforeAcquireAndLeavesServiceReady(t *testing.T)
 		errors: map[string]error{
 			"acquire": errors.Join(
 				ErrAcquisitionPermitAuthority,
-				errors.New("permit unavailable"),
+				cause,
 			),
 		},
 	}

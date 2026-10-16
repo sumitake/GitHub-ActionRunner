@@ -211,8 +211,11 @@ func validateCacheTransition(current, next CachedLease) error {
 }
 
 func (cache *LeaseCache) snapshotLocked() (*CachedLeaseSnapshot, error) {
-	if cache.poisoned || cache.entry == nil {
-		return nil, fmt.Errorf("%w: empty", ErrLeaseCache)
+	if cache.poisoned {
+		return nil, fmt.Errorf("%w: poisoned", ErrLeaseCache)
+	}
+	if cache.entry == nil {
+		return nil, fmt.Errorf("%w: %w", ErrLeaseCache, errLeaseCacheEmpty)
 	}
 	return &CachedLeaseSnapshot{
 		CachedLease:      cloneCachedLease(cache.entry.lease),
