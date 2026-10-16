@@ -111,8 +111,10 @@ relying on it.
    actual GitHub transport" (around lines 1297-1316). The canary must: obtain
    one JIT through the governed acquisition path; get an in-run authenticated
    `githubscale.Compatibility()` result proving live `DisableUpdate=true`;
-   prove the JIT absent after listener parsing and from every job-visible
-   surface; complete one real listener transport and HTTPS checkout; run every
+   apply the operator's bounded-credential amendment (PR #120 is a prerequisite:
+   own-job `/proc` and tmpfs exposure is recorded without bytes; inherited JIT
+   and prohibited Docker, host, log, report, or cross-container leaks still
+   fail); complete one real listener transport and HTTPS checkout; run every
    current proxy-sensitive tool; prove deregistration and full reclamation;
    and bind all of it to the same manifest, image, profile, policy, network
    evidence, fleet generation, and report run. Task 11 forbids any alternate
@@ -131,22 +133,27 @@ relying on it.
    failed, or corrupt reports and pending or invalid results. The collector
    still must derive its result from durable observations tied to that same
    report; this low-level API does not collect evidence or run a canary.
-4. **Durable state as the only source.** `canary-seal` must read the
-   controller's store, not live GitHub or process memory. Identify which
-   store records prove each case 15 item (acquisition, JIT consumption,
-   deregistration, reclamation). Items the store cannot prove, such as tool
-   results inside the job, need the canary workflow to report them through a
-   channel the controller already records. If no such channel exists, raise
-   it with the operator before building one.
-5. **The JIT is likely visible to the job.** `runtimeenv.Listener` appends
-   the JIT to the listener's exec environment
-   (`internal/runtimeenv/environment.go`, around lines 52-56), which stays
-   readable in `/proc/<pid>/environ`. The canary workflow should probe for it
-   first. If present, the runner gate must hand the JIT over another way
-   before case 15 can pass.
+4. **Durable evidence collection and sealing.** The phase 7 collector retains
+   one bounded non-authorizing journal row before ordinary assignment
+   compaction. Existing acquisition batches, governed permits, listener release
+   effects, identity-checked job events, and cleanup/finalization supply the
+   lifecycle evidence. The fixed `canary-read` command reads the reviewed final
+   workflow step's private Unix socket while the lifecycle lock prevents job
+   teardown. It stores only closed observations, never raw logs or credentials.
+   `canary-seal` requires disabled, quiescent durable state and completes the
+   original pending report. See
+   [the evidence mapping](../../operations/live-acquisition-case15.md).
+5. **The JIT is bounded, not hidden from its own job.** The operator explicitly
+   selected bounded exposure. PR #120 updates the plan, Task 11, and trust
+   boundary consistently and adds the three fixed tmpfs configuration links the
+   pinned listener needs. Those source/image changes must be reviewed and
+   installed before D2. No JIT hand-over redesign is needed for own-job `/proc`
+   readability. Do not claim the job cannot observe its one-job credential.
 6. **The canary workflow** targets only the scale set's single label created
-   in D7. It lives in the canary repository, not here; this repository should
-   ship it as an example or template with placeholders.
+   in D7. It lives in the dedicated canary repository. This repository ships
+   [a reviewed-install template](../../../examples/live-acquisition/README.md),
+   not an enabled canary workflow. The operator records and verifies its exact
+   revision and dispatched run before sealing.
 
 Phase 7 changes the conformance package, so it needs a security review, as
 phase 6 did.
@@ -162,7 +169,10 @@ the fence binary's `handoff` command.
 
 Gaps found while preparing this handoff:
 
-- **No client sends Worker admin commands.** `portable-canary-start` and
+- **Worker admin client prerequisite.** PR #119 supplies the one-shot signed
+  `worker-canary` client and exact canonical command instructions. It must be
+  reviewed and installed before the runbook. The original gap was:
+  **No client sends Worker admin commands.** `portable-canary-start` and
   `portable-canary-stop` are signed `POST /v1/admin/command` requests
   (`docs/operations/worker-canary-authority.md`). The Go side has only the
   path constants (`internal/failoverclient/auth.go`, lines 18-19). Nothing
@@ -176,13 +186,13 @@ Gaps found while preparing this handoff:
   `run-acquisition` requires the fence to name the portable fleet at exactly
   the runtime manifest's `fleet_generation`
   (`production_acquisition.go`, around line 140), and the gate requires the
-  report's fleet generation to match the controller's. So if D5 reads
-  generation N, the manifest, the overlay, and the D2 input must all carry
-  N+1, and D2 must run with those values. [Verify: where the runtime
-  manifest's `fleet_generation` is set during release and overlay assembly.
-  It was not found in `release/` or `scripts/` during this check.] Write this
-  into the operator steps before D2 runs, because a mismatch means a wasted
-  D2 run (the run consumes its input).
+  report's fleet generation to match the controller's. If D5 reads N, the
+  approved runtime manifest and D2 input/report must carry N+1. The overlay
+  has no generation field: it binds the exact manifest path and digest.
+  PR #117 adds the missing explicit runtime-manifest assembly command and
+  operator instructions. Worker fenceGeneration must also be N+1; its
+  leaseGeneration is independent. Finish all manifest/image/overlay changes
+  before D2 consumes its input.
 - **D4.** The watchdog safe-stops any controller that is not `disabled`, so
   the runbook suspends it for the canary window and re-arms it after, as a
   journaled step.

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/buildinfo"
+	"github.com/sumitake/portable-ghar/internal/canary"
 	"github.com/sumitake/portable-ghar/internal/imageverify"
 	"github.com/sumitake/portable-ghar/internal/runtimeenv"
 	"golang.org/x/sys/unix"
@@ -34,6 +35,7 @@ const (
 type listenerExecutor func(*os.File, string, []string, []string) error
 
 type gateRuntime struct {
+	readCanary         func() (canary.Probe, error)
 	runnerRoot         string
 	diagnosticsPath    string
 	workRoot           string
@@ -57,6 +59,7 @@ type gateRuntime struct {
 
 func defaultGateRuntime() gateRuntime {
 	return gateRuntime{
+		readCanary:         defaultCanaryProbe,
 		runnerRoot:         defaultRunnerRoot,
 		diagnosticsPath:    defaultDiagnosticsPath,
 		workRoot:           defaultRunnerWork,
@@ -115,6 +118,23 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, runtime gateR
 		if err != nil ||
 			!validRunnerConformanceWire(wire) ||
 			writeRunnerConformance(stdout, wire) != nil {
+			return gateUnavailable(stderr, 1)
+		}
+		return 0
+	}
+	if args[0] == "canary-read" {
+		if requireEmptyInput(stdin) != nil || runtime.readCanary == nil {
+			return gateUnavailable(stderr, 1)
+		}
+		probe, err := runtime.readCanary()
+		if err != nil {
+			return gateUnavailable(stderr, 1)
+		}
+		document, err := canary.MarshalProbe(probe)
+		if err != nil {
+			return gateUnavailable(stderr, 1)
+		}
+		if _, err := fmt.Fprintf(stdout, "%s\n", document); err != nil {
 			return gateUnavailable(stderr, 1)
 		}
 		return 0

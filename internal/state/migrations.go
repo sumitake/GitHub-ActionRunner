@@ -11,11 +11,20 @@ import (
 )
 
 const (
-	currentSchemaVersion        = 3
+	currentSchemaVersion        = 4
 	sqliteAutoVacuumNone        = 0
 	sqliteAutoVacuumFull        = 1
 	sqliteAutoVacuumIncremental = 2
 )
+
+// schemaV4 adds one bounded, non-authorizing evidence singleton. It survives
+// assignment/receipt compaction and never participates in acquisition decisions.
+const schemaV4 = `
+CREATE TABLE canary_evidence (
+ id INTEGER PRIMARY KEY CHECK (id = 1),
+ document TEXT NOT NULL CHECK (length(CAST(document AS BLOB)) BETWEEN 1 AND 8192)
+);
+`
 
 // schemaV1 is the complete bootstrap schema. New databases select incremental
 // auto-vacuum before this table set is created. Existing version-zero
@@ -643,6 +652,8 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		return migrateV1ToV2(ctx, db)
 	case 2:
 		return migrateV2ToV3(ctx, db)
+	case 3:
+		return migrateV3ToV4(ctx, db)
 	default:
 		return fmt.Errorf("%w: unsupported schema version %d", ErrOfflineMigration, version)
 	}
@@ -672,6 +683,9 @@ func bootstrapCurrentWithHook(
 	}
 	if err := steps.execSchema("bootstrap-schema-v3", schemaV3); err != nil {
 		return fmt.Errorf("state: apply schema v3: %w", err)
+	}
+	if err := steps.execSchema("create-v4-schema", schemaV4); err != nil {
+		return fmt.Errorf("state: create v4 tables: %w", err)
 	}
 	if err := steps.exec("bootstrap-seed-acquisition", seedAcquisitionState, string(controller.AcquisitionDisabled)); err != nil {
 		return fmt.Errorf("state: seed acquisition state: %w", err)
@@ -879,6 +893,9 @@ func migrateV0ToCurrentWithHook(
 	if err := steps.execSchema("create-v3-schema", schemaV3); err != nil {
 		return fmt.Errorf("state: create v3 tables: %w", err)
 	}
+	if err := steps.execSchema("create-v4-schema", schemaV4); err != nil {
+		return fmt.Errorf("state: create v4 tables: %w", err)
+	}
 
 	for _, drop := range []struct {
 		label     string
@@ -932,6 +949,9 @@ func migrateV1ToV2WithHook(
 	if err := steps.execSchema("create-v3-schema", schemaV3); err != nil {
 		return fmt.Errorf("state: create v3 tables: %w", err)
 	}
+	if err := steps.execSchema("create-v4-schema", schemaV4); err != nil {
+		return fmt.Errorf("state: create v4 tables: %w", err)
+	}
 	if err := steps.exec(
 		"set-v2-user-version",
 		fmt.Sprintf(`PRAGMA user_version=%d`, currentSchemaVersion),
@@ -963,6 +983,9 @@ func migrateV2ToV3WithHook(
 	if err := steps.execSchema("create-v3-schema", schemaV3); err != nil {
 		return fmt.Errorf("state: create v3 tables: %w", err)
 	}
+	if err := steps.execSchema("create-v4-schema", schemaV4); err != nil {
+		return fmt.Errorf("state: create v4 tables: %w", err)
+	}
 	if err := steps.exec(
 		"set-v3-user-version",
 		fmt.Sprintf(`PRAGMA user_version=%d`, currentSchemaVersion),
@@ -973,4 +996,20 @@ func migrateV2ToV3WithHook(
 		return fmt.Errorf("state: commit v2 migration: %w", err)
 	}
 	return nil
+}
+
+func migrateV3ToV4(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	steps := migrationStepper{ctx: ctx, tx: tx}
+	if err := steps.execSchema("create-v4-schema", schemaV4); err != nil {
+		return err
+	}
+	if err := steps.exec("set-v4-user-version", fmt.Sprintf(`PRAGMA user_version=%d`, currentSchemaVersion)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

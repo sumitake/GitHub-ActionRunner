@@ -100,6 +100,7 @@ type JailOrchestrator interface {
 }
 
 type service struct {
+	canary   CanaryObserver
 	state    DurableState
 	sessions SessionProvider
 	jit      controller.JITAuthorizer
@@ -136,12 +137,21 @@ func NewService(
 	jails JailOrchestrator,
 	recovery hostruntime.ManagedRecovery,
 	now func() time.Time,
+	observers ...CanaryObserver,
 ) (Runtime, error) {
 	if durable == nil || sessions == nil || jit == nil || builder == nil ||
 		jails == nil || recovery == nil || now == nil {
 		return nil, fmt.Errorf("%w: dependencies required", ErrLifecycle)
 	}
+	if len(observers) > 1 || (len(observers) == 1 && observers[0] == nil) {
+		return nil, ErrLifecycle
+	}
+	var observer CanaryObserver
+	if len(observers) == 1 {
+		observer = observers[0]
+	}
 	return &service{
+		canary:   observer,
 		state:    durable,
 		sessions: sessions,
 		jit:      jit,
@@ -267,6 +277,11 @@ func (s *service) releaseLocked(
 		RunnerName: entry.assignment.Slot.OpaqueName,
 		WorkFolder: runnerWorkFolder,
 	}
+	if s.canary != nil {
+		if err := s.canary.BeforeJIT(ctx, key, session.Compatibility()); err != nil {
+			return fmt.Errorf("%w: record canary JIT intent", ErrReleaseFailed)
+		}
+	}
 	authorization, err := s.jit.GenerateJITAuthorized(
 		ctx,
 		controller.JITAuthorizationRequest{
@@ -313,6 +328,15 @@ func (s *service) releaseLocked(
 		return fmt.Errorf("%w: generated runner identity or permit binding", ErrReleaseFailed)
 	}
 
+	if s.canary != nil {
+		if err := s.canary.AuthorizedJIT(ctx, key, binding); err != nil {
+			if cleanupErr := removeRunnerAndProve(ctx, session, config.Runner); cleanupErr != nil {
+				_ = s.state.MarkAmbiguous(ctx, key, "upstream-cleanup-uncertain")
+				return ErrReleaseAmbiguous
+			}
+			return fmt.Errorf("%w: record governed canary JIT", ErrReleaseFailed)
+		}
+	}
 	live, releaseErr := s.jails.Release(
 		permit.Context(),
 		entry.jail,
@@ -1070,13 +1094,17 @@ func (s *service) observeRunnerLocked(
 			return cleanupErr
 		}
 	}
-	return s.state.ApplyRunnerObservation(ctx, key, state.RunnerObservation{
-		UpstreamRunnerID:  event.RunnerID(),
-		BoundRequestID:    job.RunnerRequestID,
+	if err := s.state.ApplyRunnerObservation(ctx, key, state.RunnerObservation{
+		UpstreamRunnerID: event.RunnerID(), BoundRequestID: job.RunnerRequestID,
 		RunnerContainerID: current.Slot.RunnerContainerID,
-		Finished:          event.Kind() == githubscale.EventCompleted,
-		ObservedAt:        observedAt,
-	})
+		Finished:          event.Kind() == githubscale.EventCompleted, ObservedAt: observedAt,
+	}); err != nil {
+		return err
+	}
+	if s.canary != nil && event.Kind() == githubscale.EventCompleted {
+		return s.canary.Completed(ctx, key, event.Result())
+	}
+	return nil
 }
 
 func (s *service) listenerBindingCurrent(
@@ -1157,6 +1185,11 @@ func (s *service) destroyLocked(
 		if err := s.cleanupBothSides(ctx, record); err != nil {
 			_ = s.state.MarkAmbiguous(ctx, key, destroyReason(reason))
 			return err
+		}
+		if s.canary != nil {
+			if err := s.canary.Reclaimed(ctx, key); err != nil {
+				return fmt.Errorf("%w: record canary cleanup", ErrCleanupUnproven)
+			}
 		}
 		if err := s.state.Advance(ctx, key, controller.StateDestroyed); err != nil {
 			return fmt.Errorf("%w: finish terminal checkpoint", ErrLifecycle)
@@ -1341,6 +1374,15 @@ func (s *service) verifyRunning(
 	ctx context.Context,
 	record state.RecoverableAssignment,
 ) error {
+	if s.canary != nil {
+		recovery, err := s.recoveryForRecord(ctx, record)
+		if err != nil {
+			return err
+		}
+		if err := s.canary.Collect(ctx, record.Key, recovery); err != nil {
+			return err
+		}
+	}
 	_, upstream, found, _, runtime, err := s.readBothSides(ctx, record)
 	if err != nil {
 		return err
@@ -1438,6 +1480,11 @@ func (s *service) cleanupBothSides(
 			}
 		} else if upstream != (githubscale.RunnerRef{}) {
 			return ErrInvalidState
+		} else if record.Slot.UpstreamRunnerID > 0 {
+			byID, present, err := session.GetRunner(ctx, record.Slot.UpstreamRunnerID)
+			if err != nil || present || byID != (githubscale.RunnerRef{}) {
+				return ErrCleanupUnproven
+			}
 		}
 	}
 

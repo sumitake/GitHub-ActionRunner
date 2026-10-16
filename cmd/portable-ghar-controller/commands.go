@@ -35,6 +35,8 @@ type controllerOwnershipLease interface {
 type controllerOpener func(context.Context, string, string, controllerOwnershipLease) (controllerProcess, error)
 
 type commandDependencies struct {
+	CanaryStatus     func(context.Context, string) (canaryStatusReceipt, error)
+	CanarySeal       func(context.Context, string) (canarySealReceipt, error)
 	Clock            func() time.Time
 	IsRoot           func() bool
 	AcquireOwnership func(string) (controllerOwnershipLease, error)
@@ -52,6 +54,8 @@ type commandDependencies struct {
 
 func productionCommandDependencies(clock func() time.Time) commandDependencies {
 	return commandDependencies{
+		CanaryStatus:     productionCanaryStatus,
+		CanarySeal:       productionCanarySeal,
 		Clock:            clock,
 		IsRoot:           func() bool { return os.Geteuid() == 0 },
 		AcquireOwnership: acquireFileOwnership,
@@ -197,6 +201,8 @@ func runWithDependencies(
 		)
 	case "acquisition":
 		return executeAcquisition(ctx, args[1:], stdout, stderr, deps)
+	case "canary-status", "canary-seal":
+		return executeCanaryEvidence(ctx, args[1:], stdout, stderr, deps, args[0] == "canary-seal")
 	case "status":
 		return executeStatus(ctx, args[1:], stdout, stderr, deps)
 	case "external-probe":

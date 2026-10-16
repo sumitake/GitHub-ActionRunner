@@ -389,6 +389,7 @@ func (f *fakeSessionProvider) Session(
 }
 
 type fakeLifecycleSession struct {
+	compatibility githubscale.ScaleSetCompatibilityReport
 	mu            sync.Mutex
 	runners       map[string]githubscale.RunnerRef
 	nextRunnerID  int64
@@ -401,7 +402,7 @@ type fakeLifecycleSession struct {
 }
 
 func (f *fakeLifecycleSession) Compatibility() githubscale.ScaleSetCompatibilityReport {
-	return githubscale.ScaleSetCompatibilityReport{}
+	return f.compatibility
 }
 func (f *fakeLifecycleSession) Poll(context.Context, int, int) (githubscale.Batch, error) {
 	return githubscale.Batch{}, errors.New("unexpected Poll")
