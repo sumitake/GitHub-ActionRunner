@@ -405,6 +405,38 @@ class H8PathGrammar(unittest.TestCase):
     def test_nas_share_path(self):
         self.assertIn("PATH001", rules_of(line("/share/CACHEDEV1_DATA/foo", "notes.md")))
 
+    def test_unix_shared_data_components_are_not_nas_roots(self):
+        for text in (
+            "/usr/share/portable-ghar",
+            "/usr/local/share/portable-ghar",
+            "RUN install -d -m 0755 /usr/share/portable-ghar",
+            "test -r /usr/share/portable-ghar/dpkg-manifest.tsv",
+        ):
+            with self.subTest(text=text):
+                self.assertNotIn("PATH001", rules_of(line(text)))
+
+    def test_nas_paths_remain_detected_in_attached_and_dot_forms(self):
+        for text in (
+            "/share/CACHEDEV1_DATA/foo",
+            "//share/CACHEDEV1_DATA/foo",
+            "/./share/CACHEDEV1_DATA/foo",
+            "/opt/../share/CACHEDEV1_DATA/foo",
+            "-I/share/CACHEDEV1_DATA/include",
+            "-v/share/CACHEDEV1_DATA/foo:/data",
+            "--root=/share/CACHEDEV1_DATA/foo",
+            '"/share/CACHEDEV1_DATA/foo"',
+            ">/share/CACHEDEV1_DATA/foo",
+            "/usr/share/../../share/CACHEDEV1_DATA/foo",
+            "/usr/share/public /share/CACHEDEV1_DATA/foo",
+            "/usr/local/share/public /share/CACHEDEV1_DATA/foo",
+        ):
+            with self.subTest(text=text):
+                self.assertIn("PATH001", rules_of(line(text)))
+
+    def test_encoded_nas_root_still_detected(self):
+        text = percent_encode_each_char("/share/CACHEDEV1_DATA/foo")
+        self.assertIn("PATH001", rules_of(scan(text)))
+
     def test_home_env_var(self):
         self.assertIn("PATH001", rules_of(line("cd $HOME/project", "notes.md")))
 
@@ -517,6 +549,29 @@ class H10History(unittest.TestCase):
             any(re.fullmatch(r"secret[.]txt@[0-9a-f]{40}", p) for p in paths),
             paths,
         )
+
+    def test_deleted_dockerfile_distinguishes_shared_data_from_nas(self):
+        dockerfile = self.repo / "images" / "runner" / "Dockerfile"
+        dockerfile.parent.mkdir(parents=True)
+        dockerfile.write_text(
+            "RUN test -r /usr/share/portable-ghar/dpkg-manifest.tsv\n"
+            "RUN test -r /share/CACHEDEV1_DATA/private\n"
+        )
+        for args in (
+            ["add", "images/runner/Dockerfile"],
+            ["commit", "-q", "-m", "add path classification fixture"],
+            ["rm", "-q", "images/runner/Dockerfile"],
+            ["commit", "-q", "-m", "remove path classification fixture"],
+        ):
+            subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
+        findings = [
+            finding
+            for finding in sp.scan_history(self.repo)
+            if finding.path.startswith("images/runner/Dockerfile@")
+            and finding.rule == "PATH001"
+        ]
+        self.assertEqual([2], [finding.line for finding in findings])
+        self.assertRegex(findings[0].path, r"^images/runner/Dockerfile@[0-9a-f]{40}$")
 
     def test_historical_policy_uses_original_codeowners_path(self):
         findings = sp.scan_history(self.repo)
