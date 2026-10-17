@@ -172,6 +172,87 @@ func TestRunPrivateOverlayAssemblyRejectsTrailingTemplateData(t *testing.T) {
 	}
 }
 
+func TestPrivateOverlayTemplateRejectsAmbiguousKeys(t *testing.T) {
+	for name, document := range map[string]string{
+		"reported root alias": `{"paths":{"state_root":"/visible"},"Paths":{"State_Root":"/hidden"}}`,
+		"root duplicate":      `{"paths":{"state_root":"/visible"},"paths":{"state_root":"/hidden"}}`,
+		"nested alias":        `{"paths":{"state_root":"/visible","State_Root":"/hidden"}}`,
+		"reverse alias":       `{"paths":{"State_Root":"/hidden","state_root":"/visible"}}`,
+		"nested duplicate":    `{"paths":{"state_root":"/visible","state_root":"/hidden"}}`,
+		"escaped duplicate":   `{"paths":{"state_root":"/visible","state_\u0072oot":"/hidden"}}`,
+		"unicode alias":       `{"paths":{"ſtate_root":"/hidden"}}`,
+		"array element":       `{"repositories":[{"alias":"first"},{"alias":"visible","Alias":"hidden"}]}`,
+		"array duplicate":     `{"repositories":[{"alias":"visible","alias":"hidden"}]}`,
+		"nested secret ref":   `{"secrets":[{"name":"synthetic","ref":{"source":"file","Source":"other"}}]}`,
+		"optional section":    `{"worker":{"fleet_id":"visible","Fleet_ID":"hidden"}}`,
+		"duplicate null":      `{"worker":null,"worker":null}`,
+		"nested unknown":      `{"paths":{"unknown":"/hidden"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(privateOverlayTestRoot(t), "template.json")
+			privateOverlayTestFile(t, path, []byte(document))
+			got, err := loadPrivateOverlayTemplate(path)
+			if !errors.Is(err, ErrHostCommandFailed) {
+				t.Fatalf("ambiguous template accepted: state_root=%q, error=%v", got.Paths.StateRoot, err)
+			}
+		})
+	}
+}
+
+func TestRunPrivateOverlayAssemblyRejectsAmbiguousTemplateBeforeOutput(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		template, manifest, output := assemblyFixture(t, nil)
+		document, err := os.ReadFile(template)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// This duplicate keeps a valid value, so semantic overlay validation
+		// cannot accidentally stand in for rejection of the ambiguous name.
+		document = []byte(strings.Replace(string(document), `"state_root":"/opt/portable/state"`, `"state_root":"/opt/portable/state","State_Root":"/opt/portable/state"`, 1))
+		privateOverlayTestFile(t, template, document)
+		if existing {
+			privateOverlayTestFile(t, output, []byte("existing-output"))
+		}
+		receipt, err := RunPrivateOverlayAssembly(assemblyArgs(template, manifest, output))
+		if !errors.Is(err, ErrHostCommandFailed) || receipt != (PrivateOverlayAssemblyReceipt{}) {
+			t.Fatalf("ambiguous assembly accepted (existing=%v): %+v, %v", existing, receipt, err)
+		}
+		if existing {
+			if got, err := os.ReadFile(output); err != nil || string(got) != "existing-output" {
+				t.Fatal("rejected template changed existing output")
+			}
+		} else if _, err := os.Stat(output); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("rejected template created output")
+		}
+		entries, err := os.ReadDir(filepath.Dir(output))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if strings.Contains(entry.Name(), ".tmp-") {
+				t.Fatal("rejected template staged output")
+			}
+		}
+	}
+}
+
+func TestPrivateOverlayTemplatePreservesUnambiguousNestedValues(t *testing.T) {
+	path := filepath.Join(privateOverlayTestRoot(t), "template.json")
+	privateOverlayTestFile(t, path, []byte(`{
+		"worker": null,
+		"target": null,
+		"paths": {"state_\u0072oot": "/visible"},
+		"repositories": [{"alias":"first"}, {"alias":"second"}],
+		"secrets": [{"name":"synthetic","ref":{"ref":"placeholder","source":"file"}}],
+		"allowed_actions": ["verify"],
+		"legacy": {"image_digests": null}
+	}`))
+	got, err := loadPrivateOverlayTemplate(path)
+	if err != nil || got.Paths.StateRoot != "/visible" || got.Worker != nil || len(got.Repositories) != 2 || got.Repositories[1].Alias != "second" || got.Secrets[0].Ref.Ref != "placeholder" {
+		t.Fatalf("unambiguous template changed: %+v, %v", got, err)
+	}
+}
+
 func TestRunPrivateOverlayAssemblyAcceptsOnlyExactGrammar(t *testing.T) {
 	t.Parallel()
 	valid := assemblyArgs("/p/template.json", "/p/manifest.json", "/p/out.json")

@@ -7,7 +7,6 @@ import (
 	"io"
 	"reflect"
 	"strconv"
-	"strings"
 
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
 )
@@ -42,7 +41,7 @@ func RunRuntimeManifestAssembly(args []string) (RuntimeManifestAssemblyReceipt, 
 	if err != nil {
 		return RuntimeManifestAssemblyReceipt{}, ErrHostCommandFailed
 	}
-	if err := validateRuntimeManifestTemplateKeys(document); err != nil {
+	if err := validateTemplateKeys(document, reflect.TypeFor[hostruntime.RuntimeManifest]()); err != nil {
 		return RuntimeManifestAssemblyReceipt{}, ErrHostCommandFailed
 	}
 	decoder := json.NewDecoder(bytes.NewReader(document))
@@ -73,36 +72,4 @@ func RunRuntimeManifestAssembly(args []string) (RuntimeManifestAssemblyReceipt, 
 		return RuntimeManifestAssemblyReceipt{}, ErrHostCommandFailed
 	}
 	return RuntimeManifestAssemblyReceipt{SchemaVersion: 1, RuntimeManifestDigest: digest, FleetGeneration: generation}, nil
-}
-
-// Templates allow noncanonical formatting, but not encoding/json's duplicate
-// keys or case-insensitive aliases. Check decoded names before typed decoding.
-func validateRuntimeManifestTemplateKeys(document []byte) error {
-	manifestType := reflect.TypeFor[hostruntime.RuntimeManifest]()
-	keys := make(map[string]bool, manifestType.NumField())
-	for index := range manifestType.NumField() {
-		key, _, _ := strings.Cut(manifestType.Field(index).Tag.Get("json"), ",")
-		keys[key] = false
-	}
-	decoder := json.NewDecoder(bytes.NewReader(document))
-	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
-		return ErrHostCommandFailed
-	}
-	for decoder.More() {
-		token, err := decoder.Token()
-		key, ok := token.(string)
-		seen, known := keys[key]
-		if err != nil || !ok || !known || seen {
-			return ErrHostCommandFailed
-		}
-		keys[key] = true
-		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
-			return ErrHostCommandFailed
-		}
-	}
-	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
-		return ErrHostCommandFailed
-	}
-	return nil
 }
