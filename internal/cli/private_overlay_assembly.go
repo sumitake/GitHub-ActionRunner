@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 
 	"github.com/sumitake/portable-ghar/internal/hostruntime"
 )
@@ -103,6 +104,9 @@ func sameExistingFile(a string, b string) bool {
 func loadPrivateOverlayTemplate(path string) (hostruntime.PrivateOverlay, error) {
 	document, err := readPrivateOverlayDocument(path, maxPrivateOverlayBytes)
 	if err != nil {
+		return hostruntime.PrivateOverlay{}, ErrHostCommandFailed
+	}
+	if err := validateTemplateKeys(document, reflect.TypeFor[hostruntime.PrivateOverlay]()); err != nil {
 		return hostruntime.PrivateOverlay{}, ErrHostCommandFailed
 	}
 	decoder := json.NewDecoder(bytes.NewReader(document))

@@ -492,7 +492,9 @@ PATH_RULES = [
     re.compile(r"[A-Za-z]:\\Users\\[^\\\s\"']+"),
     re.compile(r"\\\\[^\\\s\"']+\\[^\\\s\"']+"),  # UNC
     re.compile(r"\bfile://[^\s\"']+"),
-    re.compile(r"/share/[A-Za-z0-9_.-]+"),
+    # Standard Unix shared-data components are not the NAS root. Keep other
+    # prefixes detectable, including attached flags and dot/repeated slashes.
+    re.compile(r"(?<!/usr)(?<!/usr/local)/share/[A-Za-z0-9_.-]+"),
 ]
 
 

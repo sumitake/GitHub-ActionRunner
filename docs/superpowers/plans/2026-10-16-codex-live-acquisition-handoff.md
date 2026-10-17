@@ -178,13 +178,17 @@ Gaps found while preparing this handoff:
   `run-acquisition` requires the fence to name the portable fleet at exactly
   the runtime manifest's `fleet_generation`
   (`production_acquisition.go`, around line 140), and the gate requires the
-  report's fleet generation to match the controller's. So if D5 reads
-  generation N, the manifest, the overlay, and the D2 input must all carry
-  N+1, and D2 must run with those values. [Verify: where the runtime
-  manifest's `fleet_generation` is set during release and overlay assembly.
-  It was not found in `release/` or `scripts/` during this check.] Write this
-  into the operator steps before D2 runs, because a mismatch means a wasted
-  D2 run (the run consumes its input).
+  report's fleet generation to match the controller's. If D5 reads generation
+  N, the manifest and the D2 input must carry N+1. The overlay has no generation
+  field: it binds the exact manifest path and digest. Release assembly writes
+  `runtime-release.json`, a different document; it does not assign the host
+  manifest's generation (`scripts/release/rehearse-runtime.sh`,
+  `write_authority_files`). `assemble-private-overlay` loads an existing host
+  manifest without changing it (`internal/cli/private_overlay_assembly.go`).
+  `assemble-runtime-manifest` serializes an operator-approved identity
+  template for an explicit generation using the existing canonical serializer;
+  it does not verify release provenance. The operator steps give the assembly
+  and binding commands before D2, because a mismatch wastes the consumed input.
 - **D4.** The watchdog safe-stops any controller that is not `disabled`, so
   the runbook suspends it for the canary window and re-arms it after, as a
   journaled step.
