@@ -125,6 +125,12 @@ an operator step.
 end the controller process. Decision: accept fail-stop for the canary.
 Implement real hosted routing only before `enabled` mode.
 
+The production composition enforces this limit even after case 15 passes:
+`enabled` is refused while hosted/replay adapters remain unavailable. The
+existing report gate still verifies every canary's exact build, host profile,
+fleet generation and case results. A conformance pass alone does not lift the
+production restriction.
+
 **D7. GitHub prerequisites.** The scale set must already exist in the default
 runner group with a single-name label and `DisableUpdate=true`; no code
 creates it (`internal/githubscale/client.go:397-413,475-489`). The canary
