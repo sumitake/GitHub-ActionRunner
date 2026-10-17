@@ -122,6 +122,40 @@ func TestRunPrivateOverlayAssemblyWritesDeployableOverlay(t *testing.T) {
 	}
 }
 
+func TestRunPrivateOverlayValidationAcceptsAssembledProfiles(t *testing.T) {
+	t.Parallel()
+
+	for _, profile := range []hostruntime.HostProfile{
+		hostruntime.HostProfileStrictLinux,
+		hostruntime.HostProfileQTSCaplessRoot,
+	} {
+		t.Run(string(profile), func(t *testing.T) {
+			t.Parallel()
+			templatePath, manifestPath, outputPath := assemblyFixture(t, func(template map[string]any) {
+				target := template["target"].(map[string]any)
+				target["profile_id"] = string(profile)
+				target["degraded_acknowledged"] = profile == hostruntime.HostProfileQTSCaplessRoot
+			})
+			assembled, err := RunPrivateOverlayAssembly(assemblyArgs(templatePath, manifestPath, outputPath))
+			if err != nil {
+				t.Fatalf("assemble %s: %v", profile, err)
+			}
+			receipt, err := RunPrivateOverlayValidation(
+				[]string{"validate-private-overlay", "--private", outputPath},
+				LoadPrivateOverlayFile,
+			)
+			if err != nil {
+				t.Fatalf("validate assembled %s: %v", profile, err)
+			}
+			if receipt.ProfileID != string(profile) ||
+				receipt.PrivateOverlayRevision != assembled.PrivateOverlayRevision ||
+				receipt.Mode != "disabled-observer" {
+				t.Fatalf("receipt does not match assembled profile: %+v", receipt)
+			}
+		})
+	}
+}
+
 func TestRunPrivateOverlayAssemblyRejectsBadTemplatesWithoutOutput(t *testing.T) {
 	t.Parallel()
 	tests := map[string]func(map[string]any){
