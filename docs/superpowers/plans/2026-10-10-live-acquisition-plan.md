@@ -125,6 +125,16 @@ an operator step.
 end the controller process. Decision: accept fail-stop for the canary.
 Implement real hosted routing only before `enabled` mode.
 
+Operator amendment (2026-10-17): the bounded first pilot explicitly accepts
+fail-stop with operator-led job recovery. An unverifiable offer may leave a
+job queued or stalled until the operator resolves it. Recovery does not
+automatically cancel, rerun, dispatch, or claim that a job migrated. Any
+cancellation or replacement requires the exact affected run/jobs and
+dependents to be authorized. This accepts the pilot design only, not a live
+canary, target access, routing change, or production cutover. Bind and qualify
+the actual first candidate before execution; the historical QTS steps below
+are not proof that another host supports that profile.
+
 The production composition enforces this limit even after case 15 passes:
 `enabled` is refused while hosted/replay adapters remain unavailable. The
 existing report gate still verifies every canary's exact build, host profile,
