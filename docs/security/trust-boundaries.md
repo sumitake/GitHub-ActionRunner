@@ -60,7 +60,15 @@ named volumes, and Docker config/secret objects are all prohibited as JIT
 transport. The value transits a private, per-runner transport and is only
 ever placed in the listener process's environment immediately before that
 listener starts; the pinned upstream listener removes it from its own
-process environment before any job process is created.
+process environment before any job process is created. On Linux, removing
+the variable does not erase the original exec-environment bytes exposed
+through `/proc`. A job may read its own one-job JIT there. The pinned listener
+also writes decoded `.runner`, `.credentials`, and `.credentials_rsaparams`
+configuration; fixed read-only image links place these files in that runner's
+`/runner` tmpfs. The code tree stays read-only. These files and the original
+environment remain inside the same disposable container and are destroyed
+with it. The live acquisition plan explicitly adopts this bounded-exposure
+model for case 15; no claim of secrecy from that job is made.
 
 ## Docker-host-equivalent authority
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/sumitake/portable-ghar/internal/config"
 	"github.com/sumitake/portable-ghar/internal/controller"
+	"github.com/sumitake/portable-ghar/internal/failoverclient"
 	"github.com/sumitake/portable-ghar/internal/state"
 )
 
@@ -47,6 +48,7 @@ type commandDependencies struct {
 	OpenAcquisitionController controllerOpener
 	DialAdmin                 func(context.Context) (controller.LiveAdmin, io.Closer, error)
 	GitHub                    githubAccess
+	WorkerCanary              func(context.Context, string, string) (failoverclient.CanaryAdminReceipt, error)
 	AdminTimeout              time.Duration
 	DrainTimeout              time.Duration
 	StatusReadTimeout         time.Duration
@@ -88,6 +90,7 @@ func productionCommandDependencies(clock func() time.Time) commandDependencies {
 		},
 		DialAdmin:         dialProductionAdmin,
 		GitHub:            productionGitHubAccess(),
+		WorkerCanary:      productionWorkerCanary,
 		AdminTimeout:      10 * time.Second,
 		DrainTimeout:      10 * time.Minute,
 		StatusReadTimeout: 10 * time.Second,
@@ -121,6 +124,8 @@ func runWithDependencies(
 		return commandUsage(stderr)
 	}
 	switch args[0] {
+	case "worker-canary":
+		return executeWorkerCanary(ctx, args[1:], stdout, stderr, deps)
 	case "run":
 		return executeRun(ctx, "run", deps.OpenController, args[1:], stderr, deps)
 	case "run-acquisition":
