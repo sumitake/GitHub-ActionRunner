@@ -100,7 +100,7 @@ export async function credentialObservation({
         for (const [key, item] of Object.entries(value)) {
           if (
             typeof item === "string" &&
-            /^(d|dp|dq|inverseq|p|q|token|password|secret|privatekey)$/i.test(
+            /^(d|dp|dq|inverseq|p|q)$|(?:token|password|secret|privatekey)$/i.test(
               key,
             ) &&
             item.length

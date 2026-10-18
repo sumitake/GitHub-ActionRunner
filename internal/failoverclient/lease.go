@@ -191,3 +191,7 @@ func validateAliasSet(aliases []string) error {
 	}
 	return nil
 }
+
+// ValidWorkerAlias is the shared V1 wire constraint for repository aliases and
+// scale-set names. Local configuration scalars may be broader than this wire.
+func ValidWorkerAlias(value string) bool { return aliasPattern.MatchString(value) }

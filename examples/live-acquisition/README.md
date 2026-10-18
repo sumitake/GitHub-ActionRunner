@@ -25,8 +25,13 @@ Each named action really runs. Go and Node execute the tiny fixtures. SBOM,
 Trivy, CodeQL, dependency review, Gitleaks, artifact upload, and attestation use
 only synthetic inputs. The final step requires successful step outcomes and
 reports no raw tool output. The only uploaded fixture is `fixture/index.js`.
-GitHub's normal action logs still exist; keep the canary repository and its
+Gitleaks diagnostic artifact uploads are explicitly disabled, including on a
+failed scan. GitHub's normal action logs still exist; keep the canary repository and its
 operator outputs private as appropriate, and never copy real logs here.
+
+Review the approved runner memory and tmpfs limits against all tool downloads
+and caches, including CodeQL, before assembling the final D2 input. These tools
+use the bounded job filesystems; the workflow does not widen those limits.
 
 Dispatch inputs are the exact pending report digest and the approved parent
 revision. The workflow reports `GITHUB_RUN_ID` and `GITHUB_SHA`; compare both to

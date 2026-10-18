@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,18 @@ type canaryObserverFixture struct {
 	fixture                                              lifecycleFixture
 	calls                                                []string
 	beforeErr, authorizedErr, completedErr, reclaimedErr error
+}
+
+func (o *canaryObserverFixture) ReportDigest() string { return strings.Repeat("a", 64) }
+
+func TestCanaryCompletionTupleReachesDurableBoundaryBeforeCallback(t *testing.T) {
+	f := newLifecycleFixture(t)
+	observer := installCanaryObserver(t, f)
+	releaseAndCompleteCanary(t, f)
+	completion := f.state.lastObservation.CanaryCompletion
+	if completion == nil || completion.ReportDigest != observer.ReportDigest() || completion.Result != "success" || !f.state.lastObservation.Finished {
+		t.Fatal("completed event was checkpointed without its bound canary result")
+	}
 }
 
 func (o *canaryObserverFixture) BeforeJIT(_ context.Context, key controller.AssignmentKey, compatibility githubscale.ScaleSetCompatibilityReport) error {

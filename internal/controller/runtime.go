@@ -296,16 +296,10 @@ func (s *Service) SetAcquisition(
 		next.MaxCapacity = 0
 		next.EligibleScaleSets = nil
 	case AcquisitionCanaryOnly:
-		if !validAcquisitionScalar(
-			change.EligibleScaleSet,
-			maxAcquisitionScaleSetBytes,
-		) {
-			return PolicyStatus{}, ErrAdminConflict
+		next, err = CanaryPolicy(s.enabledTemplate, change.EligibleScaleSet)
+		if err != nil {
+			return PolicyStatus{}, err
 		}
-		next = cloneAcquisitionPolicy(s.enabledTemplate)
-		next.Mode = AcquisitionCanaryOnly
-		next.MaxCapacity = 1
-		next.EligibleScaleSets = []string{change.EligibleScaleSet}
 	case AcquisitionEnabled:
 		if change.EligibleScaleSet != "" {
 			return PolicyStatus{}, ErrAdminConflict

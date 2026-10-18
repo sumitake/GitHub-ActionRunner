@@ -15,6 +15,7 @@ import (
 
 	"github.com/sumitake/portable-ghar/internal/config"
 	"github.com/sumitake/portable-ghar/internal/controller"
+	"github.com/sumitake/portable-ghar/internal/failoverclient"
 	"github.com/sumitake/portable-ghar/internal/state"
 )
 
@@ -35,6 +36,7 @@ type controllerOwnershipLease interface {
 type controllerOpener func(context.Context, string, string, controllerOwnershipLease) (controllerProcess, error)
 
 type commandDependencies struct {
+	CanaryPlan       func(context.Context, string, string) (canaryPlanReceipt, error)
 	CanaryStatus     func(context.Context, string) (canaryStatusReceipt, error)
 	CanarySeal       func(context.Context, string) (canarySealReceipt, error)
 	Clock            func() time.Time
@@ -47,6 +49,7 @@ type commandDependencies struct {
 	OpenAcquisitionController controllerOpener
 	DialAdmin                 func(context.Context) (controller.LiveAdmin, io.Closer, error)
 	GitHub                    githubAccess
+	WorkerCanary              func(context.Context, string, string) (failoverclient.CanaryAdminReceipt, error)
 	AdminTimeout              time.Duration
 	DrainTimeout              time.Duration
 	StatusReadTimeout         time.Duration
@@ -54,6 +57,7 @@ type commandDependencies struct {
 
 func productionCommandDependencies(clock func() time.Time) commandDependencies {
 	return commandDependencies{
+		CanaryPlan:       productionCanaryPlan,
 		CanaryStatus:     productionCanaryStatus,
 		CanarySeal:       productionCanarySeal,
 		Clock:            clock,
@@ -88,6 +92,7 @@ func productionCommandDependencies(clock func() time.Time) commandDependencies {
 		},
 		DialAdmin:         dialProductionAdmin,
 		GitHub:            productionGitHubAccess(),
+		WorkerCanary:      productionWorkerCanary,
 		AdminTimeout:      10 * time.Second,
 		DrainTimeout:      10 * time.Minute,
 		StatusReadTimeout: 10 * time.Second,
@@ -121,6 +126,8 @@ func runWithDependencies(
 		return commandUsage(stderr)
 	}
 	switch args[0] {
+	case "worker-canary":
+		return executeWorkerCanary(ctx, args[1:], stdout, stderr, deps)
 	case "run":
 		return executeRun(ctx, "run", deps.OpenController, args[1:], stderr, deps)
 	case "run-acquisition":
@@ -201,6 +208,8 @@ func runWithDependencies(
 		)
 	case "acquisition":
 		return executeAcquisition(ctx, args[1:], stdout, stderr, deps)
+	case "canary-plan":
+		return executeCanaryPlan(ctx, args[1:], stdout, stderr, deps)
 	case "canary-status", "canary-seal":
 		return executeCanaryEvidence(ctx, args[1:], stdout, stderr, deps, args[0] == "canary-seal")
 	case "status":

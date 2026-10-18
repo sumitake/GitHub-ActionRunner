@@ -159,7 +159,7 @@ func TestProductionCanaryObserverBindsTheEntirePendingRuntime(t *testing.T) {
 	if err != nil || observer == nil {
 		t.Fatal(err)
 	}
-	if s.seed.ReportDigest != report.Digest() || s.seed.BindingDigest != report.Binding().Digest() || s.seed.JITCount != 0 {
+	if s.seed.ReportDigest != report.Digest() || observer.ReportDigest() != report.Digest() || s.seed.BindingDigest != report.Binding().Digest() || s.seed.JITCount != 0 {
 		t.Fatal("evidence seed did not bind original pending report")
 	}
 	key := controller.AssignmentKey{RepositoryAlias: "repo-a", RunnerRequestID: 42}

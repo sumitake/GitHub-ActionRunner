@@ -85,6 +85,15 @@ type RunnerObservation struct {
 	RunnerContainerID string
 	Finished          bool
 	ObservedAt        time.Time
+	// When present, completion is committed atomically with this Finished
+	// observation, after the same assignment and upstream identity checks.
+	CanaryCompletion *CanaryCompletion
+}
+
+// CanaryCompletion binds a bounded upstream result to the original proof run.
+type CanaryCompletion struct {
+	ReportDigest string
+	Result       string
 }
 
 // RecoverableAssignment is one row ListRecoverable returns: an assignment

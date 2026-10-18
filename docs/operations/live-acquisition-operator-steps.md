@@ -199,6 +199,60 @@ The harness runs every case on the target and writes its report. For the
 canary, the expected result is cases 1-14 passed and case 15 pending. A run
 that fails still writes its report, which records the cases that passed.
 
+### Bind the handover generation before preparing the input
+
+Do this before D2: the harness consumes its input. If D5 recorded generation
+N, the canary handover expects N and writes N+1. The runtime manifest and the
+input's `runtime.fleet_generation` must both be N+1. A never-initialized fence
+starts at N=0, so the canary generation is 1. Stop if D5 did not establish a
+valid state, or if N cannot be incremented within an unsigned 64-bit integer.
+
+The release builder emits `runtime-release.json`; this is not the host
+`runtime-manifest.json`. Neither release assembly nor overlay assembly sets
+the host manifest's generation. Prepare an operator-approved identity template
+with the fields of `hostruntime.RuntimeManifest`, including every exact build,
+image, policy, trust, seccomp, and budget identity. Set `fleet_generation` to
+0 (unbound) or the intended N+1, and `acquisition_default` to `disabled`.
+The assembler validates and canonicalizes these identities; it does not
+authenticate release provenance or discover missing identities. Do not use
+invented identities to make a template pass validation.
+
+Keep the template in a private directory owned by the invoking euid, mode
+`0700`, with files mode `0600` and no symlinks or hard links. Build
+`./cmd/portable-ghar` from the same checkout as the controller. Run the
+following preparation commands on the verified control host, with the
+operator-approved N+1 substituted for `<canary_generation>`:
+
+```sh
+<portable_ghar_binary> assemble-runtime-manifest \
+  --template <manifest_identity_template> \
+  --fleet-generation <canary_generation> \
+  --output <runtime_manifest_path>
+<portable_ghar_binary> assemble-private-overlay \
+  --template <overlay_template_path> \
+  --manifest <runtime_manifest_path> \
+  --output <overlay_path>
+```
+
+The manifest output must be separate from the identity template; never use
+a tagged release asset as the output. The commands write canonical mode
+`0600` files atomically and print their domain-separated identity digests.
+The manifest has no trailing newline. The overlay has no generation field;
+its `manifest.path` and `manifest.digest` must identify that exact manifest.
+Leave release-derived overlay-template fields empty for binding; an old
+manifest digest in the template is a conflict, not a value to preserve.
+
+Keep the manifest at the same absolute path on the control host and the QTS
+target. Copy the final manifest and overlay without changing their bytes.
+Prepare the D2 input using the emitted manifest digest, overlay revision,
+and `runtime.fleet_generation=<canary_generation>`. The input's source commit,
+build ID, images, policy, trust, and seccomp identities must match the final
+runtime. Finish runtime and image changes before D2; subsequent changes need
+new evidence. Immediately before handover the runbook must re-read the fence
+and require the original N; it must not silently choose a new generation.
+
+### Run the harness
+
 Prerequisites:
 
 - A regular clone of the repository on the target, owned by the euid the

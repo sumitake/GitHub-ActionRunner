@@ -120,9 +120,31 @@ func productionCanaryStatus(ctx context.Context, configPath string) (canaryStatu
 	return buildCanaryStatus(readback.report, readback.record), nil
 }
 func productionCanarySeal(ctx context.Context, configPath string) (canarySealReceipt, error) {
-	readback, err := readCanaryReadback(ctx, configPath, true)
+	overlay, err := readProductionOverlay(configPath)
 	if err != nil {
-		return canarySealReceipt{}, err
+		return canarySealReceipt{}, errCommandUnavailable
+	}
+	return sealCanaryReport(ctx, overlay.Paths.DatabasePath, func(ctx context.Context) (canaryReadback, error) {
+		return readCanaryReadback(ctx, configPath, true)
+	}, replaceCanaryReport)
+}
+
+func sealCanaryReport(ctx context.Context, databasePath string, read func(context.Context) (canaryReadback, error), replace func(string, []byte, []byte, uint32) error) (receipt canarySealReceipt, resultErr error) {
+	if ctx == nil || ctx.Err() != nil || !canonicalAbsolutePath(databasePath) || read == nil || replace == nil {
+		return canarySealReceipt{}, errCommandUnavailable
+	}
+	ownership, err := acquireFileOwnership(databasePath + ".owner.lock")
+	if err != nil {
+		return canarySealReceipt{}, errCommandUnavailable
+	}
+	defer func() {
+		if ownership.Close() != nil {
+			receipt, resultErr = canarySealReceipt{}, errCommandUnavailable
+		}
+	}()
+	readback, err := read(ctx)
+	if err != nil || readback.runtime.overlay.Paths.DatabasePath != databasePath || ownership.Validate() != nil {
+		return canarySealReceipt{}, errCommandUnavailable
 	}
 	completed, err := completeCanaryReport(readback.report, readback.record)
 	if err != nil {
@@ -133,7 +155,10 @@ func productionCanarySeal(ctx context.Context, configPath string) (canarySealRec
 		return canarySealReceipt{}, errCommandUnavailable
 	}
 	path := filepath.Join(readback.runtime.overlay.Paths.StateRoot, conformanceReportName)
-	if err := replaceCanaryReport(path, readback.document, document, uint32(readback.runtime.overlay.Target.ExpectedEUID)); err != nil {
+	if ctx.Err() != nil || ownership.Validate() != nil {
+		return canarySealReceipt{}, errCommandUnavailable
+	}
+	if err := replace(path, readback.document, document, uint32(readback.runtime.overlay.Target.ExpectedEUID)); err != nil {
 		return canarySealReceipt{}, errCommandUnavailable
 	}
 	return canarySealReceipt{SchemaVersion: 1, OriginalReportDigest: readback.report.Digest(), ReportDigest: completed.Digest(), Case15ObservationDigest: completed.Cases()[14].ObservationDigest(), JobCount: readback.record.JobCount, ToolCount: uint64(len(readback.record.Workflow.Tools))}, nil

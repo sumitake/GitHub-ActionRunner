@@ -252,3 +252,18 @@ test("unbounded frames and invalid reader windows fail before publishing", async
     assert.equal(ready, false);
   }
 });
+
+test("diagnostics never expose nested access tokens or client secrets", async (t) => {
+  for (const key of ["oauthAccessToken", "clientSecret", "password"]) {
+    const options = await fixture(t);
+    await writeFile(
+      path.join(options.runner, ".credentials"),
+      JSON.stringify({ data: { [key]: "synthetic-sensitive-component" } }),
+    );
+    await writeFile(
+      path.join(options.diagnostics, "runner.log"),
+      "synthetic-sensitive-component",
+    );
+    await assert.rejects(credentialObservation(options));
+  }
+});

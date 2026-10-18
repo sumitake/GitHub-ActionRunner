@@ -93,15 +93,20 @@ the job, using the existing `acquisition set` command in the phase 8 runbook.
 Never dispatch or replay another job to repair an uncertain result.
 
 After acquisition is disabled and the reverse steps/residue checks prove the
-canary stopped, run once:
+canary stopped, stop and join the controller through the approved stop procedure.
+Disabling acquisition alone does not release its database ownership. Then run once:
 
 ```sh
 "$controller" canary-seal --config="$overlay"
 "$controller" canary-status --config="$overlay"
 ```
 
-`canary-seal` reads durable evidence and the pinned runtime files only. It makes
-no GitHub, Docker, fence, or Worker call. It replaces only case 15 in the same
+`canary-seal` takes the existing exclusive controller ownership lock before
+reading durable evidence and the pinned runtime files, and holds it through
+report replacement and directory sync. It refuses while a controller owns the
+database. `canary-status` remains read-only and can run while the controller owns
+it. Neither command makes a GitHub, Docker, fence, or Worker call. Sealing
+replaces only case 15 in the same
 pending report, recomputes the overall status, report digest, and build seal,
 validates the completed report, then atomically replaces the private report and
 syncs its parent directory. Cases 1-14, their target evidence, the original

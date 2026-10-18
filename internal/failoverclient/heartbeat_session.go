@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sumitake/portable-ghar/internal/controller"
@@ -39,6 +40,8 @@ type heartbeatEnrollment struct {
 // A transport failure consumes its request identity and is never replayed.
 type HeartbeatSession struct {
 	mu sync.Mutex
+	// Metadata only: readers must not wait behind Publish's network I/O.
+	currentGeneration atomic.Uint64
 
 	client          *ProtocolClient
 	cache           *LeaseCache
@@ -98,6 +101,7 @@ func (session *HeartbeatSession) Publish(
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
+	defer session.snapshotGenerationLocked()
 	if session.closed {
 		return fmt.Errorf("%w: closed", ErrHeartbeatSession)
 	}
@@ -325,6 +329,7 @@ func (session *HeartbeatSession) Close() error {
 	}
 	session.closed = true
 	session.enrollment = nil
+	session.currentGeneration.Store(0)
 	_, err := session.cache.invalidate()
 	session.client.CloseIdleConnections()
 	if err != nil {
@@ -431,4 +436,25 @@ func heartbeatModeFromHealth(mode health.AcquisitionMode) (AcquisitionMode, erro
 
 func wholeMillisecondTime(value time.Time) bool {
 	return !value.IsZero() && value.Equal(value.UTC().Truncate(time.Millisecond))
+}
+
+// CurrentLeaseGeneration reads the last completed Publish's authenticated
+// enrollment/maintenance metadata without waiting for an in-flight request.
+// It makes no request and grants no authority. Zero means that snapshot had no
+// live enrollment; concurrent Worker changes still face the admin precondition.
+func (session *HeartbeatSession) CurrentLeaseGeneration() uint64 {
+	if session == nil {
+		return 0
+	}
+	return session.currentGeneration.Load()
+}
+
+// snapshotGenerationLocked runs before Publish releases mu, including failed
+// calls that retain an authenticated enrollment. Close clears the snapshot.
+func (session *HeartbeatSession) snapshotGenerationLocked() {
+	generation := uint64(0)
+	if session.enrollment != nil {
+		generation = session.enrollment.generation
+	}
+	session.currentGeneration.Store(generation)
 }

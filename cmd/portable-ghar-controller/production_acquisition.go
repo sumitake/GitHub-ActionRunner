@@ -359,7 +359,7 @@ func openProductionAcquisitionController(
 		Hosted:                external,
 		FleetGuards:           fence,
 		Permits:               worker.Permits,
-		Conformance:           gate,
+		Conformance:           productionCanaryConformance{report: gate},
 		HostCapacity:          fixedHostCapacity{capacity: int(overlay.Resources.MaxCapacity), evidence: loaded.overlayDigest, now: time.Now},
 		HistoryPressure:       pressure,
 		HealthPublisher:       worker.Health,
@@ -391,8 +391,10 @@ func openProductionAcquisitionController(
 	}
 	jit.Set(acquiring)
 	if err := process.init(acquisitionProcessConfig{
-		Service:   acquiring,
-		FenceLost: fence.Lost(),
+		WorkerLeaseGeneration: worker.session.CurrentLeaseGeneration,
+		CanaryReportDigest:    report.Digest(),
+		Service:               acquiring,
+		FenceLost:             fence.Lost(),
 		CloseSessions: func() error {
 			return closePollTargets(context.Background(), targets)
 		},
