@@ -15,6 +15,10 @@ Nothing in this section has shipped as a tagged release.
 
 ### Added
 
+- Read-only `canary-plan` start inputs from the pending runtime and existing
+  authenticated Worker session, using the same policy builder as the actual
+  canary-only transition. No session replacement or new authority is added.
+
 - Bounded durable case 15 observations, `canary-status` and `canary-seal`,
   completion of the original pending report, and a manual dedicated-repository
   canary template that runs every current proxy-sensitive tool. Evidence grants

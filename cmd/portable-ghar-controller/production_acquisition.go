@@ -391,8 +391,10 @@ func openProductionAcquisitionController(
 	}
 	jit.Set(acquiring)
 	if err := process.init(acquisitionProcessConfig{
-		Service:   acquiring,
-		FenceLost: fence.Lost(),
+		WorkerLeaseGeneration: worker.session.CurrentLeaseGeneration,
+		CanaryReportDigest:    report.Digest(),
+		Service:               acquiring,
+		FenceLost:             fence.Lost(),
 		CloseSessions: func() error {
 			return closePollTargets(context.Background(), targets)
 		},
