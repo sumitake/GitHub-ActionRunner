@@ -299,6 +299,9 @@ func (provider CachedLeasePermitProvider) Acquire(
 		return nil, err
 	}
 	entry, err := provider.Cache.Snapshot()
+	if errors.Is(err, errLeaseCacheAwaiting) {
+		return nil, fmt.Errorf("%w: %w: %w", errLeasePermitAuthority, controller.ErrAcquisitionLeasePending, err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: cache: %w", errLeasePermitAuthority, err)
 	}
@@ -468,7 +471,7 @@ func (provider CachedLeasePermitProvider) Invalidate(ctx context.Context) error 
 	if provider.Cache == nil {
 		return fmt.Errorf("%w: unavailable", ErrLeasePermit)
 	}
-	if _, err := provider.Cache.invalidate(); err != nil {
+	if _, err := provider.Cache.invalidateForTransition(); err != nil {
 		return fmt.Errorf("%w: invalidate: %w", ErrLeasePermit, err)
 	}
 	return nil

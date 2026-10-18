@@ -1740,6 +1740,12 @@ func (s *Service) pollOnceAfterHostPressure(
 	if errors.As(pollErr, &fatal) {
 		return s.enterFatal(fatal.reason, fatal.cause)
 	}
+	// Only the pre-effect poll boundary can produce this private wait result.
+	// No GitHub call or durable acquisition has occurred; the normal cadence
+	// waits for the existing heartbeat to refill the cleared cache.
+	if errors.Is(pollErr, errPollAwaitLease) {
+		return nil
+	}
 	if errors.Is(pollErr, ErrAcquisitionPermitAuthority) {
 		pressureCtx, pressureCancel := context.WithTimeout(
 			context.Background(),
@@ -2300,6 +2306,9 @@ func (s *Service) pollBatch(
 				reason: ReasonAcquisitionResult,
 				cause:  err,
 			}
+		}
+		if errors.Is(err, ErrAcquisitionLeasePending) {
+			return guardedPollBatch{}, errPollAwaitLease
 		}
 		return guardedPollBatch{}, err
 	}
