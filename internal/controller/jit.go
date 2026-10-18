@@ -162,6 +162,9 @@ func (s *Service) revalidateJITAuthorization(
 	request JITAuthorizationRequest,
 ) error {
 	key := request.Assignment.Key
+	if err := s.verifyCanaryOffer(ctx, current, key.RepositoryAlias, request.ScaleSetName, request.Assignment.Offer); err != nil {
+		return errors.Join(ErrJITAuthorization, err)
+	}
 	acquisition, err := s.state.AcquisitionAssignment(ctx, key)
 	if err != nil ||
 		acquisition.Key != key ||

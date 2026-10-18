@@ -320,7 +320,7 @@ def validate_release_manifest(root):
     if (
         runtime["schema_version"] != 1
         or runtime["platform"] != "linux/amd64"
-        or runtime["debian_snapshot"] != "20250101T000000Z"
+        or runtime["debian_snapshot"] != "20261010T000000Z"
     ):
         reject("runtime manifest identity")
     validate_runner(runtime["runner_release"])
@@ -918,7 +918,8 @@ def validate_dockerfiles(clone, runtime):
             acquirers.append(entry["name"])
             if (
                 "ARG SOURCE_DATE_EPOCH" not in text
-                or len(re.findall(r"\bsnapshot=[0-9]{8}T[0-9]{6}Z;", text)) != 1
+                or re.findall(r"\bsnapshot=([0-9]{8}T[0-9]{6}Z);", text)
+                != [runtime["debian_snapshot"]]
                 or any(source not in text for source in RUNNER_SNAPSHOT_SOURCES)
             ):
                 reject("package snapshot")

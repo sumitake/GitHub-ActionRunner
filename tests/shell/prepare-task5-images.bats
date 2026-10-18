@@ -230,7 +230,12 @@ EOF
 @test "both Docker contexts deny all by default and audit the effective context" {
   for image in runner network-adapter; do
     [ "$(sed -n '1p' "$REPO_ROOT/images/$image/.dockerignore")" = '**' ]
-    grep -F 'COPY . /context' "$REPO_ROOT/images/$image/Dockerfile"
+    if [ "$image" = runner ]; then
+      grep -F -- '--mount=type=bind,source=.,target=/context,ro' "$REPO_ROOT/images/$image/Dockerfile"
+      ! grep -F 'COPY . /context' "$REPO_ROOT/images/$image/Dockerfile"
+    else
+      grep -F 'COPY . /context' "$REPO_ROOT/images/$image/Dockerfile"
+    fi
     grep -F '*) exit 1 ;;' "$REPO_ROOT/images/$image/Dockerfile"
   done
   grep -F 'build/runner/**' "$REPO_ROOT/images/runner/.dockerignore"

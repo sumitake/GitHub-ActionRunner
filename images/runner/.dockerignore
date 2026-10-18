@@ -1,5 +1,6 @@
 **
 !Dockerfile
+!verify-debian-cache.sh
 !.dockerignore
 !build/
 !build/portable-ghar-runner-gate

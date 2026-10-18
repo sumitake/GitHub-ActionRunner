@@ -36,6 +36,7 @@ type controllerOwnershipLease interface {
 type controllerOpener func(context.Context, string, string, controllerOwnershipLease) (controllerProcess, error)
 
 type commandDependencies struct {
+	CanaryBind       func(context.Context, string, canaryJobRequest) (canaryJobReceipt, error)
 	CanaryPlan       func(context.Context, string, string) (canaryPlanReceipt, error)
 	CanaryStatus     func(context.Context, string) (canaryStatusReceipt, error)
 	CanarySeal       func(context.Context, string) (canarySealReceipt, error)
@@ -57,6 +58,7 @@ type commandDependencies struct {
 
 func productionCommandDependencies(clock func() time.Time) commandDependencies {
 	return commandDependencies{
+		CanaryBind:       productionCanaryBind,
 		CanaryPlan:       productionCanaryPlan,
 		CanaryStatus:     productionCanaryStatus,
 		CanarySeal:       productionCanarySeal,
@@ -126,6 +128,8 @@ func runWithDependencies(
 		return commandUsage(stderr)
 	}
 	switch args[0] {
+	case "canary-bind":
+		return executeCanaryJobBind(ctx, args[1:], stdout, stderr, deps)
 	case "worker-canary":
 		return executeWorkerCanary(ctx, args[1:], stdout, stderr, deps)
 	case "run":

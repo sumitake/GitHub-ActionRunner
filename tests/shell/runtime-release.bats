@@ -517,7 +517,7 @@ PY
     ] and
     .runtime.schema_version == 1 and
     .runtime.platform == "linux/amd64" and
-    .runtime.debian_snapshot == "20250101T000000Z" and
+    .runtime.debian_snapshot == "20261010T000000Z" and
     [.runtime.binaries[].name] == [
       "portable-ghar",
       "portable-ghar-controller",
