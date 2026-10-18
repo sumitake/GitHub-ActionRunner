@@ -311,8 +311,10 @@ func historyBudgetTotalsTx(ctx context.Context, tx *sql.Tx) (historyBudgetTotals
 			(SELECT COUNT(*) FROM effects) +
 			(SELECT COUNT(*) FROM message_receipts) +
 			(SELECT COUNT(*) FROM message_acquisitions) +
-			(SELECT COUNT(*) FROM history_tombstones),
-			COALESCE((SELECT SUM(history_logical_bytes) FROM assignments), 0) +
+			(SELECT COUNT(*) FROM history_tombstones) +
+ (SELECT COUNT(*) FROM canary_evidence),
+			((SELECT COUNT(*) FROM canary_evidence) * 8192) +
+ COALESCE((SELECT SUM(history_logical_bytes) FROM assignments), 0) +
 			COALESCE((SELECT SUM(logical_bytes) FROM message_receipts), 0) +
 			COALESCE((SELECT SUM(logical_bytes) FROM message_acquisitions), 0) +
 			COALESCE((SELECT SUM(logical_bytes) FROM history_tombstones), 0) +
@@ -1610,6 +1612,9 @@ func (s *SQLiteStore) CompactTerminal(
 	); err != nil {
 		return fmt.Errorf("state: compact terminal: detach network ledgers: %w", err)
 	}
+	if err := finalizeCanaryEvidence(ctx, tx, key); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM assignments WHERE id = ?`, assignmentID); err != nil {
 		return fmt.Errorf("state: compact terminal: delete assignment graph: %w", err)
 	}
@@ -1714,6 +1719,10 @@ func historyUsageWithQuery(ctx context.Context, q queryRower, limits HistoryLimi
 	`)
 	if err != nil {
 		return HistoryUsage{}, fmt.Errorf("state: history usage network ledgers: %w", err)
+	}
+	usage.CanaryEvidenceRows, usage.CanaryEvidenceLogicalBytes, err = scanUsagePair(ctx, q, `SELECT COUNT(*), COUNT(*) * 8192 FROM canary_evidence`)
+	if err != nil {
+		return HistoryUsage{}, err
 	}
 	var inflight int64
 	if err := q.QueryRowContext(ctx,
@@ -3054,6 +3063,7 @@ func (s *SQLiteStore) ApplyRunnerObservation(
 ) error {
 	persistedAt := time.Now().UTC()
 	if observation.UpstreamRunnerID <= 0 ||
+		(observation.CanaryCompletion != nil && !observation.Finished) ||
 		observation.BoundRequestID <= 0 ||
 		observation.RunnerContainerID == "" ||
 		len(observation.RunnerContainerID) > maxEffectIdentityBytes ||
@@ -3201,6 +3211,11 @@ func (s *SQLiteStore) ApplyRunnerObservation(
 		assignmentID,
 	); err != nil {
 		return fmt.Errorf("state: apply runner observation: update assignment: %w", err)
+	}
+	if observation.CanaryCompletion != nil {
+		if err := applyCanaryCompletionTx(ctx, tx, key, *observation.CanaryCompletion); err != nil {
+			return fmt.Errorf("state: apply runner observation: canary completion: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("state: apply runner observation: commit: %w", err)

@@ -88,7 +88,7 @@ func openProductionAcquisitionController(
 	if err != nil {
 		return nil, startupStep("read decision graph", nil)
 	}
-	gate, err := productionConformanceGate(overlay.Paths.StateRoot)
+	gate, report, err := productionConformanceGateAndReport(overlay.Paths.StateRoot)
 	if err != nil {
 		return nil, startupStep("read conformance report", nil)
 	}
@@ -178,6 +178,14 @@ func openProductionAcquisitionController(
 	)
 	if err != nil {
 		return fail(startupStep("build Docker client", nil))
+	}
+	canaryObserver, err := newProductionCanaryObserver(ctx, report, loaded, store, docker)
+	if err != nil {
+		return fail(startupStep("bind canary evidence to pending report", nil))
+	}
+	var observers []lifecycle.CanaryObserver
+	if canaryObserver != nil {
+		observers = []lifecycle.CanaryObserver{canaryObserver}
 	}
 	monotonic, err := newPermitClock()
 	if err != nil {
@@ -314,6 +322,7 @@ func openProductionAcquisitionController(
 		jails,
 		docker,
 		time.Now,
+		observers...,
 	)
 	if err != nil {
 		return failWithTargets(startupStep("build lifecycle runtime", err))
@@ -627,17 +636,27 @@ func acquisitionCycleID() string {
 // is not a root-owned mode 0600 file, does not parse, or grants nothing stops
 // startup, so a bad report is never mistaken for a missing one.
 func productionConformanceGate(stateRoot string) (conformance.AcquisitionConformance, error) {
+	gate, _, err := productionConformanceGateAndReport(stateRoot)
+	return gate, err
+}
+
+// Read once so the acquisition gate and observer use the identical D2 report.
+func productionConformanceGateAndReport(stateRoot string) (conformance.AcquisitionConformance, conformance.Report, error) {
 	path := filepath.Join(stateRoot, conformanceReportName)
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		return conformance.NewUnavailableAcquisitionGate(), nil
+		return conformance.NewUnavailableAcquisitionGate(), conformance.Report{}, nil
 	}
-	document, err := readPinnedRootFile(path, 0o600, maxConformanceReportBytes)
+	document, err := readPinnedRootFile(path, 0600, maxConformanceReportBytes)
 	if err != nil {
-		return nil, err
+		return nil, conformance.Report{}, err
 	}
 	report, err := conformance.ParseReport(document, maxConformanceReportBytes)
 	if err != nil {
-		return nil, err
+		return nil, conformance.Report{}, err
 	}
-	return conformance.NewAcquisitionGate(report)
+	gate, err := conformance.NewAcquisitionGate(report)
+	if err != nil {
+		return nil, conformance.Report{}, err
+	}
+	return gate, report, nil
 }

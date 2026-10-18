@@ -15,6 +15,11 @@ Nothing in this section has shipped as a tagged release.
 
 ### Added
 
+- Bounded durable case 15 observations, `canary-status` and `canary-seal`,
+  completion of the original pending report, and a manual dedicated-repository
+  canary template that runs every current proxy-sensitive tool. Evidence grants
+  no acquisition authority and records own-job credential exposure without bytes.
+
 - Synthetic public configuration contracts (JSON Schema + examples) for
   fleet, host-profile, notification-event, and public-log-event shapes.
 - A fail-closed public-source sanitizer (`scripts/sanitize_public.py`)

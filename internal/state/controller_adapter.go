@@ -515,25 +515,29 @@ func (a *ControllerAdapter) CompactTerminal(
 func (a *ControllerAdapter) HistoryUsage(ctx context.Context) (controller.HistoryUsage, error) {
 	usage, err := a.store.HistoryUsage(ctx, a.limits)
 	if err != nil {
-		return controller.HistoryUsage{}, mapControllerStateError(err)
+		return controller.HistoryUsage{
+			CanaryEvidenceRows:         usage.CanaryEvidenceRows,
+			CanaryEvidenceLogicalBytes: usage.CanaryEvidenceLogicalBytes}, mapControllerStateError(err)
 	}
 	return controller.HistoryUsage{
-		LiveRows:                  usage.LiveRows,
-		LiveLogicalBytes:          usage.LiveLogicalBytes,
-		ProtectedTerminalRows:     usage.ProtectedTerminalRows,
-		ProtectedTerminalBytes:    usage.ProtectedTerminalBytes,
-		MessageReceiptRows:        usage.MessageReceiptRows,
-		MessageReceiptBytes:       usage.MessageReceiptBytes,
-		AcquisitionRows:           usage.AcquisitionRows,
-		AcquisitionLogicalBytes:   usage.AcquisitionLogicalBytes,
-		TombstoneRows:             usage.TombstoneRows,
-		TombstoneLogicalBytes:     usage.TombstoneLogicalBytes,
-		NetworkLedgerRows:         usage.NetworkLedgerRows,
-		NetworkLedgerLogicalBytes: usage.NetworkLedgerLogicalBytes,
-		InflightAssignments:       usage.InflightAssignments,
-		ReservedRows:              usage.ReservedRows,
-		ReservedLogicalBytes:      usage.ReservedLogicalBytes,
-		OldestRetainedAt:          usage.OldestRetainedAt,
+		CanaryEvidenceRows:         usage.CanaryEvidenceRows,
+		CanaryEvidenceLogicalBytes: usage.CanaryEvidenceLogicalBytes,
+		LiveRows:                   usage.LiveRows,
+		LiveLogicalBytes:           usage.LiveLogicalBytes,
+		ProtectedTerminalRows:      usage.ProtectedTerminalRows,
+		ProtectedTerminalBytes:     usage.ProtectedTerminalBytes,
+		MessageReceiptRows:         usage.MessageReceiptRows,
+		MessageReceiptBytes:        usage.MessageReceiptBytes,
+		AcquisitionRows:            usage.AcquisitionRows,
+		AcquisitionLogicalBytes:    usage.AcquisitionLogicalBytes,
+		TombstoneRows:              usage.TombstoneRows,
+		TombstoneLogicalBytes:      usage.TombstoneLogicalBytes,
+		NetworkLedgerRows:          usage.NetworkLedgerRows,
+		NetworkLedgerLogicalBytes:  usage.NetworkLedgerLogicalBytes,
+		InflightAssignments:        usage.InflightAssignments,
+		ReservedRows:               usage.ReservedRows,
+		ReservedLogicalBytes:       usage.ReservedLogicalBytes,
+		OldestRetainedAt:           usage.OldestRetainedAt,
 	}, nil
 }
 

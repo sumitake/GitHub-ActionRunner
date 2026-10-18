@@ -26,6 +26,7 @@ type fakeLifecycleState struct {
 	resolvedOutcome  controller.PostReleaseOutcome
 	resolveCalls     int
 	acquisition      map[controller.AssignmentKey]state.AcquisitionAssignmentRecord
+	lastObservation  state.RunnerObservation
 }
 
 func (f *fakeLifecycleState) recordLocked(
@@ -112,6 +113,7 @@ func (f *fakeLifecycleState) ApplyRunnerObservation(
 ) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastObservation = observation
 	record, ok := f.recordLocked(key)
 	if !ok {
 		return ErrInvalidState
@@ -389,6 +391,7 @@ func (f *fakeSessionProvider) Session(
 }
 
 type fakeLifecycleSession struct {
+	compatibility githubscale.ScaleSetCompatibilityReport
 	mu            sync.Mutex
 	runners       map[string]githubscale.RunnerRef
 	nextRunnerID  int64
@@ -401,7 +404,7 @@ type fakeLifecycleSession struct {
 }
 
 func (f *fakeLifecycleSession) Compatibility() githubscale.ScaleSetCompatibilityReport {
-	return githubscale.ScaleSetCompatibilityReport{}
+	return f.compatibility
 }
 func (f *fakeLifecycleSession) Poll(context.Context, int, int) (githubscale.Batch, error) {
 	return githubscale.Batch{}, errors.New("unexpected Poll")
