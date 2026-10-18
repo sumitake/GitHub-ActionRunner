@@ -944,7 +944,70 @@ def inspect_buildkit(raw, expected):
         reject("BuildKit index")
 
 
-def normalize_spdx(raw_path, output_path, subject, digest, source_epoch):
+def first_party_metadata(clone, version, source_commit):
+    if not SAFE_VERSION.fullmatch(version) or not HEX40.fullmatch(source_commit):
+        reject("first-party identity")
+    for name in ("go.mod", "package.json", "LICENSE"):
+        path = clone / name
+        if path.is_symlink() or not path.is_file():
+            reject("first-party source metadata")
+    modules = re.findall(r"(?m)^module ([A-Za-z0-9._/-]+)$", (clone / "go.mod").read_text())
+    declared = read_json(clone / "package.json").get("license")
+    if (
+        len(modules) != 1
+        or declared != "MPL-2.0"
+        or not (clone / "LICENSE").read_text().startswith("Mozilla Public License Version 2.0\n")
+    ):
+        reject("first-party license metadata")
+    return {
+        "module": modules[0],
+        "version": version,
+        "license": declared,
+        "source_commit": source_commit,
+        "license_sha256": sha256_file(clone / "LICENSE"),
+    }
+
+
+def normalize_first_party_packages(value, identity):
+    if (
+        set(identity) != {"module", "version", "license", "source_commit", "license_sha256"}
+        or not SAFE_VERSION.fullmatch(identity["version"])
+        or not HEX40.fullmatch(identity["source_commit"])
+        or not HEX64.fullmatch(identity["license_sha256"])
+        or identity["license"] != "MPL-2.0"
+    ):
+        reject("first-party identity")
+    expected = "pkg:golang/" + urllib.parse.quote(identity["module"], safe="/")
+    versioned = expected + "@" + urllib.parse.quote(identity["version"], safe="")
+    for package in value["packages"]:
+        if not isinstance(package, dict):
+            reject("SPDX package")
+        if package.get("name") != identity["module"]:
+            continue
+        if package_purl(package) not in (expected, versioned):
+            reject("first-party package identity")
+        if package.get("versionInfo") not in (None, "", "UNKNOWN", "NOASSERTION", "(devel)", identity["version"]):
+            reject("first-party version drift")
+        for field in ("licenseConcluded", "licenseDeclared"):
+            if package.get(field) not in (None, "", "NOASSERTION", identity["license"]):
+                reject("first-party license drift")
+            package[field] = identity["license"]
+        package["versionInfo"] = identity["version"]
+        for ref in package["externalRefs"]:
+            if ref.get("referenceType") == "purl":
+                ref["referenceLocator"] = versioned
+        evidence = (
+            f"Verified first-party source {identity['source_commit']}; "
+            f"LICENSE SHA256 {identity['license_sha256']}"
+        )
+        previous = package.get("sourceInfo", "")
+        if not isinstance(previous, str):
+            reject("first-party source metadata")
+        if evidence not in previous:
+            package["sourceInfo"] = (previous + "\n" if previous else "") + evidence
+
+
+def normalize_spdx(raw_path, output_path, subject, digest, source_epoch, first_party=None):
     value = read_json(raw_path)
     required = {
         "SPDXID",
@@ -978,6 +1041,8 @@ def normalize_spdx(raw_path, output_path, subject, digest, source_epoch):
     value["documentNamespace"] = (
         f"https://github.com/sumitake/portable-ghar/sbom/{subject}/{digest}"
     )
+    if first_party is not None:
+        normalize_first_party_packages(value, first_party)
     sort_keys = {
         "documentDescribes": lambda item: str(item),
         "packages": lambda item: str(item.get("SPDXID", "")),
@@ -1017,7 +1082,54 @@ def package_purl(package):
     return values[0]
 
 
-def generate_notices(sbom_rows, exceptions, output):
+def spdx_document_root(value, expected_digest):
+    if not isinstance(expected_digest, str) or not HEX64.fullmatch(expected_digest):
+        reject("SPDX subject digest")
+    document_id = value.get("SPDXID")
+    if not isinstance(document_id, str) or not document_id.startswith("SPDXRef-"):
+        reject("SPDX document identity")
+    packages = value.get("packages")
+    relationships = value.get("relationships", [])
+    if not isinstance(packages, list) or not isinstance(relationships, list):
+        reject("SPDX subject graph")
+    ids = [package.get("SPDXID") for package in packages if isinstance(package, dict)]
+    if len(ids) != len(packages) or any(not isinstance(x, str) or not x for x in ids) or len(set(ids)) != len(ids):
+        reject("SPDX package identity")
+    roots = value.get("documentDescribes", [])
+    if not isinstance(roots, list) or any(not isinstance(x, str) for x in roots):
+        reject("SPDX subject graph")
+    roots = set(roots)
+    for relationship in relationships:
+        if not isinstance(relationship, dict):
+            reject("SPDX relationship")
+        if relationship.get("spdxElementId") == document_id and relationship.get("relationshipType") == "DESCRIBES":
+            related = relationship.get("relatedSpdxElement")
+            if not isinstance(related, str):
+                reject("SPDX subject graph")
+            roots.add(related)
+    if len(roots) != 1:
+        reject("SPDX subject graph")
+    root_id = next(iter(roots))
+    matches = [package for package in packages if package["SPDXID"] == root_id]
+    if len(matches) != 1:
+        reject("SPDX subject graph")
+    package = matches[0]
+    checksums = package.get("checksums", [])
+    if not isinstance(checksums, list) or any(not isinstance(x, dict) for x in checksums):
+        reject("SPDX subject checksum")
+    sha256s = [x.get("checksumValue") for x in checksums if x.get("algorithm") == "SHA256"]
+    if (
+        sha256s != [expected_digest]
+        or package.get("versionInfo") != "sha256:" + expected_digest
+        or package.get("primaryPackagePurpose") not in ("FILE", "CONTAINER")
+    ):
+        reject("SPDX subject identity")
+    return root_id
+
+
+def generate_notices(sbom_rows, exceptions, output, subject_digests=None):
+    if subject_digests is not None and set(subject_digests) != {subject for subject, _ in sbom_rows}:
+        reject("SPDX subject registry")
     exception_map = {
         (entry["subject"], entry["purl"], entry["version"]): entry
         for entry in exceptions
@@ -1029,14 +1141,19 @@ def generate_notices(sbom_rows, exceptions, output):
         packages = value.get("packages")
         if not isinstance(packages, list):
             reject("SPDX packages")
+        root_id = spdx_document_root(value, subject_digests[subject]) if subject_digests is not None else None
         for package in packages:
             if not isinstance(package, dict):
                 reject("SPDX package")
+            # The described, checksum-bound artifact is a document subject,
+            # not a dependency. Keep it in the SBOM; omit only its notices row.
+            if root_id is not None and package.get("SPDXID") == root_id:
+                continue
             name = package.get("name")
             version = package.get("versionInfo")
             if not isinstance(name, str) or not name:
                 reject("package name")
-            if not isinstance(version, str) or not version or version == "NOASSERTION":
+            if not isinstance(version, str) or not version or version in ("NOASSERTION", "UNKNOWN", "(devel)"):
                 reject("package version")
             purl = package_purl(package)
             concluded = package.get("licenseConcluded")
@@ -1190,6 +1307,101 @@ def oci_graph(path):
         "config_digest": config_digest,
         "layer_digests": layer_digests,
     }
+
+
+def materialize_oci_layout(archive_path, output):
+    if output.exists() or output.is_symlink():
+        reject("OCI layout already exists")
+    graph = oci_graph(archive_path)
+    expected = {
+        "index.json": graph["index_digest"].removeprefix("sha256:"),
+        "oci-layout": None,
+        **{
+            "blobs/sha256/" + digest.removeprefix("sha256:"): digest.removeprefix("sha256:")
+            for digest in (graph["manifest_digest"], graph["config_digest"], *graph["layer_digests"])
+        },
+    }
+    output.mkdir(mode=0o700)
+    complete = False
+    try:
+        seen = set()
+        with tarfile.open(archive_path, mode="r:") as archive:
+            for member in archive:
+                relative = member.name.rstrip("/") if member.isdir() else member.name
+                if member.isdir():
+                    if relative not in ("blobs", "blobs/sha256"):
+                        reject("OCI layout directory")
+                    continue
+                if not member.isfile() or member.linkname or relative not in expected or relative in seen:
+                    reject("OCI layout member")
+                seen.add(relative)
+                target = output / relative
+                target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+                source = archive.extractfile(member)
+                if source is None:
+                    reject("OCI layout member")
+                hasher = hashlib.sha256()
+                total = 0
+                with target.open("xb") as destination:
+                    while True:
+                        block = source.read(1024 * 1024)
+                        if not block:
+                            break
+                        hasher.update(block)
+                        total += len(block)
+                        destination.write(block)
+                if total != member.size or expected[relative] is not None and hasher.hexdigest() != expected[relative]:
+                    reject("OCI layout blob")
+                os.chmod(target, 0o400)
+        if seen != set(expected) or read_json(output / "oci-layout") != {"imageLayoutVersion": "1.0.0"}:
+            reject("OCI layout closure")
+        complete = True
+    finally:
+        if not complete:
+            shutil.rmtree(output)
+    return graph
+
+
+def scan_oci_image(trivy, archive_path, layout, clone, env, log):
+    # The pinned CLI accepts an OCI layout directory, not an OCI tar file.
+    # Verify and stream the original blobs; do not change image contents.
+    materialize_oci_layout(archive_path, layout)
+    try:
+        run(
+            [
+                trivy, "image", "--input", os.fspath(layout),
+                "--scanners", "vuln,secret", "--severity", "HIGH,CRITICAL",
+                "--ignore-unfixed", "--exit-code", "1", "--no-progress",
+            ],
+            cwd=clone, env=env, log=log, timeout=3600,
+        )
+    finally:
+        shutil.rmtree(layout)
+
+
+def stage_stamped_image_inputs(clone, stage, runtime, stamp):
+    names = {entry["name"] for entry in runtime["binaries"]}
+    for image in runtime["images"]:
+        folder = clone / safe_relative(image["context"]) / "build"
+        targets = sorted(folder.glob("portable-ghar-*"))
+        if not targets:
+            reject("image binary inputs")
+        for target in targets:
+            source = stage / "bin" / target.name
+            if target.name not in names or target.is_symlink() or not target.is_file() or source.is_symlink() or not source.is_file():
+                reject("image binary input")
+            if stamp.encode("ascii") not in source.read_bytes():
+                reject("image binary identity")
+            fd, temporary = tempfile.mkstemp(prefix=".stamped-", dir=folder)
+            try:
+                with os.fdopen(fd, "wb") as output, source.open("rb") as input_file:
+                    shutil.copyfileobj(input_file, output)
+                os.chmod(temporary, 0o555)
+                if sha256_file(pathlib.Path(temporary)) != sha256_file(source):
+                    reject("image binary copy")
+                os.replace(temporary, target)
+            finally:
+                pathlib.Path(temporary).unlink(missing_ok=True)
 
 
 def add_subject(subjects, stage, relative, subject_type, graph=None):
@@ -1457,6 +1669,11 @@ def main():
                 "TRIVY_CACHE_DIR": os.fspath(caches / "trivy"),
                 "SYFT_CHECK_FOR_APP_UPDATE": "false",
                 "TRIVY_DISABLE_VEX_NOTICE": "true",
+                # Reuse the authenticated Go module cache populated by the
+                # build/gate; license lookup must not silently use the network.
+                "SYFT_GOLANG_SEARCH_LOCAL_MOD_CACHE_LICENSES": "true",
+                "SYFT_GOLANG_LOCAL_MOD_CACHE_DIR": os.fspath(caches / "go-mod"),
+                "SYFT_GOLANG_SEARCH_REMOTE_LICENSES": "false",
             }
         )
         for path in (
@@ -1704,6 +1921,11 @@ def main():
                 "binary",
             )
 
+        # Context preparers produce dev binaries. Bind final image inputs to
+        # the same stamped binaries already verified above before packaging.
+        stage_stamped_image_inputs(clone, stage, runtime, identity_stamp)
+        first_party = first_party_metadata(clone, version, source_commit)
+
         for entry in runtime["images"]:
             archive = stage / "images" / f"{entry['name']}.oci.tar"
             reference = f"portable-ghar/{entry['name']}:{source_commit}"
@@ -1860,25 +2082,13 @@ def main():
         # fix, and every package version remains recorded in the SBOMs. The
         # source fs scan above deliberately keeps unfixed findings blocking.
         for entry in runtime["images"]:
-            run(
-                [
-                    trivy,
-                    "image",
-                    "--input",
-                    os.fspath(stage / "images" / f"{entry['name']}.oci.tar"),
-                    "--scanners",
-                    "vuln,secret",
-                    "--severity",
-                    "HIGH,CRITICAL",
-                    "--ignore-unfixed",
-                    "--exit-code",
-                    "1",
-                    "--no-progress",
-                ],
-                cwd=clone,
-                env=env,
-                log=log,
-                timeout=3600,
+            scan_oci_image(
+                trivy,
+                stage / "images" / f"{entry['name']}.oci.tar",
+                work / f"trivy-oci-{entry['name']}",
+                clone,
+                env,
+                log,
             )
 
         set_stage(RehearsalStage.SBOM)
@@ -1918,6 +2128,7 @@ def main():
                 subject_name,
                 sha256_file(stage / relative),
                 source_epoch,
+                first_party=first_party,
             )
             os.chmod(normalized, 0o444)
             add_subject(
@@ -1929,7 +2140,16 @@ def main():
             sbom_rows.append((relative, normalized))
 
         notices = stage / "notices/THIRD-PARTY-NOTICES.txt"
-        generate_notices(sbom_rows, runtime["license_exceptions"], notices)
+        artifact_subjects = {item["path"]: item for item in subjects}
+        subject_digests = {
+            relative: (
+                artifact_subjects[relative]["oci_graph"]["manifest_digest"].removeprefix("sha256:")
+                if artifact_subjects[relative]["type"] == "oci-image"
+                else artifact_subjects[relative]["sha256"]
+            )
+            for relative, _ in sbom_rows
+        }
+        generate_notices(sbom_rows, runtime["license_exceptions"], notices, subject_digests)
         os.chmod(notices, 0o444)
         add_subject(
             subjects,
