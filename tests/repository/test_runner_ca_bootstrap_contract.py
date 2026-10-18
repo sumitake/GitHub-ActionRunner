@@ -163,6 +163,11 @@ class RunnerCABootstrapContractTest(unittest.TestCase):
         self.assertIn("Acquire::By-Hash=false", self.dockerfile)
         self.assertIn('s|file:/snapshot-cache/archive/|https://snapshot.debian.org/archive/|g', self.dockerfile)
 
+    def test_offline_cache_pins_release_bytes_before_apt(self) -> None:
+        offline = self.dockerfile.split("offline)", 1)[1]
+        self.assertIn("/bin/sh /verify-debian-cache /snapshot-cache", offline)
+        self.assertLess(offline.index("/bin/sh /verify-debian-cache"), offline.index("apt-get"))
+
     def test_ci_and_rehearsal_prepare_task6_before_task5(self) -> None:
         ci_task6 = self.workflow.index("scripts/prepare-task6-images.sh")
         ci_task5 = self.workflow.index("scripts/prepare-task5-images.sh")

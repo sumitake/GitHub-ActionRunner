@@ -19,6 +19,7 @@ import (
 
 	"github.com/sumitake/portable-ghar/internal/conformance"
 	"github.com/sumitake/portable-ghar/internal/controller"
+	"github.com/sumitake/portable-ghar/internal/githubscale"
 )
 
 const canaryJobApprovalName = "canary-job-approval.json"
@@ -33,15 +34,18 @@ type canaryJobApproval struct {
 }
 
 type canaryJobRequest struct {
-	Alias, WorkflowRef, EventName string
-	RunID                         int64
+	Alias, WorkflowRef, EventName, JobID string
+	RunID, RunAttempt                    int64
 }
 type canaryJobReceipt struct {
-	SchemaVersion  uint32 `json:"schema_version"`
-	ReportDigest   string `json:"report_digest"`
-	ApprovalDigest string `json:"approval_digest"`
-	WorkflowRunID  int64  `json:"workflow_run_id"`
-	Created        bool   `json:"created"`
+	SchemaVersion      uint32 `json:"schema_version"`
+	ReportDigest       string `json:"report_digest"`
+	ApprovalDigest     string `json:"approval_digest"`
+	WorkflowRunID      int64  `json:"workflow_run_id"`
+	Created            bool   `json:"created"`
+	Durable            bool   `json:"durable"`
+	WorkflowRunAttempt int64  `json:"workflow_run_attempt"`
+	JobID              string `json:"job_id"`
 }
 
 // fileCanaryJobProvider adds an approval intersection, never substitutes for
@@ -55,6 +59,8 @@ type fileCanaryJobProvider struct {
 	repositories                map[string]controller.CanaryJobIdentity
 	pinned                      []byte
 	poisoned                    bool
+	spent                       bool
+	claim                       func(context.Context, controller.CanaryJobIdentity) error
 }
 
 func newFileCanaryJobProvider(runtime productionRuntime, report conformance.Report) *fileCanaryJobProvider {
@@ -66,7 +72,29 @@ func newFileCanaryJobProvider(runtime productionRuntime, report conformance.Repo
 			p.repositories[repo.Alias] = controller.CanaryJobIdentity{RepositoryAlias: repo.Alias, Repository: strings.TrimPrefix(u.Path, "/"), ScaleSet: repo.ScaleSetName}
 		}
 	}
+	p.claim = func(ctx context.Context, job controller.CanaryJobIdentity) error {
+		_, err := writeCanaryJobApproval(ctx, filepath.Join(runtime.overlay.Paths.StateRoot, "canary-job-acquisition.used.json"), canaryJobApproval{SchemaVersion: 1, ReportDigest: p.reportDigest, BindingDigest: p.bindingDigest, FleetGeneration: p.generation, Job: job})
+		return err
+	}
 	return p
+}
+
+func (p *fileCanaryJobProvider) ConsumeCanaryAcquisition(ctx context.Context, alias, scaleSet string, offer githubscale.Offer) error {
+	job, err := p.ExpectedCanaryJob(ctx)
+	if err != nil || job.VerifyCanaryOffer(ctx, alias, scaleSet, offer) != nil {
+		return controller.ErrCanaryJobRejected
+	}
+	p.mu.Lock()
+	if p.spent || p.claim == nil {
+		p.mu.Unlock()
+		return controller.ErrCanaryJobRejected
+	}
+	p.spent = true
+	p.mu.Unlock()
+	if p.claim(ctx, job) != nil {
+		return controller.ErrCanaryJobRejected
+	}
+	return nil
 }
 
 func readCanaryApprovalFile(path string, expectedUID uint32) ([]byte, error) {
@@ -147,8 +175,8 @@ func (p *fileCanaryJobProvider) ExpectedCanaryJob(ctx context.Context) (controll
 }
 
 func executeCanaryJobBind(ctx context.Context, args []string, stdout, stderr io.Writer, deps commandDependencies) int {
-	flags, err := parseExactFlags(args, map[string]bool{"config": true, "alias": true, "run-id": true, "workflow-ref": true, "event": true})
-	if err != nil || len(flags) != 5 || deps.CanaryBind == nil {
+	flags, err := parseExactFlags(args, map[string]bool{"config": true, "alias": true, "run-id": true, "workflow-ref": true, "event": true, "job-id": true, "run-attempt": true})
+	if err != nil || len(flags) != 7 || deps.CanaryBind == nil {
 		return commandUsage(stderr)
 	}
 	for _, v := range flags {
@@ -160,14 +188,28 @@ func executeCanaryJobBind(ctx context.Context, args []string, stdout, stderr io.
 	if err != nil || strconv.FormatInt(id, 10) != flags["run-id"] || id <= 0 {
 		return commandUsage(stderr)
 	}
+	attempt, err := strconv.ParseInt(flags["run-attempt"], 10, 64)
+	if err != nil || attempt <= 0 || strconv.FormatInt(attempt, 10) != flags["run-attempt"] {
+		return commandUsage(stderr)
+	}
 	if !deps.IsRoot() {
 		return commandFailure(stderr, "canary job binding")
 	}
 	callCtx, cancel := context.WithTimeout(ctx, deps.AdminTimeout)
 	defer cancel()
-	receipt, err := deps.CanaryBind(callCtx, flags["config"], canaryJobRequest{Alias: flags["alias"], WorkflowRef: flags["workflow-ref"], EventName: flags["event"], RunID: id})
-	if err != nil || json.NewEncoder(stdout).Encode(receipt) != nil {
+	receipt, err := deps.CanaryBind(callCtx, flags["config"], canaryJobRequest{Alias: flags["alias"], WorkflowRef: flags["workflow-ref"], EventName: flags["event"], RunID: id, RunAttempt: attempt, JobID: flags["job-id"]})
+	if err != nil {
+		if receipt.Created {
+			if json.NewEncoder(stdout).Encode(receipt) != nil {
+				return commandFailure(stderr, "published canary approval receipt")
+			}
+			_, _ = io.WriteString(stderr, "portable-ghar-controller: approval published; completion unconfirmed; stop and inspect the exact run before recovery\n")
+			return 1
+		}
 		return commandFailure(stderr, "canary job binding")
+	}
+	if json.NewEncoder(stdout).Encode(receipt) != nil {
+		return commandFailure(stderr, "published canary approval receipt")
 	}
 	return 0
 }
@@ -185,6 +227,8 @@ func buildCanaryJobApproval(readback canaryReadback, request canaryJobRequest) (
 	}
 	job.WorkflowRef = request.WorkflowRef
 	job.WorkflowRunID = request.RunID
+	job.WorkflowRunAttempt = request.RunAttempt
+	job.JobID = request.JobID
 	job.EventName = request.EventName
 	if job.Validate() != nil {
 		return canaryJobApproval{}, errCommandUnavailable
@@ -193,7 +237,11 @@ func buildCanaryJobApproval(readback canaryReadback, request canaryJobRequest) (
 }
 
 func writeCanaryJobApproval(ctx context.Context, path string, approval canaryJobApproval) (canaryJobReceipt, error) {
-	if ctx == nil || ctx.Err() != nil {
+	return writeCanaryJobApprovalWithSync(ctx, path, approval, func(dir *os.File) error { return dir.Sync() })
+}
+
+func writeCanaryJobApprovalWithSync(ctx context.Context, path string, approval canaryJobApproval, syncDirectory func(*os.File) error) (canaryJobReceipt, error) {
+	if ctx == nil || ctx.Err() != nil || syncDirectory == nil {
 		return canaryJobReceipt{}, errCommandUnavailable
 	}
 	raw, err := json.Marshal(approval)
@@ -204,7 +252,7 @@ func writeCanaryJobApproval(ctx context.Context, path string, approval canaryJob
 		return canaryJobReceipt{}, err
 	}
 	sum := sha256.Sum256(raw)
-	receipt := canaryJobReceipt{SchemaVersion: 1, ReportDigest: approval.ReportDigest, ApprovalDigest: hex.EncodeToString(sum[:]), WorkflowRunID: approval.Job.WorkflowRunID}
+	receipt := canaryJobReceipt{SchemaVersion: 1, ReportDigest: approval.ReportDigest, ApprovalDigest: hex.EncodeToString(sum[:]), WorkflowRunID: approval.Job.WorkflowRunID, WorkflowRunAttempt: approval.Job.WorkflowRunAttempt, JobID: approval.Job.JobID}
 	// Stage complete bytes before atomic, exclusive publication. Readers can
 	// see only absence or one complete single-link file. Reuse the platform's
 	// no-replace rename contract; never overwrite or repair an existing path.
@@ -227,19 +275,21 @@ func writeCanaryJobApproval(ctx context.Context, path string, approval canaryJob
 	if ctx.Err() != nil {
 		return receipt, errCommandUnavailable
 	}
-	if err = renameCanaryApprovalNoReplace(temp, path); err != nil {
-		return receipt, errCommandUnavailable
-	}
 	dir, err := os.Open(filepath.Dir(path))
 	if err != nil {
 		return receipt, errCommandUnavailable
 	}
-	syncErr := dir.Sync()
+	if err = renameCanaryApprovalNoReplace(temp, path); err != nil {
+		_ = dir.Close()
+		return receipt, errCommandUnavailable
+	}
+	receipt.Created = true
+	syncErr := syncDirectory(dir)
 	closeErr = dir.Close()
 	if syncErr != nil || closeErr != nil {
 		return receipt, errCommandUnavailable
 	}
-	receipt.Created = true
+	receipt.Durable = true
 	return receipt, nil
 }
 

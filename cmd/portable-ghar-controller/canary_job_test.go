@@ -13,6 +13,7 @@ import (
 
 	"github.com/sumitake/portable-ghar/internal/canary"
 	"github.com/sumitake/portable-ghar/internal/controller"
+	"github.com/sumitake/portable-ghar/internal/githubscale"
 )
 
 func canaryApprovalFixture(t *testing.T) (canaryReadback, canaryJobRequest, canaryJobApproval) {
@@ -25,7 +26,7 @@ func canaryApprovalFixture(t *testing.T) (canaryReadback, canaryJobRequest, cana
 	runtime.overlay.Manifest.Digest = report.Binding().RuntimeManifestDigest()
 	runtime.overlay.Repositories[0].ConfigURL = "https://github.com/owner/repository"
 	runtime.overlay.Repositories[0].Eligibility = "active"
-	request := canaryJobRequest{Alias: runtime.overlay.Repositories[0].Alias, WorkflowRef: "owner/repository/.github/workflows/canary.yml@refs/heads/main", EventName: "workflow_dispatch", RunID: 42}
+	request := canaryJobRequest{Alias: runtime.overlay.Repositories[0].Alias, WorkflowRef: "owner/repository/.github/workflows/canary.yml@refs/heads/main", EventName: "workflow_dispatch", RunID: 42, RunAttempt: 1, JobID: "job"}
 	record := canary.Record{Version: 1, ReportDigest: report.Digest(), BindingDigest: report.Binding().Digest(), FleetGeneration: report.Binding().FleetGeneration()}
 	rb := canaryReadback{runtime: runtime, report: report, record: record}
 	a, err := buildCanaryJobApproval(rb, request)
@@ -143,7 +144,7 @@ func TestCanaryBindCommandIsRootOnlyAndClosed(t *testing.T) {
 		}
 		return canaryJobReceipt{SchemaVersion: 1, Created: true}, nil
 	}
-	args := []string{"canary-bind", "--config=/private/overlay.json", "--alias=example", "--run-id=42", "--workflow-ref=owner/repository/.github/workflows/canary.yml@refs/heads/main", "--event=workflow_dispatch"}
+	args := []string{"canary-bind", "--config=/private/overlay.json", "--alias=example", "--run-id=42", "--workflow-ref=owner/repository/.github/workflows/canary.yml@refs/heads/main", "--event=workflow_dispatch", "--job-id=job", "--run-attempt=1"}
 	var out, errout bytes.Buffer
 	if code := runWithDependencies(context.Background(), args, &out, &errout, deps); code != 0 || calls != 1 {
 		t.Fatal("binding command failed", code, errout.String())
@@ -211,5 +212,70 @@ func TestCanaryApprovalCancellationAndUnsafePrivateFileNeverAuthorize(t *testing
 	}
 	if _, err := readCanaryApprovalFile(path, uint32(os.Geteuid())); err == nil {
 		t.Fatal("multiply linked approval accepted")
+	}
+}
+
+func TestCanaryBindReportsVisibleApprovalWhenDurabilityFails(t *testing.T) {
+	deps := productionCommandDependencies(time.Now)
+	deps.IsRoot = func() bool { return true }
+	deps.CanaryBind = func(context.Context, string, canaryJobRequest) (canaryJobReceipt, error) {
+		return canaryJobReceipt{SchemaVersion: 1, WorkflowRunID: 42, Created: true}, errors.New("synthetic post-publication sync failure")
+	}
+	var out, errout bytes.Buffer
+	args := []string{"canary-bind", "--config=/private/overlay.json", "--alias=example", "--run-id=42", "--workflow-ref=owner/repository/.github/workflows/canary.yml@refs/heads/main", "--event=workflow_dispatch", "--job-id=job", "--run-attempt=1"}
+	if code := runWithDependencies(context.Background(), args, &out, &errout, deps); code != 1 {
+		t.Fatal("uncertain durability returned success")
+	}
+	var receipt canaryJobReceipt
+	if json.Unmarshal(out.Bytes(), &receipt) != nil || !receipt.Created || !strings.Contains(errout.String(), "published") {
+		t.Fatal("visible approval reported as unpublished", out.String(), errout.String())
+	}
+}
+
+func TestCanaryApprovalSyncFailureReportsPublicationAndRefusesReplacement(t *testing.T) {
+	_, _, approval := canaryApprovalFixture(t)
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, canaryJobApprovalName)
+	receipt, err := writeCanaryJobApprovalWithSync(context.Background(), path, approval, func(*os.File) error { return errors.New("synthetic directory sync fault") })
+	if err == nil || !receipt.Created || receipt.Durable {
+		t.Fatal("ambiguous post-publication state", receipt, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("visible approval silently removed", err)
+	}
+	if _, err := writeCanaryJobApproval(context.Background(), path, approval); err == nil {
+		t.Fatal("published approval replaced after uncertain result")
+	}
+}
+
+func TestCanaryAcquisitionApprovalIsSpentBeforeRetryOrRestart(t *testing.T) {
+	rb, _, approval := canaryApprovalFixture(t)
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	rb.runtime.overlay.Paths.StateRoot = root
+	path := filepath.Join(root, canaryJobApprovalName)
+	if _, err := writeCanaryJobApproval(context.Background(), path, approval); err != nil {
+		t.Fatal(err)
+	}
+	provider := func() *fileCanaryJobProvider {
+		p := newFileCanaryJobProvider(rb.runtime, rb.report)
+		p.read = func() ([]byte, error) { return readCanaryApprovalFile(path, uint32(os.Geteuid())) }
+		return p
+	}
+	offer := githubscale.Offer{JobRef: githubscale.JobRef{RunnerRequestID: 1001, JobID: approval.Job.JobID, OwnerName: "owner", RepositoryName: "repository", WorkflowRunID: 42, JobWorkflowRef: approval.Job.WorkflowRef, EventName: "workflow_dispatch", RequestLabels: []string{approval.Job.ScaleSet}}}
+	first := provider()
+	if err := first.ConsumeCanaryAcquisition(context.Background(), approval.Job.RepositoryAlias, approval.Job.ScaleSet, offer); err != nil {
+		t.Fatal(err)
+	}
+	offer.RunnerRequestID++
+	for _, p := range []*fileCanaryJobProvider{first, provider()} {
+		if p.ConsumeCanaryAcquisition(context.Background(), approval.Job.RepositoryAlias, approval.Job.ScaleSet, offer) == nil {
+			t.Fatal("second acquisition authorized")
+		}
 	}
 }

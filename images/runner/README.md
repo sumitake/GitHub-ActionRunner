@@ -35,6 +35,9 @@ reproducible; and the image records its full installed inventory in
 For a control environment whose TLS proxy is outside that pinned runtime CA
 bundle, an optional build-only named context `debian-cache` can supply the same
 snapshot's original Debian-signed `InRelease`, package indexes and `.deb` files.
+The build checks all three `InRelease` hashes against the tracked
+`verify-debian-cache.sh` pins before APT runs. A valid signature from a different
+snapshot is insufficient.
 Set `DEBIAN_SNAPSHOT_SOURCE=offline`, bind that cache read-only, and run the build
 with network mode `none`. APT still authenticates the indexes with the pinned
 base image's archive keys and checks the package hashes. Missing, changed or
@@ -52,7 +55,8 @@ avoid repeated copies of that payload in native BuildKit snapshots. Bound and
 measure the whole builder and staging footprint; retained A/B native caches may
 need cleanup within their exclusive builder between builds.
 
-Applying Debian security fixes is one change: move the snapshot timestamp
+Applying Debian security fixes requires updating the snapshot timestamp, its
+three reviewed `InRelease` hash pins, and release metadata together. Move the timestamp
 (`YYYYMMDDTHHMMSSZ`, in the past) forward and let CI rebuild, scan, and
 compare. A fix published today needs a time after snapshot.debian.org imported
 it; the midnight snapshot may predate it. The base image digest is pinned

@@ -2555,6 +2555,19 @@ func (s *Service) acquireLocalOffers(
 				return err
 			}
 		}
+		if policy.Mode == AcquisitionCanaryOnly {
+			consumer, ok := s.canaryJobs.(CanaryAcquisitionConsumer)
+			if !ok || len(ordered) != 1 {
+				return ErrCanaryJobRejected
+			}
+			if err := consumer.ConsumeCanaryAcquisition(guarded.Context(), fleet.RepositoryAlias, fleet.ScaleSetName, ordered[0].offer); err != nil {
+				return err
+			}
+			if err := s.verifyCanaryOffer(guarded.Context(), policy, fleet.RepositoryAlias, fleet.ScaleSetName, ordered[0].offer); err != nil {
+				return err
+			}
+			return guarded.Revalidate()
+		}
 		return nil
 	}(); err != nil {
 		finishCtx, finishCancel := context.WithTimeout(

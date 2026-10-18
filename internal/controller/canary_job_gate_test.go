@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func TestCanaryPollWithoutExpectedJobRejectsBeforeAcquire(t *testing.T) {
 }
 
 func testExpectedCanaryJob() CanaryJobIdentity {
-	return CanaryJobIdentity{RepositoryAlias: "repo-a", Repository: "owner/repository", ScaleSet: "portable-ghar", WorkflowRef: "owner/repository/.github/workflows/canary.yml@refs/heads/main", WorkflowRunID: 42, EventName: "workflow_dispatch"}
+	return CanaryJobIdentity{RepositoryAlias: "repo-a", Repository: "owner/repository", ScaleSet: "portable-ghar", WorkflowRef: "owner/repository/.github/workflows/canary.yml@refs/heads/main", WorkflowRunID: 42, WorkflowRunAttempt: 1, JobID: "job", EventName: "workflow_dispatch"}
 }
 func testApprovedCanaryOffer(now time.Time) githubscale.Offer {
 	job := testExpectedCanaryJob()
@@ -34,7 +35,9 @@ func testApprovedCanaryOffer(now time.Time) githubscale.Offer {
 func TestCanaryJobIdentityRejectsEveryUnexpectedOffer(t *testing.T) {
 	expected := testExpectedCanaryJob()
 	for name, mutate := range map[string]func(*githubscale.Offer){
-		"run": func(o *githubscale.Offer) { o.WorkflowRunID++ },
+		"run":                   func(o *githubscale.Offer) { o.WorkflowRunID++ },
+		"other job in same run": func(o *githubscale.Offer) { o.JobID = "another-job" },
+		"rerun job in same run": func(o *githubscale.Offer) { o.JobID = "later-attempt-job" },
 		"ref": func(o *githubscale.Offer) {
 			o.JobWorkflowRef = "owner/repository/.github/workflows/canary.yml@refs/heads/other"
 		},
@@ -78,7 +81,7 @@ func TestCanaryPollAcceptsApprovedJobAndDeclinesUnrelatedMixedOffer(t *testing.T
 			state := &fakeDurableState{}
 			broker := &fakeAdmissionBroker{lease: PollLease{RepositoryAlias: "repo-a", Reserved: 1, PollCapacity: 1, ExpiresAt: now.Add(time.Hour)}, ensureRefs: []AdmissionReference{{Key: AssignmentKey{RepositoryAlias: "repo-a", RunnerRequestID: 1001}, Phase: AdmissionQueued}}}
 			service, _ := startPollService(t, now, nil, state, broker, &fakeEventRecorder{})
-			service.canaryJobs = testExpectedCanaryJob()
+			service.canaryJobs = newTestCanaryJobProvider()
 			if _, err := service.SetAcquisition(context.Background(), AcquisitionChange{Set: AcquisitionCanaryOnly, Expected: AcquisitionEnabled, EligibleScaleSet: "portable-ghar"}); err != nil {
 				t.Fatal(err)
 			}
@@ -140,7 +143,9 @@ func TestCanaryApprovalPendingWaitsBeforePollingThenAllowsBoundJob(t *testing.T)
 
 func TestCanaryPollDeclinesUnexpectedRunRefEventBeforeAcquisition(t *testing.T) {
 	for name, mutate := range map[string]func(*githubscale.Offer){
-		"run": func(o *githubscale.Offer) { o.WorkflowRunID++ },
+		"run":                   func(o *githubscale.Offer) { o.WorkflowRunID++ },
+		"other job in same run": func(o *githubscale.Offer) { o.JobID = "another-job" },
+		"rerun job in same run": func(o *githubscale.Offer) { o.JobID = "later-attempt-job" },
 		"ref": func(o *githubscale.Offer) {
 			o.JobWorkflowRef = "owner/repository/.github/workflows/canary.yml@refs/heads/other"
 		},
@@ -152,7 +157,7 @@ func TestCanaryPollDeclinesUnexpectedRunRefEventBeforeAcquisition(t *testing.T) 
 			state := &fakeDurableState{trace: trace}
 			broker := &fakeAdmissionBroker{trace: trace, lease: PollLease{RepositoryAlias: "repo-a", Reserved: 1, PollCapacity: 1, ExpiresAt: now.Add(time.Hour)}}
 			service, _ := startPollService(t, now, trace, state, broker, &fakeEventRecorder{})
-			service.canaryJobs = testExpectedCanaryJob()
+			service.canaryJobs = newTestCanaryJobProvider()
 			if _, err := service.SetAcquisition(context.Background(), AcquisitionChange{Set: AcquisitionCanaryOnly, Expected: AcquisitionEnabled, EligibleScaleSet: "portable-ghar"}); err != nil {
 				t.Fatal(err)
 			}
@@ -235,5 +240,45 @@ func TestCanaryJobAcceptsPinnedAdapterOwnerAndBareRepository(t *testing.T) {
 		if job.VerifyCanaryOffer(context.Background(), "repo-a", "portable-ghar", offer) == nil {
 			t.Fatal("different or ambiguous repository admitted", repository)
 		}
+	}
+}
+
+type testCanaryJobProvider struct {
+	mu    sync.Mutex
+	spent bool
+}
+
+func newTestCanaryJobProvider() *testCanaryJobProvider { return &testCanaryJobProvider{} }
+func (p *testCanaryJobProvider) ExpectedCanaryJob(ctx context.Context) (CanaryJobIdentity, error) {
+	return testExpectedCanaryJob().ExpectedCanaryJob(ctx)
+}
+func (p *testCanaryJobProvider) ConsumeCanaryAcquisition(ctx context.Context, alias, scaleSet string, offer githubscale.Offer) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.spent || testExpectedCanaryJob().VerifyCanaryOffer(ctx, alias, scaleSet, offer) != nil {
+		return ErrCanaryJobRejected
+	}
+	p.spent = true
+	return nil
+}
+func (p *pendingCanaryJobs) ConsumeCanaryAcquisition(ctx context.Context, alias, scaleSet string, offer githubscale.Offer) error {
+	if !p.ready {
+		return ErrCanaryJobRejected
+	}
+	return testExpectedCanaryJob().VerifyCanaryOffer(ctx, alias, scaleSet, offer)
+}
+
+func TestSpentCanaryApprovalAbortsBeforeAcquire(t *testing.T) {
+	now := time.Date(2026, 7, 28, 23, 0, 0, 0, time.UTC)
+	state := &fakeDurableState{}
+	broker := &fakeAdmissionBroker{lease: PollLease{RepositoryAlias: "repo-a", Reserved: 1, PollCapacity: 1, ExpiresAt: now.Add(time.Hour)}}
+	service, _ := startPollService(t, now, nil, state, broker, &fakeEventRecorder{})
+	service.canaryJobs = &testCanaryJobProvider{spent: true}
+	if _, err := service.SetAcquisition(context.Background(), AcquisitionChange{Set: AcquisitionCanaryOnly, Expected: AcquisitionEnabled, EligibleScaleSet: "portable-ghar"}); err != nil {
+		t.Fatal(err)
+	}
+	upstream := &fakeSession{batch: githubscale.Batch{MessageID: 501, Offers: []githubscale.Offer{testApprovedCanaryOffer(now)}}}
+	if err := service.PollOnce(context.Background(), githubscale.Fleet{RepositoryAlias: "repo-a", ScaleSetName: "portable-ghar"}, upstream); err == nil || len(upstream.AcquireRequests()) != 0 {
+		t.Fatal("spent approval reached upstream", err)
 	}
 }

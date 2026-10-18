@@ -23,16 +23,24 @@ type CanaryJobProvider interface {
 	ExpectedCanaryJob(context.Context) (CanaryJobIdentity, error)
 }
 
-// CanaryJobIdentity identifies the single approved manual run. The operator
+// CanaryAcquisitionConsumer spends one durable approval before an upstream
+// acquisition attempt. Uncertainty consumes the approval; it never retries.
+type CanaryAcquisitionConsumer interface {
+	ConsumeCanaryAcquisition(context.Context, string, string, githubscale.Offer) error
+}
+
+// CanaryJobIdentity identifies one approved job from one manual run attempt. The operator
 // obtains its run ID and immutable revision from authenticated GitHub metadata;
 // the scale-set offer carries the run ID/ref/event, but no source revision.
 type CanaryJobIdentity struct {
-	RepositoryAlias string `json:"repository_alias"`
-	Repository      string `json:"repository"`
-	ScaleSet        string `json:"scale_set"`
-	WorkflowRef     string `json:"workflow_ref"`
-	WorkflowRunID   int64  `json:"workflow_run_id"`
-	EventName       string `json:"event_name"`
+	RepositoryAlias    string `json:"repository_alias"`
+	Repository         string `json:"repository"`
+	ScaleSet           string `json:"scale_set"`
+	WorkflowRef        string `json:"workflow_ref"`
+	WorkflowRunID      int64  `json:"workflow_run_id"`
+	WorkflowRunAttempt int64  `json:"workflow_run_attempt"`
+	JobID              string `json:"job_id"`
+	EventName          string `json:"event_name"`
 }
 
 var canaryRepositoryPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$`)
@@ -43,6 +51,8 @@ func (job CanaryJobIdentity) Validate() error {
 		!validAcquisitionScalar(job.ScaleSet, maxAcquisitionScaleSetBytes) ||
 		!canaryRepositoryPattern.MatchString(job.Repository) ||
 		job.WorkflowRunID <= 0 || job.WorkflowRunID > 9007199254740991 ||
+		job.WorkflowRunAttempt <= 0 || job.WorkflowRunAttempt > 9007199254740991 ||
+		!validAcquisitionScalar(job.JobID, 128) ||
 		job.EventName != "workflow_dispatch" {
 		return ErrCanaryJobRejected
 	}
@@ -64,7 +74,7 @@ func (job CanaryJobIdentity) VerifyCanaryOffer(ctx context.Context, alias, scale
 	if ctx == nil || ctx.Err() != nil || job.Validate() != nil ||
 		alias != job.RepositoryAlias || scaleSet != job.ScaleSet ||
 		repository != job.Repository || offer.OwnerName != strings.SplitN(job.Repository, "/", 2)[0] ||
-		offer.WorkflowRunID != job.WorkflowRunID || offer.JobWorkflowRef != job.WorkflowRef ||
+		offer.WorkflowRunID != job.WorkflowRunID || offer.JobID != job.JobID || offer.JobWorkflowRef != job.WorkflowRef ||
 		offer.EventName != job.EventName || len(offer.RequestLabels) != 1 || offer.RequestLabels[0] != job.ScaleSet {
 		return ErrCanaryJobRejected
 	}

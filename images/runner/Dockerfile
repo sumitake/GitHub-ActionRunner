@@ -9,7 +9,7 @@ RUN --mount=type=bind,source=.,target=/context,ro set -eu; \
     find /context -mindepth 1 -print | while IFS= read -r candidate; do \
       relative=${candidate#/context/}; \
       case "$relative" in \
-        Dockerfile|.dockerignore|build| \
+        Dockerfile|.dockerignore|verify-debian-cache.sh|build| \
         build/portable-ghar-runner-gate| \
         build/runner|build/runner/*| \
         build/runner.tree-manifest.json|build/runner.tree-lock| \
@@ -39,6 +39,7 @@ ARG SOURCE_DATE_EPOCH
 ARG DEBIAN_SNAPSHOT_SOURCE=network
 COPY --from=context-audit --chown=0:0 --chmod=0444 /verified-ca-bundle.pem /portable-ghar-bootstrap-ca.pem
 RUN --mount=type=bind,from=debian-cache,target=/snapshot-cache,ro \
+    --mount=type=bind,source=verify-debian-cache.sh,target=/verify-debian-cache,ro \
     --mount=type=bind,source=build,target=/inputs,ro \
     --mount=type=bind,from=context-audit,source=/context-audit.OK,target=/context-audit.OK,ro \
     set -eu; \
@@ -55,6 +56,7 @@ RUN --mount=type=bind,from=debian-cache,target=/snapshot-cache,ro \
           "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${snapshot} bookworm-security main" \
           > /etc/apt/sources.list ;; \
       offline) \
+        /bin/sh /verify-debian-cache /snapshot-cache "$snapshot"; \
         printf '%s\n' \
           "deb [check-valid-until=no] file:/snapshot-cache/archive/debian/${snapshot} bookworm main" \
           "deb [check-valid-until=no] file:/snapshot-cache/archive/debian/${snapshot} bookworm-updates main" \
