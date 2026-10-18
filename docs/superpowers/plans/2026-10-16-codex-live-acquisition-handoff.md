@@ -111,8 +111,10 @@ relying on it.
    actual GitHub transport" (around lines 1297-1316). The canary must: obtain
    one JIT through the governed acquisition path; get an in-run authenticated
    `githubscale.Compatibility()` result proving live `DisableUpdate=true`;
-   prove the JIT absent after listener parsing and from every job-visible
-   surface; complete one real listener transport and HTTPS checkout; run every
+   apply the operator-approved bounded-credential amendment in the live
+   acquisition plan (record own-job `/proc` and tmpfs exposure without bytes,
+   and prove no inherited job environment, Docker, host, log, report, or
+   cross-container leak); complete one real listener transport and HTTPS checkout; run every
    current proxy-sensitive tool; prove deregistration and full reclamation;
    and bind all of it to the same manifest, image, profile, policy, network
    evidence, fleet generation, and report run. Task 11 forbids any alternate
@@ -139,12 +141,17 @@ relying on it.
    results inside the job, need the canary workflow to report them through a
    channel the controller already records. If no such channel exists, raise
    it with the operator before building one.
-5. **The JIT is likely visible to the job.** `runtimeenv.Listener` appends
+5. **The JIT is bounded, not hidden from its own job.** `runtimeenv.Listener` appends
    the JIT to the listener's exec environment
    (`internal/runtimeenv/environment.go`, around lines 52-56), which stays
-   readable in `/proc/<pid>/environ`. The canary workflow should probe for it
-   first. If present, the runner gate must hand the JIT over another way
-   before case 15 can pass.
+   readable in `/proc/<pid>/environ`. The operator explicitly chose bounded
+   credential exposure for case 15; the live acquisition plan and Task 11 now
+   record that amendment. The canary must measure own-job exposure without
+   emitting bytes and still prove no prohibited leak. The pinned listener's
+   decoded configuration writes also need writable storage: exactly three
+   fixed image links point `.runner`, `.credentials`, and
+   `.credentials_rsaparams` into `/runner` tmpfs. Code stays read-only and the
+   complete runner/tmpfs must be reclaimed after the one job.
 6. **The canary workflow** targets only the scale set's single label created
    in D7. It lives in the canary repository, not here; this repository should
    ship it as an example or template with placeholders.
