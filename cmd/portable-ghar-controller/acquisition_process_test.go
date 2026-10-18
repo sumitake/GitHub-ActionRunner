@@ -151,23 +151,51 @@ func healthStatus(t *testing.T, path string) localStatus {
 	return response.Status
 }
 
-func TestAcquisitionProcessServesSocketsAndStopsCleanlyOnSignal(t *testing.T) {
+func waitForAcquisitionServiceReady(t *testing.T, service *fakeAcquisitionService) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for !service.Ready() {
+		if time.Now().After(deadline) {
+			t.Fatal("service never reported ready")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestAcquisitionProcessHealthTracksServiceReadiness(t *testing.T) {
 	fixture := newAcquisitionProcessFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := fixture.startWith(t, ctx)
+	t.Cleanup(func() {
+		cancel()
+		if err := waitForRun(t, result); err != nil {
+			t.Errorf("Run after signal = %v, want nil", err)
+		}
+		if err := fixture.process.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 
 	// Health follows the service: unavailable until startup recovery ends.
 	if status := healthStatus(t, fixture.healthPath); status != localStatusUnavailable {
 		t.Fatalf("health before ready = %q, want unavailable", status)
 	}
 	close(fixture.service.release)
-	deadline := time.Now().Add(time.Second)
-	for healthStatus(t, fixture.healthPath) != localStatusOK {
-		if time.Now().After(deadline) {
-			t.Fatal("health never reported ready")
-		}
-		time.Sleep(time.Millisecond)
+	waitForAcquisitionServiceReady(t, fixture.service)
+	if status := healthStatus(t, fixture.healthPath); status != localStatusOK {
+		t.Fatalf("health after ready = %q, want ok", status)
 	}
+}
+
+func TestAcquisitionProcessServesSocketsAndStopsCleanlyOnSignal(t *testing.T) {
+	fixture := newAcquisitionProcessFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := fixture.startWith(t, ctx)
+	close(fixture.service.release)
+	waitForAcquisitionServiceReady(t, fixture.service)
+	// Keep the admin lifecycle independent of health connections: response EOF
+	// does not guarantee that a previous handler released its admission slot.
 	admin, err := newLocalAdminClient(fixture.adminPath, uint32(os.Geteuid()), time.Second)
 	if err != nil {
 		t.Fatalf("newLocalAdminClient: %v", err)

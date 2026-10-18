@@ -170,27 +170,32 @@ the fence binary's `handoff` command.
 
 Gaps found while preparing this handoff:
 
-- **No client sends Worker admin commands.** `portable-canary-start` and
+- **Worker admin client.** `portable-canary-start` and
   `portable-canary-stop` are signed `POST /v1/admin/command` requests
-  (`docs/operations/worker-canary-authority.md`). The Go side has only the
-  path constants (`internal/failoverclient/auth.go`, lines 18-19). Nothing
-  signs or sends an admin command. The runbook needs a small one-shot
-  subcommand, for example in `portable-ghar-controller`, that reads the
-  overlay's Worker section and HMAC secret and sends one command. [Verify:
-  how the Worker authenticates admin requests, in `worker/src/protocol/admin.ts`,
-  before designing the client.]
+  (`docs/operations/worker-canary-authority.md`). The
+  one-shot `worker-canary --config=<overlay> --command-file=<file>` command
+  reads the overlay's Worker section and HMAC secret and sends exactly one
+  canonical command through the existing protocol exchange. The Worker
+  authenticates it in `worker/src/engine/admin.ts` using the normal HMAC key,
+  timestamp window, inventory, and fresh nonce. The client verifies response
+  signature, freshness, identity, and outcome, and never retries. The operator
+  instructions in `worker-canary-authority.md` describe the command fields.
 - **The fence generation moves at the handover.** `handoff` writes
   `ExpectedGeneration + 1` (`internal/fleetfence/store.go`, around line 353).
   `run-acquisition` requires the fence to name the portable fleet at exactly
   the runtime manifest's `fleet_generation`
   (`production_acquisition.go`, around line 140), and the gate requires the
-  report's fleet generation to match the controller's. So if D5 reads
-  generation N, the manifest, the overlay, and the D2 input must all carry
-  N+1, and D2 must run with those values. [Verify: where the runtime
-  manifest's `fleet_generation` is set during release and overlay assembly.
-  It was not found in `release/` or `scripts/` during this check.] Write this
-  into the operator steps before D2 runs, because a mismatch means a wasted
-  D2 run (the run consumes its input).
+  report's fleet generation to match the controller's. If D5 reads generation
+  N, the manifest and the D2 input must carry N+1. The overlay has no generation
+  field: it binds the exact manifest path and digest. Release assembly writes
+  `runtime-release.json`, a different document; it does not assign the host
+  manifest's generation (`scripts/release/rehearse-runtime.sh`,
+  `write_authority_files`). `assemble-private-overlay` loads an existing host
+  manifest without changing it (`internal/cli/private_overlay_assembly.go`).
+  `assemble-runtime-manifest` serializes an operator-approved identity
+  template for an explicit generation using the existing canonical serializer;
+  it does not verify release provenance. The operator steps give the assembly
+  and binding commands before D2, because a mismatch wastes the consumed input.
 - **D4.** The watchdog safe-stops any controller that is not `disabled`, so
   the runbook suspends it for the canary window and re-arms it after, as a
   journaled step.
