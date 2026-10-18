@@ -169,10 +169,7 @@ the fence binary's `handoff` command.
 
 Gaps found while preparing this handoff:
 
-- **Worker admin client prerequisite.** PR #119 supplies the one-shot signed
-  `worker-canary` client and exact canonical command instructions. It must be
-  reviewed and installed before the runbook. The original gap was:
-  **No client sends Worker admin commands.** `portable-canary-start` and
+- **Worker admin client.** `portable-canary-start` and
   `portable-canary-stop` are signed `POST /v1/admin/command` requests
   (`docs/operations/worker-canary-authority.md`). The
   one-shot `worker-canary --config=<overlay> --command-file=<file>` command
@@ -182,6 +179,14 @@ Gaps found while preparing this handoff:
   timestamp window, inventory, and fresh nonce. The client verifies response
   signature, freshness, identity, and outcome, and never retries. The operator
   instructions in `worker-canary-authority.md` describe the command fields.
+- **Worker start inputs.** PR #119 supplies the one-shot signed `worker-canary`
+  client. `canary-plan --config=<overlay_path>
+  --eligible-scale-set=<canary_scale_set>` reads the exact pending runtime and
+  the existing authenticated session's lease generation through the root-local
+  probe. It previews the same policy as the actual canary transition. Do not
+  guess the lease counter, open a replacement session, or reimplement the policy
+  digest in the script. See
+  [canary start context](../../operations/live-acquisition-canary-context.md).
 - **The fence generation moves at the handover.** `handoff` writes
   `ExpectedGeneration + 1` (`internal/fleetfence/store.go`, around line 353).
   `run-acquisition` requires the fence to name the portable fleet at exactly
@@ -202,7 +207,10 @@ Gaps found while preparing this handoff:
   Finish all manifest/image/overlay changes before D2 consumes its input.
 - **D4.** The watchdog safe-stops any controller that is not `disabled`, so
   the runbook suspends it for the canary window and re-arms it after, as a
-  journaled step.
+  journaled step. The target-local D5 inventory still determines the exact
+  reverse commands: returning the fence writes N+2, while the canary manifest
+  and report remain bound to N+1. Do not blindly restart an observer/watchdog
+  with stale generation bindings.
 - **D6.** Hosted and replay routes are stubs; a stale offer ends the process.
   Accepted for the canary. Real hosted routing comes before `enabled`.
 - The runbook must end with `disabled`, whatever happened.
