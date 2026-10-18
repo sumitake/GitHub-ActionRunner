@@ -118,7 +118,7 @@ class RunnerCABootstrapContractTest(unittest.TestCase):
     def test_final_stage_bootstraps_apt_only_from_the_completed_audit(self) -> None:
         audited_copy = (
             "COPY --from=context-audit --chown=0:0 --chmod=0444 "
-            "/context/build/ca-bundle.pem /portable-ghar-bootstrap-ca.pem"
+            "/verified-ca-bundle.pem /portable-ghar-bootstrap-ca.pem"
         )
         self.assertIn(audited_copy, self.dockerfile)
         self.assertLess(
@@ -150,6 +150,18 @@ class RunnerCABootstrapContractTest(unittest.TestCase):
             self.dockerfile.index(absence_check),
             self.dockerfile.rindex("COPY "),
         )
+
+    def test_offline_cache_keeps_debian_signature_and_runtime_tls_authority(self) -> None:
+        self.assertIn("FROM scratch AS debian-cache", self.dockerfile)
+        self.assertIn("ARG DEBIAN_SNAPSHOT_SOURCE=network", self.dockerfile)
+        self.assertIn("--mount=type=bind,from=debian-cache,target=/snapshot-cache,ro", self.dockerfile)
+        self.assertIn('case "$DEBIAN_SNAPSHOT_SOURCE" in', self.dockerfile)
+        self.assertIn("file:/snapshot-cache/archive/debian/${snapshot}", self.dockerfile)
+        for forbidden in ("trusted=yes", "allow-unauthenticated", "AllowInsecureRepositories", "Verify-Peer=false", "Verify-Host=false"):
+            self.assertNotIn(forbidden, self.dockerfile)
+        self.assertIn("Acquire::Languages=none", self.dockerfile)
+        self.assertIn("Acquire::By-Hash=false", self.dockerfile)
+        self.assertIn('s|file:/snapshot-cache/archive/|https://snapshot.debian.org/archive/|g', self.dockerfile)
 
     def test_ci_and_rehearsal_prepare_task6_before_task5(self) -> None:
         ci_task6 = self.workflow.index("scripts/prepare-task6-images.sh")

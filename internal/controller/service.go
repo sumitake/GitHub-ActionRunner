@@ -546,6 +546,7 @@ type AcquisitionRevoker interface {
 }
 
 type ServiceConfig struct {
+	CanaryJobs            CanaryJobProvider
 	State                 DurableState
 	Broker                AdmissionBroker
 	Transitions           AcquisitionTransitioner
@@ -613,6 +614,7 @@ func (e *fatalOperationError) Unwrap() error {
 // reconciliation sections enter the live acquisition barrier instead of
 // holding one global network-call mutex.
 type Service struct {
+	canaryJobs   CanaryJobProvider
 	transitionMu sync.Mutex
 	mu           sync.RWMutex
 
@@ -714,6 +716,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		fleetGuards:           config.FleetGuards,
 		permits:               config.Permits,
 		conformance:           config.Conformance,
+		canaryJobs:            config.CanaryJobs,
 		hostCapacity:          config.HostCapacity,
 		pressure:              config.HistoryPressure,
 		health:                config.HealthPublisher,
@@ -1743,7 +1746,7 @@ func (s *Service) pollOnceAfterHostPressure(
 	// Only the pre-effect poll boundary can produce this private wait result.
 	// No GitHub call or durable acquisition has occurred; the normal cadence
 	// waits for the existing heartbeat to refill the cleared cache.
-	if errors.Is(pollErr, errPollAwaitLease) {
+	if errors.Is(pollErr, errPollAwaitLease) || errors.Is(pollErr, errPollAwaitCanaryJob) {
 		return nil
 	}
 	if errors.Is(pollErr, ErrAcquisitionPermitAuthority) {
@@ -1899,6 +1902,17 @@ func (s *Service) pollOnceCritical(
 		}
 	}()
 
+	var expectedCanary CanaryJobIdentity
+	if policy.Mode == AcquisitionCanaryOnly {
+		var err error
+		expectedCanary, err = s.expectedCanaryJob(ctx)
+		if errors.Is(err, ErrCanaryJobPending) {
+			return errPollAwaitCanaryJob
+		}
+		if err != nil {
+			return err
+		}
+	}
 	now := s.now()
 	lease, err := s.broker.LeasePoll(fleet.RepositoryAlias, now)
 	if err != nil {
@@ -1948,6 +1962,7 @@ func (s *Service) pollOnceCritical(
 	if !batch.StatisticsPresent {
 		return fmt.Errorf("%w: nonempty batch omitted statistics", ErrPollCycle)
 	}
+
 	envelope := NewMessageEnvelope(fleet.RepositoryAlias, batch)
 	keys := make([]AssignmentKey, 0, len(batch.Offers))
 	for _, offer := range batch.Offers {
@@ -2008,6 +2023,9 @@ func (s *Service) pollOnceCritical(
 	observed := make([]observedOffer, 0, len(batch.Offers))
 	seen := make(map[AssignmentKey]struct{}, len(batch.Offers))
 	for _, offer := range batch.Offers {
+		if policy.Mode == AcquisitionCanaryOnly && expectedCanary.VerifyCanaryOffer(workCtx, fleet.RepositoryAlias, fleet.ScaleSetName, offer) != nil {
+			continue
+		}
 		record, err := s.state.RecordOffer(workCtx, fleet.RepositoryAlias, offer, OfferEvidence{
 			Kind:       OfferEvidenceCurrentPoll,
 			MessageID:  batch.MessageID,
@@ -2427,6 +2445,11 @@ func (s *Service) acquireLocalOffers(
 	if len(ordered) > lease.Reserved {
 		ordered = ordered[:lease.Reserved]
 	}
+	for _, item := range ordered {
+		if err := s.verifyCanaryOffer(ctx, policy, fleet.RepositoryAlias, fleet.ScaleSetName, item.offer); err != nil {
+			return guardedLocalAcquisition{}, err
+		}
+	}
 	keys := make([]AssignmentKey, len(ordered))
 	for i, item := range ordered {
 		keys[i] = item.record.Key
@@ -2523,7 +2546,17 @@ func (s *Service) acquireLocalOffers(
 		}
 	}
 
-	if err := guarded.Revalidate(); err != nil {
+	if err := func() error {
+		if err := guarded.Revalidate(); err != nil {
+			return err
+		}
+		for _, item := range ordered {
+			if err := s.verifyCanaryOffer(guarded.Context(), policy, fleet.RepositoryAlias, fleet.ScaleSetName, item.offer); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
 		finishCtx, finishCancel := context.WithTimeout(
 			context.Background(),
 			s.durableFinishTimeout,

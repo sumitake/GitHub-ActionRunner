@@ -4,7 +4,7 @@
   "runtime": {
     "schema_version": 1,
     "platform": "linux/amd64",
-    "debian_snapshot": "20250101T000000Z",
+    "debian_snapshot": "20261010T000000Z",
     "runner_release": {
       "schema_version": 1,
       "version": "v2.338.0",

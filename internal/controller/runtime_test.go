@@ -107,6 +107,7 @@ func newRuntimeServiceFixture(
 		CompletedAt: now.Add(-time.Second),
 	}}
 	config := ServiceConfig{
+		CanaryJobs:            testExpectedCanaryJob(),
 		State:                 state,
 		Broker:                broker,
 		Transitions:           transitions,
@@ -388,6 +389,7 @@ func TestCanaryReplayFailureStopsPollingAndShutdownDoesNotCancelRunningJobs(t *t
 	if err != nil {
 		t.Fatalf("set canary: %v", err)
 	}
+	service.canaryJobs = testExpectedCanaryJob()
 	service.replay = &fakeReplayVerifier{result: ReplayUnknown}
 	hosted := &recordingHostedRouter{readinessErr: ErrHostedUnavailable}
 	service.hosted = hosted
@@ -396,6 +398,11 @@ func TestCanaryReplayFailureStopsPollingAndShutdownDoesNotCancelRunningJobs(t *t
 		Offers: []githubscale.Offer{{JobRef: githubscale.JobRef{
 			RunnerRequestID: 3910,
 			RepositoryName:  "owner/repository",
+			OwnerName:       "owner",
+			WorkflowRunID:   42,
+			JobWorkflowRef:  "owner/repository/.github/workflows/canary.yml@refs/heads/main",
+			EventName:       "workflow_dispatch",
+			RequestLabels:   []string{"portable-ghar"},
 		}}},
 	}}
 	trace.Reset()

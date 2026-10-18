@@ -360,6 +360,7 @@ func openProductionAcquisitionController(
 		FleetGuards:           fence,
 		Permits:               worker.Permits,
 		Conformance:           productionCanaryConformance{report: gate},
+		CanaryJobs:            newFileCanaryJobProvider(loaded, report),
 		HostCapacity:          fixedHostCapacity{capacity: int(overlay.Resources.MaxCapacity), evidence: loaded.overlayDigest, now: time.Now},
 		HistoryPressure:       pressure,
 		HealthPublisher:       worker.Health,

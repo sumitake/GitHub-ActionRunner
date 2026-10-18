@@ -2,9 +2,10 @@
 
 ARG SOURCE_DATE_EPOCH
 
+FROM scratch AS debian-cache
+
 FROM debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867 AS context-audit
-COPY . /context
-RUN set -eu; \
+RUN --mount=type=bind,source=.,target=/context,ro set -eu; \
     find /context -mindepth 1 -print | while IFS= read -r candidate; do \
       relative=${candidate#/context/}; \
       case "$relative" in \
@@ -30,24 +31,41 @@ RUN set -eu; \
     test -x /context/build/portable-ghar-runner-gate; \
     test -f /context/build/runner.READY; \
     test -f /context/build/seed-cache.READY; \
+    cp /context/build/ca-bundle.pem /verified-ca-bundle.pem; \
     printf '%s\n' verified > /context-audit.OK
 
 FROM debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867
 ARG SOURCE_DATE_EPOCH
-COPY --from=context-audit --chown=0:0 --chmod=0444 /context/build/ca-bundle.pem /portable-ghar-bootstrap-ca.pem
-RUN set -eu; \
+ARG DEBIAN_SNAPSHOT_SOURCE=network
+COPY --from=context-audit --chown=0:0 --chmod=0444 /verified-ca-bundle.pem /portable-ghar-bootstrap-ca.pem
+RUN --mount=type=bind,from=debian-cache,target=/snapshot-cache,ro \
+    --mount=type=bind,source=build,target=/inputs,ro \
+    --mount=type=bind,from=context-audit,source=/context-audit.OK,target=/context-audit.OK,ro \
+    set -eu; \
     case "${SOURCE_DATE_EPOCH:-}" in \
       ""|*[!0-9]*) exit 1 ;; \
     esac; \
     rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*; \
     snapshot=20261010T000000Z; \
-    printf '%s\n' \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${snapshot} bookworm main" \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${snapshot} bookworm-updates main" \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${snapshot} bookworm-security main" \
-      > /etc/apt/sources.list; \
+    case "$DEBIAN_SNAPSHOT_SOURCE" in \
+      network) \
+        printf '%s\n' \
+          "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${snapshot} bookworm main" \
+          "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${snapshot} bookworm-updates main" \
+          "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${snapshot} bookworm-security main" \
+          > /etc/apt/sources.list ;; \
+      offline) \
+        printf '%s\n' \
+          "deb [check-valid-until=no] file:/snapshot-cache/archive/debian/${snapshot} bookworm main" \
+          "deb [check-valid-until=no] file:/snapshot-cache/archive/debian/${snapshot} bookworm-updates main" \
+          "deb [check-valid-until=no] file:/snapshot-cache/archive/debian-security/${snapshot} bookworm-security main" \
+          > /etc/apt/sources.list ;; \
+      *) exit 1 ;; \
+    esac; \
     apt-get \
       -o Acquire::Check-Valid-Until=false \
+      -o Acquire::Languages=none \
+      -o Acquire::By-Hash=false \
       -o Acquire::https::CaInfo=/portable-ghar-bootstrap-ca.pem \
       -o Acquire::https::Verify-Peer=true \
       -o Acquire::https::Verify-Host=true \
@@ -75,18 +93,14 @@ RUN set -eu; \
       /var/cache/ldconfig/aux-cache \
       /var/log/alternatives.log \
       /var/log/dpkg.log \
-    && rm -f /portable-ghar-bootstrap-ca.pem
-COPY --from=context-audit --chown=0:0 --chmod=0444 /context-audit.OK /opt/portable-ghar/context-audit.OK
+    && sed -i 's|file:/snapshot-cache/archive/|https://snapshot.debian.org/archive/|g' /etc/apt/sources.list \
+    && rm -f /portable-ghar-bootstrap-ca.pem \
+    && install -d -m 0755 /opt/portable-ghar /usr/local/bin \
+    && cp -Rp /inputs/seed-cache /opt/portable-ghar/seed-cache \
+    && install -m 0444 /context-audit.OK /opt/portable-ghar/context-audit.OK \
+    && install -m 0444 /inputs/runner.tree-manifest.json /inputs/runner.tree-lock /inputs/runner.runtime-lock.json /inputs/runner.READY /inputs/seed-cache.manifest.json /inputs/seed-cache.tree-lock /inputs/seed-cache.READY /opt/portable-ghar/ \
+    && install -m 0555 /inputs/portable-ghar-runner-gate /usr/local/bin/portable-ghar-runner-gate
 COPY --chown=0:0 build/runner /opt/actions-runner
-COPY --chown=0:0 build/seed-cache /opt/portable-ghar/seed-cache
-COPY --chown=0:0 --chmod=0444 build/runner.tree-manifest.json /opt/portable-ghar/runner.tree-manifest.json
-COPY --chown=0:0 --chmod=0444 build/runner.tree-lock /opt/portable-ghar/runner.tree-lock
-COPY --chown=0:0 --chmod=0444 build/runner.runtime-lock.json /opt/portable-ghar/runner.runtime-lock.json
-COPY --chown=0:0 --chmod=0444 build/runner.READY /opt/portable-ghar/runner.READY
-COPY --chown=0:0 --chmod=0444 build/seed-cache.manifest.json /opt/portable-ghar/seed-cache.manifest.json
-COPY --chown=0:0 --chmod=0444 build/seed-cache.tree-lock /opt/portable-ghar/seed-cache.tree-lock
-COPY --chown=0:0 --chmod=0444 build/seed-cache.READY /opt/portable-ghar/seed-cache.READY
-COPY --chown=0:0 --chmod=0555 build/portable-ghar-runner-gate /usr/local/bin/portable-ghar-runner-gate
 RUN chmod 0555 /opt/actions-runner /opt/portable-ghar/seed-cache \
     && expected_version=$(/usr/local/bin/portable-ghar-runner-gate verify-image) \
     && installed_version=$(/opt/actions-runner/bin/Runner.Listener --version) \

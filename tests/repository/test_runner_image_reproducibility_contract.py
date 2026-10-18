@@ -19,6 +19,21 @@ def _normalized_shell(text: str) -> str:
 
 
 class RunnerImageReproducibilityContractTest(unittest.TestCase):
+    def test_runner_audit_does_not_persist_a_second_runner_payload(self):
+        text = (REPO_ROOT / "images/runner/Dockerfile").read_text()
+        audit, final = text.split(" AS context-audit\n", 1)[1].split("\nFROM ", 1)
+        self.assertNotIn("COPY . /context", audit)
+        self.assertIn("--mount=type=bind,source=.,target=/context,ro", audit)
+        self.assertIn("cp /context/build/ca-bundle.pem /verified-ca-bundle.pem", audit)
+        self.assertIn("/verified-ca-bundle.pem /portable-ghar-bootstrap-ca.pem", final)
+        runner = "COPY --chown=0:0 build/runner /opt/actions-runner"
+        self.assertIn(runner, final)
+        self.assertNotIn("COPY ", final.split(runner, 1)[1])
+        copies = [line for line in final.split(runner, 1)[0].splitlines() if line.startswith("COPY ")]
+        self.assertEqual(len(copies), 1, "small metadata must share the package transaction, avoiding native snapshots")
+        self.assertIn("--mount=type=bind,source=build,target=/inputs,ro", final)
+        self.assertIn("install -m 0555 /inputs/portable-ghar-runner-gate", final)
+
     def test_jit_configuration_links_target_only_ephemeral_runner_root(self):
         for relative, dockerfile in self.dockerfiles.items():
             for name in (".runner", ".credentials", ".credentials_rsaparams"):
