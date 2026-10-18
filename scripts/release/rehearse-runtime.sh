@@ -979,14 +979,18 @@ def normalize_first_party_packages(value, identity):
         reject("first-party identity")
     expected = "pkg:golang/" + urllib.parse.quote(identity["module"], safe="/")
     versioned = expected + "@" + urllib.parse.quote(identity["version"], safe="")
+    inferred_version = identity["version"]
+    if not inferred_version.startswith("v"):
+        inferred_version = "v" + inferred_version
+    inferred_purl = expected + "@" + urllib.parse.quote(inferred_version, safe="")
     for package in value["packages"]:
         if not isinstance(package, dict):
             reject("SPDX package")
         if package.get("name") != identity["module"]:
             continue
-        if package_purl(package) not in (expected, versioned):
+        if package_purl(package) not in (expected, versioned, inferred_purl):
             reject("first-party package identity")
-        if package.get("versionInfo") not in (None, "", "UNKNOWN", "NOASSERTION", "(devel)", identity["version"]):
+        if package.get("versionInfo") not in (None, "", "UNKNOWN", "NOASSERTION", "(devel)", identity["version"], inferred_version):
             reject("first-party version drift")
         for field in ("licenseConcluded", "licenseDeclared"):
             if package.get(field) not in (None, "", "NOASSERTION", identity["license"]):

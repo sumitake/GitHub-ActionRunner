@@ -115,6 +115,22 @@ class RuntimeSBOMMetadata(unittest.TestCase):
             with self.assertRaises(self.n["RehearsalError"]):
                 self.n["normalize_first_party_packages"]({"packages": [bad]}, identity)
 
+    def test_syft_prefixed_release_version_normalizes_without_allowing_drift(self):
+        for version in ("1.2.3", "1.2.3-rc1", "v1.2.3"):
+            with self.subTest(version=version):
+                identity = {"module": "example.invalid/fixture", "version": version, "license": "MPL-2.0", "source_commit": "c" * 40, "license_sha256": "d" * 64}
+                inferred = version if version.startswith("v") else "v" + version
+                package = {"name": identity["module"], "versionInfo": inferred, "licenseDeclared": "NOASSERTION", "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:golang/example.invalid/fixture@" + inferred}]}
+                self.n["normalize_first_party_packages"]({"packages": [package]}, identity)
+                self.assertEqual(package["versionInfo"], version)
+                self.assertEqual(package["externalRefs"][0]["referenceLocator"], "pkg:golang/example.invalid/fixture@" + version)
+                self.assertEqual(package["licenseDeclared"], "MPL-2.0")
+                for field, conflicting in (("versionInfo", "v9.9.9"), ("externalRefs", [{"referenceType": "purl", "referenceLocator": "pkg:golang/example.invalid/fixture@v9.9.9"}])):
+                    bad = copy.deepcopy(package)
+                    bad[field] = conflicting
+                    with self.assertRaises(self.n["RehearsalError"]):
+                        self.n["normalize_first_party_packages"]({"packages": [bad]}, identity)
+
     def test_unrelated_unknown_license_cannot_be_filled(self):
         package = copy.deepcopy(self.dependency)
         package["licenseDeclared"] = "NOASSERTION"
