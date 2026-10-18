@@ -26,6 +26,7 @@ type fakeLifecycleState struct {
 	resolvedOutcome  controller.PostReleaseOutcome
 	resolveCalls     int
 	acquisition      map[controller.AssignmentKey]state.AcquisitionAssignmentRecord
+	lastObservation  state.RunnerObservation
 }
 
 func (f *fakeLifecycleState) recordLocked(
@@ -112,6 +113,7 @@ func (f *fakeLifecycleState) ApplyRunnerObservation(
 ) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastObservation = observation
 	record, ok := f.recordLocked(key)
 	if !ok {
 		return ErrInvalidState

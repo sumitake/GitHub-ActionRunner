@@ -3063,6 +3063,7 @@ func (s *SQLiteStore) ApplyRunnerObservation(
 ) error {
 	persistedAt := time.Now().UTC()
 	if observation.UpstreamRunnerID <= 0 ||
+		(observation.CanaryCompletion != nil && !observation.Finished) ||
 		observation.BoundRequestID <= 0 ||
 		observation.RunnerContainerID == "" ||
 		len(observation.RunnerContainerID) > maxEffectIdentityBytes ||
@@ -3210,6 +3211,11 @@ func (s *SQLiteStore) ApplyRunnerObservation(
 		assignmentID,
 	); err != nil {
 		return fmt.Errorf("state: apply runner observation: update assignment: %w", err)
+	}
+	if observation.CanaryCompletion != nil {
+		if err := applyCanaryCompletionTx(ctx, tx, key, *observation.CanaryCompletion); err != nil {
+			return fmt.Errorf("state: apply runner observation: canary completion: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("state: apply runner observation: commit: %w", err)

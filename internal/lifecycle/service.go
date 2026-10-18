@@ -1094,11 +1094,15 @@ func (s *service) observeRunnerLocked(
 			return cleanupErr
 		}
 	}
-	if err := s.state.ApplyRunnerObservation(ctx, key, state.RunnerObservation{
+	observation := state.RunnerObservation{
 		UpstreamRunnerID: event.RunnerID(), BoundRequestID: job.RunnerRequestID,
 		RunnerContainerID: current.Slot.RunnerContainerID,
 		Finished:          event.Kind() == githubscale.EventCompleted, ObservedAt: observedAt,
-	}); err != nil {
+	}
+	if s.canary != nil && observation.Finished {
+		observation.CanaryCompletion = &state.CanaryCompletion{ReportDigest: s.canary.ReportDigest(), Result: event.Result()}
+	}
+	if err := s.state.ApplyRunnerObservation(ctx, key, observation); err != nil {
 		return err
 	}
 	if s.canary != nil && event.Kind() == githubscale.EventCompleted {

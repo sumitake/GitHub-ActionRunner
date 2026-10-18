@@ -29,6 +29,8 @@ type productionCanaryObserver struct {
 	reader       canaryWorkflowReader
 }
 
+func (o *productionCanaryObserver) ReportDigest() string { return o.reportDigest }
+
 func newProductionCanaryObserver(ctx context.Context, report conformance.Report, runtime productionRuntime, store canaryEvidenceWriter, reader canaryWorkflowReader) (lifecycle.CanaryObserver, error) {
 	if report.Status() != conformance.StatusPending {
 		return nil, nil
