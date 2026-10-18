@@ -17,11 +17,12 @@ import (
 )
 
 type commandDependencies struct {
-	RunHost                   func(context.Context, []string) (cli.PublicHostResult, error)
-	RunTarget                 func(context.Context, []string) (hostruntime.HostActionResult, error)
-	RunTransport              func(context.Context, io.Reader, io.Writer, bool) error
-	RunValidatePrivateOverlay func(context.Context, []string) (cli.PrivateOverlayValidationReceipt, error)
-	RunAssemblePrivateOverlay func(context.Context, []string) (cli.PrivateOverlayAssemblyReceipt, error)
+	RunHost                    func(context.Context, []string) (cli.PublicHostResult, error)
+	RunTarget                  func(context.Context, []string) (hostruntime.HostActionResult, error)
+	RunTransport               func(context.Context, io.Reader, io.Writer, bool) error
+	RunValidatePrivateOverlay  func(context.Context, []string) (cli.PrivateOverlayValidationReceipt, error)
+	RunAssemblePrivateOverlay  func(context.Context, []string) (cli.PrivateOverlayAssemblyReceipt, error)
+	RunAssembleRuntimeManifest func(context.Context, []string) (cli.RuntimeManifestAssemblyReceipt, error)
 }
 
 func productionCommandDependencies() commandDependencies {
@@ -40,6 +41,12 @@ func productionCommandDependencies() commandDependencies {
 		},
 	)
 	return commandDependencies{
+		RunAssembleRuntimeManifest: func(ctx context.Context, args []string) (cli.RuntimeManifestAssemblyReceipt, error) {
+			if ctx == nil || ctx.Err() != nil {
+				return cli.RuntimeManifestAssemblyReceipt{}, cli.ErrHostCommandFailed
+			}
+			return cli.RunRuntimeManifestAssembly(args)
+		},
 		RunHost: func(
 			ctx context.Context,
 			args []string,
@@ -149,6 +156,24 @@ func run(
 		}
 		return 0
 	}
+	if args[0] == "assemble-runtime-manifest" {
+		if dependencies.RunAssembleRuntimeManifest == nil {
+			return writeUsage(stderr)
+		}
+		result, err := dependencies.RunAssembleRuntimeManifest(ctx, args)
+		if errors.Is(err, cli.ErrHostUsage) {
+			return writeUsage(stderr)
+		}
+		if err != nil {
+			_, _ = io.WriteString(stderr, "portable-ghar: runtime manifest assembly failed\n")
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(result); err != nil {
+			_, _ = io.WriteString(stderr, "portable-ghar: output failed\n")
+			return 1
+		}
+		return 0
+	}
 	if args[0] == "assemble-private-overlay" {
 		if dependencies.RunAssemblePrivateOverlay == nil {
 			return writeUsage(stderr)
@@ -238,7 +263,7 @@ func runTarget(
 func writeUsage(stderr io.Writer) int {
 	_, _ = io.WriteString(
 		stderr,
-		"usage: portable-ghar assemble-private-overlay|validate-private-overlay|deploy|verify|suspend|resume [exact arguments]\n",
+		"usage: portable-ghar assemble-runtime-manifest|assemble-private-overlay|validate-private-overlay|deploy|verify|suspend|resume [exact arguments]\n",
 	)
 	return 2
 }

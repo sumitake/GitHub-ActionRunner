@@ -89,7 +89,7 @@ func TestRunPrivateOverlayValidationRejectsUntrustedLoaderOutput(t *testing.T) {
 			ExpectedEUID:              0,
 			HostIdentityDigest:        strings.Repeat("1", 64),
 			ControlHostIdentityDigest: strings.Repeat("2", 64),
-			ProfileID:                 "strict-linux",
+			ProfileID:                 string(hostruntime.HostProfileStrictLinux),
 		},
 		Policy: hostruntime.PolicyOverlay{AcquisitionDefault: "disabled"},
 	}
@@ -126,6 +126,14 @@ func TestRunPrivateOverlayValidationRejectsUntrustedLoaderOutput(t *testing.T) {
 			overlay: func() hostruntime.PrivateOverlay {
 				value := valid
 				value.Target.ProfileID = "generic-linux"
+				return value
+			}(),
+			revision: strings.Repeat("a", 64),
+		},
+		"obsolete strict profile spelling": {
+			overlay: func() hostruntime.PrivateOverlay {
+				value := valid
+				value.Target.ProfileID = "strict-linux"
 				return value
 			}(),
 			revision: strings.Repeat("a", 64),

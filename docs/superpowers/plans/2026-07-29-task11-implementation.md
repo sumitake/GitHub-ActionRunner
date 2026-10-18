@@ -389,8 +389,11 @@ The harness and report must fail closed against:
 16. read-only root, cgroup, tmpfs, seccomp, masked procfs, namespace/raw/BPF,
     non-root/capless-root, PID, FD, CPU, memory, swap, or scratch proof that
     relies only on requested Docker configuration instead of readback;
-17. a JIT value surviving listener parsing or appearing in a job environment,
-    export, diagnostic, log, test error, report, or cleanup artifact;
+17. a JIT appearing in an inherited job environment, export, diagnostic, log,
+    test error, report, cleanup artifact, host file, Docker configuration, or
+    another container. The live acquisition plan's explicit bounded-credential
+    amendment permits the job to observe its own listener's original exec
+    environment or decoded configuration in its ephemeral `/runner` tmpfs;
 18. cleanup that observes a stop request instead of absence of the runner,
     cgroup, tmpfs mounts, work/update directories, descendants, namespaces,
     sockets, and temporary files;
@@ -1304,8 +1307,12 @@ passing only during a separately approved secretless canary that:
 - obtains one real one-job JIT through the governed acquisition path;
 - obtains an in-run authenticated `githubscale.Compatibility()` result and
   proves live `DisableUpdate=true`;
-- proves the JIT absent after listener parsing and from all job-visible
-  surfaces;
+- proves the JIT absent from inherited job environments, Docker configuration,
+  controller arguments, host files, diagnostics, logs, reports, and other
+  containers. Under the operator's bounded-credential amendment in the live
+  acquisition plan, record (without credential bytes) whether the job can read
+  its own listener's original exec environment or decoded runner configuration
+  in `/runner` tmpfs; that exposure is permitted only for this one-job runner;
 - completes one real listener transport and HTTPS checkout;
 - runs every current proxy-sensitive workflow tool;
 - proves deregistration and complete reclamation; and

@@ -111,8 +111,10 @@ relying on it.
    actual GitHub transport" (around lines 1297-1316). The canary must: obtain
    one JIT through the governed acquisition path; get an in-run authenticated
    `githubscale.Compatibility()` result proving live `DisableUpdate=true`;
-   prove the JIT absent after listener parsing and from every job-visible
-   surface; complete one real listener transport and HTTPS checkout; run every
+   apply the operator-approved bounded-credential amendment in the live
+   acquisition plan (record own-job `/proc` and tmpfs exposure without bytes,
+   and prove no inherited job environment, Docker, host, log, report, or
+   cross-container leak); complete one real listener transport and HTTPS checkout; run every
    current proxy-sensitive tool; prove deregistration and full reclamation;
    and bind all of it to the same manifest, image, profile, policy, network
    evidence, fleet generation, and report run. Task 11 forbids any alternate
@@ -138,12 +140,17 @@ relying on it.
    results inside the job, need the canary workflow to report them through a
    channel the controller already records. If no such channel exists, raise
    it with the operator before building one.
-5. **The JIT is likely visible to the job.** `runtimeenv.Listener` appends
+5. **The JIT is bounded, not hidden from its own job.** `runtimeenv.Listener` appends
    the JIT to the listener's exec environment
    (`internal/runtimeenv/environment.go`, around lines 52-56), which stays
-   readable in `/proc/<pid>/environ`. The canary workflow should probe for it
-   first. If present, the runner gate must hand the JIT over another way
-   before case 15 can pass.
+   readable in `/proc/<pid>/environ`. The operator explicitly chose bounded
+   credential exposure for case 15; the live acquisition plan and Task 11 now
+   record that amendment. The canary must measure own-job exposure without
+   emitting bytes and still prove no prohibited leak. The pinned listener's
+   decoded configuration writes also need writable storage: exactly three
+   fixed image links point `.runner`, `.credentials`, and
+   `.credentials_rsaparams` into `/runner` tmpfs. Code stays read-only and the
+   complete runner/tmpfs must be reclaimed after the one job.
 6. **The canary workflow** targets only the scale set's single label created
    in D7. It lives in the canary repository, not here; this repository should
    ship it as an example or template with placeholders.
@@ -162,27 +169,32 @@ the fence binary's `handoff` command.
 
 Gaps found while preparing this handoff:
 
-- **No client sends Worker admin commands.** `portable-canary-start` and
+- **Worker admin client.** `portable-canary-start` and
   `portable-canary-stop` are signed `POST /v1/admin/command` requests
-  (`docs/operations/worker-canary-authority.md`). The Go side has only the
-  path constants (`internal/failoverclient/auth.go`, lines 18-19). Nothing
-  signs or sends an admin command. The runbook needs a small one-shot
-  subcommand, for example in `portable-ghar-controller`, that reads the
-  overlay's Worker section and HMAC secret and sends one command. [Verify:
-  how the Worker authenticates admin requests, in `worker/src/protocol/admin.ts`,
-  before designing the client.]
+  (`docs/operations/worker-canary-authority.md`). The
+  one-shot `worker-canary --config=<overlay> --command-file=<file>` command
+  reads the overlay's Worker section and HMAC secret and sends exactly one
+  canonical command through the existing protocol exchange. The Worker
+  authenticates it in `worker/src/engine/admin.ts` using the normal HMAC key,
+  timestamp window, inventory, and fresh nonce. The client verifies response
+  signature, freshness, identity, and outcome, and never retries. The operator
+  instructions in `worker-canary-authority.md` describe the command fields.
 - **The fence generation moves at the handover.** `handoff` writes
   `ExpectedGeneration + 1` (`internal/fleetfence/store.go`, around line 353).
   `run-acquisition` requires the fence to name the portable fleet at exactly
   the runtime manifest's `fleet_generation`
   (`production_acquisition.go`, around line 140), and the gate requires the
-  report's fleet generation to match the controller's. So if D5 reads
-  generation N, the manifest, the overlay, and the D2 input must all carry
-  N+1, and D2 must run with those values. [Verify: where the runtime
-  manifest's `fleet_generation` is set during release and overlay assembly.
-  It was not found in `release/` or `scripts/` during this check.] Write this
-  into the operator steps before D2 runs, because a mismatch means a wasted
-  D2 run (the run consumes its input).
+  report's fleet generation to match the controller's. If D5 reads generation
+  N, the manifest and the D2 input must carry N+1. The overlay has no generation
+  field: it binds the exact manifest path and digest. Release assembly writes
+  `runtime-release.json`, a different document; it does not assign the host
+  manifest's generation (`scripts/release/rehearse-runtime.sh`,
+  `write_authority_files`). `assemble-private-overlay` loads an existing host
+  manifest without changing it (`internal/cli/private_overlay_assembly.go`).
+  `assemble-runtime-manifest` serializes an operator-approved identity
+  template for an explicit generation using the existing canonical serializer;
+  it does not verify release provenance. The operator steps give the assembly
+  and binding commands before D2, because a mismatch wastes the consumed input.
 - **D4.** The watchdog safe-stops any controller that is not `disabled`, so
   the runbook suspends it for the canary window and re-arms it after, as a
   journaled step.

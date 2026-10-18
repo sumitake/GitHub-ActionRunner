@@ -235,7 +235,7 @@ func TestCommandSeparatesUsageFromSanitizedFailure(t *testing.T) {
 			"usage",
 			cli.ErrHostUsage,
 			2,
-			"usage: portable-ghar assemble-private-overlay|validate-private-overlay|deploy|verify|suspend|resume [exact arguments]\n",
+			"usage: portable-ghar assemble-runtime-manifest|assemble-private-overlay|validate-private-overlay|deploy|verify|suspend|resume [exact arguments]\n",
 		},
 		{
 			"failure",
