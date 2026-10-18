@@ -369,6 +369,71 @@ func TestRuntimeDrainWaitAndCancelUseDistinctRunningPolicy(t *testing.T) {
 	}
 }
 
+func TestCanaryReplayFailureStopsPollingAndShutdownDoesNotCancelRunningJobs(t *testing.T) {
+	now := time.Date(2026, 7, 28, 21, 0, 0, 0, time.UTC)
+	trace := &callTrace{}
+	state := &fakeDurableState{summary: OperationalSummary{RunningJobs: 1}}
+	broker := &fakeAdmissionBroker{lease: PollLease{
+		RepositoryAlias: "repo-a",
+		Reserved:        1,
+		PollCapacity:    1,
+		ExpiresAt:       now.Add(time.Minute),
+	}}
+	service, _ := startPollService(t, now, trace, state, broker, &fakeEventRecorder{})
+	status, err := service.SetAcquisition(context.Background(), AcquisitionChange{
+		Set:              AcquisitionCanaryOnly,
+		Expected:         AcquisitionEnabled,
+		EligibleScaleSet: "portable-ghar",
+	})
+	if err != nil {
+		t.Fatalf("set canary: %v", err)
+	}
+	service.replay = &fakeReplayVerifier{result: ReplayUnknown}
+	hosted := &recordingHostedRouter{readinessErr: ErrHostedUnavailable}
+	service.hosted = hosted
+	session := &fakeSession{trace: trace, batch: githubscale.Batch{
+		MessageID: 710,
+		Offers: []githubscale.Offer{{JobRef: githubscale.JobRef{
+			RunnerRequestID: 3910,
+			RepositoryName:  "owner/repository",
+		}}},
+	}}
+	trace.Reset()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = service.runPollLoop(ctx, PollTarget{
+		Fleet:   githubscale.Fleet{RepositoryAlias: "repo-a", ScaleSetName: "portable-ghar"},
+		Session: session,
+	})
+	if !errors.Is(err, ErrHostedUnavailable) || !errors.Is(err, ErrRuntimeUnavailable) {
+		t.Fatalf("poll loop = %v, want fail-stop", err)
+	}
+	polls := 0
+	for _, call := range trace.Snapshot() {
+		if call == "session:poll" {
+			polls++
+		}
+	}
+	if polls != 1 || session.AckCount() != 0 || len(session.AcquireRequests()) != 0 ||
+		hosted.RouteCalls() != 0 || state.HostedBeginCalls() != 0 || broker.EnsureCalls() != 0 {
+		t.Fatalf("unexpected retry or ownership effect: polls=%d ack=%d acquire=%v route=%d intent=%d admission=%d",
+			polls, session.AckCount(), session.AcquireRequests(), hosted.RouteCalls(), state.HostedBeginCalls(), broker.EnsureCalls())
+	}
+	// Run uses this shutdown path after its loops join. It publishes a newer
+	// zero epoch without escalating to destructive running-job cancellation.
+	if err := service.disableForShutdown(); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	policy := service.Policy()
+	if policy.Mode != AcquisitionDisabled || policy.Epoch != status.Epoch+1 ||
+		policy.MaxCapacity != 0 || broker.CapacitySummary().Available != 0 {
+		t.Fatalf("shutdown policy/capacity = %+v / %+v", policy, broker.CapacitySummary())
+	}
+	if calls := service.runningCanceler.(*fakeRunningCanceler).Calls(); calls != 0 {
+		t.Fatalf("shutdown canceled running jobs %d times", calls)
+	}
+}
+
 func TestRuntimeUnjoinableCentralLoopPersistsFatalBeforeTermination(
 	t *testing.T,
 ) {

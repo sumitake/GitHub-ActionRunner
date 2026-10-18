@@ -10,10 +10,12 @@ import (
 
 // CanaryObserver records secret-free evidence at the existing lifecycle
 // boundaries. It receives no JIT or reusable credential and grants no authority.
-// Collect runs under the existing running reconciliation lock. Completed runs
-// after the exact upstream event is durable and before teardown;
-// a failure there leaves JOB_FINISHED available for ordinary cleanup.
+// Collect runs under the existing running reconciliation lock. ReportDigest
+// binds completion evidence to the same atomic upstream event checkpoint.
+// Completed is an idempotent post-commit callback before teardown; its failure
+// leaves the checkpoint and result durable for ordinary cleanup.
 type CanaryObserver interface {
+	ReportDigest() string
 	BeforeJIT(context.Context, controller.AssignmentKey, githubscale.ScaleSetCompatibilityReport) error
 	AuthorizedJIT(context.Context, controller.AssignmentKey, controller.AcquisitionPermitBinding) error
 	Collect(context.Context, controller.AssignmentKey, hostruntime.RecoverySpec) error

@@ -54,5 +54,6 @@ func RunPrivateOverlayValidation(
 }
 
 func validValidationProfile(profile string) bool {
-	return profile == "strict-linux" || profile == "qts-capless-root"
+	return profile == string(hostruntime.HostProfileStrictLinux) ||
+		profile == string(hostruntime.HostProfileQTSCaplessRoot)
 }

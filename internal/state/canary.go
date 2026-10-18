@@ -97,6 +97,13 @@ func (s *SQLiteStore) updateCanaryEvidence(ctx context.Context, reportDigest str
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := updateCanaryEvidenceTx(ctx, tx, reportDigest, key, update); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func updateCanaryEvidenceTx(ctx context.Context, tx *sql.Tx, reportDigest string, key controller.AssignmentKey, update func(*sql.Tx, *canary.Record) error) error {
 	record, err := readCanaryEvidence(ctx, tx)
 	if err != nil {
 		return err
@@ -111,10 +118,7 @@ func (s *SQLiteStore) updateCanaryEvidence(ctx context.Context, reportDigest str
 	} else if err := update(tx, &record); err != nil {
 		return err
 	}
-	if err := writeCanaryEvidence(ctx, tx, record); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return writeCanaryEvidence(ctx, tx, record)
 }
 
 // BeginCanaryJIT records an attempt before calling the governed JIT authorizer.
@@ -219,31 +223,41 @@ func (s *SQLiteStore) RecordCanaryWorkflow(ctx context.Context, reportDigest str
 // An absent workflow frame invalidates proof without preventing ordinary cleanup.
 func (s *SQLiteStore) CompleteCanaryJob(ctx context.Context, reportDigest string, key controller.AssignmentKey, result string) error {
 	return s.updateCanaryEvidence(ctx, reportDigest, key, func(tx *sql.Tx, r *canary.Record) error {
-		_, checkpoint, err := lookupAssignmentTx(ctx, tx, key)
-		if err != nil {
-			return err
-		}
-		if checkpoint != controller.StateJobFinished {
-			return canary.ErrEvidence
-		}
-		switch result {
-		case "success", "failure", "canceled", "skipped":
-		default:
-			result = "unknown"
-		}
-		if r.JobCount != 0 {
-			if r.JobResult != result {
-				r.Invalid = true
-			}
-			return nil
-		}
-		r.JobCount = 1
-		r.JobResult = result
-		if r.Workflow.Version != 1 {
+		return completeCanaryJobTx(ctx, tx, key, r, result)
+	})
+}
+
+func applyCanaryCompletionTx(ctx context.Context, tx *sql.Tx, key controller.AssignmentKey, completion CanaryCompletion) error {
+	return updateCanaryEvidenceTx(ctx, tx, completion.ReportDigest, key, func(tx *sql.Tx, r *canary.Record) error {
+		return completeCanaryJobTx(ctx, tx, key, r, completion.Result)
+	})
+}
+
+func completeCanaryJobTx(ctx context.Context, tx *sql.Tx, key controller.AssignmentKey, r *canary.Record, result string) error {
+	_, checkpoint, err := lookupAssignmentTx(ctx, tx, key)
+	if err != nil {
+		return err
+	}
+	if checkpoint != controller.StateJobFinished {
+		return canary.ErrEvidence
+	}
+	switch result {
+	case "success", "failure", "canceled", "skipped":
+	default:
+		result = "unknown"
+	}
+	if r.JobCount != 0 {
+		if r.JobResult != result {
 			r.Invalid = true
 		}
 		return nil
-	})
+	}
+	r.JobCount = 1
+	r.JobResult = result
+	if r.Workflow.Version != 1 {
+		r.Invalid = true
+	}
+	return nil
 }
 
 // MarkCanaryCleanup is called only after the lifecycle's upstream and managed

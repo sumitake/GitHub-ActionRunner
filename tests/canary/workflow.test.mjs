@@ -63,5 +63,9 @@ test("canary template is manual, single-label, SHA-pinned and checks every curre
     steps.find((s) => s.id === "artifact").with.path,
     "fixture/index.js",
   );
+  assert.equal(
+    steps.find((s) => s.id === "gitleaks").env.GITLEAKS_ENABLE_UPLOAD_ARTIFACT,
+    "false",
+  );
   assert.ok(!steps.some((s) => s["continue-on-error"]));
 });

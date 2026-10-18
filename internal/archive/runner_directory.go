@@ -50,6 +50,9 @@ type runnerImageEvidence interface {
 type runnerDirectoryOverlay struct {
 	diagnosticsSeen bool
 	workSeen        bool
+	settingsSeen    bool
+	credentialsSeen bool
+	rsaSeen         bool
 }
 
 const (
@@ -128,7 +131,8 @@ func VerifyRunnerImageDirectory(
 
 // VerifyRunnerImageDirectoryWithRuntimeOverlay proves the same immutable image
 // tuple while requiring the exact post-manifest root overlays
-// "_diag" -> "/runner/_diag" and "_work" -> "/runner/_work". The overlays
+// "_diag", "_work", ".runner", ".credentials", and ".credentials_rsaparams"
+// each point to the same basename under the ephemeral /runner tmpfs. The overlays
 // never contribute to the logical manifest or tree-lock digest.
 func VerifyRunnerImageDirectoryWithRuntimeOverlay(
 	root string,
@@ -270,7 +274,8 @@ func verifyRunnerDirectory(
 	rootAfter, err := fstatFile(rootFile)
 	if err != nil || !rootBefore.stableEqual(rootAfter) ||
 		len(seen) != len(expected) ||
-		(overlay != nil && (!overlay.diagnosticsSeen || !overlay.workSeen)) {
+		(overlay != nil && (!overlay.diagnosticsSeen || !overlay.workSeen ||
+			!overlay.settingsSeen || !overlay.credentialsSeen || !overlay.rsaSeen)) {
 		return VerifiedRunnerDirectory{}, errors.New("archive: runner directory root changed or tree incomplete")
 	}
 	manifestHash, err := runnerManifestDigest(manifest)
@@ -345,6 +350,15 @@ func walkVerifiedRunnerDirectory(
 				case runnerRuntimeWorkPath:
 					target = runnerRuntimeWorkTarget
 					seen = &overlay.workSeen
+				case ".runner":
+					target = "/runner/.runner"
+					seen = &overlay.settingsSeen
+				case ".credentials":
+					target = "/runner/.credentials"
+					seen = &overlay.credentialsSeen
+				case ".credentials_rsaparams":
+					target = "/runner/.credentials_rsaparams"
+					seen = &overlay.rsaSeen
 				default:
 					return errors.New("archive: unexpected runner directory object")
 				}
