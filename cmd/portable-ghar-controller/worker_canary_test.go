@@ -62,3 +62,53 @@ func TestWorkerCanaryRequiresConfiguredOperation(t *testing.T) {
 		t.Fatal("missing operation accepted")
 	}
 }
+
+func TestWorkerCanaryPreservesCallerDeadlineAndCancellation(t *testing.T) {
+	for _, name := range []string{"background", "later deadline", "earlier deadline", "canceled", "expired"} {
+		t.Run(name, func(t *testing.T) {
+			caller := context.Background()
+			cancel := func() {}
+			switch name {
+			case "later deadline":
+				caller, cancel = context.WithTimeout(caller, 5*time.Minute)
+			case "earlier deadline":
+				caller, cancel = context.WithTimeout(caller, 30*time.Second)
+			case "canceled":
+				caller, cancel = context.WithCancel(caller)
+				cancel()
+			case "expired":
+				caller, cancel = context.WithDeadline(caller, time.Now().Add(-time.Second))
+			}
+			defer cancel()
+			wantDeadline, wantBound := caller.Deadline()
+			wantErr := caller.Err()
+			deps := productionCommandDependencies(time.Now)
+			deps.AdminTimeout = time.Minute
+			deps.IsRoot = func() bool { return true }
+			calls := 0
+			deps.WorkerCanary = func(ctx context.Context, _, _ string) (failoverclient.CanaryAdminReceipt, error) {
+				calls++
+				deadline, bounded := ctx.Deadline()
+				if bounded != wantBound || !deadline.Equal(wantDeadline) {
+					t.Fatalf("Worker context deadline = %s (%t), caller deadline = %s (%t)", deadline, bounded, wantDeadline, wantBound)
+				}
+				if !errors.Is(ctx.Err(), wantErr) {
+					t.Fatalf("Worker context error = %v, want %v", ctx.Err(), wantErr)
+				}
+				return failoverclient.CanaryAdminReceipt{}, ctx.Err()
+			}
+			var out, errout bytes.Buffer
+			exit := runWithDependencies(caller, []string{"worker-canary", "--config=/private/overlay.json", "--command-file=/private/stop.json"}, &out, &errout, deps)
+			wantExit := 0
+			if wantErr != nil {
+				wantExit = 1
+			}
+			if exit != wantExit || calls != 1 {
+				t.Fatalf("exit=%d calls=%d, want exit=%d and one call", exit, calls, wantExit)
+			}
+			if wantErr != nil && out.Len() != 0 {
+				t.Fatal("canceled operation emitted a receipt")
+			}
+		})
+	}
+}

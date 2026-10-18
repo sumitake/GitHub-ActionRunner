@@ -18,9 +18,7 @@ func executeWorkerCanary(ctx context.Context, args []string, stdout, stderr io.W
 		_, _ = io.WriteString(stderr, "portable-ghar-controller: Worker canary command failed\n")
 		return 1
 	}
-	callCtx, cancel := context.WithTimeout(ctx, deps.AdminTimeout)
-	defer cancel()
-	receipt, err := deps.WorkerCanary(callCtx, flags["config"], flags["command-file"])
+	receipt, err := deps.WorkerCanary(ctx, flags["config"], flags["command-file"])
 	if err != nil {
 		_, _ = io.WriteString(stderr, "portable-ghar-controller: Worker canary command failed\n")
 		return 1

@@ -3,10 +3,12 @@ package failoverclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func canaryCommandFixture(t *testing.T, kind string) []byte {
@@ -22,6 +24,32 @@ func canaryCommandFixture(t *testing.T, kind string) []byte {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func TestCanaryAdminKeepsConfiguredAttemptTimeoutWithoutRetry(t *testing.T) {
+	config := protocolClientConfig(nil)
+	config.AttemptTimeout = 5 * time.Millisecond
+	calls := 0
+	var contextErr error
+	config.RoundTripper = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		deadline, ok := request.Context().Deadline()
+		if !ok || time.Until(deadline) > config.AttemptTimeout {
+			t.Fatal("canary request did not retain its configured attempt deadline")
+		}
+		<-request.Context().Done()
+		contextErr = request.Context().Err()
+		return nil, contextErr
+	})
+	client, err := NewProtocolClient(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseIdleConnections()
+	_, err = client.SendCanaryAdmin(context.Background(), "example-fleet", canaryCommandFixture(t, "portable-canary-stop"))
+	if !errors.Is(err, ErrProtocolTransport) || !errors.Is(contextErr, context.DeadlineExceeded) || calls != 1 {
+		t.Fatalf("error=%v context error=%v calls=%d", err, contextErr, calls)
+	}
 }
 
 func TestCanaryAdminSignsAndBindsStartAndStop(t *testing.T) {
