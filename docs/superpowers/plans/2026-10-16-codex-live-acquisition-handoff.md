@@ -163,15 +163,16 @@ the fence binary's `handoff` command.
 
 Gaps found while preparing this handoff:
 
-- **No client sends Worker admin commands.** `portable-canary-start` and
+- **Worker admin client.** `portable-canary-start` and
   `portable-canary-stop` are signed `POST /v1/admin/command` requests
-  (`docs/operations/worker-canary-authority.md`). The Go side has only the
-  path constants (`internal/failoverclient/auth.go`, lines 18-19). Nothing
-  signs or sends an admin command. The runbook needs a small one-shot
-  subcommand, for example in `portable-ghar-controller`, that reads the
-  overlay's Worker section and HMAC secret and sends one command. [Verify:
-  how the Worker authenticates admin requests, in `worker/src/protocol/admin.ts`,
-  before designing the client.]
+  (`docs/operations/worker-canary-authority.md`). The
+  one-shot `worker-canary --config=<overlay> --command-file=<file>` command
+  reads the overlay's Worker section and HMAC secret and sends exactly one
+  canonical command through the existing protocol exchange. The Worker
+  authenticates it in `worker/src/engine/admin.ts` using the normal HMAC key,
+  timestamp window, inventory, and fresh nonce. The client verifies response
+  signature, freshness, identity, and outcome, and never retries. The operator
+  instructions in `worker-canary-authority.md` describe the command fields.
 - **The fence generation moves at the handover.** `handoff` writes
   `ExpectedGeneration + 1` (`internal/fleetfence/store.go`, around line 353).
   `run-acquisition` requires the fence to name the portable fleet at exactly
