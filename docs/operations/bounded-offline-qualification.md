@@ -93,7 +93,7 @@ with the same CPU, memory, swap and PID limits for at most two minutes;
 it performs no build, scan, download or raw payload copy. Evidence exceeding
 the fixed transfer cap remains unadmitted.
 
-# Failure diagnostics
+## Failure diagnostics
 
 The composed worker sets `SSL_CERT_FILE` to its copied
 `/etc/ssl/certs/ca-certificates.crt` bundle. Python HTTPS acquisition therefore
