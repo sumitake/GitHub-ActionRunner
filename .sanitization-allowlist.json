@@ -3134,5 +3134,75 @@
     "rule": "PATH001",
     "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
     "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "images/runner/build/runner/externals/node20/LICENSE",
+    "line": 348,
+    "rule": "MAIL001",
+    "sha256": "996995329e04abdd7a542998772ae2b42ff6342aa1705670af8c08ecc67a657a",
+    "reason": "Exact inspected public upstream Node licensing text; complete document SHA256 70c7a59521f41ccfe5bb0193677b77a44ed43ad4fe59203fa408afa538214949 is verified against the committed runner licensing registry before this source identity can represent generated text. No secret, unknown line, altered document, or unrelated generated metadata is exempt."
+  },
+  {
+    "path": "images/runner/build/runner/externals/node20/LICENSE",
+    "line": 1308,
+    "rule": "MAIL001",
+    "sha256": "dad8d4bae6171208b15c4567f20a62e2d95db2e23d5c422162cabafe3c36df6c",
+    "reason": "Exact inspected public upstream Node licensing text; complete document SHA256 70c7a59521f41ccfe5bb0193677b77a44ed43ad4fe59203fa408afa538214949 is verified against the committed runner licensing registry before this source identity can represent generated text. No secret, unknown line, altered document, or unrelated generated metadata is exempt."
+  },
+  {
+    "path": "images/runner/build/runner/externals/node20/LICENSE",
+    "line": 1318,
+    "rule": "IP001",
+    "sha256": "5b180eadc9f0faf8d06e653cd922f96526320f1cd8675436f97e27508b189cf4",
+    "reason": "Exact inspected public upstream Node licensing text; complete document SHA256 70c7a59521f41ccfe5bb0193677b77a44ed43ad4fe59203fa408afa538214949 is verified against the committed runner licensing registry before this source identity can represent generated text. No secret, unknown line, altered document, or unrelated generated metadata is exempt."
+  },
+  {
+    "path": "images/runner/build/runner/externals/node20/LICENSE",
+    "line": 1339,
+    "rule": "MAIL001",
+    "sha256": "f2c9cd4cc992f1c72b1c33798e168fff4b83a12e91537f48a718d892479ba750",
+    "reason": "Exact inspected public upstream Node licensing text; complete document SHA256 70c7a59521f41ccfe5bb0193677b77a44ed43ad4fe59203fa408afa538214949 is verified against the committed runner licensing registry before this source identity can represent generated text. No secret, unknown line, altered document, or unrelated generated metadata is exempt."
+  },
+  {
+    "path": "images/runner/build/runner/externals/node20/LICENSE",
+    "line": 2064,
+    "rule": "MAIL001",
+    "sha256": "19fee6d6cfcd079e1d582db80f4fb2ce18437e032338f9fe571cd385755627f5",
+    "reason": "Exact inspected public upstream Node licensing text; complete document SHA256 70c7a59521f41ccfe5bb0193677b77a44ed43ad4fe59203fa408afa538214949 is verified against the committed runner licensing registry before this source identity can represent generated text. No secret, unknown line, altered document, or unrelated generated metadata is exempt."
+  },
+  {
+    "path": "images/runner/build/runner/externals/node24/LICENSE",
+    "line": 586,
+    "rule": "MAIL001",
+    "sha256": "996995329e04abdd7a542998772ae2b42ff6342aa1705670af8c08ecc67a657a",
+    "reason": "Exact inspected public upstream Node licensing text; complete document SHA256 5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace is verified against the committed runner licensing registry before this source identity can represent generated text. No secret, unknown line, altered document, or unrelated generated metadata is exempt."
+  },
+  {
+    "path": "images/runner/build/runner/externals/node24/LICENSE",
+    "line": 1778,
+    "rule": "MAIL001",
+    "sha256": "dad8d4bae6171208b15c4567f20a62e2d95db2e23d5c422162cabafe3c36df6c",
+    "reason": "Exact inspected public upstream Node licensing text; complete document SHA256 5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace is verified against the committed runner licensing registry before this source identity can represent generated text. No secret, unknown line, altered document, or unrelated generated metadata is exempt."
+  },
+  {
+    "path": "images/runner/build/runner/externals/node24/LICENSE",
+    "line": 1788,
+    "rule": "IP001",
+    "sha256": "19a709e7c0e11f760779460ea1f5bcc49c99c15781c64ea5537729f387cba755",
+    "reason": "Exact inspected public upstream Node licensing text; complete document SHA256 5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace is verified against the committed runner licensing registry before this source identity can represent generated text. No secret, unknown line, altered document, or unrelated generated metadata is exempt."
+  },
+  {
+    "path": "images/runner/build/runner/externals/node24/LICENSE",
+    "line": 1809,
+    "rule": "MAIL001",
+    "sha256": "f2c9cd4cc992f1c72b1c33798e168fff4b83a12e91537f48a718d892479ba750",
+    "reason": "Exact inspected public upstream Node licensing text; complete document SHA256 5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace is verified against the committed runner licensing registry before this source identity can represent generated text. No secret, unknown line, altered document, or unrelated generated metadata is exempt."
+  },
+  {
+    "path": "images/runner/build/runner/externals/node24/LICENSE",
+    "line": 2750,
+    "rule": "MAIL001",
+    "sha256": "19fee6d6cfcd079e1d582db80f4fb2ce18437e032338f9fe571cd385755627f5",
+    "reason": "Exact inspected public upstream Node licensing text; complete document SHA256 5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace is verified against the committed runner licensing registry before this source identity can represent generated text. No secret, unknown line, altered document, or unrelated generated metadata is exempt."
   }
 ]

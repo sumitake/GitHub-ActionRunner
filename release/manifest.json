@@ -149,6 +149,10 @@
         "identity_inventory_sha256": "3e120eae69da9743b84639c379ca5171e05daf648942c13dedf07dff10dd704e"
       },
       {
+        "path": "release/runner-licenses.json",
+        "identity_inventory_sha256": "78443b1047023b26c7886a122877f14e86648460b57f339139254700f0e031a8"
+      },
+      {
         "path": "tests/boundaries/runtime_boundary_test.go",
         "identity_inventory_sha256": "8281615cc0fdfe1f680494639b54987a88d01de6f0bb906a6d09b40021a51eeb"
       },
@@ -261,6 +265,24 @@
         "token": "version_bare",
         "count": 2,
         "replace": true
+      },
+      {
+        "path": "release/runner-licenses.json",
+        "token": "linux_x64_sha256",
+        "count": 1,
+        "replace": false
+      },
+      {
+        "path": "release/runner-licenses.json",
+        "token": "source_commit",
+        "count": 7,
+        "replace": false
+      },
+      {
+        "path": "release/runner-licenses.json",
+        "token": "version_bare",
+        "count": 14,
+        "replace": false
       },
       {
         "path": "tests/boundaries/runtime_boundary_test.go",
