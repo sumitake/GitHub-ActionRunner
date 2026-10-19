@@ -99,3 +99,44 @@ class RebuildArchive(unittest.TestCase):
         self.assertEqual((destination / "public-tool").read_bytes(), b"synthetic external\n")
         self.assertFalse(prepared.exists())
         self.assertFalse((destination / "old-runtime").exists())
+
+    def startup_evidence(self):
+        evidence = self.root / "startup-evidence"
+        evidence.mkdir()
+        for name, code, output in (
+            ("Runner.Listener", 0, "1.2.3"),
+            ("Runner.Worker", 1, "Expected '3'. Actual '0'. GitHub.Runner.Worker.Program.MainAsync"),
+            ("Runner.PluginHost", 1, "Expected '2'. Actual '0'. GitHub.Runner.PluginHost.Program.Main"),
+        ):
+            (evidence / (name + ".exit")).write_text(str(code) + "\n")
+            (evidence / (name + ".log")).write_text(output + "\n")
+            (evidence / (name + ".trace")).write_text("CoreCLR path = '/synthetic/bin/libcoreclr.so'\nExecute managed assembly exit code: 0x" + str(code) + "\n")
+        return evidence
+
+    def test_all_three_entrypoints_require_managed_startup_evidence(self):
+        evidence = self.startup_evidence()
+        rows = self.module.verify_startup_evidence(evidence, "1.2.3", "/synthetic/bin")
+        self.assertEqual({r['entrypoint'] for r in rows}, {"Runner.Listener", "Runner.Worker", "Runner.PluginHost"})
+        (evidence / "Runner.PluginHost.trace").unlink()
+        with self.assertRaises((OSError, ValueError)):
+            self.module.verify_startup_evidence(evidence, "1.2.3", "/synthetic/bin")
+
+    def test_framework_fallback_or_unexpected_worker_failure_blocks(self):
+        evidence = self.startup_evidence()
+        trace = evidence / "Runner.Worker.trace"
+        original = trace.read_text()
+        trace.write_text(original.replace("/synthetic/bin", "/synthetic/global-framework"))
+        with self.assertRaises(ValueError):
+            self.module.verify_startup_evidence(evidence, "1.2.3", "/synthetic/bin")
+        trace.write_text(original)
+        (evidence / "Runner.Worker.log").write_text("synthetic dependency resolution failure\n")
+        with self.assertRaises(ValueError):
+            self.module.verify_startup_evidence(evidence, "1.2.3", "/synthetic/bin")
+
+    def test_sdk_command_uses_descriptor_and_private_temporary_directory(self):
+        descriptor = {'sdk_container_image': 'mcr.microsoft.com/dotnet/sdk@sha256:' + 'e' * 64}
+        command = self.module.sdk_container_command(self.root, descriptor, {})
+        self.assertIn(descriptor['sdk_container_image'], command)
+        self.assertIn('TMPDIR=/work/tmp', command)
+        self.assertEqual((self.root / 'tmp').stat().st_mode & 0o777, 0o700)
+        self.assertNotIn('/var/run/docker.sock', ' '.join(command))

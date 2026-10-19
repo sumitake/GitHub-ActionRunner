@@ -24,6 +24,7 @@ type RunnerRebuildPin struct {
 	UpstreamLinuxX64SHA256 string `json:"upstream_linux_x64_sha256,omitempty"`
 	DotnetSDKVersion       string `json:"dotnet_sdk_version,omitempty"`
 	DotnetRuntimeVersion   string `json:"dotnet_runtime_version,omitempty"`
+	SDKContainerImage      string `json:"sdk_container_image,omitempty"`
 	SDKArchiveSHA512       string `json:"sdk_archive_sha512,omitempty"`
 	SourcePatchSHA256      string `json:"source_patch_sha256,omitempty"`
 	AssetName              string `json:"asset_name,omitempty"`
@@ -41,6 +42,8 @@ type RunnerPayload struct {
 	ProvenanceSHA256 string `json:"provenance_sha256,omitempty"`
 	ArchiveBytes     uint64 `json:"archive_bytes,omitempty"`
 }
+
+var sdkContainerImage = regexp.MustCompile(`^mcr\.microsoft\.com/dotnet/sdk@sha256:[0-9a-f]{64}$`)
 
 var payloadVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
@@ -78,7 +81,7 @@ func (m Manifest) RunnerPayload() (RunnerPayload, error) {
 		}
 		return official, nil
 	}
-	if !payloadVersion.MatchString(d.UpstreamVersion) || !payloadHex(d.UpstreamSourceCommit, 40) || !payloadHex(d.UpstreamLinuxX64SHA256, 64) || !payloadHex(d.LinuxX64SHA256, 64) || !payloadHex(d.SDKArchiveSHA512, 128) || !payloadHex(d.SourcePatchSHA256, 64) || d.LinuxX64SHA256 == d.UpstreamLinuxX64SHA256 || d.DotnetSDKVersion != "8.0.426" || d.DotnetRuntimeVersion != "8.0.32" || d.ArchiveBytes == 0 || d.ArchiveBytes > 512<<20 || d.AssetName != "actions-runner-linux-x64-"+strings.TrimPrefix(d.UpstreamVersion, "v")+"-dotnet-8.0.32.tar.gz" {
+	if !sdkContainerImage.MatchString(d.SDKContainerImage) || !payloadVersion.MatchString(d.UpstreamVersion) || !payloadHex(d.UpstreamSourceCommit, 40) || !payloadHex(d.UpstreamLinuxX64SHA256, 64) || !payloadHex(d.LinuxX64SHA256, 64) || !payloadHex(d.SDKArchiveSHA512, 128) || !payloadHex(d.SourcePatchSHA256, 64) || d.LinuxX64SHA256 == d.UpstreamLinuxX64SHA256 || d.DotnetSDKVersion != "8.0.426" || d.DotnetRuntimeVersion != "8.0.32" || d.ArchiveBytes == 0 || d.ArchiveBytes > 512<<20 || d.AssetName != "actions-runner-linux-x64-"+strings.TrimPrefix(d.UpstreamVersion, "v")+"-dotnet-8.0.32.tar.gz" {
 		return RunnerPayload{}, invalid
 	}
 	if d.UpstreamLinuxX64SHA256 != m.UpstreamRunner.LinuxX64SHA256 {

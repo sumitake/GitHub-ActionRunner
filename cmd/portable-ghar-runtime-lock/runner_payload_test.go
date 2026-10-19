@@ -32,7 +32,7 @@ func TestRunRunnerPayloadSpecPreservesUpstreamAuthority(t *testing.T) {
 }
 
 func TestRunnerDownloadSpecRejectsRebuiltArchiveAsOfficial(t *testing.T) {
-	d := buildinfo.RunnerRebuildPin{SchemaVersion: 1, Enabled: true, UpstreamVersion: "v1.2.3", UpstreamSourceCommit: strings.Repeat("c", 40), UpstreamLinuxX64SHA256: strings.Repeat("a", 64), DotnetSDKVersion: "8.0.426", DotnetRuntimeVersion: "8.0.32", SDKArchiveSHA512: strings.Repeat("d", 128), SourcePatchSHA256: strings.Repeat("e", 64), AssetName: "actions-runner-linux-x64-1.2.3-dotnet-8.0.32.tar.gz", LinuxX64SHA256: strings.Repeat("b", 64), ArchiveBytes: 1234}
+	d := buildinfo.RunnerRebuildPin{SchemaVersion: 1, Enabled: true, UpstreamVersion: "v1.2.3", UpstreamSourceCommit: strings.Repeat("c", 40), UpstreamLinuxX64SHA256: strings.Repeat("a", 64), DotnetSDKVersion: "8.0.426", DotnetRuntimeVersion: "8.0.32", SDKContainerImage: "mcr.microsoft.com/dotnet/sdk@sha256:" + strings.Repeat("e", 64), SDKArchiveSHA512: strings.Repeat("d", 128), SourcePatchSHA256: strings.Repeat("e", 64), AssetName: "actions-runner-linux-x64-1.2.3-dotnet-8.0.32.tar.gz", LinuxX64SHA256: strings.Repeat("b", 64), ArchiveBytes: 1234}
 	raw, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		t.Fatal(err)

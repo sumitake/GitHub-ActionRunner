@@ -25,7 +25,6 @@ import tempfile
 import urllib.parse
 import xml.etree.ElementTree as ET
 
-SDK_IMAGE = "mcr.microsoft.com/dotnet/sdk@sha256:8467fac908c4b0ac0496335989ca196721537277e42474a40f61e34fdc8ad772"
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 STAGE = "admission"
 
@@ -163,6 +162,66 @@ def run(arguments, cwd, env):
     subprocess.run(arguments, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=sys.stderr, check=True, timeout=1800)
 
 
+def sdk_container_command(work, descriptor, env):
+    image = descriptor["sdk_container_image"]
+    if re.fullmatch(r"mcr\.microsoft\.com/dotnet/sdk@sha256:[0-9a-f]{64}", image) is None:
+        raise ValueError("unbound SDK image")
+    (work / "tmp").mkdir(mode=0o700)
+    command = ["docker", "run", "--platform=linux/amd64", "--cpus=4", "--memory=6174015488", "--memory-swap=6174015488", "--pids-limit=1024", "--user=" + str(os.getuid()) + ":" + str(os.getgid()), "--mount", "type=bind,src=" + str(work) + ",dst=/work", "--workdir=/work/runner-source/src"]
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"):
+        if key in env:
+            command += ["--env", key]
+    ca = env.get("SSL_CERT_FILE") or env.get("GIT_SSL_CAINFO")
+    if ca:
+        certificate = pathlib.Path(ca).resolve(strict=True)
+        if not certificate.is_file():
+            raise ValueError("existing CA file unavailable")
+        command += ["--mount", "type=bind,src=" + str(certificate) + ",dst=/transport-ca.pem,readonly", "--env", "SSL_CERT_FILE=/transport-ca.pem", "--env", "GIT_SSL_CAINFO=/transport-ca.pem"]
+    settings = {"TMPDIR": "/work/tmp", "HOME": "/work/home", "DOTNET_CLI_HOME": "/work/home", "DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_GENERATE_ASPNET_CERTIFICATE": "false", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1", "NUGET_PACKAGES": "/work/output/sdk-attempt4/nuget-packages", "MSBUILDDISABLENODEREUSE": "1", "DOTNET_PROCESSOR_COUNT": "4"}
+    for key, value in settings.items():
+        command += ["--env", key + "=" + value]
+    return command + [image]
+
+
+STARTUP_SCRIPT = r"""
+set -eu
+root=$1
+proof=$2
+mkdir -m 700 "$proof"
+cd "$proof"
+for entry in Runner.Listener Runner.Worker Runner.PluginHost; do
+  set --
+  if [ "$entry" = Runner.Listener ]; then set -- --version; fi
+  status=0
+  COREHOST_TRACE=1 COREHOST_TRACEFILE="$proof/$entry.trace" timeout -k 5s 20s "$root/bin/$entry" "$@" >"$proof/$entry.log" 2>&1 || status=$?
+  printf '%s\n' "$status" >"$proof/$entry.exit"
+done
+"""
+
+
+def verify_startup_evidence(evidence, version, runtime_bin):
+    def read(name):
+        path = evidence / name
+        info = path.lstat()
+        if path.resolve(strict=True) != path or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 8 * 2**20:
+            raise ValueError("unsafe entrypoint evidence")
+        return path.read_text(encoding="utf-8", errors="strict")
+    rows = []
+    for name, code, expected_arguments in (("Runner.Listener", 0, None), ("Runner.Worker", 1, 3), ("Runner.PluginHost", 1, 2)):
+        status = read(name + ".exit")
+        output = read(name + ".log")
+        trace = read(name + ".trace")
+        if status != str(code) + "\n" or "CoreCLR path = '" + runtime_bin + "/libcoreclr.so'" not in trace or "Execute managed assembly exit code: 0x" + str(code) not in trace:
+            raise ValueError("entrypoint did not load its app-local CLR")
+        if name == "Runner.Listener":
+            if output.strip() != version:
+                raise ValueError("unexpected runner version")
+        elif "Expected '" + str(expected_arguments) + "'. Actual '0'." not in output or "GitHub.Runner." + name.removeprefix("Runner.") + ".Program.Main" not in output:
+            raise ValueError("unexpected worker or plugin startup failure")
+        rows.append({"entrypoint": name, "exit_code": code, "app_local_CLR_loaded": True, "trace_sha256": sha256(evidence / (name + ".trace")), "output_sha256": sha256(evidence / (name + ".log"))})
+    return rows
+
+
 def take_prepared_externals(prepared, destination):
     os.chmod(prepared, 0o700)
     # Moving a directory between parents updates its .. entry and needs write
@@ -252,26 +311,25 @@ def main():
         official.unlink()
         # The SDK builds at the same absolute path as the reviewed A/B builds;
         # this also avoids path-dependent portable PDB differences.
-        command = ["docker", "run", "--platform=linux/amd64", "--cpus=4", "--memory=6174015488", "--memory-swap=6174015488", "--pids-limit=1024", "--user=" + str(os.getuid()) + ":" + str(os.getgid()), "--mount", "type=bind,src=" + str(work) + ",dst=/work", "--workdir=/work/runner-source/src"]
-        for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"):
-            if key in env:
-                command += ["--env", key]
-        ca = env.get("SSL_CERT_FILE") or env.get("GIT_SSL_CAINFO")
-        if ca:
-            certificate = pathlib.Path(ca).resolve(strict=True)
-            if not certificate.is_file():
-                raise ValueError("existing CA file unavailable")
-            command += ["--mount", "type=bind,src=" + str(certificate) + ",dst=/transport-ca.pem,readonly", "--env", "SSL_CERT_FILE=/transport-ca.pem", "--env", "GIT_SSL_CAINFO=/transport-ca.pem"]
-        settings = {"HOME": "/work/home", "DOTNET_CLI_HOME": "/work/home", "DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_GENERATE_ASPNET_CERTIFICATE": "false", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1", "NUGET_PACKAGES": "/work/output/sdk-attempt4/nuget-packages", "MSBUILDDISABLENODEREUSE": "1", "DOTNET_PROCESSOR_COUNT": "4"}
-        for key, value in settings.items():
-            command += ["--env", key + "=" + value]
-        command += [SDK_IMAGE, "dotnet", "msbuild", "-t:Layout", "-p:PackageRuntime=linux-x64", "-p:RuntimeIdentifiers=linux-x64", "-p:RuntimeFrameworkVersion=8.0.32", "-p:BUILDCONFIG=Release", "-p:RunnerVersion=" + runner["version"][1:], "-p:BuildInParallel=false", "-p:RestoreDisableParallel=true", "-p:UseSharedCompilation=false", "-m:1", "./dir.proj"]
+        sdk_command = sdk_container_command(work, descriptor, env)
+        command = sdk_command + ["/bin/sh", "-c", 'set -eu; test "$(dotnet --version)" = "$1"; shift; exec dotnet msbuild "$@"', "rebuild-runner", descriptor["dotnet_sdk_version"], "-t:Layout", "-p:PackageRuntime=linux-x64", "-p:RuntimeIdentifiers=linux-x64", "-p:RuntimeFrameworkVersion=" + descriptor["dotnet_runtime_version"], "-p:BUILDCONFIG=Release", "-p:RunnerVersion=" + runner["version"][1:], "-p:BuildInParallel=false", "-p:RestoreDisableParallel=true", "-p:UseSharedCompilation=false", "-m:1", "./dir.proj"]
         stage("SDK-publication")
         run_sdk(command, work, env)
         layout = source / "_layout"
         (work / "externals").rename(layout / "externals")
         stage("notice-packaging")
         prepare_documents(source, layout, work / "output/sdk-attempt4/nuget-packages")
+        stage("all-entrypoint-startup")
+        diagnostics = layout / "_diag"
+        if diagnostics.exists() or diagnostics.is_symlink():
+            raise ValueError("unexpected preexisting startup diagnostics")
+        run_sdk(sdk_command + ["/bin/sh", "-c", STARTUP_SCRIPT, "runner-startups", "/work/runner-source/_layout", "/work/startup-evidence"], work, env)
+        startup = verify_startup_evidence(work / "startup-evidence", runner["version"][1:], "/work/runner-source/_layout/bin")
+        (work / "startup-evidence/summary.json").write_text(json.dumps(startup, indent=2) + "\n")
+        if diagnostics.exists():
+            if diagnostics.is_symlink() or not diagnostics.is_dir():
+                raise ValueError("unsafe startup diagnostics")
+            shutil.rmtree(diagnostics)
         epoch = int(subprocess.check_output(["git", "show", "-s", "--format=%ct", "HEAD"], cwd=source, env=env, text=True))
         partial = work / "archive.part"
         package_archive(layout, partial, epoch)

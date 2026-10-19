@@ -18,7 +18,7 @@ func descriptorBytes(t *testing.T, descriptor RunnerRebuildPin) []byte {
 }
 func payloadFixture(t *testing.T) Manifest {
 	t.Helper()
-	descriptor := RunnerRebuildPin{SchemaVersion: 1, Enabled: true, UpstreamVersion: "v1.2.3", UpstreamSourceCommit: strings.Repeat("c", 40), UpstreamLinuxX64SHA256: strings.Repeat("a", 64), LinuxX64SHA256: strings.Repeat("b", 64), AssetName: "actions-runner-linux-x64-1.2.3-dotnet-8.0.32.tar.gz", DotnetRuntimeVersion: "8.0.32", DotnetSDKVersion: "8.0.426", SDKArchiveSHA512: strings.Repeat("d", 128), SourcePatchSHA256: strings.Repeat("e", 64), ArchiveBytes: 1234}
+	descriptor := RunnerRebuildPin{SchemaVersion: 1, Enabled: true, UpstreamVersion: "v1.2.3", UpstreamSourceCommit: strings.Repeat("c", 40), UpstreamLinuxX64SHA256: strings.Repeat("a", 64), LinuxX64SHA256: strings.Repeat("b", 64), AssetName: "actions-runner-linux-x64-1.2.3-dotnet-8.0.32.tar.gz", DotnetRuntimeVersion: "8.0.32", DotnetSDKVersion: "8.0.426", SDKContainerImage: "mcr.microsoft.com/dotnet/sdk@sha256:" + strings.Repeat("e", 64), SDKArchiveSHA512: strings.Repeat("d", 128), SourcePatchSHA256: strings.Repeat("e", 64), ArchiveBytes: 1234}
 	return Manifest{UpstreamRunner: UpstreamRunnerPin{Version: descriptor.UpstreamVersion, SourceCommit: descriptor.UpstreamSourceCommit, LinuxX64SHA256: descriptor.UpstreamLinuxX64SHA256}, RunnerRebuildJSON: descriptorBytes(t, descriptor)}
 }
 func TestRunnerPayloadSelectsOnlyAnExplicitlyBoundRebuild(t *testing.T) {
@@ -42,7 +42,7 @@ func TestRunnerPayloadSelectsOnlyAnExplicitlyBoundRebuild(t *testing.T) {
 	}
 }
 func TestRunnerPayloadRejectsMalformedOrAmbiguousRebuildPins(t *testing.T) {
-	for _, change := range []string{"upstream", "archive", "same-digest", "asset", "runtime", "sdk", "sdk-hash", "patch", "size", "source", "version", "unknown", "duplicate", "trailing", "noncanonical", "missing"} {
+	for _, change := range []string{"upstream", "archive", "same-digest", "asset", "runtime", "sdk", "sdk-hash", "sdk-image", "patch", "size", "source", "version", "unknown", "duplicate", "trailing", "noncanonical", "missing"} {
 		t.Run(change, func(t *testing.T) {
 			m := payloadFixture(t)
 			var d RunnerRebuildPin
@@ -62,6 +62,8 @@ func TestRunnerPayloadRejectsMalformedOrAmbiguousRebuildPins(t *testing.T) {
 				d.DotnetRuntimeVersion = "8.0.31"
 			case "sdk":
 				d.DotnetSDKVersion = "8.0.425"
+			case "sdk-image":
+				d.SDKContainerImage = "mcr.microsoft.com/dotnet/sdk:8.0.426"
 			case "sdk-hash":
 				d.SDKArchiveSHA512 = "bad"
 			case "patch":

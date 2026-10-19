@@ -146,7 +146,7 @@
       },
       {
         "path": "internal/buildinfo/runner_rebuild.json",
-        "identity_inventory_sha256": "e7e2744dae90c33213abb3afb54536bec3531b98749d6736d4d6324ab4327c9f"
+        "identity_inventory_sha256": "2cf6f16f294e4f78af718d17b52c39fe70bc5ebc2a8115ac3a9850a13220d6ca"
       },
       {
         "path": "internal/runtimelock/lock_test.go",

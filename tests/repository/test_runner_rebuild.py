@@ -7,12 +7,29 @@ class RunnerRebuild(unittest.TestCase):
         self.n=rehearsal();self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=pathlib.Path(self.temp.name);self.descriptor=self.root/'internal/buildinfo/runner_rebuild.json';self.descriptor.parent.mkdir(parents=True)
         self.patch=self.root/'release/runner-rebuild.patch';self.patch.parent.mkdir();self.patch.write_bytes(b'synthetic source patch\n')
         self.runner={'version':'v1.2.3','source_commit_sha':'c'*40,'linux_x64_asset_digest':'sha256:'+'a'*64,'linux_x64_asset_name':'actions-runner-linux-x64-1.2.3.tar.gz','linux_x64_asset_size':12}
-        self.d={'schema_version':1,'enabled':True,'upstream_version':'v1.2.3','upstream_source_commit':'c'*40,'upstream_linux_x64_sha256':'a'*64,'dotnet_sdk_version':'8.0.426','dotnet_runtime_version':'8.0.32','sdk_archive_sha512':'d'*128,'source_patch_sha256':hashlib.sha256(self.patch.read_bytes()).hexdigest(),'asset_name':'actions-runner-linux-x64-1.2.3-dotnet-8.0.32.tar.gz','linux_x64_sha256':hashlib.sha256(b'fixture').hexdigest(),'archive_bytes':7}
+        self.d={'schema_version':1,'enabled':True,'upstream_version':'v1.2.3','upstream_source_commit':'c'*40,'upstream_linux_x64_sha256':'a'*64,'dotnet_sdk_version':'8.0.426','dotnet_runtime_version':'8.0.32','sdk_container_image':'mcr.microsoft.com/dotnet/sdk@sha256:'+'e'*64,'sdk_archive_sha512':'d'*128,'source_patch_sha256':hashlib.sha256(self.patch.read_bytes()).hexdigest(),'asset_name':'actions-runner-linux-x64-1.2.3-dotnet-8.0.32.tar.gz','linux_x64_sha256':hashlib.sha256(b'fixture').hexdigest(),'archive_bytes':7}
     def write(self,d=None):
         self.descriptor.write_text(json.dumps(self.d if d is None else d,indent=2)+'\n')
     def select(self):return self.n['select_runner_payload'](self.root,self.runner)
     def test_rebuild_keeps_official_identity_separate(self):
         self.write();before=copy.deepcopy(self.runner);payload=self.select();self.assertEqual(self.runner,before);self.assertEqual(payload['kind'],'dotnet-rebuild');self.assertEqual(payload['sha256'],self.d['linux_x64_sha256']);self.assertEqual(payload['provenance_sha256'],hashlib.sha256(self.descriptor.read_bytes()).hexdigest())
+    def test_actual_sdk_container_input_is_bound_and_immutable(self):
+        self.d['sdk_container_image'] = 'mcr.microsoft.com/dotnet/sdk@sha256:' + 'e' * 64
+        ordered = {}
+        for key, value in self.d.items():
+            if key == 'sdk_archive_sha512':
+                ordered['sdk_container_image'] = self.d['sdk_container_image']
+            if key != 'sdk_container_image':
+                ordered[key] = value
+        self.d = ordered
+        self.write()
+        self.assertEqual(self.select()['kind'], 'dotnet-rebuild')
+        for value in ('mcr.microsoft.com/dotnet/sdk:8.0.426', 'example.invalid/sdk@sha256:' + 'e' * 64):
+            self.d['sdk_container_image'] = value
+            self.write()
+            with self.assertRaises(self.n['RehearsalError']):
+                self.select()
+
     def test_source_patch_drift_is_refused(self):
         self.write();self.patch.write_bytes(b'changed source patch')
         with self.assertRaises(self.n['RehearsalError']):self.select()

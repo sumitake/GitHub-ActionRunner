@@ -429,7 +429,7 @@ def runner_payload_from_descriptor(raw, runner):
     if not 0 < len(raw) <= 8192:
         reject("runner rebuild descriptor size")
     descriptor = parse_json(raw)
-    ordered = ("schema_version", "enabled", "upstream_version", "upstream_source_commit", "upstream_linux_x64_sha256", "dotnet_sdk_version", "dotnet_runtime_version", "sdk_archive_sha512", "source_patch_sha256", "asset_name", "linux_x64_sha256", "archive_bytes")
+    ordered = ("schema_version", "enabled", "upstream_version", "upstream_source_commit", "upstream_linux_x64_sha256", "dotnet_sdk_version", "dotnet_runtime_version", "sdk_container_image", "sdk_archive_sha512", "source_patch_sha256", "asset_name", "linux_x64_sha256", "archive_bytes")
     if not isinstance(descriptor, dict) or type(descriptor.get("schema_version")) is not int or descriptor["schema_version"] != 1 or type(descriptor.get("enabled")) is not bool:
         reject("runner rebuild schema")
     keys = ordered if descriptor["enabled"] else ordered[:2]
@@ -444,6 +444,7 @@ def runner_payload_from_descriptor(raw, runner):
             reject("runner rebuild digest")
     if (not isinstance(descriptor["upstream_version"], str) or re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", descriptor["upstream_version"]) is None
         or descriptor["dotnet_sdk_version"] != "8.0.426" or descriptor["dotnet_runtime_version"] != "8.0.32"
+        or not isinstance(descriptor["sdk_container_image"], str) or re.fullmatch(r"mcr\.microsoft\.com/dotnet/sdk@sha256:[0-9a-f]{64}", descriptor["sdk_container_image"]) is None
         or type(descriptor["archive_bytes"]) is not int or not 0 < descriptor["archive_bytes"] <= 512 * 1024 * 1024
         or descriptor["linux_x64_sha256"] == descriptor["upstream_linux_x64_sha256"]
         or descriptor["asset_name"] != "actions-runner-linux-x64-" + descriptor["upstream_version"][1:] + "-dotnet-8.0.32.tar.gz"):

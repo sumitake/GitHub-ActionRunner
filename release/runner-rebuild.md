@@ -10,7 +10,7 @@ two SDK selectors change, and the Pkcs and Asn1 package references move to
 
 The descriptor retains the official release identity and digest separately
 from the rebuilt archive name, size and digest. It also binds the Microsoft
-SDK archive SHA512 and source patch SHA256. The archive includes the upstream
+SDK archive SHA512, public SDK container digest and source patch SHA256. The archive includes the upstream
 MIT license, runtime notices and package attribution. GitHub supports its
 own distributed runner packages for production; this private rebuild retains
 that support limitation and must pass the complete qualification gates.
@@ -32,14 +32,18 @@ mkdir -m 700 "$RUNNER_TEMP/rebuilt-runner"
 python3 scripts/release/rebuild-runner.py --output-directory "$RUNNER_TEMP/rebuilt-runner"
 ```
 
-The recipe pins the Microsoft SDK container by digest, fetches the exact
+The original A/B build authenticates the Microsoft SDK archive. The public
+recipe consumes the descriptor's separate immutable Microsoft SDK container
+input and checks its SDK version before compilation. It fetches the exact
 upstream commit, authenticates the official archive before reusing only its
 prepared externals, and carries forward the complete notices. It caps the SDK
 build at four CPUs, 5.75 GiB memory, no swap and 1,024 PIDs. It mounts a fresh
 build directory and optionally the existing transport CA file; it does not
 mount a Docker socket or user credentials. A different output digest fails
-closed and leaves the destination unpublished. CI and both product release
-builds invoke this recipe when the rebuild is selected.
+closed and leaves the destination unpublished. CI, the vulnerability watch and both product release builds invoke this
+recipe when the rebuild is selected. Before accepting an archive it runs
+Listener, Worker and PluginHost with benign arguments and verifies their
+expected exit behavior and actual app-local CoreCLR traces.
 
 The archive uses the existing extractor's canonical USTAR format: one `./`
 root entry, `./` relative path prefixes and no PAX metadata. Header corrections
