@@ -55,3 +55,19 @@ class RebuildArchive(unittest.TestCase):
             )
         self.assertFalse(partial.exists())
         self.assertEqual(destination.read_bytes(), b"existing evidence")
+
+    def test_sdk_timeout_removes_only_its_created_container(self):
+        from unittest import mock
+        import subprocess
+        container_id = "b" * 64
+        work = self.root / "build"
+        work.mkdir()
+        def timeout(arguments, cwd, env):
+            cidfile = pathlib.Path(arguments[arguments.index("--cidfile") + 1])
+            self.assertFalse(cidfile.is_relative_to(work))
+            cidfile.write_text(container_id)
+            raise subprocess.TimeoutExpired(arguments, 1)
+        with mock.patch.object(self.module, "run", side_effect=timeout), mock.patch.object(self.module.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"", b"")) as cleanup:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.module.run_sdk(["docker", "run", "--rm", "synthetic-image", "dotnet"], work, {})
+        self.assertEqual(cleanup.call_args.args[0], ["docker", "rm", "--force", container_id])

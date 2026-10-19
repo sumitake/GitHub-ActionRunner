@@ -491,10 +491,13 @@ PATH_RULES = [
     re.compile(r"[A-Za-z]:\\Users\\[^\\\s\"']+"),
     re.compile(r"\\\\[^\\\s\"']+\\[^\\\s\"']+"),  # UNC
     re.compile(r"\bfile://[^\s\"']+"),
-    # Standard Unix shared-data components are not the NAS root. Keep other
-    # prefixes detectable, including attached flags and dot/repeated slashes.
-    re.compile(r"(?<!/usr)(?<!/usr/local)/share/[A-Za-z0-9_.-]+"),
+    # Standard absolute Unix shared-data components are not the NAS root.
 ]
+_NAS_SHARE_RULE = re.compile(r"(?<!/usr)(?<!/usr/local)/share/[A-Za-z0-9_.-]+")
+# SPDX fileName values may be relative to the image root. Recognize only a
+# complete usr or usr/local prefix at a lexical boundary, without rewriting
+# the original metadata or hiding a separate NAS-root occurrence on the line.
+_RELATIVE_SYSTEM_SHARE_PREFIX = re.compile(r"(?:\A|[\s\"'=:(\[,{])usr(?:/local)?\Z")
 
 
 def _check_paths(text: str, relpath: str, lineno, fixture: bool) -> list[Finding]:
@@ -504,6 +507,13 @@ def _check_paths(text: str, relpath: str, lineno, fixture: bool) -> list[Finding
     for rex in PATH_RULES:
         if rex.search(text):
             out.append(Finding(relpath, lineno, "PATH001", "personal/NAS/UNC/Windows-profile absolute path literal", text))
+    for match in _NAS_SHARE_RULE.finditer(text):
+        # Bound the prefix check so compact SBOMs remain linear in input size.
+        prefix = text[max(0, match.start() - 10):match.start()]
+        if _RELATIVE_SYSTEM_SHARE_PREFIX.search(prefix):
+            continue
+        out.append(Finding(relpath, lineno, "PATH001", "personal/NAS/UNC/Windows-profile absolute path literal", text))
+        break
     return out
 
 

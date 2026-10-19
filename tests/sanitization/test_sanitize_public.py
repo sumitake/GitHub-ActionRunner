@@ -425,6 +425,28 @@ class H8PathGrammar(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertNotIn("PATH001", rules_of(line(text)))
 
+    def test_root_relative_unix_shared_data_paths_in_sbom_are_allowed(self):
+        for text in (
+            "usr/share/portable-ghar/dpkg-manifest.tsv",
+            "usr/local/share/portable-ghar/notice.txt",
+            '{"fileName":"usr/share/doc/example/copyright"}',
+            '{"files":[{"fileName":"usr/share/doc/example/a"},{"fileName":"usr/local/share/example/b"}]}',
+        ):
+            with self.subTest(text=text):
+                self.assertNotIn("PATH001", rules_of(line(text)))
+
+    def test_relative_system_prefix_does_not_hide_other_share_roots(self):
+        for text in (
+            "evilusr/share/private",
+            "evil-usr/share/private",
+            "evilusr/local/share/private",
+            "usr/share/public /share/CACHEDEV1_DATA/private",
+            "usr/share/../../share/CACHEDEV1_DATA/private",
+            'file://usr/share/example',
+        ):
+            with self.subTest(text=text):
+                self.assertIn("PATH001", rules_of(line(text)))
+
     def test_nas_paths_remain_detected_in_attached_and_dot_forms(self):
         for text in (
             "/share/CACHEDEV1_DATA/foo",

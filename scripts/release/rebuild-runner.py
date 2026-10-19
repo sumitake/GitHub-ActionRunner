@@ -14,6 +14,8 @@ import json
 import os
 import pathlib
 import platform
+import re
+import signal
 import shutil
 import stat
 import subprocess
@@ -25,6 +27,13 @@ import xml.etree.ElementTree as ET
 
 SDK_IMAGE = "mcr.microsoft.com/dotnet/sdk@sha256:8467fac908c4b0ac0496335989ca196721537277e42474a40f61e34fdc8ad772"
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+STAGE = "admission"
+
+
+def stage(value):
+    global STAGE
+    STAGE = value
+    print("rebuild-runner: stage=" + value, file=sys.stderr, flush=True)
 
 
 def sha256(path):
@@ -149,6 +158,28 @@ def run(arguments, cwd, env):
     subprocess.run(arguments, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=sys.stderr, check=True, timeout=1800)
 
 
+def run_sdk(arguments, work, env):
+    # Keep the control file outside the build mount so the SDK process cannot
+    # redirect cleanup toward a different container.
+    with tempfile.TemporaryDirectory(prefix=".runner-control-", dir=work.parent) as control:
+        cidfile = pathlib.Path(control) / "container-id"
+        command = arguments[:2] + ["--cidfile", str(cidfile)] + arguments[2:]
+        try:
+            run(command, work, env)
+        finally:
+            if cidfile.exists():
+                container_id = cidfile.read_text().strip()
+                if re.fullmatch(r"[0-9a-f]{64}", container_id) is None:
+                    raise ValueError("invalid SDK container receipt")
+                cleanup = subprocess.run(
+                    ["docker", "rm", "--force", container_id], env=env,
+                    stdin=subprocess.DEVNULL, capture_output=True, timeout=30,
+                )
+                absent = ("Error response from daemon: No such container: " + container_id).encode()
+                if cleanup.returncode and cleanup.stderr.strip() != absent:
+                    raise ValueError("SDK container cleanup failed")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-directory", type=pathlib.Path, required=True)
@@ -186,17 +217,21 @@ def main():
                 proxy = urllib.parse.urlsplit(env[key])
                 if proxy.username is not None or proxy.password is not None:
                     raise ValueError("credentialed proxy is not a build input")
+        stage("public-source")
         source = work / "runner-source"
         run(["git", "init", str(source)], work, env)
         run(["git", "-C", str(source), "fetch", "--depth=1", "https://github.com/actions/runner.git", descriptor["upstream_source_commit"]], work, env)
         run(["git", "-C", str(source), "checkout", "--detach", "FETCH_HEAD"], work, env)
         run(["git", "-C", str(source), "apply", str(ROOT / "release/runner-rebuild.patch")], work, env)
+        stage("upstream-acquisition")
         official = work / runner["linux_x64_asset_name"]
         authority["curl_download"]("https://github.com/actions/runner/releases/download/" + runner["version"] + "/" + runner["linux_x64_asset_name"], official, payload["upstream_sha256"], env, work / "transfer.log", maximum=256 * 2**20)
+        stage("upstream-verification")
         prepared = work / "prepared-upstream"
         run(["go", "run", "./scripts/release/rebuildinput", str(official), str(prepared)], ROOT, env)
         # Discard the authenticated old bin immediately. Only externals are
         # carried into the new layout, and moving avoids a second large copy.
+        stage("upstream-cleanup")
         os.chmod(prepared, 0o700)
         (prepared / "externals").rename(work / "externals")
         for directory, _, _ in os.walk(prepared):
@@ -205,7 +240,7 @@ def main():
         official.unlink()
         # The SDK builds at the same absolute path as the reviewed A/B builds;
         # this also avoids path-dependent portable PDB differences.
-        command = ["docker", "run", "--rm", "--platform=linux/amd64", "--cpus=4", "--memory=6174015488", "--memory-swap=6174015488", "--pids-limit=1024", "--user=" + str(os.getuid()) + ":" + str(os.getgid()), "--mount", "type=bind,src=" + str(work) + ",dst=/work", "--workdir=/work/runner-source/src"]
+        command = ["docker", "run", "--platform=linux/amd64", "--cpus=4", "--memory=6174015488", "--memory-swap=6174015488", "--pids-limit=1024", "--user=" + str(os.getuid()) + ":" + str(os.getgid()), "--mount", "type=bind,src=" + str(work) + ",dst=/work", "--workdir=/work/runner-source/src"]
         for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"):
             if key in env:
                 command += ["--env", key]
@@ -219,20 +254,31 @@ def main():
         for key, value in settings.items():
             command += ["--env", key + "=" + value]
         command += [SDK_IMAGE, "dotnet", "msbuild", "-t:Layout", "-p:PackageRuntime=linux-x64", "-p:RuntimeIdentifiers=linux-x64", "-p:RuntimeFrameworkVersion=8.0.32", "-p:BUILDCONFIG=Release", "-p:RunnerVersion=" + runner["version"][1:], "-p:BuildInParallel=false", "-p:RestoreDisableParallel=true", "-p:UseSharedCompilation=false", "-m:1", "./dir.proj"]
-        run(command, work, env)
+        stage("SDK-publication")
+        run_sdk(command, work, env)
         layout = source / "_layout"
         (work / "externals").rename(layout / "externals")
+        stage("notice-packaging")
         prepare_documents(source, layout, work / "output/sdk-attempt4/nuget-packages")
         epoch = int(subprocess.check_output(["git", "show", "-s", "--format=%ct", "HEAD"], cwd=source, env=env, text=True))
         partial = work / "archive.part"
         package_archive(layout, partial, epoch)
+        stage("archive-authentication")
         publish_archive(partial, destination, payload)
     print(destination)
 
 
 if __name__ == "__main__":
+    def terminate(_signal, _frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, terminate)
     try:
         main()
-    except (OSError, ValueError, subprocess.SubprocessError):
-        print("rebuild-runner: unavailable; no archive was published", file=sys.stderr)
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        # Report only static stages and error types, never URLs, environment
+        # settings or private paths from exception messages.
+        code = getattr(error, "errno", None)
+        print(f"rebuild-runner: unavailable stage={STAGE} class={type(error).__name__} errno={code}; no archive was published", file=sys.stderr)
         sys.exit(1)
