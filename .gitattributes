@@ -3,3 +3,5 @@
 *.sh text eol=lf
 *.png binary
 *.gz binary
+# Preserve upstream license-document bytes and their recorded SHA-256 values.
+release/runner-license-texts/*.txt -text whitespace=-blank-at-eol,-blank-at-eof

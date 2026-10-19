@@ -1,0 +1,2320 @@
+{
+  "schema_version": 1,
+  "runner_asset_digest": "sha256:af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32",
+  "packages": [
+    {
+      "name": "node",
+      "version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "license_expression": "LicenseRef-Runner-Upstream-a7544126ccb208d5132f",
+      "evidence": [
+        {
+          "url": "https://raw.githubusercontent.com/nodejs/node/v20.20.2/LICENSE",
+          "sha256": "70c7a59521f41ccfe5bb0193677b77a44ed43ad4fe59203fa408afa538214949",
+          "detail": "Exact versioned Node LICENSE matches the authenticated runner payload, including bundled third-party notices"
+        }
+      ]
+    },
+    {
+      "name": "node",
+      "version": "24.21.0",
+      "purl": "pkg:generic/node@24.21.0",
+      "license_expression": "LicenseRef-Runner-Upstream-b85059d6a611c95650aa",
+      "evidence": [
+        {
+          "url": "https://raw.githubusercontent.com/nodejs/node/v24.21.0/LICENSE",
+          "sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace",
+          "detail": "Exact versioned Node LICENSE matches the authenticated runner payload, including bundled third-party notices"
+        }
+      ]
+    },
+    {
+      "name": "Apache.Arrow",
+      "version": "22.1.0",
+      "purl": "pkg:nuget/Apache.Arrow@22.1.0",
+      "license_expression": "LicenseRef-Runner-Upstream-5d89822258c05808d9e3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/apache.arrow/22.1.0/apache.arrow.nuspec",
+          "sha256": "aa96d1026060c79fe647539e0da2f27e706a31e6dc519d4d3d8594ec45c85111",
+          "detail": "NuGet package Apache.Arrow 22.1.0; license type=file: LICENSE.txt"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/apache.arrow/22.1.0/apache.arrow.22.1.0.nupkg",
+          "sha256": "835e84117ea5c8afcef4c94defd92556e00d85cb797f09e4d1395a489c54ca9f",
+          "detail": "Exact package licensing files: LICENSE.txt SHA256 f49cc7be44c8d4b6efffed6ac00026f2ff2146310f040350b50be30ed3f9c570"
+        }
+      ]
+    },
+    {
+      "name": "Azure.Core",
+      "version": "1.60.0",
+      "purl": "pkg:nuget/Azure.Core@1.60.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/azure.core/1.60.0/azure.core.nuspec",
+          "sha256": "b14f505719439cee9a182c407b12ded46657403c5b94fcdd33ef3bd26291985b",
+          "detail": "NuGet package Azure.Core 1.60.0; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Azure.Storage.Blobs",
+      "version": "12.30.0",
+      "purl": "pkg:nuget/Azure.Storage.Blobs@12.30.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/azure.storage.blobs/12.30.0/azure.storage.blobs.nuspec",
+          "sha256": "1a661b7ed16589e4e05328ad9d4a70a0a162491b5448ef960c37ed90bdd21efc",
+          "detail": "NuGet package Azure.Storage.Blobs 12.30.0; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Azure.Storage.Common",
+      "version": "12.29.0",
+      "purl": "pkg:nuget/Azure.Storage.Common@12.29.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/azure.storage.common/12.29.0/azure.storage.common.nuspec",
+          "sha256": "2022364d5c9ef958d65a0dd53a260bcaecb8641badaa29e5989719ebb1a11531",
+          "detail": "NuGet package Azure.Storage.Common 12.29.0; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.AspNet.WebApi.Client",
+      "version": "6.0.0",
+      "purl": "pkg:nuget/Microsoft.AspNet.WebApi.Client@6.0.0",
+      "license_expression": "LicenseRef-Runner-Upstream-16dea00710a0daf5c94c",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.aspnet.webapi.client/6.0.0/microsoft.aspnet.webapi.client.nuspec",
+          "sha256": "f18da5c91ef329642879de8e00fa7d7aa44923339b12168a3fbb360c5f21a0a2",
+          "detail": "NuGet package Microsoft.AspNet.WebApi.Client 6.0.0; license type=file: NET_Library_EULA_ENU.txt"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.aspnet.webapi.client/6.0.0/microsoft.aspnet.webapi.client.6.0.0.nupkg",
+          "sha256": "94d2f90b85bbfe9f21a265a8a0eff764a0d94363341544c38b1270a9604f55ba",
+          "detail": "Exact package licensing files: NET_Library_EULA_ENU.txt SHA256 45b71a39607f04388bafdf2a1b7925eb5be912b0ea626b242d5f704bb567dd84"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.AspNetCore.WebUtilities",
+      "version": "8.0.25",
+      "purl": "pkg:nuget/Microsoft.AspNetCore.WebUtilities@8.0.25",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.aspnetcore.webutilities/8.0.25/microsoft.aspnetcore.webutilities.nuspec",
+          "sha256": "983c9e3cc5daaf9154e8319e849637e57122a54e9b8f6770da66e087ec7757d8",
+          "detail": "NuGet package Microsoft.AspNetCore.WebUtilities 8.0.25; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Bcl.AsyncInterfaces",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/Microsoft.Bcl.AsyncInterfaces@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.bcl.asyncinterfaces/10.0.9/microsoft.bcl.asyncinterfaces.nuspec",
+          "sha256": "101ff0b2687e20243ddd1c102efd931ffae2dce750d4450cd182e47a61370186",
+          "detail": "NuGet package Microsoft.Bcl.AsyncInterfaces 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Bcl.Cryptography",
+      "version": "10.0.12",
+      "purl": "pkg:nuget/Microsoft.Bcl.Cryptography@10.0.12",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.bcl.cryptography/10.0.12/microsoft.bcl.cryptography.nuspec",
+          "sha256": "28958d1592f9f24b3150cc3563a163424cf78a7fb2fca1bd8efd2951d69ff5a2",
+          "detail": "NuGet package Microsoft.Bcl.Cryptography 10.0.12; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.DevTunnels.Connections",
+      "version": "1.3.60",
+      "purl": "pkg:nuget/Microsoft.DevTunnels.Connections@1.3.60",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.devtunnels.connections/1.3.60/microsoft.devtunnels.connections.nuspec",
+          "sha256": "cad56e332f619b85f64928e97e4633f56c6d9150697f810b267de739d8bf5dcf",
+          "detail": "NuGet package Microsoft.DevTunnels.Connections 1.3.60; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.DevTunnels.Contracts",
+      "version": "1.3.60",
+      "purl": "pkg:nuget/Microsoft.DevTunnels.Contracts@1.3.60",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.devtunnels.contracts/1.3.60/microsoft.devtunnels.contracts.nuspec",
+          "sha256": "69f0f4469159bca657546a3db25a1f6fce23b757e33df9e1aaddead3a486805b",
+          "detail": "NuGet package Microsoft.DevTunnels.Contracts 1.3.60; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.DevTunnels.Management",
+      "version": "1.3.60",
+      "purl": "pkg:nuget/Microsoft.DevTunnels.Management@1.3.60",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.devtunnels.management/1.3.60/microsoft.devtunnels.management.nuspec",
+          "sha256": "75336437d3f40b25ba9666e9fe4bd8b513372d15e46d380f3e11dba00bb5e20c",
+          "detail": "NuGet package Microsoft.DevTunnels.Management 1.3.60; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.DevTunnels.Ssh.Tcp",
+      "version": "3.12.42",
+      "purl": "pkg:nuget/Microsoft.DevTunnels.Ssh.Tcp@3.12.42",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.devtunnels.ssh.tcp/3.12.42/microsoft.devtunnels.ssh.tcp.nuspec",
+          "sha256": "c1a489b293645938c8e3ab51bf11c117c70a5fb8811d9d73b55a9f822f45a035",
+          "detail": "NuGet package Microsoft.DevTunnels.Ssh.Tcp 3.12.42; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.DevTunnels.Ssh",
+      "version": "3.12.42",
+      "purl": "pkg:nuget/Microsoft.DevTunnels.Ssh@3.12.42",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.devtunnels.ssh/3.12.42/microsoft.devtunnels.ssh.nuspec",
+          "sha256": "59423139c0de8f5b1fba38cef4e12e5f6a0f758cf14d19559121b37b6f0d6293",
+          "detail": "NuGet package Microsoft.DevTunnels.Ssh 3.12.42; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Extensions.Configuration.Abstractions",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/Microsoft.Extensions.Configuration.Abstractions@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.configuration.abstractions/10.0.9/microsoft.extensions.configuration.abstractions.nuspec",
+          "sha256": "caedac75fbe0753957634c81416d36a169a63c8c49778b45ec5efd91cead29d6",
+          "detail": "NuGet package Microsoft.Extensions.Configuration.Abstractions 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Extensions.DependencyInjection.Abstractions",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/Microsoft.Extensions.DependencyInjection.Abstractions@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.dependencyinjection.abstractions/10.0.9/microsoft.extensions.dependencyinjection.abstractions.nuspec",
+          "sha256": "27e1a1ae1cf5e5a57c62403cbb42fd011842d7872d3cfdfed56f00aa4e4ba6bd",
+          "detail": "NuGet package Microsoft.Extensions.DependencyInjection.Abstractions 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Extensions.Diagnostics.Abstractions",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/Microsoft.Extensions.Diagnostics.Abstractions@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.diagnostics.abstractions/10.0.9/microsoft.extensions.diagnostics.abstractions.nuspec",
+          "sha256": "ed41ea52a297076ed537c2a56e9c4e61e67db01c878f9bdaa95d0eee9f70dfc5",
+          "detail": "NuGet package Microsoft.Extensions.Diagnostics.Abstractions 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Extensions.FileProviders.Abstractions",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/Microsoft.Extensions.FileProviders.Abstractions@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.fileproviders.abstractions/10.0.9/microsoft.extensions.fileproviders.abstractions.nuspec",
+          "sha256": "02a57f62cec0411b8341c08265324a6124ce0bb035596348b952f3e7a89ac133",
+          "detail": "NuGet package Microsoft.Extensions.FileProviders.Abstractions 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Extensions.Hosting.Abstractions",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/Microsoft.Extensions.Hosting.Abstractions@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.hosting.abstractions/10.0.9/microsoft.extensions.hosting.abstractions.nuspec",
+          "sha256": "f425b3a91fe1fe153a254dc3fef2b38d9ccede55cddba8fd57cbf05aa780d40b",
+          "detail": "NuGet package Microsoft.Extensions.Hosting.Abstractions 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Extensions.Logging.Abstractions",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/Microsoft.Extensions.Logging.Abstractions@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.logging.abstractions/10.0.9/microsoft.extensions.logging.abstractions.nuspec",
+          "sha256": "baa6e9d3301f2ad0b534f9c1e3138a1833f29add8124f676e32bea5e49782c96",
+          "detail": "NuGet package Microsoft.Extensions.Logging.Abstractions 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Extensions.Options",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/Microsoft.Extensions.Options@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.options/10.0.9/microsoft.extensions.options.nuspec",
+          "sha256": "16fb503ba17c455b00e0b1f1cdb1337babf2e3122a33a5ed7efe9b132103a347",
+          "detail": "NuGet package Microsoft.Extensions.Options 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Extensions.Primitives",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/Microsoft.Extensions.Primitives@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.primitives/10.0.9/microsoft.extensions.primitives.nuspec",
+          "sha256": "4060a99ae389b81977a54a1554e9cfb78a05d68554c8242c0d970a15ac96195a",
+          "detail": "NuGet package Microsoft.Extensions.Primitives 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Identity.Client.Extensions.Msal",
+      "version": "4.84.2",
+      "purl": "pkg:nuget/Microsoft.Identity.Client.Extensions.Msal@4.84.2",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.identity.client.extensions.msal/4.84.2/microsoft.identity.client.extensions.msal.nuspec",
+          "sha256": "6205f984d7bf0264286db3861ab0c6bc40c1aa790beae97c70c0afeac84d4872",
+          "detail": "NuGet package Microsoft.Identity.Client.Extensions.Msal 4.84.2; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Identity.Client",
+      "version": "4.84.2",
+      "purl": "pkg:nuget/Microsoft.Identity.Client@4.84.2",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.identity.client/4.84.2/microsoft.identity.client.nuspec",
+          "sha256": "23a6e17d2c57a7127e9df5db01b0fa8bf408bbb8517481410fe2bd3bc62c6a40",
+          "detail": "NuGet package Microsoft.Identity.Client 4.84.2; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.IdentityModel.Abstractions",
+      "version": "8.14.0",
+      "purl": "pkg:nuget/Microsoft.IdentityModel.Abstractions@8.14.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.identitymodel.abstractions/8.14.0/microsoft.identitymodel.abstractions.nuspec",
+          "sha256": "0747c9f9a9e56ac186ead332f434232806889c909dd57e9352b2f19db29c3a0e",
+          "detail": "NuGet package Microsoft.IdentityModel.Abstractions 8.14.0; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Net.Http.Headers",
+      "version": "8.0.25",
+      "purl": "pkg:nuget/Microsoft.Net.Http.Headers@8.0.25",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.net.http.headers/8.0.25/microsoft.net.http.headers.nuspec",
+          "sha256": "c39ea0ca45be966d728cbbbca3e219cc8ea88f2058e848bafbc20ce0c60c851e",
+          "detail": "NuGet package Microsoft.Net.Http.Headers 8.0.25; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.VisualStudio.Validation",
+      "version": "17.13.22",
+      "purl": "pkg:nuget/Microsoft.VisualStudio.Validation@17.13.22",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.visualstudio.validation/17.13.22/microsoft.visualstudio.validation.nuspec",
+          "sha256": "44535d1dd0b1a7d892f29a22dc0a33dfd8dfdf619616b7e2dcd48677f8ba3398",
+          "detail": "NuGet package Microsoft.VisualStudio.Validation 17.13.22; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Win32.Primitives",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/Microsoft.Win32.Primitives@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.win32.primitives/4.3.0/microsoft.win32.primitives.nuspec",
+          "sha256": "21492782cc38dc537fb64e022c9036c416590e9766fc99f2d0e413e3dba84a00",
+          "detail": "NuGet package Microsoft.Win32.Primitives 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.win32.primitives/4.3.0/microsoft.win32.primitives.4.3.0.nupkg",
+          "sha256": "98134398f5cd4d6e785cb9cf014c0146f90839114ceff8f40f42364b240f0c48",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "Microsoft.Win32.Registry",
+      "version": "5.0.0",
+      "purl": "pkg:nuget/Microsoft.Win32.Registry@5.0.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.win32.registry/5.0.0/microsoft.win32.registry.nuspec",
+          "sha256": "50401c0ab9113ee0c519760f1284890fad0b49576323a9d30ef73ee6da2ea24d",
+          "detail": "NuGet package Microsoft.Win32.Registry 5.0.0; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Minimatch",
+      "version": "2.0.0",
+      "purl": "pkg:nuget/Minimatch@2.0.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/minimatch/2.0.0/minimatch.nuspec",
+          "sha256": "881edf0833fede240b7c7c2fe2dae2ffb6b79b5c91a09495d3813bdf8d8aebc2",
+          "detail": "NuGet package Minimatch 2.0.0; licenseUrl: http://opensource.org/licenses/MIT"
+        }
+      ]
+    },
+    {
+      "name": "NETStandard.Library",
+      "version": "1.5.0-rc2-24027",
+      "purl": "pkg:nuget/NETStandard.Library@1.5.0-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/netstandard.library/1.5.0-rc2-24027/netstandard.library.nuspec",
+          "sha256": "423bf5d79eed2968c2a56165ff9c64e6a5d2d97ab756051ab187db1fc7007abb",
+          "detail": "NuGet package NETStandard.Library 1.5.0-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/netstandard.library/1.5.0-rc2-24027/netstandard.library.1.5.0-rc2-24027.nupkg",
+          "sha256": "95d748caa8fc63721ec4e9b923586c139c35fdd3a839a3431e850f235be45fcd",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "Newtonsoft.Json.Bson",
+      "version": "1.0.2",
+      "purl": "pkg:nuget/Newtonsoft.Json.Bson@1.0.2",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/newtonsoft.json.bson/1.0.2/newtonsoft.json.bson.nuspec",
+          "sha256": "5df9b540b9eb8f32a3b3bc98bfaf3ea363be295622436183786c0f9407cbecc5",
+          "detail": "NuGet package Newtonsoft.Json.Bson 1.0.2; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Newtonsoft.Json",
+      "version": "13.0.3",
+      "purl": "pkg:nuget/Newtonsoft.Json@13.0.3",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/newtonsoft.json/13.0.3/newtonsoft.json.nuspec",
+          "sha256": "ab5ff2f951cf44643a10b99ec9379104944e0850b594d19195d520788601a295",
+          "detail": "NuGet package Newtonsoft.Json 13.0.3; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "Runner.Common",
+      "version": "2.338.0",
+      "purl": "pkg:nuget/Runner.Common@2.338.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://raw.githubusercontent.com/actions/runner/197ca027b90de199464dee3bb9ff198a1db60967/LICENSE",
+          "sha256": "621a1e0b6163b9d63fe780b9d6f5a7f775a5781065024a1ebf8010726c44cec1",
+          "detail": "Runner-owned project assembly; exact upstream source LICENSE declares MIT"
+        }
+      ]
+    },
+    {
+      "name": "Runner.Listener",
+      "version": "2.338.0",
+      "purl": "pkg:nuget/Runner.Listener@2.338.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://raw.githubusercontent.com/actions/runner/197ca027b90de199464dee3bb9ff198a1db60967/LICENSE",
+          "sha256": "621a1e0b6163b9d63fe780b9d6f5a7f775a5781065024a1ebf8010726c44cec1",
+          "detail": "Runner-owned project assembly; exact upstream source LICENSE declares MIT"
+        }
+      ]
+    },
+    {
+      "name": "Runner.PluginHost",
+      "version": "2.338.0",
+      "purl": "pkg:nuget/Runner.PluginHost@2.338.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://raw.githubusercontent.com/actions/runner/197ca027b90de199464dee3bb9ff198a1db60967/LICENSE",
+          "sha256": "621a1e0b6163b9d63fe780b9d6f5a7f775a5781065024a1ebf8010726c44cec1",
+          "detail": "Runner-owned project assembly; exact upstream source LICENSE declares MIT"
+        }
+      ]
+    },
+    {
+      "name": "Runner.Plugins",
+      "version": "2.338.0",
+      "purl": "pkg:nuget/Runner.Plugins@2.338.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://raw.githubusercontent.com/actions/runner/197ca027b90de199464dee3bb9ff198a1db60967/LICENSE",
+          "sha256": "621a1e0b6163b9d63fe780b9d6f5a7f775a5781065024a1ebf8010726c44cec1",
+          "detail": "Runner-owned project assembly; exact upstream source LICENSE declares MIT"
+        }
+      ]
+    },
+    {
+      "name": "Runner.Sdk",
+      "version": "2.338.0",
+      "purl": "pkg:nuget/Runner.Sdk@2.338.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://raw.githubusercontent.com/actions/runner/197ca027b90de199464dee3bb9ff198a1db60967/LICENSE",
+          "sha256": "621a1e0b6163b9d63fe780b9d6f5a7f775a5781065024a1ebf8010726c44cec1",
+          "detail": "Runner-owned project assembly; exact upstream source LICENSE declares MIT"
+        }
+      ]
+    },
+    {
+      "name": "Runner.Worker",
+      "version": "2.338.0",
+      "purl": "pkg:nuget/Runner.Worker@2.338.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://raw.githubusercontent.com/actions/runner/197ca027b90de199464dee3bb9ff198a1db60967/LICENSE",
+          "sha256": "621a1e0b6163b9d63fe780b9d6f5a7f775a5781065024a1ebf8010726c44cec1",
+          "detail": "Runner-owned project assembly; exact upstream source LICENSE declares MIT"
+        }
+      ]
+    },
+    {
+      "name": "Sdk",
+      "version": "2.338.0",
+      "purl": "pkg:nuget/Sdk@2.338.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://raw.githubusercontent.com/actions/runner/197ca027b90de199464dee3bb9ff198a1db60967/LICENSE",
+          "sha256": "621a1e0b6163b9d63fe780b9d6f5a7f775a5781065024a1ebf8010726c44cec1",
+          "detail": "Runner-owned project assembly; exact upstream source LICENSE declares MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.AppContext",
+      "version": "4.1.0-rc2-24027",
+      "purl": "pkg:nuget/System.AppContext@4.1.0-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.appcontext/4.1.0-rc2-24027/system.appcontext.nuspec",
+          "sha256": "bec14f699ab64a7da2b7e7ed178d51eabcd2da9c4a31af8ecbe2dddd34e5cc9b",
+          "detail": "NuGet package System.AppContext 4.1.0-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.appcontext/4.1.0-rc2-24027/system.appcontext.4.1.0-rc2-24027.nupkg",
+          "sha256": "4f29b59c3affe7e55051ad74e357aab5f206176149f75d55e4bf28119e1e1d30",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Buffers",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Buffers@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.buffers/4.3.0/system.buffers.nuspec",
+          "sha256": "d45da20bd42caa1bb6882bf48f231a42e5a77a49bc9c6107f7422be90da82279",
+          "detail": "NuGet package System.Buffers 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.buffers/4.3.0/system.buffers.4.3.0.nupkg",
+          "sha256": "5ea6566f829dd38f7ad21e14f6c7a2be32ac78603f60422976995f1d81d0f639",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.ClientModel",
+      "version": "1.14.0",
+      "purl": "pkg:nuget/System.ClientModel@1.14.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.clientmodel/1.14.0/system.clientmodel.nuspec",
+          "sha256": "a339a065f76a3f575a07a5d0008319cd96b0e19bec420fda8e8ead261cadef35",
+          "detail": "NuGet package System.ClientModel 1.14.0; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Collections.Concurrent",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Collections.Concurrent@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.collections.concurrent/4.3.0/system.collections.concurrent.nuspec",
+          "sha256": "6a48e65cc5785d123ae442cf3087e383350bf3eb54a611855b9af1dcb40a2131",
+          "detail": "NuGet package System.Collections.Concurrent 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.collections.concurrent/4.3.0/system.collections.concurrent.4.3.0.nupkg",
+          "sha256": "28c6390df2670de22c6b5dc3a6abf237c36445e644300167966360955a052172",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Collections",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Collections@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.collections/4.3.0/system.collections.nuspec",
+          "sha256": "7ad270df3e52b0ae360a73876568e4f21e8afbd17fdaad54ab46b39e36f46c9a",
+          "detail": "NuGet package System.Collections 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.collections/4.3.0/system.collections.4.3.0.nupkg",
+          "sha256": "69f63b554b43eb0ff9998aab71ef2442bbc321f4b61970c834387bdc88f124a7",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Console",
+      "version": "4.0.0-rc2-24027",
+      "purl": "pkg:nuget/System.Console@4.0.0-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.console/4.0.0-rc2-24027/system.console.nuspec",
+          "sha256": "528bd46774790482ba375ce81b07bb9aa4ceb46a7f2ca06c29551569470e690d",
+          "detail": "NuGet package System.Console 4.0.0-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.console/4.0.0-rc2-24027/system.console.4.0.0-rc2-24027.nupkg",
+          "sha256": "0181b4d4f63e64dbc67ef1d90033f16d0476ee01f86691af634583ad4618551c",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Diagnostics.Debug",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Diagnostics.Debug@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.diagnostics.debug/4.3.0/system.diagnostics.debug.nuspec",
+          "sha256": "ed2b10a24e8c5125d0b0216c881dbf75d2d90e3e66de3a104b31dd26a3f43e7e",
+          "detail": "NuGet package System.Diagnostics.Debug 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.diagnostics.debug/4.3.0/system.diagnostics.debug.4.3.0.nupkg",
+          "sha256": "7e403bf528cf6d27a211cadb6d4b1bef4bbd07bc2a6ec74cf6cd4b9e82a3d203",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Diagnostics.DiagnosticSource",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/System.Diagnostics.DiagnosticSource@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.diagnostics.diagnosticsource/10.0.9/system.diagnostics.diagnosticsource.nuspec",
+          "sha256": "8ae53467d5871b11f85fd3082e7f3905de9d5611debe136d817779a7bfeb065d",
+          "detail": "NuGet package System.Diagnostics.DiagnosticSource 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Diagnostics.EventLog",
+      "version": "10.0.3",
+      "purl": "pkg:nuget/System.Diagnostics.EventLog@10.0.3",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.diagnostics.eventlog/10.0.3/system.diagnostics.eventlog.nuspec",
+          "sha256": "0e49d110c0ad3068dd1eea3bea425fe015ffdd00409cc22d96c51d050db3c365",
+          "detail": "NuGet package System.Diagnostics.EventLog 10.0.3; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Diagnostics.EventLog",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/System.Diagnostics.EventLog@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.diagnostics.eventlog/10.0.9/system.diagnostics.eventlog.nuspec",
+          "sha256": "fa4e1397ce1a1901df7ceb158c972d745ed25ea09eaa2c4b681a0c1b38f65da9",
+          "detail": "NuGet package System.Diagnostics.EventLog 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Diagnostics.Tools",
+      "version": "4.0.1-rc2-24027",
+      "purl": "pkg:nuget/System.Diagnostics.Tools@4.0.1-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.diagnostics.tools/4.0.1-rc2-24027/system.diagnostics.tools.nuspec",
+          "sha256": "27548bcba39e0c139e6491ef7c2d3858913437e13d2bd28ca80d8d392f92434b",
+          "detail": "NuGet package System.Diagnostics.Tools 4.0.1-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.diagnostics.tools/4.0.1-rc2-24027/system.diagnostics.tools.4.0.1-rc2-24027.nupkg",
+          "sha256": "65bba3b0378dbff563f44aaa2f1074d408c2fa9f57c763fe9f6edec00c6a0f20",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Diagnostics.Tracing",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Diagnostics.Tracing@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.diagnostics.tracing/4.3.0/system.diagnostics.tracing.nuspec",
+          "sha256": "f9124f452660a77a0861a076d500fbf81da1ba140113d44660e6db3c83b57658",
+          "detail": "NuGet package System.Diagnostics.Tracing 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.diagnostics.tracing/4.3.0/system.diagnostics.tracing.4.3.0.nupkg",
+          "sha256": "8421136691c719584f62f6f80b47e1e33b3ef33bf818fa22c5a8242d98e96bd4",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Formats.Asn1",
+      "version": "10.0.12",
+      "purl": "pkg:nuget/System.Formats.Asn1@10.0.12",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.formats.asn1/10.0.12/system.formats.asn1.nuspec",
+          "sha256": "02aaaaccb0ed849c874ad4ad168625be90c712310fe97d766b7111cef8e6834d",
+          "detail": "NuGet package System.Formats.Asn1 10.0.12; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Globalization.Calendars",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Globalization.Calendars@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.globalization.calendars/4.3.0/system.globalization.calendars.nuspec",
+          "sha256": "3ba6fec23ec7f540d0976fdeac1a143513da47a58f91185c8aed8fb997319951",
+          "detail": "NuGet package System.Globalization.Calendars 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.globalization.calendars/4.3.0/system.globalization.calendars.4.3.0.nupkg",
+          "sha256": "b8d383d043951609d2d9f30abcc884b48f5a3b0d34f8f7f2fc7faab9c01094f7",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Globalization.Extensions",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Globalization.Extensions@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.globalization.extensions/4.3.0/system.globalization.extensions.nuspec",
+          "sha256": "37fcb32bfb943c9071a34d50175dc384393d510c5a3453f22a359cb4ac792338",
+          "detail": "NuGet package System.Globalization.Extensions 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.globalization.extensions/4.3.0/system.globalization.extensions.4.3.0.nupkg",
+          "sha256": "9a6256036ed3d06455b853fdfec8fee13ad1e06256af33489363c3adbafb4509",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Globalization",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Globalization@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.globalization/4.3.0/system.globalization.nuspec",
+          "sha256": "d02e7c00f3827bfe4112b1b581f0ef56af0a7486bff330646a23d293ac715ab6",
+          "detail": "NuGet package System.Globalization 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.globalization/4.3.0/system.globalization.4.3.0.nupkg",
+          "sha256": "71a2f4a51985484b1aa1e65e58de414d0b46ac0b5a40fc058bc60e64f646e6b2",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.IO.Compression.ZipFile",
+      "version": "4.0.1-rc2-24027",
+      "purl": "pkg:nuget/System.IO.Compression.ZipFile@4.0.1-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io.compression.zipfile/4.0.1-rc2-24027/system.io.compression.zipfile.nuspec",
+          "sha256": "a4cd0c3f638914d7f727f01d32755aeb713e494ceef0e0e8f23cedc4e860b02f",
+          "detail": "NuGet package System.IO.Compression.ZipFile 4.0.1-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io.compression.zipfile/4.0.1-rc2-24027/system.io.compression.zipfile.4.0.1-rc2-24027.nupkg",
+          "sha256": "428f2b50989d36e6ebd42e071522669820e6f39da6688f35f85a399b93dbe65a",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.IO.Compression",
+      "version": "4.1.0-rc2-24027",
+      "purl": "pkg:nuget/System.IO.Compression@4.1.0-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io.compression/4.1.0-rc2-24027/system.io.compression.nuspec",
+          "sha256": "718d315be4dac28433f19cb76c72edbe1dad9deafac4506e17189250905677d1",
+          "detail": "NuGet package System.IO.Compression 4.1.0-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io.compression/4.1.0-rc2-24027/system.io.compression.4.1.0-rc2-24027.nupkg",
+          "sha256": "32aa0e369b8496547f531366af16b90cdef43ef7627559c16e1dc6c15bff451f",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.IO.FileSystem.Primitives",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.IO.FileSystem.Primitives@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io.filesystem.primitives/4.3.0/system.io.filesystem.primitives.nuspec",
+          "sha256": "9985249f157ef3f041c57c9598bfe2604e3c5b1050c2947ab90473c73e0c79e1",
+          "detail": "NuGet package System.IO.FileSystem.Primitives 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io.filesystem.primitives/4.3.0/system.io.filesystem.primitives.4.3.0.nupkg",
+          "sha256": "2cc9df83c5706afb3d70c9eaf67347f085ad02d49f934fc5cb8b3846df6bd648",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.IO.FileSystem",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.IO.FileSystem@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io.filesystem/4.3.0/system.io.filesystem.nuspec",
+          "sha256": "7afa1eca3e1dea0c9c2e9dfe0587c5b575c9b0d77132458ff7610099de0348db",
+          "detail": "NuGet package System.IO.FileSystem 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io.filesystem/4.3.0/system.io.filesystem.4.3.0.nupkg",
+          "sha256": "bcd2189ef95acae563d167d17d82a90eb843a6d961a75a4df026269557764d7c",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.IO.Hashing",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/System.IO.Hashing@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io.hashing/10.0.9/system.io.hashing.nuspec",
+          "sha256": "24b7b6ef971efda098006139200515b6f577fc8a9f16645e18720b0905bad6b3",
+          "detail": "NuGet package System.IO.Hashing 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.IO.Pipelines",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/System.IO.Pipelines@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io.pipelines/10.0.9/system.io.pipelines.nuspec",
+          "sha256": "c4b16c3ff8dde910876b0c8cbd6e6c9b39d5fd029276943bfbd6982926f3cd2b",
+          "detail": "NuGet package System.IO.Pipelines 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.IO",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.IO@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io/4.3.0/system.io.nuspec",
+          "sha256": "a3c7c712b172fa869cc4dfd8ee7363bb71bc78e44dafc265d159760d220450d6",
+          "detail": "NuGet package System.IO 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.io/4.3.0/system.io.4.3.0.nupkg",
+          "sha256": "aeeca74077a414fe703eb0e257284d891217799fc8f4da632b9a54f873c38916",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Linq",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Linq@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.linq/4.3.0/system.linq.nuspec",
+          "sha256": "2f911b3accf6c9bf3b67d00b9be88125622c337b58fd6217031a981959f94869",
+          "detail": "NuGet package System.Linq 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.linq/4.3.0/system.linq.4.3.0.nupkg",
+          "sha256": "479ba248bde5e9add7ad74922fa8f3faafcf732550cc4001ca2b9764d4aa0ff0",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Memory.Data",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/System.Memory.Data@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.memory.data/10.0.9/system.memory.data.nuspec",
+          "sha256": "852081cff2f8d48671924b1a830d09571b08f65f4df3f2ea39d1a2a7a161da88",
+          "detail": "NuGet package System.Memory.Data 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Net.Http",
+      "version": "4.3.4",
+      "purl": "pkg:nuget/System.Net.Http@4.3.4",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.net.http/4.3.4/system.net.http.nuspec",
+          "sha256": "dc7ad669377d102632fcd47b0982cf81d275f6316c407e501e76d095d37c39fa",
+          "detail": "NuGet package System.Net.Http 4.3.4; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.net.http/4.3.4/system.net.http.4.3.4.nupkg",
+          "sha256": "14ca14d0aee794f2f1a038eed0d2f6d568e581af46a67028423b05845618b74d",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Net.NameResolution",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Net.NameResolution@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.net.nameresolution/4.3.0/system.net.nameresolution.nuspec",
+          "sha256": "06b8bc38744d683a1e31a320a703ff09efd5a6044db04c9ca0d757743f1d66bc",
+          "detail": "NuGet package System.Net.NameResolution 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.net.nameresolution/4.3.0/system.net.nameresolution.4.3.0.nupkg",
+          "sha256": "7866700811315ac9e2ad6047ca9dac492497a7a83b23abf9dea366c0f82d2797",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Net.Primitives",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Net.Primitives@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.net.primitives/4.3.0/system.net.primitives.nuspec",
+          "sha256": "6f8c5ff4df107e7044db58c9318dd613a5a1177abcb45a90414a4227c4656a02",
+          "detail": "NuGet package System.Net.Primitives 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.net.primitives/4.3.0/system.net.primitives.4.3.0.nupkg",
+          "sha256": "318ed9eaf3ad14c6c429a2d6f6739265e023716a700ad74eeff5b59a41990731",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Net.Sockets",
+      "version": "4.1.0-rc2-24027",
+      "purl": "pkg:nuget/System.Net.Sockets@4.1.0-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.net.sockets/4.1.0-rc2-24027/system.net.sockets.nuspec",
+          "sha256": "70a825042f3dad8b190d5dad8200d19fadac2ca57c9a4b820085a4dfbfd75576",
+          "detail": "NuGet package System.Net.Sockets 4.1.0-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.net.sockets/4.1.0-rc2-24027/system.net.sockets.4.1.0-rc2-24027.nupkg",
+          "sha256": "1a03923b2c99cd7430eae6d7979899790f11c7765359d959e5d09e50f75a5318",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.ObjectModel",
+      "version": "4.0.12-rc2-24027",
+      "purl": "pkg:nuget/System.ObjectModel@4.0.12-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.objectmodel/4.0.12-rc2-24027/system.objectmodel.nuspec",
+          "sha256": "8f2a2458ab787750b9f6623c0907d7d218ed06e4484f96ca041b3d0033d6c080",
+          "detail": "NuGet package System.ObjectModel 4.0.12-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.objectmodel/4.0.12-rc2-24027/system.objectmodel.4.0.12-rc2-24027.nupkg",
+          "sha256": "72531449d9ba8e802a8c04ed39d34f6dfaeb263f1a4302c69ae947c75542b718",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Private.Uri",
+      "version": "4.3.2",
+      "purl": "pkg:nuget/System.Private.Uri@4.3.2",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.private.uri/4.3.2/system.private.uri.nuspec",
+          "sha256": "ded6b737edced0691acf5fd3c95efd7a14518ceced673cf39945897d8d0f401d",
+          "detail": "NuGet package System.Private.Uri 4.3.2; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.private.uri/4.3.2/system.private.uri.4.3.2.nupkg",
+          "sha256": "8c1dbe5b7b5343a0fd5c7cb9b0414c01acc87b57eeda3ac43543b471be3c3a05",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Reflection.Extensions",
+      "version": "4.0.1-rc2-24027",
+      "purl": "pkg:nuget/System.Reflection.Extensions@4.0.1-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.reflection.extensions/4.0.1-rc2-24027/system.reflection.extensions.nuspec",
+          "sha256": "a3f4068cfe065ec9e743a1fb3e372f02d107398f274c22069be3bf406b1a93ce",
+          "detail": "NuGet package System.Reflection.Extensions 4.0.1-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.reflection.extensions/4.0.1-rc2-24027/system.reflection.extensions.4.0.1-rc2-24027.nupkg",
+          "sha256": "675be5aa6804341c93329e3f84976635602b839bedc113d4555b80d5383fff51",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Reflection.Primitives",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Reflection.Primitives@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.reflection.primitives/4.3.0/system.reflection.primitives.nuspec",
+          "sha256": "01dfcebea5d7125f41c35dfaf885cd80cdf314ad3e8f8e21798fc11d8f805c9f",
+          "detail": "NuGet package System.Reflection.Primitives 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.reflection.primitives/4.3.0/system.reflection.primitives.4.3.0.nupkg",
+          "sha256": "e68830581e2f9504e5de38e4d718e7886da8cdb1488d94cbf6e834bac650b813",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Reflection",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Reflection@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.reflection/4.3.0/system.reflection.nuspec",
+          "sha256": "2e734d31415658923b1fa0a7cde26b2ec2d76d0857155c4a23709caf088ff194",
+          "detail": "NuGet package System.Reflection 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.reflection/4.3.0/system.reflection.4.3.0.nupkg",
+          "sha256": "35049946964bbed3d60e5be6308746c5c56ec949f0f76654468d215ec12c8576",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Resources.ResourceManager",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Resources.ResourceManager@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.resources.resourcemanager/4.3.0/system.resources.resourcemanager.nuspec",
+          "sha256": "b63702b9cbbeb2cb9bf1a76850029ca90a79904dc727f19f71b99b6241751c1d",
+          "detail": "NuGet package System.Resources.ResourceManager 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.resources.resourcemanager/4.3.0/system.resources.resourcemanager.4.3.0.nupkg",
+          "sha256": "89d88e0fddf16dbadbc304a70f898e440f51622fc3fd4e3c79152c9ff5a7586a",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Runtime.Extensions",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Runtime.Extensions@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime.extensions/4.3.0/system.runtime.extensions.nuspec",
+          "sha256": "749f6fa77e79b7d1759363119b946a6d56924fdb7eab81402035c75efd20321b",
+          "detail": "NuGet package System.Runtime.Extensions 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime.extensions/4.3.0/system.runtime.extensions.4.3.0.nupkg",
+          "sha256": "c0b0c79a8cebf38bf55b6cd8096631c63d0547424360749545a46e0e6d1b77fa",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Runtime.Handles",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Runtime.Handles@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime.handles/4.3.0/system.runtime.handles.nuspec",
+          "sha256": "4be0fcc65f3638d444cb35cc9e2fd0fe0088a4c80dade529b3c5c7eb631385f4",
+          "detail": "NuGet package System.Runtime.Handles 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime.handles/4.3.0/system.runtime.handles.4.3.0.nupkg",
+          "sha256": "289e5a5e81a9079e98ebe89ea4191da71fc07da243022b71e2fae42ea47b826b",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Runtime.InteropServices.RuntimeInformation",
+      "version": "4.0.0-rc2-24027",
+      "purl": "pkg:nuget/System.Runtime.InteropServices.RuntimeInformation@4.0.0-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime.interopservices.runtimeinformation/4.0.0-rc2-24027/system.runtime.interopservices.runtimeinformation.nuspec",
+          "sha256": "b1c4bf5045efa2727c421be78537a7bfdc8b343f188be69d1ccb383a9e06a05a",
+          "detail": "NuGet package System.Runtime.InteropServices.RuntimeInformation 4.0.0-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime.interopservices.runtimeinformation/4.0.0-rc2-24027/system.runtime.interopservices.runtimeinformation.4.0.0-rc2-24027.nupkg",
+          "sha256": "c20eb58fc8ee7b3325d96d51e9a006e9f9acbfd508349dfd8bfb39a8dec2ef0e",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Runtime.InteropServices",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Runtime.InteropServices@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime.interopservices/4.3.0/system.runtime.interopservices.nuspec",
+          "sha256": "3eb8a86db9fa4162d54cd6a213bda72d314136799efd6acd12250569c6378dd9",
+          "detail": "NuGet package System.Runtime.InteropServices 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime.interopservices/4.3.0/system.runtime.interopservices.4.3.0.nupkg",
+          "sha256": "f2c0c7f965097c247eedee277e97ed8fffa5b2d122662c56501b9e476ce61e02",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Runtime.Numerics",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Runtime.Numerics@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime.numerics/4.3.0/system.runtime.numerics.nuspec",
+          "sha256": "175134aec900ace7dc5fbad503ea89d041f0c606ee4e3bd1c0d8e18e9b6e8d33",
+          "detail": "NuGet package System.Runtime.Numerics 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime.numerics/4.3.0/system.runtime.numerics.4.3.0.nupkg",
+          "sha256": "3f98c70a031b80531888e36fce668a15e3aa7002033eefd4f1b395acd3d82aa7",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Runtime",
+      "version": "4.3.1",
+      "purl": "pkg:nuget/System.Runtime@4.3.1",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime/4.3.1/system.runtime.nuspec",
+          "sha256": "312a22e1cff1f9d299105e8be0026e5385d357583d0377ed46f254c64c3d6dfc",
+          "detail": "NuGet package System.Runtime 4.3.1; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.runtime/4.3.1/system.runtime.4.3.1.nupkg",
+          "sha256": "47d4faf00cd2d4f249eefe80473f6fa3cf2928bd5d5aa2ce00d838a64423900d",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Security.AccessControl",
+      "version": "5.0.0",
+      "purl": "pkg:nuget/System.Security.AccessControl@5.0.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.accesscontrol/5.0.0/system.security.accesscontrol.nuspec",
+          "sha256": "5a2021bc757f08136e2300b3c22bc469d0e8231891209ed115b1691d3eb445b0",
+          "detail": "NuGet package System.Security.AccessControl 5.0.0; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Security.Cryptography.Algorithms",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Security.Cryptography.Algorithms@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.algorithms/4.3.0/system.security.cryptography.algorithms.nuspec",
+          "sha256": "353ae479fb964602488b6f640ec6d5ba0904e34c50c8f5c6cd2e34c803642ff8",
+          "detail": "NuGet package System.Security.Cryptography.Algorithms 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.algorithms/4.3.0/system.security.cryptography.algorithms.4.3.0.nupkg",
+          "sha256": "b4026f35295ccd8049dc4776e007b6edae79b6afe7e03ddfb9b35077070a580f",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Security.Cryptography.Cng",
+      "version": "5.0.0",
+      "purl": "pkg:nuget/System.Security.Cryptography.Cng@5.0.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.cng/5.0.0/system.security.cryptography.cng.nuspec",
+          "sha256": "bbb747f36a1815349344239a4b095f5014c3c0034d363326f7bda30aa51f1c63",
+          "detail": "NuGet package System.Security.Cryptography.Cng 5.0.0; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Security.Cryptography.Csp",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Security.Cryptography.Csp@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.csp/4.3.0/system.security.cryptography.csp.nuspec",
+          "sha256": "817a3cac952b0b75042c6a430348558f028eb6da805c46b47324c416b87ff3e1",
+          "detail": "NuGet package System.Security.Cryptography.Csp 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.csp/4.3.0/system.security.cryptography.csp.4.3.0.nupkg",
+          "sha256": "a1e7dd4d4fd9d8f594f6795ab7cba24431aafcf199a123d182430bd75a66bcf4",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Security.Cryptography.Encoding",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Security.Cryptography.Encoding@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.encoding/4.3.0/system.security.cryptography.encoding.nuspec",
+          "sha256": "9c1b3a7fb083bb1acbfb34c65978c9d9177f850065963451e787fcadfb1d6e13",
+          "detail": "NuGet package System.Security.Cryptography.Encoding 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.encoding/4.3.0/system.security.cryptography.encoding.4.3.0.nupkg",
+          "sha256": "62e81ef3d37a33e35c6e572f5cc7b21d9ea46437f006fdcb3cc0e217c1e126cb",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Security.Cryptography.OpenSsl",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Security.Cryptography.OpenSsl@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.openssl/4.3.0/system.security.cryptography.openssl.nuspec",
+          "sha256": "42044c62b6eccfdd3d121770ad8a351aa623adc0f18d4c02074bdd2399922748",
+          "detail": "NuGet package System.Security.Cryptography.OpenSsl 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.openssl/4.3.0/system.security.cryptography.openssl.4.3.0.nupkg",
+          "sha256": "0cbf83dac73626b422078a007148204c5c83f30dda2c48c97e877924f7be3b3e",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Security.Cryptography.Pkcs",
+      "version": "10.0.12",
+      "purl": "pkg:nuget/System.Security.Cryptography.Pkcs@10.0.12",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.pkcs/10.0.12/system.security.cryptography.pkcs.nuspec",
+          "sha256": "9df7e9cc51d731e3bd3a1763da90b4814d31d6e60ce4d118c7cd4284333d2632",
+          "detail": "NuGet package System.Security.Cryptography.Pkcs 10.0.12; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Security.Cryptography.Primitives",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Security.Cryptography.Primitives@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.primitives/4.3.0/system.security.cryptography.primitives.nuspec",
+          "sha256": "5194eb59279bffe6c2c6fb1f50700cbddbe0bd5635cbf658d9e4fda5ffca310d",
+          "detail": "NuGet package System.Security.Cryptography.Primitives 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.primitives/4.3.0/system.security.cryptography.primitives.4.3.0.nupkg",
+          "sha256": "7e7162ec1dd29d58f96be05b8179db8e718dbd6ac2114e87a7fc23b235b3df5f",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Security.Cryptography.ProtectedData",
+      "version": "10.0.11",
+      "purl": "pkg:nuget/System.Security.Cryptography.ProtectedData@10.0.11",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.protecteddata/10.0.11/system.security.cryptography.protecteddata.nuspec",
+          "sha256": "67b82aa511d5784f8cccffeae26c4b71f2364e399c7505a16985cab93dce86f3",
+          "detail": "NuGet package System.Security.Cryptography.ProtectedData 10.0.11; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Security.Cryptography.X509Certificates",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Security.Cryptography.X509Certificates@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.x509certificates/4.3.0/system.security.cryptography.x509certificates.nuspec",
+          "sha256": "471306af5b167a907825287e84b4e2af62be852aecf7bc6f04067bfce4fe34a9",
+          "detail": "NuGet package System.Security.Cryptography.X509Certificates 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.x509certificates/4.3.0/system.security.cryptography.x509certificates.4.3.0.nupkg",
+          "sha256": "306dd5fe8c03876ef718250fb061ab68dc1a56973276ea65dc4b4f5e3e93546d",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Security.Principal.Windows",
+      "version": "5.0.0",
+      "purl": "pkg:nuget/System.Security.Principal.Windows@5.0.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.principal.windows/5.0.0/system.security.principal.windows.nuspec",
+          "sha256": "6e7677f44a734eeda3f9e6f31c6762cceac25287cd92194d23591e030f9126c7",
+          "detail": "NuGet package System.Security.Principal.Windows 5.0.0; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.ServiceProcess.ServiceController",
+      "version": "10.0.3",
+      "purl": "pkg:nuget/System.ServiceProcess.ServiceController@10.0.3",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.serviceprocess.servicecontroller/10.0.3/system.serviceprocess.servicecontroller.nuspec",
+          "sha256": "ba3b560ec7d2a26d1e238ad270cbcf1f33654bca981c4dfc7dd97fd6a5a3b11d",
+          "detail": "NuGet package System.ServiceProcess.ServiceController 10.0.3; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.ServiceProcess.ServiceController",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/System.ServiceProcess.ServiceController@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.serviceprocess.servicecontroller/10.0.9/system.serviceprocess.servicecontroller.nuspec",
+          "sha256": "f54e0e2ccac29b5fc8db0cb3b9341e727773fb555b3b6317be996390a2a6a7df",
+          "detail": "NuGet package System.ServiceProcess.ServiceController 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Text.Encoding.CodePages",
+      "version": "10.0.12",
+      "purl": "pkg:nuget/System.Text.Encoding.CodePages@10.0.12",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.text.encoding.codepages/10.0.12/system.text.encoding.codepages.nuspec",
+          "sha256": "238601b83c5acf73d95e72930f7b991d48182505353a1e0033021a8f79d0c691",
+          "detail": "NuGet package System.Text.Encoding.CodePages 10.0.12; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Text.Encoding.Extensions",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Text.Encoding.Extensions@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.text.encoding.extensions/4.3.0/system.text.encoding.extensions.nuspec",
+          "sha256": "43769235d505f31ac80f8734543b7f6481a5f5184bcae7165bbf161444470296",
+          "detail": "NuGet package System.Text.Encoding.Extensions 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.text.encoding.extensions/4.3.0/system.text.encoding.extensions.4.3.0.nupkg",
+          "sha256": "bee7c75e0f1000ac4796e8cf1c772bb46c00a859ac083e872a37c30221f20187",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Text.Encoding",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Text.Encoding@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.text.encoding/4.3.0/system.text.encoding.nuspec",
+          "sha256": "0693a62ec62384e65db1c2370598db2e6fe38afaaba2e66d1cadca2ec8c768b2",
+          "detail": "NuGet package System.Text.Encoding 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.text.encoding/4.3.0/system.text.encoding.4.3.0.nupkg",
+          "sha256": "19cb475462d901afebaa404d86c0469ec89674acafe950ee6d8a4692e3a404b8",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Text.Encodings.Web",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/System.Text.Encodings.Web@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.text.encodings.web/10.0.9/system.text.encodings.web.nuspec",
+          "sha256": "e62106c3094d6f962ae9ffc47f84727e740faa33a88a187b2eea24abd2567c95",
+          "detail": "NuGet package System.Text.Encodings.Web 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Text.Json",
+      "version": "10.0.9",
+      "purl": "pkg:nuget/System.Text.Json@10.0.9",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.text.json/10.0.9/system.text.json.nuspec",
+          "sha256": "352741993e7625727f6d375e23ce1d0ad63b88af1b98e86ba7065677f286f5c5",
+          "detail": "NuGet package System.Text.Json 10.0.9; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Text.RegularExpressions",
+      "version": "4.3.1",
+      "purl": "pkg:nuget/System.Text.RegularExpressions@4.3.1",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.text.regularexpressions/4.3.1/system.text.regularexpressions.nuspec",
+          "sha256": "56fce5a7f1b0ba3f8c6151381e7115c8a4b4e924f5322f9602ab2b235342fbc5",
+          "detail": "NuGet package System.Text.RegularExpressions 4.3.1; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.text.regularexpressions/4.3.1/system.text.regularexpressions.4.3.1.nupkg",
+          "sha256": "0f1b046749e73e8cf20b55b5eb8cab3145f09c07474a14bd127ec8983fc624c3",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Threading.Channels",
+      "version": "10.0.10",
+      "purl": "pkg:nuget/System.Threading.Channels@10.0.10",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.threading.channels/10.0.10/system.threading.channels.nuspec",
+          "sha256": "aad61ecd7637f884ebf6a8bd84ba59071d553c652c8c305d684660c753a0f5cf",
+          "detail": "NuGet package System.Threading.Channels 10.0.10; license type=expression: MIT"
+        }
+      ]
+    },
+    {
+      "name": "System.Threading.Tasks",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Threading.Tasks@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.threading.tasks/4.3.0/system.threading.tasks.nuspec",
+          "sha256": "0117a141faf59d8c67662b23838375e24acaeb79cad8697f898b9a01a234b0c4",
+          "detail": "NuGet package System.Threading.Tasks 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.threading.tasks/4.3.0/system.threading.tasks.4.3.0.nupkg",
+          "sha256": "679ad77c9d445e9dc6df620a646899ea4a0c8d1bb49fc0b5346af0a5d21e9f8c",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Threading.ThreadPool",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Threading.ThreadPool@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.threading.threadpool/4.3.0/system.threading.threadpool.nuspec",
+          "sha256": "9e7c2bcdb94bf5c890a987033d53e39778c32c140ae7eb997450033367c9cedd",
+          "detail": "NuGet package System.Threading.ThreadPool 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.threading.threadpool/4.3.0/system.threading.threadpool.4.3.0.nupkg",
+          "sha256": "c16d1076fb2c46868e7d02dacd31929f0613bab13847c1710f1ef4a5890bfa08",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Threading.Timer",
+      "version": "4.0.1-rc2-24027",
+      "purl": "pkg:nuget/System.Threading.Timer@4.0.1-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.threading.timer/4.0.1-rc2-24027/system.threading.timer.nuspec",
+          "sha256": "a13ec4ee3a603c645fbda08b2aac543c8a3ed3ceb3acc47033f004d9cdd4d135",
+          "detail": "NuGet package System.Threading.Timer 4.0.1-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.threading.timer/4.0.1-rc2-24027/system.threading.timer.4.0.1-rc2-24027.nupkg",
+          "sha256": "077aa25fb1af67ac14f65ca0e0111086ca55ab42c6705fd6e07fb84705897c1a",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Threading",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/System.Threading@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.threading/4.3.0/system.threading.nuspec",
+          "sha256": "f4c85e18f175e76f34970d459c37d0ca3ccdea5e892da8d54a64dae3ee16ad00",
+          "detail": "NuGet package System.Threading 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.threading/4.3.0/system.threading.4.3.0.nupkg",
+          "sha256": "643437751e29cd5c266aa060e2169c65a55e9d0ff7c8017fb95ec15d95e38967",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Xml.ReaderWriter",
+      "version": "4.0.11-rc2-24027",
+      "purl": "pkg:nuget/System.Xml.ReaderWriter@4.0.11-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.xml.readerwriter/4.0.11-rc2-24027/system.xml.readerwriter.nuspec",
+          "sha256": "1233e2efcacbf99223ba92b8e1e4345d38ae05657032a2000df63f6b3d4fd6bc",
+          "detail": "NuGet package System.Xml.ReaderWriter 4.0.11-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.xml.readerwriter/4.0.11-rc2-24027/system.xml.readerwriter.4.0.11-rc2-24027.nupkg",
+          "sha256": "8d8c598eac872290b88374278166c0de3a0c8340d005159ec96be26ae27bdc6f",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "System.Xml.XDocument",
+      "version": "4.0.11-rc2-24027",
+      "purl": "pkg:nuget/System.Xml.XDocument@4.0.11-rc2-24027",
+      "license_expression": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.xml.xdocument/4.0.11-rc2-24027/system.xml.xdocument.nuspec",
+          "sha256": "bba99b89c3f469bd9c717bc673b37cab3074a1e78b498eb1b65cf3eb7a09337a",
+          "detail": "NuGet package System.Xml.XDocument 4.0.11-rc2-24027; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/system.xml.xdocument/4.0.11-rc2-24027/system.xml.xdocument.4.0.11-rc2-24027.nupkg",
+          "sha256": "3fdc8222591b380845d3799317f4fe88b2845d221c9dca150db81ba65ca46fe7",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "YamlDotNet.Signed",
+      "version": "5.3.0",
+      "purl": "pkg:nuget/YamlDotNet.Signed@5.3.0",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/yamldotnet.signed/5.3.0/yamldotnet.signed.nuspec",
+          "sha256": "0d4835e67cfff7144c2def93b86559c71b5d135c24c71d2c5edc0f809b852be0",
+          "detail": "NuGet package YamlDotNet.Signed 5.3.0; licenseUrl: https://github.com/aaubry/YamlDotNet/blob/master/LICENSE"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/aaubry/YamlDotNet/v5.3.0/LICENSE",
+          "sha256": "daea8b7f1b2bab48ea12ad50b0ce91634669d99d7dd0cb64aed8dffeeef69ed3",
+          "detail": "Versioned upstream license contains the MIT grant referenced by the exact NuGet manifest"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Collections",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Collections@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.collections/4.3.0/runtime.any.system.collections.nuspec",
+          "sha256": "e8fca4a1da9046c910372b3307ec3040d1c7bfe0b51fef7e35007b880d86a714",
+          "detail": "NuGet package runtime.any.System.Collections 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.collections/4.3.0/runtime.any.system.collections.4.3.0.nupkg",
+          "sha256": "e0f199ab25a167afc709317629d743b1b9934e3c6cda85bbf587e46deac3652f",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Diagnostics.Tools",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Diagnostics.Tools@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.diagnostics.tools/4.3.0/runtime.any.system.diagnostics.tools.nuspec",
+          "sha256": "4ac75456cfdc7b92941115ae6f6e167b5c7c024f0312e60b6bb10fd2ad9f1417",
+          "detail": "NuGet package runtime.any.System.Diagnostics.Tools 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.diagnostics.tools/4.3.0/runtime.any.system.diagnostics.tools.4.3.0.nupkg",
+          "sha256": "f322ca16ddb04319047fb7cd7f307e70f5028d89f6a9ba8d810d7e11e63687f2",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Diagnostics.Tracing",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Diagnostics.Tracing@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.diagnostics.tracing/4.3.0/runtime.any.system.diagnostics.tracing.nuspec",
+          "sha256": "86d5d2566477535e4d060707ff4ba8288b6eb5cb1a28b62ca23a704b09cd977c",
+          "detail": "NuGet package runtime.any.System.Diagnostics.Tracing 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.diagnostics.tracing/4.3.0/runtime.any.system.diagnostics.tracing.4.3.0.nupkg",
+          "sha256": "76c9932c6bedf07a9190358ff222955c9092f9a900cc43465ca3d5d7c5b64602",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Globalization.Calendars",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Globalization.Calendars@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.globalization.calendars/4.3.0/runtime.any.system.globalization.calendars.nuspec",
+          "sha256": "d7d0bc2360f89234b83225831b3ce991ff05753d57a0cd6b1e0f7b78a083a807",
+          "detail": "NuGet package runtime.any.System.Globalization.Calendars 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.globalization.calendars/4.3.0/runtime.any.system.globalization.calendars.4.3.0.nupkg",
+          "sha256": "018877f6d81725516ef1a2e2f58ff8acaf3258c6b36b84b879ac637dcb8410be",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Globalization",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Globalization@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.globalization/4.3.0/runtime.any.system.globalization.nuspec",
+          "sha256": "ad8f02b82f5bbb943806f5918b93d42c73c168f288420a1cb045cb9e9745a11c",
+          "detail": "NuGet package runtime.any.System.Globalization 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.globalization/4.3.0/runtime.any.system.globalization.4.3.0.nupkg",
+          "sha256": "3da8884d3148d857cfca54c493b0f0cdf29e880fe0fdaa28494d690dc77058b5",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.IO",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.IO@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.io/4.3.0/runtime.any.system.io.nuspec",
+          "sha256": "1af88200d509c2e729a6d9f48366b1f9e0c0762b92c8d69352b0720dcb11dc4f",
+          "detail": "NuGet package runtime.any.System.IO 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.io/4.3.0/runtime.any.system.io.4.3.0.nupkg",
+          "sha256": "bde8fbc92461caf337a5887f21331d0b6e62bd277458b64068841b623ffa1d51",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Reflection.Extensions",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Reflection.Extensions@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.reflection.extensions/4.3.0/runtime.any.system.reflection.extensions.nuspec",
+          "sha256": "8b224e36a905decd2bf57579cd91a2ac639293c40357916bbf14f667f4c7c11b",
+          "detail": "NuGet package runtime.any.System.Reflection.Extensions 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.reflection.extensions/4.3.0/runtime.any.system.reflection.extensions.4.3.0.nupkg",
+          "sha256": "63602784e709c09558bfb469e89cfa99ad1fa484c5a895bef2bb30d74e8ad97f",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Reflection.Primitives",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Reflection.Primitives@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.reflection.primitives/4.3.0/runtime.any.system.reflection.primitives.nuspec",
+          "sha256": "551e99c793971347f030f424821a2ffbebc5d0b61f880f38cf846eaf357ec7b5",
+          "detail": "NuGet package runtime.any.System.Reflection.Primitives 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.reflection.primitives/4.3.0/runtime.any.system.reflection.primitives.4.3.0.nupkg",
+          "sha256": "2e43d7b620d033705c7589009b9b9234e8b3dee178278e6aa719f96818aa3574",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Reflection",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Reflection@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.reflection/4.3.0/runtime.any.system.reflection.nuspec",
+          "sha256": "d0c15365fae4646fd46f8dbb008d8077c421976a85e09dd4fec9ef9f030aa962",
+          "detail": "NuGet package runtime.any.System.Reflection 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.reflection/4.3.0/runtime.any.system.reflection.4.3.0.nupkg",
+          "sha256": "9ece9ffbe95203e6e2d715e0996d4991615bd8d68c0fec3e60d4df32fc808909",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Resources.ResourceManager",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Resources.ResourceManager@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.resources.resourcemanager/4.3.0/runtime.any.system.resources.resourcemanager.nuspec",
+          "sha256": "d12f8274a97bc2e701e8ff63e2cbb5f67128b43205f91b787b3ea2682a839912",
+          "detail": "NuGet package runtime.any.System.Resources.ResourceManager 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.resources.resourcemanager/4.3.0/runtime.any.system.resources.resourcemanager.4.3.0.nupkg",
+          "sha256": "f44be7999b252e02cb849d34a3931668fb894256d415c505f22b4640d564710e",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Runtime.Handles",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Runtime.Handles@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.runtime.handles/4.3.0/runtime.any.system.runtime.handles.nuspec",
+          "sha256": "2d3839a4ee22c2362b0d328713bd10a77433b84c0d77d45f9e8fca8851b0fa57",
+          "detail": "NuGet package runtime.any.System.Runtime.Handles 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.runtime.handles/4.3.0/runtime.any.system.runtime.handles.4.3.0.nupkg",
+          "sha256": "3d04400b09d252ec6057248ed7ce342afa820bd17c888f624f3c4d5b445c052e",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Runtime.InteropServices",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Runtime.InteropServices@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.runtime.interopservices/4.3.0/runtime.any.system.runtime.interopservices.nuspec",
+          "sha256": "ef0be613098983c63eabd458f00d656fa7283a331d1261f0ec0e37c26584633c",
+          "detail": "NuGet package runtime.any.System.Runtime.InteropServices 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.runtime.interopservices/4.3.0/runtime.any.system.runtime.interopservices.4.3.0.nupkg",
+          "sha256": "29ac393e72d8222a966eca05dd5289872ee9929a06b14c27e190c22ac71b6f30",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Runtime",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Runtime@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.runtime/4.3.0/runtime.any.system.runtime.nuspec",
+          "sha256": "765e50b89349ae810998848dbf2c5b1a4ecd45e84483a5733e4f18eb32803223",
+          "detail": "NuGet package runtime.any.System.Runtime 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.runtime/4.3.0/runtime.any.system.runtime.4.3.0.nupkg",
+          "sha256": "ab084d5c1689d43b4392e45a7201f09d998e675bbdabb37c8f471638b60e10b3",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Text.Encoding.Extensions",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Text.Encoding.Extensions@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.text.encoding.extensions/4.3.0/runtime.any.system.text.encoding.extensions.nuspec",
+          "sha256": "b8ba83cac009d09a37eb88b88878dd3d93f2cf82e743a6c4450a182385ba7f44",
+          "detail": "NuGet package runtime.any.System.Text.Encoding.Extensions 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.text.encoding.extensions/4.3.0/runtime.any.system.text.encoding.extensions.4.3.0.nupkg",
+          "sha256": "e8c623d1198b878115a8cb4efcc46a062d073a7e621b8c7d2629a008227e1053",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Text.Encoding",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Text.Encoding@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.text.encoding/4.3.0/runtime.any.system.text.encoding.nuspec",
+          "sha256": "e38f0ab3ab4500f61a3b89500b698ba03864d864ca569d38c494fe70c9be3260",
+          "detail": "NuGet package runtime.any.System.Text.Encoding 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.text.encoding/4.3.0/runtime.any.system.text.encoding.4.3.0.nupkg",
+          "sha256": "435f01f6adba324599c7af1ec547d04f7d3ed0f1a6a4594381a1744e7688182b",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Threading.Tasks",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Threading.Tasks@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.threading.tasks/4.3.0/runtime.any.system.threading.tasks.nuspec",
+          "sha256": "636b3bbb0a8df78dad5d88a7ccb7e64304d1d0a9eeed1977238e8961b266c159",
+          "detail": "NuGet package runtime.any.System.Threading.Tasks 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.threading.tasks/4.3.0/runtime.any.system.threading.tasks.4.3.0.nupkg",
+          "sha256": "6a074e334357ba97c76ca010cd04fc5e06c8f41f2154487e6bfdafa9e1dcb60e",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.any.System.Threading.Timer",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.any.System.Threading.Timer@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.threading.timer/4.3.0/runtime.any.system.threading.timer.nuspec",
+          "sha256": "d271bebf8614a621568450d4a26a25a52f56a873af6b3a7fbdcde9fa6b7fc7cf",
+          "detail": "NuGet package runtime.any.System.Threading.Timer 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.any.system.threading.timer/4.3.0/runtime.any.system.threading.timer.4.3.0.nupkg",
+          "sha256": "0601f15c221b89c559b6980c8a64978b18450b757ea79383a9e9630e33bc842b",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.unix.Microsoft.Win32.Primitives",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.unix.Microsoft.Win32.Primitives@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.microsoft.win32.primitives/4.3.0/runtime.unix.microsoft.win32.primitives.nuspec",
+          "sha256": "c58c25cf8a84b28986973d434d42048f45c77cf7995f303ffd646706d80b4d81",
+          "detail": "NuGet package runtime.unix.Microsoft.Win32.Primitives 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.microsoft.win32.primitives/4.3.0/runtime.unix.microsoft.win32.primitives.4.3.0.nupkg",
+          "sha256": "2d96f6de5457cebdbab514b9680d31c81d3c27189b94f0e803b1c1be7e9ac178",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.unix.System.Console",
+      "version": "4.3.1",
+      "purl": "pkg:nuget/runtime.unix.System.Console@4.3.1",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.console/4.3.1/runtime.unix.system.console.nuspec",
+          "sha256": "51b9aab99f7c649a131ac32669a61999145e4b4f6a392179c69f600f18cd1969",
+          "detail": "NuGet package runtime.unix.System.Console 4.3.1; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.console/4.3.1/runtime.unix.system.console.4.3.1.nupkg",
+          "sha256": "771ca7ff53f1e0528b67640c52b905a56eb5f58d6584f7938862d660ce886e96",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.unix.System.Diagnostics.Debug",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.unix.System.Diagnostics.Debug@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.diagnostics.debug/4.3.0/runtime.unix.system.diagnostics.debug.nuspec",
+          "sha256": "e2fcab7c961fdb27cf9261d70d677ae8df812d7d49ac892cc78105e3d51eb170",
+          "detail": "NuGet package runtime.unix.System.Diagnostics.Debug 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.diagnostics.debug/4.3.0/runtime.unix.system.diagnostics.debug.4.3.0.nupkg",
+          "sha256": "45ea1acec71f6c61fe47ab3a8e4839b0810758d12f8c4a07b48b0c6e973bfad2",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.unix.System.IO.FileSystem",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.unix.System.IO.FileSystem@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.io.filesystem/4.3.0/runtime.unix.system.io.filesystem.nuspec",
+          "sha256": "f6578b00e508bf1c848f9afb6618607af7fe54f5522669da6cee4964e0891b33",
+          "detail": "NuGet package runtime.unix.System.IO.FileSystem 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.io.filesystem/4.3.0/runtime.unix.system.io.filesystem.4.3.0.nupkg",
+          "sha256": "3dfe26465e980cadb1d8a321d16772360bf455435d48a5432e51eaa3379ccb92",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.unix.System.Net.Primitives",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.unix.System.Net.Primitives@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.net.primitives/4.3.0/runtime.unix.system.net.primitives.nuspec",
+          "sha256": "db0fec1d3178fb43024cee335fb015e003a6b262084588a212fcf0c9865d2c46",
+          "detail": "NuGet package runtime.unix.System.Net.Primitives 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.net.primitives/4.3.0/runtime.unix.system.net.primitives.4.3.0.nupkg",
+          "sha256": "a4727e23a8b5e8c57a9bbeee8530ba18f63a8d6191784dd248fddf541e7db62d",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.unix.System.Net.Sockets",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.unix.System.Net.Sockets@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.net.sockets/4.3.0/runtime.unix.system.net.sockets.nuspec",
+          "sha256": "d4d6e3cfaf0b71ef019fcc531e3b2ce503e75d48d7de86eb4126bc9d2893cc53",
+          "detail": "NuGet package runtime.unix.System.Net.Sockets 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.net.sockets/4.3.0/runtime.unix.system.net.sockets.4.3.0.nupkg",
+          "sha256": "22f80e780d89b818ca979c805468cf60c3c3cecf6985bdca00db3de47f6fd70e",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.unix.System.Private.Uri",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.unix.System.Private.Uri@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.private.uri/4.3.0/runtime.unix.system.private.uri.nuspec",
+          "sha256": "4180212de04d1aaec13c3017596e26d658883a0c0134a9c2b02b731582ddcc09",
+          "detail": "NuGet package runtime.unix.System.Private.Uri 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.private.uri/4.3.0/runtime.unix.system.private.uri.4.3.0.nupkg",
+          "sha256": "739b575a113f7d86c9565f6b5ecd2e1e1de94ec838e180f5749bf2380d16a0cb",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtime.unix.System.Runtime.Extensions",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/runtime.unix.System.Runtime.Extensions@4.3.0",
+      "license_expression": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.runtime.extensions/4.3.0/runtime.unix.system.runtime.extensions.nuspec",
+          "sha256": "36f8a325b208f450f24a501e767efc48edd228b7b8e6e46a78e99b5ff2cedddf",
+          "detail": "NuGet package runtime.unix.System.Runtime.Extensions 4.3.0; licenseUrl: http://go.microsoft.com/fwlink/?LinkId=329770"
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.runtime.extensions/4.3.0/runtime.unix.system.runtime.extensions.4.3.0.nupkg",
+          "sha256": "97c4bd82de9d937a981ba1d8a271ed76562d04ac8f6f6f6e43a3438e6aeddd5e",
+          "detail": "Exact package licensing files: dotnet_library_license.txt SHA256 f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297, ThirdPartyNotices.txt SHA256 0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ]
+    },
+    {
+      "name": "runtimepack.Microsoft.NETCore.App.Runtime.linux-x64",
+      "version": "8.0.31",
+      "purl": "pkg:nuget/runtimepack.Microsoft.NETCore.App.Runtime.linux-x64@8.0.31",
+      "license_expression": "MIT",
+      "evidence": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.netcore.app.runtime.linux-x64/8.0.31/microsoft.netcore.app.runtime.linux-x64.nuspec",
+          "sha256": "656694e2c9a41604299a00fc4e39f9a09ab4948a05eff659f47aae64d661e49f",
+          "detail": "NuGet package Microsoft.NETCore.App.Runtime.linux-x64 8.0.31; license type=expression: MIT"
+        }
+      ]
+    }
+  ],
+  "licenses": [
+    {
+      "license_id": "LicenseRef-Runner-Upstream-16dea00710a0daf5c94c",
+      "name": "Upstream declared licensing text and bundled notices",
+      "files": [
+        {
+          "name": "NET_Library_EULA_ENU.txt",
+          "path": "release/runner-license-texts/45b71a39607f04388bafdf2a1b7925eb5be912b0ea626b242d5f704bb567dd84.txt",
+          "sha256": "45b71a39607f04388bafdf2a1b7925eb5be912b0ea626b242d5f704bb567dd84"
+        }
+      ],
+      "see_also": [
+        "https://api.nuget.org/v3-flatcontainer/microsoft.aspnet.webapi.client/6.0.0/microsoft.aspnet.webapi.client.6.0.0.nupkg"
+      ]
+    },
+    {
+      "license_id": "LicenseRef-Runner-Upstream-216ce8e8cb32d56c2b98",
+      "name": "Upstream declared licensing text and bundled notices",
+      "files": [
+        {
+          "name": "dotnet_library_license.txt",
+          "path": "release/runner-license-texts/f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297.txt",
+          "sha256": "f1db688d8481c91a452fabcea5060a23da9ea5088329b58c478a040e2e426297"
+        },
+        {
+          "name": "ThirdPartyNotices.txt",
+          "path": "release/runner-license-texts/0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b.txt",
+          "sha256": "0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ],
+      "see_also": [
+        "https://api.nuget.org/v3-flatcontainer/microsoft.win32.primitives/4.3.0/microsoft.win32.primitives.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.collections/4.3.0/runtime.any.system.collections.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.diagnostics.tools/4.3.0/runtime.any.system.diagnostics.tools.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.diagnostics.tracing/4.3.0/runtime.any.system.diagnostics.tracing.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.globalization.calendars/4.3.0/runtime.any.system.globalization.calendars.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.globalization/4.3.0/runtime.any.system.globalization.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.io/4.3.0/runtime.any.system.io.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.reflection.extensions/4.3.0/runtime.any.system.reflection.extensions.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.reflection.primitives/4.3.0/runtime.any.system.reflection.primitives.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.reflection/4.3.0/runtime.any.system.reflection.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.resources.resourcemanager/4.3.0/runtime.any.system.resources.resourcemanager.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.runtime.handles/4.3.0/runtime.any.system.runtime.handles.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.runtime.interopservices/4.3.0/runtime.any.system.runtime.interopservices.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.runtime/4.3.0/runtime.any.system.runtime.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.text.encoding.extensions/4.3.0/runtime.any.system.text.encoding.extensions.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.text.encoding/4.3.0/runtime.any.system.text.encoding.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.threading.tasks/4.3.0/runtime.any.system.threading.tasks.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.any.system.threading.timer/4.3.0/runtime.any.system.threading.timer.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.unix.microsoft.win32.primitives/4.3.0/runtime.unix.microsoft.win32.primitives.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.console/4.3.1/runtime.unix.system.console.4.3.1.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.diagnostics.debug/4.3.0/runtime.unix.system.diagnostics.debug.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.io.filesystem/4.3.0/runtime.unix.system.io.filesystem.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.net.primitives/4.3.0/runtime.unix.system.net.primitives.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.net.sockets/4.3.0/runtime.unix.system.net.sockets.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.private.uri/4.3.0/runtime.unix.system.private.uri.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/runtime.unix.system.runtime.extensions/4.3.0/runtime.unix.system.runtime.extensions.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.buffers/4.3.0/system.buffers.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.collections.concurrent/4.3.0/system.collections.concurrent.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.collections/4.3.0/system.collections.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.diagnostics.debug/4.3.0/system.diagnostics.debug.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.diagnostics.tracing/4.3.0/system.diagnostics.tracing.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.globalization.calendars/4.3.0/system.globalization.calendars.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.globalization.extensions/4.3.0/system.globalization.extensions.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.globalization/4.3.0/system.globalization.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.io.filesystem.primitives/4.3.0/system.io.filesystem.primitives.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.io.filesystem/4.3.0/system.io.filesystem.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.io/4.3.0/system.io.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.linq/4.3.0/system.linq.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.net.http/4.3.4/system.net.http.4.3.4.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.net.nameresolution/4.3.0/system.net.nameresolution.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.net.primitives/4.3.0/system.net.primitives.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.private.uri/4.3.2/system.private.uri.4.3.2.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.reflection.primitives/4.3.0/system.reflection.primitives.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.reflection/4.3.0/system.reflection.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.resources.resourcemanager/4.3.0/system.resources.resourcemanager.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.runtime.extensions/4.3.0/system.runtime.extensions.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.runtime.handles/4.3.0/system.runtime.handles.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.runtime.interopservices/4.3.0/system.runtime.interopservices.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.runtime.numerics/4.3.0/system.runtime.numerics.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.runtime/4.3.1/system.runtime.4.3.1.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.algorithms/4.3.0/system.security.cryptography.algorithms.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.csp/4.3.0/system.security.cryptography.csp.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.encoding/4.3.0/system.security.cryptography.encoding.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.openssl/4.3.0/system.security.cryptography.openssl.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.primitives/4.3.0/system.security.cryptography.primitives.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.x509certificates/4.3.0/system.security.cryptography.x509certificates.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.text.encoding.extensions/4.3.0/system.text.encoding.extensions.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.text.encoding/4.3.0/system.text.encoding.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.text.regularexpressions/4.3.1/system.text.regularexpressions.4.3.1.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.threading.tasks/4.3.0/system.threading.tasks.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.threading.threadpool/4.3.0/system.threading.threadpool.4.3.0.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.threading/4.3.0/system.threading.4.3.0.nupkg"
+      ]
+    },
+    {
+      "license_id": "LicenseRef-Runner-Upstream-5d89822258c05808d9e3",
+      "name": "Upstream declared licensing text and bundled notices",
+      "files": [
+        {
+          "name": "LICENSE.txt",
+          "path": "release/runner-license-texts/f49cc7be44c8d4b6efffed6ac00026f2ff2146310f040350b50be30ed3f9c570.txt",
+          "sha256": "f49cc7be44c8d4b6efffed6ac00026f2ff2146310f040350b50be30ed3f9c570"
+        }
+      ],
+      "see_also": [
+        "https://api.nuget.org/v3-flatcontainer/apache.arrow/22.1.0/apache.arrow.22.1.0.nupkg"
+      ]
+    },
+    {
+      "license_id": "LicenseRef-Runner-Upstream-a7544126ccb208d5132f",
+      "name": "Upstream declared licensing text and bundled notices",
+      "files": [
+        {
+          "name": "LICENSE",
+          "path": "images/runner/build/runner/externals/node20/LICENSE",
+          "sha256": "70c7a59521f41ccfe5bb0193677b77a44ed43ad4fe59203fa408afa538214949"
+        }
+      ],
+      "see_also": [
+        "https://raw.githubusercontent.com/nodejs/node/v20.20.2/LICENSE"
+      ]
+    },
+    {
+      "license_id": "LicenseRef-Runner-Upstream-b85059d6a611c95650aa",
+      "name": "Upstream declared licensing text and bundled notices",
+      "files": [
+        {
+          "name": "LICENSE",
+          "path": "images/runner/build/runner/externals/node24/LICENSE",
+          "sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace"
+        }
+      ],
+      "see_also": [
+        "https://raw.githubusercontent.com/nodejs/node/v24.21.0/LICENSE"
+      ]
+    },
+    {
+      "license_id": "LicenseRef-Runner-Upstream-fccb42978e61c81ddfe3",
+      "name": "Upstream declared licensing text and bundled notices",
+      "files": [
+        {
+          "name": "dotnet_library_license.txt",
+          "path": "release/runner-license-texts/b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977.txt",
+          "sha256": "b7d43d08f59637129c482c63dcd4811077101ac41cc763b3b58490137f741977"
+        },
+        {
+          "name": "ThirdPartyNotices.txt",
+          "path": "release/runner-license-texts/0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b.txt",
+          "sha256": "0684b2349427ee28e392ae8914645832e59731dba8a38a984f72b3fb8769c76b"
+        }
+      ],
+      "see_also": [
+        "https://api.nuget.org/v3-flatcontainer/netstandard.library/1.5.0-rc2-24027/netstandard.library.1.5.0-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.appcontext/4.1.0-rc2-24027/system.appcontext.4.1.0-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.console/4.0.0-rc2-24027/system.console.4.0.0-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.diagnostics.tools/4.0.1-rc2-24027/system.diagnostics.tools.4.0.1-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.io.compression.zipfile/4.0.1-rc2-24027/system.io.compression.zipfile.4.0.1-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.io.compression/4.1.0-rc2-24027/system.io.compression.4.1.0-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.net.sockets/4.1.0-rc2-24027/system.net.sockets.4.1.0-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.objectmodel/4.0.12-rc2-24027/system.objectmodel.4.0.12-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.reflection.extensions/4.0.1-rc2-24027/system.reflection.extensions.4.0.1-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.runtime.interopservices.runtimeinformation/4.0.0-rc2-24027/system.runtime.interopservices.runtimeinformation.4.0.0-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.threading.timer/4.0.1-rc2-24027/system.threading.timer.4.0.1-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.xml.readerwriter/4.0.11-rc2-24027/system.xml.readerwriter.4.0.11-rc2-24027.nupkg",
+        "https://api.nuget.org/v3-flatcontainer/system.xml.xdocument/4.0.11-rc2-24027/system.xml.xdocument.4.0.11-rc2-24027.nupkg"
+      ]
+    }
+  ]
+}

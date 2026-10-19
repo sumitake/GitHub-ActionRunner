@@ -1131,6 +1131,131 @@ def spdx_document_root(value, expected_digest):
     return root_id
 
 
+def supplement_runner_licenses(clone, runner, spdx_path, subject_digest):
+    """Supplement declarations from reviewed, version/asset-bound evidence."""
+    clone = clone.resolve(strict=True)
+
+    def text(value, maximum=2048):
+        return isinstance(value, str) and 0 < len(value) <= maximum and not any(c in value for c in "\r\n\t\x00")
+
+    def url(value):
+        if not text(value):
+            return False
+        parsed = urllib.parse.urlsplit(value)
+        return parsed.scheme == "https" and bool(parsed.hostname) and parsed.username is None and parsed.password is None
+
+    def checked_file(relative):
+        relative = safe_relative(relative)
+        if not (
+            relative == "release/runner-licenses.json"
+            or relative.startswith("release/runner-license-texts/")
+            or re.fullmatch(r"images/runner/build/runner/externals/node(?:20|24)/LICENSE", relative)
+        ):
+            reject("runner licensing path")
+        path = clone / relative
+        if path.is_symlink() or not path.is_file() or path.resolve(strict=True) != path or path.stat().st_size > 1048576:
+            reject("runner licensing file")
+        return path
+
+    registry_path = checked_file("release/runner-licenses.json")
+    registry = read_json(registry_path)
+    if (
+        not isinstance(registry, dict)
+        or set(registry) != {"schema_version", "runner_asset_digest", "packages", "licenses"}
+        or type(registry["schema_version"]) is not int or registry["schema_version"] != 1
+        or registry["runner_asset_digest"] != runner["linux_x64_asset_digest"]
+        or not isinstance(registry["runner_asset_digest"], str)
+        or DIGEST.fullmatch(registry["runner_asset_digest"]) is None
+        or not isinstance(registry["packages"], list) or not 0 < len(registry["packages"]) <= 1024
+        or not isinstance(registry["licenses"], list) or len(registry["licenses"]) > 128
+    ):
+        reject("runner license registry")
+    license_texts = {}
+    for entry in registry["licenses"]:
+        if (
+            not isinstance(entry, dict) or set(entry) != {"license_id", "name", "files", "see_also"}
+            or not text(entry["license_id"])
+            or re.fullmatch(r"LicenseRef-Runner-Upstream-[a-z0-9.-]+", entry["license_id"]) is None
+            or entry["license_id"] in license_texts or not text(entry["name"])
+            or not isinstance(entry["files"], list) or not 0 < len(entry["files"]) <= 8
+            or not isinstance(entry["see_also"], list) or not entry["see_also"] or not all(url(u) for u in entry["see_also"])
+        ):
+            reject("runner licensing text")
+        parts = []
+        for item in entry["files"]:
+            if not isinstance(item, dict) or set(item) != {"name", "path", "sha256"} or not text(item["name"], 128) or not isinstance(item["sha256"], str) or HEX64.fullmatch(item["sha256"]) is None:
+                reject("runner licensing source")
+            path = checked_file(item["path"])
+            if sha256_file(path) != item["sha256"]:
+                reject("runner licensing text hash")
+            original = path.read_bytes().decode("utf-8")
+            if not original.strip():
+                reject("runner licensing text")
+            parts.append(item["name"] + "\n" + original)
+        license_texts[entry["license_id"]] = {
+            "licenseId": entry["license_id"], "name": entry["name"],
+            "extractedText": "\n\n".join(parts), "seeAlsos": sorted(set(entry["see_also"])),
+        }
+    identities = {}
+    for entry in registry["packages"]:
+        if (
+            not isinstance(entry, dict) or set(entry) != {"name", "version", "purl", "license_expression", "evidence"}
+            or not text(entry["name"], 128) or not text(entry["version"], 128)
+            or not text(entry["purl"]) or entry["purl"] in identities
+            or entry["purl"] not in tuple("pkg:" + kind + "/" + urllib.parse.quote(entry["name"], safe="") + "@" + urllib.parse.quote(entry["version"], safe="") for kind in ("nuget", "generic"))
+            or not isinstance(entry["license_expression"], str)
+            or entry["license_expression"] not in ({"MIT", "Apache-2.0"} | set(license_texts))
+            or not isinstance(entry["evidence"], list) or not entry["evidence"]
+        ):
+            reject("runner license identity")
+        for evidence in entry["evidence"]:
+            if not isinstance(evidence, dict) or set(evidence) != {"url", "sha256", "detail"} or not url(evidence["url"]) or not isinstance(evidence["sha256"], str) or HEX64.fullmatch(evidence["sha256"]) is None or not text(evidence["detail"]):
+                reject("runner license evidence")
+        identities[entry["purl"]] = entry
+    value = read_json(spdx_path)
+    root_id = spdx_document_root(value, subject_digest)
+    extracted = value.get("hasExtractedLicensingInfos", [])
+    if not isinstance(extracted, list) or any(not isinstance(e, dict) or not text(e.get("licenseId")) for e in extracted):
+        reject("runner extracted licensing")
+    existing = {e["licenseId"]: e for e in extracted}
+    if len(existing) != len(extracted):
+        reject("runner extracted licensing")
+    seen, used_texts = set(), set()
+    registry_digest = sha256_file(registry_path)
+    for package in value["packages"]:
+        if package["SPDXID"] == root_id:
+            continue
+        purl = package_purl(package)
+        if purl not in identities:
+            continue
+        entry = identities[purl]
+        if package.get("name") != entry["name"] or package.get("versionInfo") != entry["version"]:
+            reject("runner package identity drift")
+        expression = entry["license_expression"]
+        for field in ("licenseDeclared", "licenseConcluded"):
+            if package.get(field) not in (None, "", "NOASSERTION", expression):
+                reject("runner license declaration drift")
+        # This is a producer declaration, not a newly invented legal conclusion.
+        package["licenseDeclared"] = expression
+        comment = "Verified runner license registry SHA256 " + registry_digest + "; " + "; ".join(e["url"] + " SHA256 " + e["sha256"] + " (" + e["detail"] + ")" for e in entry["evidence"])
+        previous = package.get("licenseComments", "")
+        if not isinstance(previous, str):
+            reject("runner license comments")
+        if comment not in previous:
+            package["licenseComments"] = (previous + "\n" if previous else "") + comment
+        seen.add(purl)
+        if expression in license_texts:
+            expected = license_texts[expression]
+            if expression in existing and existing[expression] != expected:
+                reject("runner extracted license drift")
+            existing[expression] = expected
+            used_texts.add(expression)
+    if seen != set(identities) or used_texts != set(license_texts):
+        reject("runner license inventory drift")
+    value["hasExtractedLicensingInfos"] = sorted(existing.values(), key=lambda e: e["licenseId"])
+    spdx_path.write_bytes(canonical_json(value))
+
+
 def generate_notices(sbom_rows, exceptions, output, subject_digests=None):
     if subject_digests is not None and set(subject_digests) != {subject for subject, _ in sbom_rows}:
         reject("SPDX subject registry")
@@ -1140,6 +1265,7 @@ def generate_notices(sbom_rows, exceptions, output, subject_digests=None):
     }
     used_exceptions = set()
     rows = []
+    upstream_texts = {}
     for subject, path in sbom_rows:
         value = read_json(path)
         packages = value.get("packages")
@@ -1177,6 +1303,17 @@ def generate_notices(sbom_rows, exceptions, output, subject_digests=None):
                 if exception["license_expression"] != license_expression:
                     reject("license exception drift")
                 used_exceptions.add(key)
+            for reference in re.findall(r"LicenseRef-Runner-Upstream-[a-z0-9.-]+", license_expression):
+                extracted = value.get("hasExtractedLicensingInfos", [])
+                if not isinstance(extracted, list):
+                    reject("runner licensing text")
+                matches = [entry for entry in extracted if isinstance(entry, dict) and entry.get("licenseId") == reference]
+                if len(matches) != 1 or not isinstance(matches[0].get("extractedText"), str) or not matches[0]["extractedText"].strip():
+                    reject("runner licensing text")
+                full_text = matches[0]["extractedText"]
+                if reference in upstream_texts and upstream_texts[reference] != full_text:
+                    reject("runner licensing text drift")
+                upstream_texts[reference] = full_text
             rows.append((subject, purl, version, license_expression, name))
     if used_exceptions != set(exception_map):
         reject("unused license exception")
@@ -1187,6 +1324,8 @@ def generate_notices(sbom_rows, exceptions, output, subject_digests=None):
         "subject\tpurl\tversion\tlicense\tpackage",
     ]
     lines.extend("\t".join(row) for row in rows)
+    for reference, full_text in sorted(upstream_texts.items()):
+        lines.extend(["", reference, full_text])
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -2134,6 +2273,11 @@ def main():
                 source_epoch,
                 first_party=first_party,
             )
+            if relative == "images/runner.oci.tar":
+                supplement_runner_licenses(
+                    clone, runner, normalized,
+                    oci_graph(stage / relative)["manifest_digest"].removeprefix("sha256:"),
+                )
             os.chmod(normalized, 0o444)
             add_subject(
                 subjects,
