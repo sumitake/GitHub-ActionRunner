@@ -1113,7 +1113,19 @@ def normalize_first_party_packages(value, identity):
             package["sourceInfo"] = (previous + "\n" if previous else "") + evidence
 
 
-def normalize_spdx(raw_path, output_path, subject, digest, source_epoch, first_party=None):
+def load_public_dependency_metadata(repository):
+    import importlib.util
+    path = repository / "scripts/public_dependency_metadata.py"
+    try:
+        spec = importlib.util.spec_from_file_location("release_public_dependency_metadata", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module, module.load(repository)
+    except (OSError, ValueError, ImportError):
+        reject("public dependency producer evidence")
+
+
+def normalize_spdx(raw_path, output_path, subject, digest, source_epoch, first_party=None, public_evidence=None):
     value = read_json(raw_path)
     required = {
         "SPDXID",
@@ -1149,6 +1161,12 @@ def normalize_spdx(raw_path, output_path, subject, digest, source_epoch, first_p
     )
     if first_party is not None:
         normalize_first_party_packages(value, first_party)
+    if public_evidence is not None:
+        module, evidence = public_evidence
+        try:
+            module.complete_go_license_records(value, evidence)
+        except module.MetadataError:
+            reject("public dependency licensing evidence")
     sort_keys = {
         "documentDescribes": lambda item: str(item),
         "packages": lambda item: str(item.get("SPDXID", "")),
@@ -2387,6 +2405,7 @@ def main():
         syft = os.fspath(acquired["syft"])
         sbom_rows = []
         license_sanitizer_args = []
+        public_evidence = load_public_dependency_metadata(clone)
         artifact_rows = [
             (item["name"], f"bin/{item['name']}", "sbom")
             for item in runtime["binaries"]
@@ -2422,6 +2441,7 @@ def main():
                 sha256_file(stage / relative),
                 source_epoch,
                 first_party=first_party,
+                public_evidence=public_evidence,
             )
             if relative == "images/runner.oci.tar":
                 license_sanitizer_args = apply_baseline_runner_licenses(
@@ -2501,7 +2521,7 @@ def main():
         }
         if actual_text != expected_text:
             reject("text authority registry")
-        sanitizer_command = ["python3", "scripts/sanitize_public.py", *license_sanitizer_args]
+        sanitizer_command = ["python3", "scripts/sanitize_public.py", "--verified-dependency-metadata", *license_sanitizer_args]
         for path in text_authorities:
             sanitizer_command.extend(["--generated", os.fspath(path)])
         run(

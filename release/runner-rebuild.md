@@ -65,6 +65,19 @@ A successful payload check alone does not qualify the complete release images
 or authorize a target handover. Runner configuration still requires
 `DisableUpdate=true`.
 
+Generated SBOM checks retain complete public attribution and legal terms.
+[`public-dependency-metadata.json`](public-dependency-metadata.json) records
+the exact Debian package identities and Maintainer fields authenticated from
+the pinned signed snapshot, plus Go legal documents authenticated against
+the module ZIP checksums in `go.sum`. Rehearsal fills missing Go legal text
+and replaces its placeholder local citation with the public producer URL.
+The sanitizer recognizes only the registered package, version and exact field
+value, or a complete hash-verified legal document, in memory. It checks the
+original producer evidence under exact source-line bindings; unknown or changed
+values remain scanned. Original SBOM attribution, package relationships and
+private-denylist checks remain intact. This evidence is independent of the
+runner asset; a replacement runner still needs its own runner license evidence.
+
 When a patched official asset becomes available, observe its real metadata and
 run the existing official candidate path and complete gates. A different
 upstream asset digest automatically selects the official archive; the old

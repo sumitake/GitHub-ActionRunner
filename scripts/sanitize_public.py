@@ -38,6 +38,7 @@ from typing import Iterable, NamedTuple, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _sanitize_normalize as norm  # noqa: E402
+import public_dependency_metadata as public_metadata_source  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Finding model
@@ -1014,17 +1015,22 @@ def load_verified_upstream_licenses(repo_root: Path) -> list[tuple[str, bytes]]:
         raise VerifiedLicenseError("unverified upstream licensing evidence") from exc
 
 
-def scan_generated_bytes(raw: bytes, relpath: str, fixture: bool, upstream_licenses) -> list[Finding]:
+def scan_generated_bytes(raw: bytes, relpath: str, fixture: bool, upstream_licenses, *, public_metadata=None) -> list[Finding]:
     # The original size/archive checks precede any projection. Every matched
     # document is scanned independently at its exact source path and line, so
     # the existing hash-bound allowlist remains the only suppression mechanism.
-    if not upstream_licenses or len(raw) > MAX_FILE_BYTES or _sniff_archive_kind(raw) is not None:
+    if not (upstream_licenses or public_metadata) or len(raw) > MAX_FILE_BYTES or _sniff_archive_kind(raw) is not None:
         return scan_bytes_as_file(raw, relpath, fixture=fixture)
     try:
         text = raw.decode("utf-8", "strict")
     except UnicodeDecodeError:
         return scan_bytes_as_file(raw, relpath, fixture=fixture)
     out = []
+    if public_metadata is not None:
+        try:
+            text = public_metadata_source.project_spdx(text, public_metadata)
+        except (public_metadata_source.MetadataError, IndexError, RecursionError):
+            return [Finding(relpath, "file", "DECODE_FAIL", "public dependency metadata projection failed closed", "")]
     for source_path, original in upstream_licenses:
         body = original.decode("utf-8", "strict")
         used = False
@@ -1043,7 +1049,7 @@ def scan_generated_bytes(raw: bytes, relpath: str, fixture: bool, upstream_licen
     return out
 
 
-def scan_generated_tree(root_path: Path, repo_root: Path, upstream_licenses=()) -> list[Finding]:
+def scan_generated_tree(root_path: Path, repo_root: Path, upstream_licenses=(), *, public_metadata=None) -> list[Finding]:
     out: list[Finding] = []
     root_path = root_path.resolve()
     if not root_path.exists():
@@ -1064,7 +1070,7 @@ def scan_generated_tree(root_path: Path, repo_root: Path, upstream_licenses=()) 
             out += scan_text_content(target, relpath, fixture=fixture)
             continue
         raw = abs_path.read_bytes()
-        out += scan_generated_bytes(raw, relpath, fixture, upstream_licenses)
+        out += scan_generated_bytes(raw, relpath, fixture, upstream_licenses, public_metadata=public_metadata)
     return out
 
 
@@ -1348,6 +1354,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p.add_argument("--generated", action="append", default=[], metavar="PATH", help="scan a generated-output path (repeatable)")
     p.add_argument("--private-denylist", metavar="PATH", help="operator-supplied untracked denylist file (never in CI)")
     p.add_argument("--history", action="store_true", help="scan reachable git history + metadata")
+    p.add_argument("--verified-dependency-metadata", action="store_true", help="recognize committed source-bound public package attribution and complete legal texts")
     p.add_argument("--verified-runner-licenses", action="store_true", help="recognize committed, hash-verified upstream documents in generated text")
     return p.parse_args(argv)
 
@@ -1380,8 +1387,30 @@ def main(argv: Optional[list[str]] = None) -> int:
             print("release/runner-licenses.json:file:DECODE_FAIL: unverified upstream licensing evidence")
             return 1
 
+    dependency_metadata = None
+    if args.verified_dependency_metadata:
+        try:
+            if not args.generated:
+                raise public_metadata_source.MetadataError("generated inputs required")
+            dependency_metadata = public_metadata_source.load(repo_root)
+            documents = dict(upstream_licenses)
+            for path, body in dependency_metadata['documents']:
+                if path in documents and documents[path] != body:
+                    raise public_metadata_source.MetadataError("conflicting public source text")
+                documents[path] = body
+            if sum(len(body) for body in documents.values()) > 8 * 1024 * 1024:
+                raise public_metadata_source.MetadataError("public evidence text budget")
+            upstream_licenses = sorted(documents.items(), key=lambda item: (-len(item[1]), item[0]))
+        except public_metadata_source.MetadataError:
+            print("release/public-dependency-metadata.json:file:DECODE_FAIL: unverified public dependency metadata")
+            return 1
+
     ran_any = False
     findings: list[Finding] = []
+    if dependency_metadata is not None:
+        # The ordinary exact path/line/rule/content-hash allowlist applies to
+        # the original producer evidence. Private-denylist reads stay raw.
+        findings += scan_bytes_as_file(dependency_metadata['source_raw'], dependency_metadata['source_path'], fixture=False)
 
     if args.tracked:
         ran_any = True
@@ -1390,7 +1419,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     for g in args.generated:
         ran_any = True
-        findings += scan_generated_tree(Path(g), repo_root, upstream_licenses)
+        findings += scan_generated_tree(Path(g), repo_root, upstream_licenses, public_metadata=dependency_metadata)
 
     if args.private_denylist:
         ran_any = True

@@ -3225,5 +3225,1153 @@
     "rule": "DEPLOYID002",
     "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
     "reason": "Immutable public-history instance of an inspected synthetic redirect fixture; exact blob OID, line, rule and unchanged canonical content hash bind this entry."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 32,
+    "rule": "MAIL001",
+    "sha256": "70ecdfcd6beb58aff8df0d6b7fa26a081eb2b94d35218438e8d35d8166d78d62",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 32,
+    "rule": "MAIL001",
+    "sha256": "70ecdfcd6beb58aff8df0d6b7fa26a081eb2b94d35218438e8d35d8166d78d62",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 43,
+    "rule": "MAIL001",
+    "sha256": "48c2a2c0a529cc8da5ab240fe324bd186ce7e368425ed678df3ccd4b271d7ae7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 43,
+    "rule": "MAIL001",
+    "sha256": "48c2a2c0a529cc8da5ab240fe324bd186ce7e368425ed678df3ccd4b271d7ae7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 54,
+    "rule": "MAIL001",
+    "sha256": "7ac120c83aae1d8b127dfb884a99bde737a0c6bc6ebab91621dee6bd1de21783",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 54,
+    "rule": "MAIL001",
+    "sha256": "7ac120c83aae1d8b127dfb884a99bde737a0c6bc6ebab91621dee6bd1de21783",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 65,
+    "rule": "MAIL001",
+    "sha256": "4529823db18b911f3de40d83767788a5e804760eb0bb8484e03d9d3d40e93d75",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 65,
+    "rule": "MAIL001",
+    "sha256": "4529823db18b911f3de40d83767788a5e804760eb0bb8484e03d9d3d40e93d75",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 76,
+    "rule": "MAIL001",
+    "sha256": "cdfe08dfdc506557850d3d15f57ea77d0601b703de4ed89d0f0ab6b12c7d5c73",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 76,
+    "rule": "MAIL001",
+    "sha256": "cdfe08dfdc506557850d3d15f57ea77d0601b703de4ed89d0f0ab6b12c7d5c73",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 87,
+    "rule": "MAIL001",
+    "sha256": "dd0be6e22475a9dd95b3099343750ae61fc77ddfa45d3f8359cd440ec96b25d7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 87,
+    "rule": "MAIL001",
+    "sha256": "dd0be6e22475a9dd95b3099343750ae61fc77ddfa45d3f8359cd440ec96b25d7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 98,
+    "rule": "MAIL001",
+    "sha256": "cf3fa70e6c4c707177472382e8f84ee39108727b2afbd0fb527d550278c1f79b",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 98,
+    "rule": "MAIL001",
+    "sha256": "cf3fa70e6c4c707177472382e8f84ee39108727b2afbd0fb527d550278c1f79b",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 109,
+    "rule": "MAIL001",
+    "sha256": "b5d12c75ff3942d8395604e90a82ff047852daaaaab3ef0d51beab8d6ce79627",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 109,
+    "rule": "MAIL001",
+    "sha256": "b5d12c75ff3942d8395604e90a82ff047852daaaaab3ef0d51beab8d6ce79627",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 120,
+    "rule": "MAIL001",
+    "sha256": "70ecdfcd6beb58aff8df0d6b7fa26a081eb2b94d35218438e8d35d8166d78d62",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 120,
+    "rule": "MAIL001",
+    "sha256": "70ecdfcd6beb58aff8df0d6b7fa26a081eb2b94d35218438e8d35d8166d78d62",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 131,
+    "rule": "MAIL001",
+    "sha256": "665dce0829ae61d989f5c9e92b1329e14932bff122ea9e3ab49585dea1a3b81a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 131,
+    "rule": "MAIL001",
+    "sha256": "665dce0829ae61d989f5c9e92b1329e14932bff122ea9e3ab49585dea1a3b81a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 142,
+    "rule": "MAIL001",
+    "sha256": "55a06f5d0e6589cf8a5d4fc40b739c4f0cd4a192f52816d9f813d203938a16e3",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 142,
+    "rule": "MAIL001",
+    "sha256": "55a06f5d0e6589cf8a5d4fc40b739c4f0cd4a192f52816d9f813d203938a16e3",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 153,
+    "rule": "MAIL001",
+    "sha256": "224f3f0b23790c7d9d8d56d75abc4c90b29fc412efce2ca4b2858335735ed319",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 153,
+    "rule": "MAIL001",
+    "sha256": "224f3f0b23790c7d9d8d56d75abc4c90b29fc412efce2ca4b2858335735ed319",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 164,
+    "rule": "MAIL001",
+    "sha256": "224f3f0b23790c7d9d8d56d75abc4c90b29fc412efce2ca4b2858335735ed319",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 164,
+    "rule": "MAIL001",
+    "sha256": "224f3f0b23790c7d9d8d56d75abc4c90b29fc412efce2ca4b2858335735ed319",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 175,
+    "rule": "MAIL001",
+    "sha256": "053326d3bd7fa575600a495d3a79b34d8227287292bbb0929ce05f2e460ad941",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 175,
+    "rule": "MAIL001",
+    "sha256": "053326d3bd7fa575600a495d3a79b34d8227287292bbb0929ce05f2e460ad941",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 186,
+    "rule": "MAIL001",
+    "sha256": "473a95aef8054edb39c5246a6841474f867706d6ca69d65bd0f5848c4d95df2b",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 186,
+    "rule": "MAIL001",
+    "sha256": "473a95aef8054edb39c5246a6841474f867706d6ca69d65bd0f5848c4d95df2b",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 197,
+    "rule": "MAIL001",
+    "sha256": "45bb6e9e0f14b79ddf699ff0959331e0f37d85a47aa9e8b44339c4881256cc8a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 197,
+    "rule": "MAIL001",
+    "sha256": "45bb6e9e0f14b79ddf699ff0959331e0f37d85a47aa9e8b44339c4881256cc8a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 208,
+    "rule": "MAIL001",
+    "sha256": "0d5160d96392712be4d3bee74576575d72be907e47c77d60efeb83d4ea5fad26",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 208,
+    "rule": "MAIL001",
+    "sha256": "0d5160d96392712be4d3bee74576575d72be907e47c77d60efeb83d4ea5fad26",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 219,
+    "rule": "MAIL001",
+    "sha256": "0d5160d96392712be4d3bee74576575d72be907e47c77d60efeb83d4ea5fad26",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 219,
+    "rule": "MAIL001",
+    "sha256": "0d5160d96392712be4d3bee74576575d72be907e47c77d60efeb83d4ea5fad26",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 230,
+    "rule": "MAIL001",
+    "sha256": "a175f331cf4529655854861bb6500c1b6c934f3daa01a52a33bd2b0f6d55b05b",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 230,
+    "rule": "MAIL001",
+    "sha256": "a175f331cf4529655854861bb6500c1b6c934f3daa01a52a33bd2b0f6d55b05b",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 241,
+    "rule": "MAIL001",
+    "sha256": "a175f331cf4529655854861bb6500c1b6c934f3daa01a52a33bd2b0f6d55b05b",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 241,
+    "rule": "MAIL001",
+    "sha256": "a175f331cf4529655854861bb6500c1b6c934f3daa01a52a33bd2b0f6d55b05b",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 252,
+    "rule": "MAIL001",
+    "sha256": "48f9d90ece8472562ec7fae2953dd939117f6d6a26c5f0f3899912a20ab84330",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 252,
+    "rule": "MAIL001",
+    "sha256": "48f9d90ece8472562ec7fae2953dd939117f6d6a26c5f0f3899912a20ab84330",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 263,
+    "rule": "MAIL001",
+    "sha256": "053326d3bd7fa575600a495d3a79b34d8227287292bbb0929ce05f2e460ad941",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 263,
+    "rule": "MAIL001",
+    "sha256": "053326d3bd7fa575600a495d3a79b34d8227287292bbb0929ce05f2e460ad941",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 274,
+    "rule": "MAIL001",
+    "sha256": "9e578c1241fcb6427d7e34db16d22744f2099bc568c9f2f24fece8d2672729b8",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 274,
+    "rule": "MAIL001",
+    "sha256": "9e578c1241fcb6427d7e34db16d22744f2099bc568c9f2f24fece8d2672729b8",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 285,
+    "rule": "MAIL001",
+    "sha256": "755de1aef5c70e414a50411c219cb12a58203e01a0b932e1363aab9b53ca2721",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 285,
+    "rule": "MAIL001",
+    "sha256": "755de1aef5c70e414a50411c219cb12a58203e01a0b932e1363aab9b53ca2721",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 296,
+    "rule": "MAIL001",
+    "sha256": "665dce0829ae61d989f5c9e92b1329e14932bff122ea9e3ab49585dea1a3b81a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 296,
+    "rule": "MAIL001",
+    "sha256": "665dce0829ae61d989f5c9e92b1329e14932bff122ea9e3ab49585dea1a3b81a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 307,
+    "rule": "MAIL001",
+    "sha256": "9e1a515a739685f5ba3aca03af77539cad225c3fa5e8bd38d27c8bd3265d4fd8",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 307,
+    "rule": "MAIL001",
+    "sha256": "9e1a515a739685f5ba3aca03af77539cad225c3fa5e8bd38d27c8bd3265d4fd8",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 318,
+    "rule": "MAIL001",
+    "sha256": "dd0be6e22475a9dd95b3099343750ae61fc77ddfa45d3f8359cd440ec96b25d7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 318,
+    "rule": "MAIL001",
+    "sha256": "dd0be6e22475a9dd95b3099343750ae61fc77ddfa45d3f8359cd440ec96b25d7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 329,
+    "rule": "MAIL001",
+    "sha256": "dd0be6e22475a9dd95b3099343750ae61fc77ddfa45d3f8359cd440ec96b25d7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 329,
+    "rule": "MAIL001",
+    "sha256": "dd0be6e22475a9dd95b3099343750ae61fc77ddfa45d3f8359cd440ec96b25d7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 340,
+    "rule": "MAIL001",
+    "sha256": "093e5b208582b1d4fa13e247b5b336bb1e47fc0279d95fc188e417956d584110",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 340,
+    "rule": "MAIL001",
+    "sha256": "093e5b208582b1d4fa13e247b5b336bb1e47fc0279d95fc188e417956d584110",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 351,
+    "rule": "MAIL001",
+    "sha256": "665dce0829ae61d989f5c9e92b1329e14932bff122ea9e3ab49585dea1a3b81a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 351,
+    "rule": "MAIL001",
+    "sha256": "665dce0829ae61d989f5c9e92b1329e14932bff122ea9e3ab49585dea1a3b81a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 362,
+    "rule": "MAIL001",
+    "sha256": "4870b9710b2a59929902290d6cb00ed8ba91684576e525f23f6113386bc9e4a5",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 362,
+    "rule": "MAIL001",
+    "sha256": "4870b9710b2a59929902290d6cb00ed8ba91684576e525f23f6113386bc9e4a5",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 368,
+    "rule": "PATH001",
+    "sha256": "7930170d578a6df933afb61670250dc4ad24c73af98515a3e71641033d6278d7",
+    "reason": "Exact public libffi8 SPDX reference from the authenticated pinned Debian package inventory. Encoded-token probing produces a path-shaped false positive; only this source line and the exact identity-bound SPDX graph reference are recognized."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 368,
+    "rule": "PATH001",
+    "sha256": "7930170d578a6df933afb61670250dc4ad24c73af98515a3e71641033d6278d7",
+    "reason": "Exact public libffi8 SPDX reference from the authenticated pinned Debian package inventory. Encoded-token probing produces a path-shaped false positive; only this source line and the exact identity-bound SPDX graph reference are recognized. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 374,
+    "rule": "MAIL001",
+    "sha256": "71f2b1cb9c787b8f81a83500bc4202926c7af18b75d3d6e76833fb1e389bef74",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 374,
+    "rule": "MAIL001",
+    "sha256": "71f2b1cb9c787b8f81a83500bc4202926c7af18b75d3d6e76833fb1e389bef74",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 385,
+    "rule": "MAIL001",
+    "sha256": "71f2b1cb9c787b8f81a83500bc4202926c7af18b75d3d6e76833fb1e389bef74",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 385,
+    "rule": "MAIL001",
+    "sha256": "71f2b1cb9c787b8f81a83500bc4202926c7af18b75d3d6e76833fb1e389bef74",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 396,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 396,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 407,
+    "rule": "MAIL001",
+    "sha256": "d4eb76aecb5360cb6ad39fcb312be9577e164a799a13e492cc7a8c9acd9ec2c7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 407,
+    "rule": "MAIL001",
+    "sha256": "d4eb76aecb5360cb6ad39fcb312be9577e164a799a13e492cc7a8c9acd9ec2c7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 418,
+    "rule": "MAIL001",
+    "sha256": "857bb488ba2db813ab11e033ccb8818f45820a2aa45607d1aee56cfd4363518e",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 418,
+    "rule": "MAIL001",
+    "sha256": "857bb488ba2db813ab11e033ccb8818f45820a2aa45607d1aee56cfd4363518e",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 429,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 429,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 440,
+    "rule": "MAIL001",
+    "sha256": "755de1aef5c70e414a50411c219cb12a58203e01a0b932e1363aab9b53ca2721",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 440,
+    "rule": "MAIL001",
+    "sha256": "755de1aef5c70e414a50411c219cb12a58203e01a0b932e1363aab9b53ca2721",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 451,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 451,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 462,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 462,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 473,
+    "rule": "MAIL001",
+    "sha256": "5f93110bc1e674dcbfd0b43f8b3102a317669ccd5f80b06a4363a67336ca1778",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 473,
+    "rule": "MAIL001",
+    "sha256": "5f93110bc1e674dcbfd0b43f8b3102a317669ccd5f80b06a4363a67336ca1778",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 484,
+    "rule": "MAIL001",
+    "sha256": "5f93110bc1e674dcbfd0b43f8b3102a317669ccd5f80b06a4363a67336ca1778",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 484,
+    "rule": "MAIL001",
+    "sha256": "5f93110bc1e674dcbfd0b43f8b3102a317669ccd5f80b06a4363a67336ca1778",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 495,
+    "rule": "MAIL001",
+    "sha256": "5f93110bc1e674dcbfd0b43f8b3102a317669ccd5f80b06a4363a67336ca1778",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 495,
+    "rule": "MAIL001",
+    "sha256": "5f93110bc1e674dcbfd0b43f8b3102a317669ccd5f80b06a4363a67336ca1778",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 506,
+    "rule": "MAIL001",
+    "sha256": "3de161659352cfd83deae09ba93fb11cce017c94ee55872df6f72315e197739e",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 506,
+    "rule": "MAIL001",
+    "sha256": "3de161659352cfd83deae09ba93fb11cce017c94ee55872df6f72315e197739e",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 517,
+    "rule": "MAIL001",
+    "sha256": "af87c4f642271e319e8e27ae37451a4e36477f9730d67b6539ae836c61d50a4e",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 517,
+    "rule": "MAIL001",
+    "sha256": "af87c4f642271e319e8e27ae37451a4e36477f9730d67b6539ae836c61d50a4e",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 528,
+    "rule": "MAIL001",
+    "sha256": "0d5160d96392712be4d3bee74576575d72be907e47c77d60efeb83d4ea5fad26",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 528,
+    "rule": "MAIL001",
+    "sha256": "0d5160d96392712be4d3bee74576575d72be907e47c77d60efeb83d4ea5fad26",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 539,
+    "rule": "MAIL001",
+    "sha256": "d4eb76aecb5360cb6ad39fcb312be9577e164a799a13e492cc7a8c9acd9ec2c7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 539,
+    "rule": "MAIL001",
+    "sha256": "d4eb76aecb5360cb6ad39fcb312be9577e164a799a13e492cc7a8c9acd9ec2c7",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 550,
+    "rule": "MAIL001",
+    "sha256": "48f9d90ece8472562ec7fae2953dd939117f6d6a26c5f0f3899912a20ab84330",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 550,
+    "rule": "MAIL001",
+    "sha256": "48f9d90ece8472562ec7fae2953dd939117f6d6a26c5f0f3899912a20ab84330",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 561,
+    "rule": "MAIL001",
+    "sha256": "3b8771a21c2aa286be2b1212c86a6095adf638994d5288a71c004e3020764118",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 561,
+    "rule": "MAIL001",
+    "sha256": "3b8771a21c2aa286be2b1212c86a6095adf638994d5288a71c004e3020764118",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 572,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 572,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 583,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 583,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 594,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 594,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 605,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 605,
+    "rule": "MAIL001",
+    "sha256": "67cd27d61fe39e810591d01ded32128f6c9d20885f415c7a648d7381b21a48f9",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 616,
+    "rule": "MAIL001",
+    "sha256": "c4ffa64ec1584ec0f5f825209f5ca1d57c6b1c278718dffdbfdeeec91cd4703c",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 616,
+    "rule": "MAIL001",
+    "sha256": "c4ffa64ec1584ec0f5f825209f5ca1d57c6b1c278718dffdbfdeeec91cd4703c",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 627,
+    "rule": "MAIL001",
+    "sha256": "1fb0cd998d0c7beecf88244d1f17522407b722ae220dc1f1c94dfeb1d70b55a1",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 627,
+    "rule": "MAIL001",
+    "sha256": "1fb0cd998d0c7beecf88244d1f17522407b722ae220dc1f1c94dfeb1d70b55a1",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 638,
+    "rule": "MAIL001",
+    "sha256": "fd304ae1f4d5e470a222977454a525f1d185122bbed5d7e4863ae976cfbcae1d",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 638,
+    "rule": "MAIL001",
+    "sha256": "fd304ae1f4d5e470a222977454a525f1d185122bbed5d7e4863ae976cfbcae1d",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 649,
+    "rule": "MAIL001",
+    "sha256": "44e66d0d85f7c7f3843e47b396926100ebea809e0c2b3030b4e1cf5db6419310",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 649,
+    "rule": "MAIL001",
+    "sha256": "44e66d0d85f7c7f3843e47b396926100ebea809e0c2b3030b4e1cf5db6419310",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 660,
+    "rule": "MAIL001",
+    "sha256": "665dce0829ae61d989f5c9e92b1329e14932bff122ea9e3ab49585dea1a3b81a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 660,
+    "rule": "MAIL001",
+    "sha256": "665dce0829ae61d989f5c9e92b1329e14932bff122ea9e3ab49585dea1a3b81a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 671,
+    "rule": "MAIL001",
+    "sha256": "71f2b1cb9c787b8f81a83500bc4202926c7af18b75d3d6e76833fb1e389bef74",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 671,
+    "rule": "MAIL001",
+    "sha256": "71f2b1cb9c787b8f81a83500bc4202926c7af18b75d3d6e76833fb1e389bef74",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 682,
+    "rule": "MAIL001",
+    "sha256": "25a7d109edb768f8e790e15c42c9a938506fcf4ad6fb2b5fc2047d43634ecd1a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 682,
+    "rule": "MAIL001",
+    "sha256": "25a7d109edb768f8e790e15c42c9a938506fcf4ad6fb2b5fc2047d43634ecd1a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 693,
+    "rule": "MAIL001",
+    "sha256": "f863fed4ba0d4d643d031ab37e5ff368979aec5dfaa2ab3efc7273133528ca32",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 693,
+    "rule": "MAIL001",
+    "sha256": "f863fed4ba0d4d643d031ab37e5ff368979aec5dfaa2ab3efc7273133528ca32",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 704,
+    "rule": "MAIL001",
+    "sha256": "add0a8a0de3e6fba37cff61165f4e45f660b0000e13186b69809710caf84420c",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 704,
+    "rule": "MAIL001",
+    "sha256": "add0a8a0de3e6fba37cff61165f4e45f660b0000e13186b69809710caf84420c",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 715,
+    "rule": "MAIL001",
+    "sha256": "665dce0829ae61d989f5c9e92b1329e14932bff122ea9e3ab49585dea1a3b81a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 715,
+    "rule": "MAIL001",
+    "sha256": "665dce0829ae61d989f5c9e92b1329e14932bff122ea9e3ab49585dea1a3b81a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 726,
+    "rule": "MAIL001",
+    "sha256": "fb90e839d49ebbf1c5007b1967d78633bb9c511a8782166d507cd1f5497a478a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 726,
+    "rule": "MAIL001",
+    "sha256": "fb90e839d49ebbf1c5007b1967d78633bb9c511a8782166d507cd1f5497a478a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 737,
+    "rule": "MAIL001",
+    "sha256": "25a7d109edb768f8e790e15c42c9a938506fcf4ad6fb2b5fc2047d43634ecd1a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 737,
+    "rule": "MAIL001",
+    "sha256": "25a7d109edb768f8e790e15c42c9a938506fcf4ad6fb2b5fc2047d43634ecd1a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 748,
+    "rule": "MAIL001",
+    "sha256": "25a7d109edb768f8e790e15c42c9a938506fcf4ad6fb2b5fc2047d43634ecd1a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 748,
+    "rule": "MAIL001",
+    "sha256": "25a7d109edb768f8e790e15c42c9a938506fcf4ad6fb2b5fc2047d43634ecd1a",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 759,
+    "rule": "MAIL001",
+    "sha256": "1fb0cd998d0c7beecf88244d1f17522407b722ae220dc1f1c94dfeb1d70b55a1",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 759,
+    "rule": "MAIL001",
+    "sha256": "1fb0cd998d0c7beecf88244d1f17522407b722ae220dc1f1c94dfeb1d70b55a1",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 770,
+    "rule": "MAIL001",
+    "sha256": "1fb0cd998d0c7beecf88244d1f17522407b722ae220dc1f1c94dfeb1d70b55a1",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 770,
+    "rule": "MAIL001",
+    "sha256": "1fb0cd998d0c7beecf88244d1f17522407b722ae220dc1f1c94dfeb1d70b55a1",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 781,
+    "rule": "MAIL001",
+    "sha256": "1fb0cd998d0c7beecf88244d1f17522407b722ae220dc1f1c94dfeb1d70b55a1",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 781,
+    "rule": "MAIL001",
+    "sha256": "1fb0cd998d0c7beecf88244d1f17522407b722ae220dc1f1c94dfeb1d70b55a1",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 792,
+    "rule": "MAIL001",
+    "sha256": "b5d12c75ff3942d8395604e90a82ff047852daaaaab3ef0d51beab8d6ce79627",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 792,
+    "rule": "MAIL001",
+    "sha256": "b5d12c75ff3942d8395604e90a82ff047852daaaaab3ef0d51beab8d6ce79627",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 803,
+    "rule": "MAIL001",
+    "sha256": "038b23ebc001a8c71901a28c5429fa311068e2fbf7060820ca0803c4202f2758",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 803,
+    "rule": "MAIL001",
+    "sha256": "038b23ebc001a8c71901a28c5429fa311068e2fbf7060820ca0803c4202f2758",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 814,
+    "rule": "MAIL001",
+    "sha256": "9e1a515a739685f5ba3aca03af77539cad225c3fa5e8bd38d27c8bd3265d4fd8",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 814,
+    "rule": "MAIL001",
+    "sha256": "9e1a515a739685f5ba3aca03af77539cad225c3fa5e8bd38d27c8bd3265d4fd8",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-metadata.json",
+    "line": 825,
+    "rule": "MAIL001",
+    "sha256": "f1e7b4163623b870f5e0bb76ab8d50f3f5221836322a6bae219f3881d9955a35",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned."
+  },
+  {
+    "path": "release/public-dependency-metadata.json@4a42c3a26627d37576cac83589f5f7b35d8d5b5b",
+    "line": 825,
+    "rule": "MAIL001",
+    "sha256": "f1e7b4163623b870f5e0bb76ab8d50f3f5221836322a6bae219f3881d9955a35",
+    "reason": "Exact public Debian Maintainer field authenticated against the pinned signed snapshot Packages index; package name, version, purl, archive and signed-index hashes are retained in this registry. Only this inspected source line is recognized; other identities and generated fields remain scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt",
+    "line": 132,
+    "rule": "MAIL001",
+    "sha256": "e342c7e8d835a9ef4d95f639caeb00c76281c4a44b3cf4c04a1410a8b8eebbaf",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt@859dac18fa138c1b0df20700f83f3b0b9ce1d341",
+    "line": 132,
+    "rule": "MAIL001",
+    "sha256": "e342c7e8d835a9ef4d95f639caeb00c76281c4a44b3cf4c04a1410a8b8eebbaf",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt",
+    "line": 135,
+    "rule": "MAIL001",
+    "sha256": "d1f64fe429983f06cc0151f0c366db851cd38a38765ede9de82ce165f72a5b8c",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt@859dac18fa138c1b0df20700f83f3b0b9ce1d341",
+    "line": 135,
+    "rule": "MAIL001",
+    "sha256": "d1f64fe429983f06cc0151f0c366db851cd38a38765ede9de82ce165f72a5b8c",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt",
+    "line": 318,
+    "rule": "MAIL001",
+    "sha256": "d91044fcfbcd6db397541df0089e423d3932b88ad17bab19f2d5acfe1f74f6f5",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt@859dac18fa138c1b0df20700f83f3b0b9ce1d341",
+    "line": 318,
+    "rule": "MAIL001",
+    "sha256": "d91044fcfbcd6db397541df0089e423d3932b88ad17bab19f2d5acfe1f74f6f5",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt",
+    "line": 321,
+    "rule": "MAIL001",
+    "sha256": "dd0172a213ee4d9955a6e10ac22fd807ad12c09847f9389ed468506c3ff9e7d7",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt@859dac18fa138c1b0df20700f83f3b0b9ce1d341",
+    "line": 321,
+    "rule": "MAIL001",
+    "sha256": "dd0172a213ee4d9955a6e10ac22fd807ad12c09847f9389ed468506c3ff9e7d7",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt",
+    "line": 637,
+    "rule": "MAIL001",
+    "sha256": "8b2e4776a420064d0ba5910e393f0d787a8680022b85edd382b19251b07e2ca4",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt@859dac18fa138c1b0df20700f83f3b0b9ce1d341",
+    "line": 637,
+    "rule": "MAIL001",
+    "sha256": "8b2e4776a420064d0ba5910e393f0d787a8680022b85edd382b19251b07e2ca4",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt",
+    "line": 640,
+    "rule": "MAIL001",
+    "sha256": "5865c6e8018efcb6eb01a516e5b6036ac7627a847ee62109f05c5344c5192294",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt@859dac18fa138c1b0df20700f83f3b0b9ce1d341",
+    "line": 640,
+    "rule": "MAIL001",
+    "sha256": "5865c6e8018efcb6eb01a516e5b6036ac7627a847ee62109f05c5344c5192294",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt",
+    "line": 1162,
+    "rule": "MAIL001",
+    "sha256": "b5ae0c0e8c7f81b2669efada77e34409b8d0b9e2239f1c68a38dfb13aa68deb5",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt@859dac18fa138c1b0df20700f83f3b0b9ce1d341",
+    "line": 1162,
+    "rule": "MAIL001",
+    "sha256": "b5ae0c0e8c7f81b2669efada77e34409b8d0b9e2239f1c68a38dfb13aa68deb5",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned. Immutable public-history binding includes the complete blob OID."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt",
+    "line": 1165,
+    "rule": "MAIL001",
+    "sha256": "152383aa699ba4508ff78c0d42bf8d30273e6649db20450351e3eefdd3dfcfa6",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned."
+  },
+  {
+    "path": "release/public-dependency-texts/b4366b9c27a9364633e015011a231913ed19bf1228f335bf617e50a6f7b168a6.txt@859dac18fa138c1b0df20700f83f3b0b9ce1d341",
+    "line": 1165,
+    "rule": "MAIL001",
+    "sha256": "152383aa699ba4508ff78c0d42bf8d30273e6649db20450351e3eefdd3dfcfa6",
+    "reason": "Exact public copyright attribution in the complete Go producer legal document authenticated against the committed go.sum module ZIP checksum and document SHA256. Complete terms and attribution remain unchanged; altered or unrelated text is scanned. Immutable public-history binding includes the complete blob OID."
   }
 ]
