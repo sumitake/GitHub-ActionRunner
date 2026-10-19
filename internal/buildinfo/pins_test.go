@@ -47,6 +47,8 @@ func TestPinsExactValues(t *testing.T) {
 	}
 
 	got := Pins()
+	// Rebuild descriptor selection and validation are covered separately.
+	got.RunnerRebuildJSON = nil
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Pins() mismatch:\n got:  %#v\n want: %#v", got, want)
 	}

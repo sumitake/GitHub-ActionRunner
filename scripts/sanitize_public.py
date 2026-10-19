@@ -311,7 +311,7 @@ def _check_ip_literals(line: str, ctx: "LineCtx") -> list[Finding]:
 # H4/H5 -- hostnames, .local, punycode, URI authority
 # ---------------------------------------------------------------------------
 
-LOCAL_SUFFIX_RE = re.compile(r"\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.local\b", re.IGNORECASE)
+LOCAL_SUFFIX_RE = re.compile(r"\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.local\b(?!\.[A-Za-z0-9-])", re.IGNORECASE)
 # Labeled context = the only place H4 looks for bare hostnames/FQDNs (single-
 # label AND multi-label): free-text scanning for "any word that might be a
 # hostname" is not attempted (see module notes on the private-denylist being

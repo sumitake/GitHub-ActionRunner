@@ -265,6 +265,16 @@ class H4Hostnames(unittest.TestCase):
         f = line("mDNS target: printer.local reachable", "notes.md")
         self.assertIn("HOST001", rules_of(f))
 
+    def test_private_suffix_must_end_the_dns_name(self):
+        for value in ("bin/System.Transactions.Local.dll", "SPDXRef-File-bin-System.Transactions.Local.dll-" + "a" * 16):
+            with self.subTest(value=value):
+                self.assertNotIn("HOST001", rules_of(line(value, "sbom/runner.spdx.json")))
+
+    def test_real_local_hosts_and_labeled_names_still_block(self):
+        for value in ("printer.local", "printer.local.", "printer.local:7443", "ssh user@printer.local", "host: printer.local.dll"):
+            with self.subTest(value=value):
+                self.assertIn("HOST001", rules_of(line(value, "notes.md")))
+
     def test_non_allowlisted_fqdn_labeled_context(self):
         f = line("hostname: rhohaus.johnosumi.example", "notes.md")
         self.assertIn("HOST001", rules_of(f))

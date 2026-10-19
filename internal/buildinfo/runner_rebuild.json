@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "upstream_version": "v2.338.0",
+  "upstream_source_commit": "197ca027b90de199464dee3bb9ff198a1db60967",
+  "upstream_linux_x64_sha256": "af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32",
+  "dotnet_sdk_version": "8.0.426",
+  "dotnet_runtime_version": "8.0.32",
+  "sdk_archive_sha512": "8141d01bdc53f604aed3bb661b604707a64209f8a947cd81bf95b4f518951593d77864069191f54ea5e84362a409da6b0f69074bf893b283d7e0cf93e2bf20a8",
+  "source_patch_sha256": "659e0c77601da2b2446e8118753d2058a51135626dcdbc954c8728e208f83606",
+  "asset_name": "actions-runner-linux-x64-2.338.0-dotnet-8.0.32.tar.gz",
+  "linux_x64_sha256": "3409ed5b3764e26fce226b65fc97340177eec8fefb934fd254e50e239eb4ce85",
+  "archive_bytes": 220762843
+}

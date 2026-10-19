@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	seedarchive "github.com/sumitake/portable-ghar/internal/archive"
+	"github.com/sumitake/portable-ghar/internal/buildinfo"
 	"github.com/sumitake/portable-ghar/internal/runtimelock"
 )
 
@@ -29,7 +30,18 @@ func TestRunPinsEmitsCanonicalRunnerAcquisitionPins(t *testing.T) {
 
 func TestRunRunnerDownloadSpecDerivesCanonicalReleaseURLFromPins(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"runner-download-spec"}, &stdout, &stderr); code != 0 {
+	payload, err := buildinfo.Pins().RunnerPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := run([]string{"runner-download-spec"}, &stdout, &stderr)
+	if payload.Kind != "official" {
+		if code != 1 || stdout.Len() != 0 || stderr.String() != "portable-ghar-runtime-lock: unavailable\n" {
+			t.Fatalf("rebuild acquisition accepted: exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+		}
+		return
+	}
+	if code != 0 {
 		t.Fatalf("run runner-download-spec = %d, stderr=%q", code, stderr.String())
 	}
 	const expected = `{"schema_version":1,"source_url":"https://github.com/actions/runner/releases/download/v2.338.0/actions-runner-linux-x64-2.338.0.tar.gz","asset_name":"actions-runner-linux-x64-2.338.0.tar.gz","sha256":"af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32"}` + "\n"
@@ -43,7 +55,7 @@ func TestValidateRunnerRedirectAcceptsOnlyBoundGitHubReleaseAsset(t *testing.T) 
 	valid := "https://release-assets.githubusercontent.com/github-production-release-asset/184286875/4f75472f-4bf4-4f5e-b40a-660e7ceb303f" +
 		"?response-content-disposition=attachment%3B%20filename%3D" + asset +
 		"&response-content-type=application%2Foctet-stream&sig=public-release-signature"
-	if got, err := validateRunnerRedirect(valid); err != nil || got != valid {
+	if got, err := validateRunnerRedirectForPins(valid, officialTestPins()); err != nil || got != valid {
 		t.Fatalf("validateRunnerRedirect valid got=%q err=%v", got, err)
 	}
 
@@ -63,7 +75,7 @@ func TestValidateRunnerRedirectAcceptsOnlyBoundGitHubReleaseAsset(t *testing.T) 
 	}
 	for name, candidate := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := validateRunnerRedirect(candidate); err == nil {
+			if _, err := validateRunnerRedirectForPins(candidate, officialTestPins()); err == nil {
 				t.Fatal("validateRunnerRedirect accepted an unbound redirect")
 			}
 		})
@@ -75,11 +87,17 @@ func TestRunValidateRunnerRedirectReadsBoundedStdinAndEmitsCanonicalURL(t *testi
 		"?response-content-disposition=attachment%3B%20filename%3Dactions-runner-linux-x64-2.338.0.tar.gz" +
 		"&response-content-type=application%2Foctet-stream&sig=public-release-signature"
 	var stdout, stderr bytes.Buffer
-	if code := runWithInput([]string{"validate-runner-redirect"}, strings.NewReader(valid), &stdout, &stderr); code != 0 {
-		t.Fatalf("validate-runner-redirect code=%d stderr=%q", code, stderr.String())
+	payload, err := buildinfo.Pins().RunnerPayload()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if stdout.String() != valid+"\n" || stderr.Len() != 0 {
-		t.Fatalf("validate redirect stdout=%q stderr=%q", stdout.String(), stderr.String())
+	code := runWithInput([]string{"validate-runner-redirect"}, strings.NewReader(valid), &stdout, &stderr)
+	if payload.Kind == "official" {
+		if code != 0 || stdout.String() != valid+"\n" || stderr.Len() != 0 {
+			t.Fatalf("validate redirect code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+		}
+	} else if code != 1 || stdout.Len() != 0 || stderr.String() != "portable-ghar-runtime-lock: unavailable\n" {
+		t.Fatalf("rebuild redirect accepted code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 
 	stdout.Reset()
@@ -304,7 +322,11 @@ type runnerTransactionFixture struct {
 func newRunnerTransactionFixture(t *testing.T) runnerTransactionFixture {
 	t.Helper()
 	parent := canonicalTestDir(t)
-	archivePath := filepath.Join(parent, "actions-runner-linux-x64-2.338.0.tar.gz")
+	payload, err := buildinfo.Pins().RunnerPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(parent, payload.AssetName)
 	listener := []byte("runner-listener")
 	manifest := seedarchive.RunnerTreeManifest{
 		SchemaVersion: 1,
@@ -316,7 +338,7 @@ func newRunnerTransactionFixture(t *testing.T) runnerTransactionFixture {
 	}
 	extractor := func(options seedarchive.RunnerExtractOptions) (seedarchive.VerifiedRunnerDirectory, error) {
 		if options.ArchivePath != archivePath ||
-			options.ExpectedSHA256 != "af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32" ||
+			options.ExpectedSHA256 != payload.SHA256 ||
 			options.EvidenceGeneration == 0 {
 			return seedarchive.VerifiedRunnerDirectory{}, errors.New("fixture: extraction options invalid")
 		}

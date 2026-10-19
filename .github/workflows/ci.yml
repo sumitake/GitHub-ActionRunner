@@ -162,8 +162,13 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Prepare Task 6 image contexts
         run: scripts/prepare-task6-images.sh
+      - name: Rebuild selected app-local runner archive
+        id: runner-payload
+        run: 'set -euo pipefail; archive_directory="$RUNNER_TEMP/rebuilt-runner"; mkdir -m 700 "$archive_directory"; archive="$(python3 scripts/release/rebuild-runner.py --if-selected --output-directory "$archive_directory")"; printf "archive=%s\n" "$archive" >>"$GITHUB_OUTPUT"'
       - name: Prepare Task 5 image contexts
-        run: 'repository="$(pwd -P)"; scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID" --ca-bundle "$repository/images/trust/build/ca-bundle.pem"'
+        env:
+          REBUILT_RUNNER_ARCHIVE: ${{ steps.runner-payload.outputs.archive }}
+        run: 'set -euo pipefail; repository="$(pwd -P)"; archive_args=(); if [ -n "$REBUILT_RUNNER_ARCHIVE" ]; then archive_args=(--runner-archive "$REBUILT_RUNNER_ARCHIVE"); fi; scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID" --ca-bundle "$repository/images/trust/build/ca-bundle.pem" "${archive_args[@]}"'
       - name: Prepare Task 11 image context
         run: scripts/prepare-task11-images.sh --generation "$GITHUB_RUN_ID"
       - name: Run Linux and Docker release gate

@@ -53,10 +53,14 @@ func NewRunnerLock(verified seedarchive.VerifiedRunnerDirectory, listenerRelativ
 		return Lock{}, errors.New("runtimelock: verified listener required")
 	}
 	pins := buildinfo.Pins()
+	payload, err := pins.RunnerPayload()
+	if err != nil {
+		return Lock{}, errors.New("runtimelock: runner payload invalid")
+	}
 	lock := Lock{
 		SchemaVersion:         1,
 		RunnerVersion:         pins.UpstreamRunner.Version,
-		RunnerArchiveSHA256:   pins.UpstreamRunner.LinuxX64SHA256,
+		RunnerArchiveSHA256:   payload.SHA256,
 		RunnerSourceCommit:    pins.UpstreamRunner.SourceCommit,
 		CommandSettingsSHA256: pins.UpstreamRunner.CommandSettingsSHA256,
 		RunnerBaseImage:       pins.RunnerBaseImage,
@@ -118,8 +122,12 @@ func Load(reader io.Reader) (Lock, error) {
 
 func validate(lock Lock) error {
 	pins := buildinfo.Pins()
+	payload, err := pins.RunnerPayload()
+	if err != nil {
+		return errors.New("runtimelock: runner payload invalid")
+	}
 	if lock.SchemaVersion != 1 || lock.RunnerVersion != pins.UpstreamRunner.Version ||
-		lock.RunnerArchiveSHA256 != pins.UpstreamRunner.LinuxX64SHA256 ||
+		lock.RunnerArchiveSHA256 != payload.SHA256 ||
 		lock.RunnerSourceCommit != pins.UpstreamRunner.SourceCommit ||
 		lock.CommandSettingsSHA256 != pins.UpstreamRunner.CommandSettingsSHA256 ||
 		lock.RunnerBaseImage != pins.RunnerBaseImage || lock.EvidenceGeneration == 0 ||

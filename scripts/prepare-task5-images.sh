@@ -205,7 +205,7 @@ native_runtime_lock="$work/portable-ghar-runtime-lock"
 chmod 500 "$native_runtime_lock" || die
 
 if [ "$seen_archive" = 1 ]; then
-  runner_download_spec=$("$native_runtime_lock" runner-download-spec) || die
+  runner_download_spec=$("$native_runtime_lock" runner-payload-spec) || die
   expected_runner_asset=$(
     printf '%s\n' "$runner_download_spec" |
       jq -er 'if .schema_version == 1 and (.asset_name | type) == "string" then .asset_name else empty end'

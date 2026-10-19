@@ -190,21 +190,21 @@
   },
   {
     "path": "cmd/portable-ghar-runtime-lock/main_test.go",
-    "line": 43,
+    "line": 55,
     "rule": "DEPLOYID002",
     "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
     "reason": "Synthetic UUID-shaped GitHub release-asset object identifier required by the canonical redirect acceptance fixture; it is not a deployment identifier."
   },
   {
     "path": "cmd/portable-ghar-runtime-lock/main_test.go",
-    "line": 53,
+    "line": 65,
     "rule": "URI001",
     "sha256": "5e037138d3d5a8ce0c020abf12cb3e4cb477a71f32e9e681c982059b19cb1dbe",
     "reason": "Adversarial URL-userinfo mutation used only to prove the runner redirect validator rejects userinfo before acquisition."
   },
   {
     "path": "cmd/portable-ghar-runtime-lock/main_test.go",
-    "line": 74,
+    "line": 86,
     "rule": "DEPLOYID002",
     "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
     "reason": "Synthetic UUID-shaped GitHub release-asset object identifier required by the bounded-stdin redirect fixture; it is not a deployment identifier."
@@ -3204,5 +3204,26 @@
     "rule": "MAIL001",
     "sha256": "19fee6d6cfcd079e1d582db80f4fb2ce18437e032338f9fe571cd385755627f5",
     "reason": "Exact inspected public upstream Node licensing text; complete document SHA256 5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace is verified against the committed runner licensing registry before this source identity can represent generated text. No secret, unknown line, altered document, or unrelated generated metadata is exempt."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@8189fe7aee66137bfec261166e6810349aaaea73",
+    "line": 55,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Immutable public-history instance of an inspected synthetic redirect fixture; exact blob OID, line, rule and unchanged canonical content hash bind this entry."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@8189fe7aee66137bfec261166e6810349aaaea73",
+    "line": 65,
+    "rule": "URI001",
+    "sha256": "5e037138d3d5a8ce0c020abf12cb3e4cb477a71f32e9e681c982059b19cb1dbe",
+    "reason": "Immutable public-history instance of an inspected synthetic redirect fixture; exact blob OID, line, rule and unchanged canonical content hash bind this entry."
+  },
+  {
+    "path": "cmd/portable-ghar-runtime-lock/main_test.go@8189fe7aee66137bfec261166e6810349aaaea73",
+    "line": 86,
+    "rule": "DEPLOYID002",
+    "sha256": "35c16d89e708d0e68f730ece53786a0e67d6604da7ec2c09558d8957d764fd96",
+    "reason": "Immutable public-history instance of an inspected synthetic redirect fixture; exact blob OID, line, rule and unchanged canonical content hash bind this entry."
   }
 ]

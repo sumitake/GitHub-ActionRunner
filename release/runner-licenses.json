@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "runner_asset_digest": "sha256:af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32",
+  "runner_asset_digest": "sha256:3409ed5b3764e26fce226b65fc97340177eec8fefb934fd254e50e239eb4ce85",
   "packages": [
     {
       "name": "node",
@@ -131,14 +131,14 @@
     },
     {
       "name": "Microsoft.Bcl.Cryptography",
-      "version": "10.0.12",
-      "purl": "pkg:nuget/Microsoft.Bcl.Cryptography@10.0.12",
+      "version": "10.0.13",
+      "purl": "pkg:nuget/Microsoft.Bcl.Cryptography@10.0.13",
       "license_expression": "MIT",
       "evidence": [
         {
-          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.bcl.cryptography/10.0.12/microsoft.bcl.cryptography.nuspec",
-          "sha256": "28958d1592f9f24b3150cc3563a163424cf78a7fb2fca1bd8efd2951d69ff5a2",
-          "detail": "NuGet package Microsoft.Bcl.Cryptography 10.0.12; license type=expression: MIT"
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.bcl.cryptography/10.0.13/microsoft.bcl.cryptography.10.0.13.nupkg",
+          "sha256": "5e2ecb4c99321f5740051d556c58df3189529813c9ead75ada496d1acae5f9c3",
+          "detail": "Signed NuGet package Microsoft.Bcl.Cryptography 10.0.13; license type=expression: MIT; microsoft.bcl.cryptography.nuspec SHA256 f4c46484eebe2958c2af1aff6d9538d0db34249c912361b262bee143475e066d"
         }
       ]
     },
@@ -753,14 +753,14 @@
     },
     {
       "name": "System.Formats.Asn1",
-      "version": "10.0.12",
-      "purl": "pkg:nuget/System.Formats.Asn1@10.0.12",
+      "version": "10.0.13",
+      "purl": "pkg:nuget/System.Formats.Asn1@10.0.13",
       "license_expression": "MIT",
       "evidence": [
         {
-          "url": "https://api.nuget.org/v3-flatcontainer/system.formats.asn1/10.0.12/system.formats.asn1.nuspec",
-          "sha256": "02aaaaccb0ed849c874ad4ad168625be90c712310fe97d766b7111cef8e6834d",
-          "detail": "NuGet package System.Formats.Asn1 10.0.12; license type=expression: MIT"
+          "url": "https://api.nuget.org/v3-flatcontainer/system.formats.asn1/10.0.13/system.formats.asn1.10.0.13.nupkg",
+          "sha256": "783c54a6ef9d259b5665c649a6cc34d7bcbf9305e5a33e385993ef5f2ff568ba",
+          "detail": "Signed NuGet package System.Formats.Asn1 10.0.13; license type=expression: MIT; system.formats.asn1.nuspec SHA256 00756c9a73ac724d0e7425ef875433e785d022d7c73ae4c7e54a5b40caf30c78"
         }
       ]
     },
@@ -1353,14 +1353,14 @@
     },
     {
       "name": "System.Security.Cryptography.Pkcs",
-      "version": "10.0.12",
-      "purl": "pkg:nuget/System.Security.Cryptography.Pkcs@10.0.12",
+      "version": "10.0.13",
+      "purl": "pkg:nuget/System.Security.Cryptography.Pkcs@10.0.13",
       "license_expression": "MIT",
       "evidence": [
         {
-          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.pkcs/10.0.12/system.security.cryptography.pkcs.nuspec",
-          "sha256": "9df7e9cc51d731e3bd3a1763da90b4814d31d6e60ce4d118c7cd4284333d2632",
-          "detail": "NuGet package System.Security.Cryptography.Pkcs 10.0.12; license type=expression: MIT"
+          "url": "https://api.nuget.org/v3-flatcontainer/system.security.cryptography.pkcs/10.0.13/system.security.cryptography.pkcs.10.0.13.nupkg",
+          "sha256": "54ed24578ead34b5b50d259084243432f11733e2754b8b196e799d3418d304a7",
+          "detail": "Signed NuGet package System.Security.Cryptography.Pkcs 10.0.13; license type=expression: MIT; system.security.cryptography.pkcs.nuspec SHA256 733efcb3d5563332e6a441368f03c29fce22d32d33b9ce998571d8dd14239123"
         }
       ]
     },
@@ -2136,14 +2136,14 @@
     },
     {
       "name": "runtimepack.Microsoft.NETCore.App.Runtime.linux-x64",
-      "version": "8.0.31",
-      "purl": "pkg:nuget/runtimepack.Microsoft.NETCore.App.Runtime.linux-x64@8.0.31",
+      "version": "8.0.32",
+      "purl": "pkg:nuget/runtimepack.Microsoft.NETCore.App.Runtime.linux-x64@8.0.32",
       "license_expression": "MIT",
       "evidence": [
         {
-          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.netcore.app.runtime.linux-x64/8.0.31/microsoft.netcore.app.runtime.linux-x64.nuspec",
-          "sha256": "656694e2c9a41604299a00fc4e39f9a09ab4948a05eff659f47aae64d661e49f",
-          "detail": "NuGet package Microsoft.NETCore.App.Runtime.linux-x64 8.0.31; license type=expression: MIT"
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.netcore.app.runtime.linux-x64/8.0.32/microsoft.netcore.app.runtime.linux-x64.8.0.32.nupkg",
+          "sha256": "fd887aea29827a46918473e503b01df6e028589ea56d96c99906ca3806ae39bf",
+          "detail": "Signed NuGet package Microsoft.NETCore.App.Runtime.linux-x64 8.0.32; license type=expression: MIT; microsoft.netcore.app.runtime.linux-x64.nuspec SHA256 078449071bdfb0b05f807b0b177e9fe0653462d1e4e4f55fc729563c2a80e4ed"
         }
       ]
     }

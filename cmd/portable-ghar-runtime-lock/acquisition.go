@@ -25,7 +25,14 @@ type runnerDownloadSpec struct {
 }
 
 func currentRunnerDownloadSpec() (runnerDownloadSpec, error) {
-	pins := buildinfo.Pins()
+	return runnerDownloadSpecForPins(buildinfo.Pins())
+}
+
+func runnerDownloadSpecForPins(pins buildinfo.Manifest) (runnerDownloadSpec, error) {
+	payload, err := pins.RunnerPayload()
+	if err != nil || payload.Kind != "official" {
+		return runnerDownloadSpec{}, errors.New("runtime-lock: selected payload requires authenticated local archive")
+	}
 	version := pins.UpstreamRunner.Version
 	if !strings.HasPrefix(version, "v") || len(version) < 2 {
 		return runnerDownloadSpec{}, errors.New("runtime-lock: runner version invalid")
@@ -40,11 +47,15 @@ func currentRunnerDownloadSpec() (runnerDownloadSpec, error) {
 }
 
 func validateRunnerRedirect(raw string) (string, error) {
+	return validateRunnerRedirectForPins(raw, buildinfo.Pins())
+}
+
+func validateRunnerRedirectForPins(raw string, pins buildinfo.Manifest) (string, error) {
 	if raw == "" || len(raw) > maxRunnerRedirectBytes || strings.TrimSpace(raw) != raw ||
 		strings.ContainsAny(raw, "\x00\r\n\t#") {
 		return "", errors.New("runtime-lock: runner redirect bytes invalid")
 	}
-	spec, err := currentRunnerDownloadSpec()
+	spec, err := runnerDownloadSpecForPins(pins)
 	if err != nil {
 		return "", err
 	}

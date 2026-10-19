@@ -10,14 +10,15 @@ set -euo pipefail
 
 usage() {
   printf '%s\n' \
-    'usage: rehearse-runtime.sh --release-kind candidate|product --version VERSION --runner-manifest PATH --output PATH' >&2
+    'usage: rehearse-runtime.sh --release-kind candidate|product --version VERSION --runner-manifest PATH --output PATH [--runner-archive PATH]' >&2
 }
 
-if [ "$#" -ne 8 ] ||
+if { [ "$#" -ne 8 ] && [ "$#" -ne 10 ]; } ||
   [ "$1" != "--release-kind" ] ||
   [ "$3" != "--version" ] ||
   [ "$5" != "--runner-manifest" ] ||
-  [ "$7" != "--output" ]; then
+  [ "$7" != "--output" ] ||
+  { [ "$#" -eq 10 ] && [ "$9" != "--runner-archive" ]; }; then
   usage
   exit 2
 fi
@@ -26,8 +27,9 @@ release_kind=$2
 version=$4
 runner_manifest=$6
 output=$8
+runner_archive=${10:-}
 
-python3 - "$release_kind" "$version" "$runner_manifest" "$output" "$(dirname "$0")/../.." <<'PY'
+python3 - "$release_kind" "$version" "$runner_manifest" "$output" "$(dirname "$0")/../.." "$runner_archive" <<'PY'
 import datetime
 import enum
 import hashlib
@@ -307,6 +309,96 @@ def validate_runner(value):
     if value["observation_evidence"] != evidence_digest(value):
         reject("runner observation evidence")
     return value
+
+
+
+def select_runner_payload(repository, runner):
+    """Keep the official observation separate from an optional bound rebuild."""
+    path = repository / "internal/buildinfo/runner_rebuild.json"
+    try:
+        if path.is_symlink() or path.resolve(strict=True) != path or not path.is_file() or path.stat().st_nlink != 1 or path.stat().st_size > 8192:
+            reject("runner rebuild descriptor")
+        raw = path.read_bytes()
+    except OSError:
+        reject("runner rebuild descriptor")
+    payload = runner_payload_from_descriptor(raw, runner)
+    if payload["kind"] == "dotnet-rebuild":
+        patch = repository / "release/runner-rebuild.patch"
+        try:
+            if patch.is_symlink() or patch.resolve(strict=True) != patch or not patch.is_file() or patch.stat().st_nlink != 1 or patch.stat().st_size > 65536:
+                reject("runner source patch")
+            if sha256_file(patch) != load_json_bytes(raw)["source_patch_sha256"]:
+                reject("runner source patch digest")
+        except OSError:
+            reject("runner source patch")
+    return payload
+
+
+def runner_payload_from_descriptor(raw, runner):
+    if not 0 < len(raw) <= 8192:
+        reject("runner rebuild descriptor size")
+    descriptor = load_json_bytes(raw)
+    ordered = ("schema_version", "enabled", "upstream_version", "upstream_source_commit", "upstream_linux_x64_sha256", "dotnet_sdk_version", "dotnet_runtime_version", "sdk_archive_sha512", "source_patch_sha256", "asset_name", "linux_x64_sha256", "archive_bytes")
+    if not isinstance(descriptor, dict) or type(descriptor.get("schema_version")) is not int or descriptor["schema_version"] != 1 or type(descriptor.get("enabled")) is not bool:
+        reject("runner rebuild schema")
+    keys = ordered if descriptor["enabled"] else ordered[:2]
+    if set(descriptor) != set(keys) or (json.dumps({key: descriptor[key] for key in keys}, indent=2, ensure_ascii=True) + "\n").encode() != raw:
+        reject("runner rebuild encoding")
+    upstream_sha = runner["linux_x64_asset_digest"].removeprefix("sha256:")
+    official = {"schema_version": 1, "kind": "official", "asset_name": runner["linux_x64_asset_name"], "sha256": upstream_sha, "upstream_sha256": upstream_sha}
+    if not descriptor["enabled"]:
+        return official
+    for key, length in (("upstream_source_commit", 40), ("upstream_linux_x64_sha256", 64), ("linux_x64_sha256", 64), ("source_patch_sha256", 64), ("sdk_archive_sha512", 128)):
+        if not isinstance(descriptor[key], str) or re.fullmatch("[0-9a-f]{" + str(length) + "}", descriptor[key]) is None:
+            reject("runner rebuild digest")
+    if (not isinstance(descriptor["upstream_version"], str) or re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", descriptor["upstream_version"]) is None
+        or descriptor["dotnet_sdk_version"] != "8.0.426" or descriptor["dotnet_runtime_version"] != "8.0.32"
+        or type(descriptor["archive_bytes"]) is not int or not 0 < descriptor["archive_bytes"] <= 512 * 1024 * 1024
+        or descriptor["linux_x64_sha256"] == descriptor["upstream_linux_x64_sha256"]
+        or descriptor["asset_name"] != "actions-runner-linux-x64-" + descriptor["upstream_version"][1:] + "-dotnet-8.0.32.tar.gz"):
+        reject("runner rebuild identity")
+    if descriptor["upstream_linux_x64_sha256"] != upstream_sha:
+        return official
+    if descriptor["upstream_version"] != runner["version"] or descriptor["upstream_source_commit"] != runner["source_commit_sha"]:
+        reject("runner rebuild upstream binding")
+    return {"schema_version": 1, "kind": "dotnet-rebuild", "asset_name": descriptor["asset_name"], "sha256": descriptor["linux_x64_sha256"], "upstream_sha256": upstream_sha, "provenance_sha256": sha256_bytes(raw), "archive_bytes": descriptor["archive_bytes"]}
+
+
+def copy_rebuilt_runner_archive(source, destination, payload):
+    """Copy a local authenticated payload without following aliases or drift."""
+    if payload["kind"] != "dotnet-rebuild" or source.name != payload["asset_name"]:
+        reject("runner rebuild archive name")
+    opened = False
+    try:
+        source = source.absolute()
+        if source.resolve(strict=True) != source:
+            reject("runner rebuild archive path")
+        descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size != payload["archive_bytes"]:
+                reject("runner rebuild archive identity")
+            digest = hashlib.sha256()
+            with destination.open("xb") as target:
+                opened = True
+                remaining = payload["archive_bytes"]
+                while remaining:
+                    chunk = stream.read(min(remaining, 1024 * 1024))
+                    if not chunk:
+                        reject("runner rebuild short read")
+                    target.write(chunk)
+                    digest.update(chunk)
+                    remaining -= len(chunk)
+                if stream.read(1):
+                    reject("runner rebuild extra bytes")
+            after = os.fstat(stream.fileno())
+            identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
+            if identity(before) != identity(after) or digest.hexdigest() != payload["sha256"]:
+                reject("runner rebuild archive drift")
+    except (OSError, RehearsalError):
+        if opened:
+            destination.unlink(missing_ok=True)
+        reject("runner rebuild archive")
 
 
 def validate_release_manifest(root):
@@ -1131,9 +1223,12 @@ def spdx_document_root(value, expected_digest):
     return root_id
 
 
-def supplement_runner_licenses(clone, runner, spdx_path, subject_digest):
+def supplement_runner_licenses(clone, runner, spdx_path, subject_digest, *, runner_asset_digest=None):
     """Supplement declarations from reviewed, version/asset-bound evidence."""
     clone = clone.resolve(strict=True)
+    asset_digest = runner["linux_x64_asset_digest"] if runner_asset_digest is None else runner_asset_digest
+    if not isinstance(asset_digest, str) or DIGEST.fullmatch(asset_digest) is None:
+        reject("runner licensing payload digest")
 
     def text(value, maximum=2048):
         return isinstance(value, str) and 0 < len(value) <= maximum and not any(c in value for c in "\r\n\t\x00")
@@ -1163,7 +1258,7 @@ def supplement_runner_licenses(clone, runner, spdx_path, subject_digest):
         not isinstance(registry, dict)
         or set(registry) != {"schema_version", "runner_asset_digest", "packages", "licenses"}
         or type(registry["schema_version"]) is not int or registry["schema_version"] != 1
-        or registry["runner_asset_digest"] != runner["linux_x64_asset_digest"]
+        or registry["runner_asset_digest"] != asset_digest
         or not isinstance(registry["runner_asset_digest"], str)
         or DIGEST.fullmatch(registry["runner_asset_digest"]) is None
         or not isinstance(registry["packages"], list) or not 0 < len(registry["packages"]) <= 1024
@@ -1256,13 +1351,22 @@ def supplement_runner_licenses(clone, runner, spdx_path, subject_digest):
     spdx_path.write_bytes(canonical_json(value))
 
 
-def apply_baseline_runner_licenses(clone, baseline, runner, spdx_path, subject_digest):
-    # Evidence for one authenticated asset cannot be retargeted to another.
-    # Other candidates retain the ordinary strict catalog/notices path.
-    if runner["linux_x64_asset_digest"] == baseline["linux_x64_asset_digest"]:
-        supplement_runner_licenses(clone, runner, spdx_path, subject_digest)
-        return ["--verified-runner-licenses"]
-    return []
+def apply_baseline_runner_licenses(clone, baseline, runner, spdx_path, subject_digest, *, payload=None):
+    # Evidence for one authenticated payload cannot be retargeted to another.
+    # Other official candidates retain the ordinary strict catalog/notices path.
+    if runner["linux_x64_asset_digest"] != baseline["linux_x64_asset_digest"]:
+        return []
+    actual_digest = runner["linux_x64_asset_digest"]
+    if payload is not None:
+        if (not isinstance(payload, dict) or payload.get("kind") not in ("official", "dotnet-rebuild")
+            or not isinstance(payload.get("sha256"), str) or HEX64.fullmatch(payload["sha256"]) is None
+            or payload.get("upstream_sha256") != actual_digest.removeprefix("sha256:")):
+            reject("runner licensing upstream binding")
+        actual_digest = "sha256:" + payload["sha256"]
+        if payload["kind"] == "official" and actual_digest != runner["linux_x64_asset_digest"]:
+            reject("runner licensing official payload")
+    supplement_runner_licenses(clone, runner, spdx_path, subject_digest, runner_asset_digest=actual_digest)
+    return ["--verified-runner-licenses"]
 
 
 def generate_notices(sbom_rows, exceptions, output, subject_digests=None):
@@ -1637,9 +1741,9 @@ def write_authority_files(
 
 def main():
     set_stage(RehearsalStage.SOURCE)
-    if len(sys.argv) != 6:
+    if len(sys.argv) != 7:
         return 2
-    release_kind, version, runner_manifest_arg, output_arg, repository_arg = sys.argv[1:]
+    release_kind, version, runner_manifest_arg, output_arg, repository_arg, local_runner_archive_arg = sys.argv[1:]
     if release_kind not in ("candidate", "product"):
         reject("release kind")
     if (
@@ -1663,6 +1767,9 @@ def main():
     release_root = load_json_bytes(release_manifest_raw)
     runtime = validate_release_manifest(release_root)
     baseline = runtime["runner_release"]
+    payload = select_runner_payload(repository, runner)
+    if bool(local_runner_archive_arg) != (payload["kind"] == "dotnet-rebuild"):
+        reject("runner payload input")
     relation = (
         version_tuple(runner["version"]) > version_tuple(baseline["version"])
     )
@@ -1779,20 +1886,23 @@ def main():
         # Runner transfer and independent size/hash proof happen before the
         # candidate overlay or any archive use.
         set_stage(RehearsalStage.RUNNER)
-        runner_archive = downloads / runner["linux_x64_asset_name"]
-        runner_url = (
-            "https://github.com/actions/runner/releases/download/"
-            f"{runner['version']}/{runner['linux_x64_asset_name']}"
-        )
-        curl_download(
-            runner_url,
-            runner_archive,
-            runner["linux_x64_asset_digest"].removeprefix("sha256:"),
-            env,
-            log,
-            maximum=runner["linux_x64_asset_size"],
-        )
-        if runner_archive.stat().st_size != runner["linux_x64_asset_size"]:
+        runner_archive = downloads / payload["asset_name"]
+        if payload["kind"] == "dotnet-rebuild":
+            copy_rebuilt_runner_archive(pathlib.Path(local_runner_archive_arg), runner_archive, payload)
+        else:
+            runner_url = (
+                "https://github.com/actions/runner/releases/download/"
+                f"{runner['version']}/{runner['linux_x64_asset_name']}"
+            )
+            curl_download(
+                runner_url,
+                runner_archive,
+                runner["linux_x64_asset_digest"].removeprefix("sha256:"),
+                env,
+                log,
+                maximum=runner["linux_x64_asset_size"],
+            )
+        if runner_archive.stat().st_size != payload.get("archive_bytes", runner["linux_x64_asset_size"]):
             reject("runner asset size")
         os.chmod(runner_archive, 0o400)
 
@@ -1971,6 +2081,13 @@ def main():
             reject("CA bundle path")
         if resolved_ca_bundle != ca_bundle or not ca_bundle.is_file():
             reject("CA bundle path")
+        # The independent Go consumer must choose exactly the Python-selected payload.
+        compiled_payload = capture(
+            ["go", "run", "./cmd/portable-ghar-runtime-lock", "runner-payload-spec"],
+            cwd=clone, env=env, log=log, timeout=300,
+        )
+        if load_json_bytes(compiled_payload) != payload:
+            reject("runner payload consumer disagreement")
         run(
             [
                 "scripts/prepare-task5-images.sh",
@@ -2203,6 +2320,19 @@ def main():
         runner_path_out.write_bytes(canonical_json(runner))
         os.chmod(runner_path_out, 0o444)
         add_subject(subjects, stage, "runner-release.json", "runner-manifest")
+        payload_path_out = stage / "runner-payload.json"
+        payload_path_out.write_bytes(canonical_json(payload))
+        os.chmod(payload_path_out, 0o444)
+        add_subject(subjects, stage, "runner-payload.json", "runner-payload")
+        if payload["kind"] == "dotnet-rebuild":
+            descriptor_raw = (clone / "internal/buildinfo/runner_rebuild.json").read_bytes()
+            if sha256_bytes(descriptor_raw) != payload["provenance_sha256"]:
+                reject("runner rebuild provenance drift")
+            descriptor_path_out = stage / "runner-rebuild.json"
+            descriptor_path_out.write_bytes(descriptor_raw)
+            os.chmod(descriptor_path_out, 0o444)
+            add_subject(subjects, stage, "runner-rebuild.json", "runner-rebuild-provenance")
+
 
         # Pinned Trivy is a live-DB fail-closed admission gate, deliberately
         # excluded from byte-reproducibility evidence.
@@ -2287,6 +2417,7 @@ def main():
                 license_sanitizer_args = apply_baseline_runner_licenses(
                     clone, baseline, runner, normalized,
                     oci_graph(stage / relative)["manifest_digest"].removeprefix("sha256:"),
+                    payload=payload,
                 )
             os.chmod(normalized, 0o444)
             add_subject(

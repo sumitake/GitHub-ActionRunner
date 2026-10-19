@@ -209,7 +209,7 @@ EOF
   ! grep -F 'portable-ghar-runtime-lock" "$runner_stage' "$SCRIPT"
   ! grep -F '2.336.0' "$SCRIPT"
   ! grep -F '2.336.0' "$REPO_ROOT/images/runner/Dockerfile"
-  grep -F 'runner-download-spec' "$SCRIPT"
+  grep -F 'runner-payload-spec' "$SCRIPT"
 }
 
 @test "prepared runner and seed contexts preserve verified object modes" {

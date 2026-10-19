@@ -30,6 +30,10 @@ type Manifest struct {
 
 	UpstreamRunner UpstreamRunnerPin
 
+	// RunnerRebuildJSON binds an optional app-local runtime rebuild while
+	// retaining the official release identity separately.
+	RunnerRebuildJSON []byte
+
 	// RunnerBaseImage is the base image for the upstream GitHub Actions
 	// runner image layer. AdapterImage, BrokerImage, HelperImage, and
 	// VerifierImage are the controller's own component images, all built
@@ -109,6 +113,7 @@ const (
 // its slice fields in place if they intend to call Pins again and compare.
 func Pins() Manifest {
 	return Manifest{
+		RunnerRebuildJSON: append([]byte(nil), runnerRebuildJSON...),
 		GoLanguageVersion: "1.26.0",
 		GoToolchain:       "go1.26.9",
 		Scaleset: ModulePin{
