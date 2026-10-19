@@ -23,7 +23,7 @@ import _bounded_qualification as q
 
 
 def command(args, **kwargs):
-    return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
+    return subprocess.check_output(args, text=True, timeout=kwargs.pop('timeout', 60), **kwargs).strip()
 
 
 def admission(source, event, environment):
@@ -65,13 +65,107 @@ def safe_environment(root, go_root):
     return value
 
 
-def docker_json(args):
-    return json.loads(command(['docker', *args]))
+def docker_json(args, **kwargs):
+    return json.loads(command(['docker', *args], **kwargs))
 
 
-def own_containers(label):
-    raw = command(['docker', 'ps', '-aq', '--no-trunc', '--filter', 'label=' + label])
+def own_containers(label, **kwargs):
+    raw = command(['docker', 'ps', '-aq', '--no-trunc', '--filter', 'label=' + label], **kwargs)
     return raw.splitlines() if raw else []
+
+
+def layer_path(raw, docker_root, leaf):
+    if not isinstance(raw, str) or not raw or any(c in raw for c in '\n\r\t*?[]\\'):
+        raise q.Stop('invalid Docker graph path')
+    path = pathlib.Path(raw).resolve(strict=True)
+    relative = path.relative_to(docker_root)
+    if len(relative.parts) != 3 or relative.parts[0] != 'overlay2' or re.fullmatch('[0-9a-f]{64}', relative.parts[1]) is None or relative.parts[2] != leaf or not path.is_dir():
+        raise q.Stop('unexpected Docker graph path')
+    return path
+
+
+def preinstalled_payloads(docker_root):
+    """Freeze only immutable image payloads, before any task Docker mutation."""
+    deadline = time.monotonic() + 20
+    identifiers = sorted(set(command(['docker', 'image', 'ls', '-aq', '--no-trunc'], timeout=q.remaining(deadline)).splitlines()))
+    if len(identifiers) > 1024 or any(re.fullmatch('sha256:[0-9a-f]{64}', value) is None for value in identifiers):
+        raise q.Stop('unbounded or invalid baseline image inventory')
+    images = docker_json(['image', 'inspect', *identifiers], timeout=q.remaining(deadline)) if identifiers else []
+    if {image['Id'] for image in images} != set(identifiers) or len(images) != len(identifiers):
+        raise q.Stop('incomplete baseline image inventory')
+    excluded = set()
+    for image in images:
+        driver = image['GraphDriver']
+        if driver['Name'] != 'overlay2':
+            raise q.Stop('unsupported baseline image storage')
+        data = driver['Data'] or {}
+        if not image.get('RootFS', {}).get('Layers') and not data:
+            continue
+        if not data.get('UpperDir') or not isinstance(data.get('LowerDir', ''), str):
+            raise q.Stop('baseline image payload unavailable')
+        for raw in [data['UpperDir'], *filter(None, data.get('LowerDir', '').split(':'))]:
+            excluded.add(layer_path(raw, docker_root, 'diff'))
+        q.remaining(deadline)
+    if len(excluded) > 4096 or sum(len(str(path).encode()) + 12 for path in excluded) > 512 * 1024:
+        raise q.Stop('unbounded baseline exclusion catalog')
+    q.remaining(deadline)
+    return tuple(sorted(excluded))
+
+
+def filesystems(paths):
+    """Each physical device contributes once, even with several task paths."""
+    rows = {}
+    for path in paths:
+        device = str(path.stat().st_dev)
+        value = os.statvfs(path)
+        row = {'used_bytes': (value.f_blocks - value.f_bfree) * value.f_frsize, 'free_bytes': value.f_bavail * value.f_frsize, 'free_inodes': value.f_favail}
+        if device in rows:
+            previous = rows[device]
+            row = {'used_bytes': max(previous['used_bytes'], row['used_bytes']), 'free_bytes': min(previous['free_bytes'], row['free_bytes']), 'free_inodes': min(previous['free_inodes'], row['free_inodes'])}
+        rows[device] = row
+    return rows
+
+
+def charge_allocation(usage, root, source, docker_root, current, baseline, carry, initial_charge):
+    if set(current) != set(baseline):
+        raise q.Stop('allocation filesystem changed')
+    owned = sum(usage[str(path)] for path in (root, source, docker_root))
+    growth = sum(max(0, row['used_bytes'] - baseline[device]['used_bytes']) for device, row in current.items())
+    # Physical filesystem growth can catch pending/unlinked allocations. It is
+    # only an additional floor: unrelated deletions never discount owned bytes.
+    charged = max(owned, growth + initial_charge)
+    return {'allocated_task_and_Docker_bytes': owned, 'filesystem_growth_bytes': growth, 'accounted_bytes': carry + charged + 64 * 2**20}
+
+
+def allocation_preflight(source, output_parent):
+    """Read-only host compatibility check, shared by CI and manual admission."""
+    info = docker_json(['info', '--format', '{{json .}}'])
+    if info['CgroupVersion'] != '2' or info['Driver'] != 'overlay2':
+        raise q.Stop('hosted cgroup v2 and overlay2 required')
+    docker_root = pathlib.Path(info['DockerRootDir'])
+    if docker_root.resolve(strict=True) != docker_root:
+        raise q.Stop('indirect Docker data root')
+    if source == docker_root or source.is_relative_to(docker_root) or docker_root.is_relative_to(source):
+        raise q.Stop('overlapping allocation roots')
+    excluded = preinstalled_payloads(docker_root)
+    baseline = filesystems((output_parent, docker_root, source))
+    initial = q.allocated([docker_root, source], excluded)
+    return docker_root, excluded, baseline, initial
+
+
+def wait_for_observer(root):
+    # No build descendant starts before admission. Allow the full20-second
+    # sample plus scheduling margin within the existing30-second freshness bound.
+    deadline = time.monotonic() + 30
+    heartbeat = root / 'heartbeat.json'
+    while time.monotonic() < deadline:
+        if heartbeat.exists():
+            if time.time() - heartbeat.stat().st_mtime > 30:
+                raise q.Stop('initial observer heartbeat stale')
+            q.checks(json.loads(heartbeat.read_text()))
+            return
+        time.sleep(.1)
+    raise q.Stop('host observer did not admit aggregate bounds')
 
 
 def compose_worker(root, label):
@@ -200,15 +294,7 @@ def child(root, go_root):
         raise q.Stop('unexpected aggregate cgroup')
     control = pathlib.Path('/sys/fs/cgroup') / group.lstrip('/')
     q.write(root / 'scope.json', {'name': slice_name, 'cgroup': str(control)})
-    admitted = False
-    for _ in range(150):
-        if (root / 'heartbeat.json').exists():
-            q.checks(json.loads((root / 'heartbeat.json').read_text()))
-            admitted = True
-            break
-        time.sleep(.1)
-    if not admitted:
-        raise q.Stop('host observer did not admit aggregate bounds')
+    wait_for_observer(root)
     parent = slice_name if docker_json(['info', '--format', '{{json .CgroupDriver}}']) == 'systemd' else group
     label = 'pghar.qualification=' + inputs['run_id']
     environment = safe_environment(root, go_root)
@@ -266,24 +352,24 @@ def child(root, go_root):
             os.environ.update(old_env)
 
 
-def sample(root, inputs, docker_root, docker_baseline):
+def sample(root, inputs, docker_root, excluded, baseline, initial_charge):
+    deadline = time.monotonic() + 20
+    source = pathlib.Path(inputs['checkout'])
     scope = json.loads((root / 'scope.json').read_text())
     control = pathlib.Path(scope['cgroup'])
     kernel = {key: (control / key).read_text().strip() for key in ('cpu.max', 'memory.max', 'memory.swap.max', 'memory.events', 'memory.current', 'memory.peak', 'pids.max', 'pids.current', 'pids.peak')}
-    ids = own_containers('pghar.qualification=' + inputs['run_id'])
-    writable = 0
+    label = 'pghar.qualification=' + inputs['run_id']
+    ids = own_containers(label, timeout=q.remaining(deadline))
     containers = []
     for identifier in ids:
-        result = subprocess.run(['docker', 'inspect', '--size', identifier], capture_output=True, text=True, timeout=15)
+        result = subprocess.run(['docker', 'inspect', identifier], capture_output=True, text=True, timeout=min(15, q.remaining(deadline)))
         if result.returncode:
-            if identifier in own_containers('pghar.qualification=' + inputs['run_id']):
+            if identifier in own_containers(label, timeout=q.remaining(deadline)):
                 raise q.Stop('owned container inspection unavailable')
             continue
         item = json.loads(result.stdout)[0]
         config = item['HostConfig']
         if config['NanoCpus'] != 4000000000 or config['Memory'] != q.MEMORY or config['MemorySwap'] != q.MEMORY or config['PidsLimit'] != 1024 or any(m['Destination'] == '/var/run/docker.sock' for m in item['Mounts']):
-            # The source image is copied from an unstarted container during
-            # bootstrap; only running build descendants consume this allowance.
             if item['State']['Running']:
                 raise q.Stop('running descendant escaped resource policy')
         pid = item['State']['Pid']
@@ -292,14 +378,36 @@ def sample(root, inputs, docker_root, docker_baseline):
             expected = str(control.relative_to('/sys/fs/cgroup'))
             if not lineage.lstrip('/').startswith(expected + '/'):
                 raise q.Stop('running container escaped aggregate cgroup')
-        writable += item.get('SizeRw', 0)
-        containers.append({'id': identifier, 'running': item['State']['Running'], 'pid': pid, 'size_rw': item.get('SizeRw', 0), 'cgroup_parent': config['CgroupParent']})
+        try:
+            data = item['GraphDriver']['Data']
+            upper = layer_path(data['UpperDir'], docker_root, 'diff')
+            work = layer_path(data['WorkDir'], docker_root, 'work')
+        except FileNotFoundError:
+            if identifier not in own_containers(label, timeout=q.remaining(deadline)):
+                continue
+            raise q.Stop('owned writable root unavailable')
+        if upper in excluded:
+            raise q.Stop('writable root overlaps immutable baseline payload')
+        containers.append({'id': identifier, 'running': item['State']['Running'], 'pid': pid, 'upper': str(upper), 'work': str(work), 'cgroup_parent': config['CgroupParent']})
+    usage = q.allocated([root, docker_root, source], excluded, deadline=deadline, depth=3)
+    present = set(own_containers(label, timeout=q.remaining(deadline)))
+    writable_paths = set()
+    for item in containers:
+        for key in ('upper', 'work'):
+            path = item[key]
+            if path not in usage:
+                if item['id'] in present:
+                    raise q.Stop('incomplete writable-root allocation')
+            else:
+                writable_paths.add(path)
+    writable = sum(usage[path] for path in writable_paths)
+    current = filesystems((root, docker_root, source))
     memory = dict(line.split(':', 1) for line in pathlib.Path('/proc/meminfo').read_text().splitlines())
-    filesystem = os.statvfs(root)
-    docker_filesystem = os.statvfs(docker_root)
-    row = {'captured_at': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'kernel': kernel, 'work_bytes': q.du(root), 'docker_growth_bytes': max(0, q.du(docker_root) - docker_baseline), 'checkout_bytes': q.du(pathlib.Path(inputs['checkout'])), 'carry_in_bytes': inputs['carry_in_bytes'], 'control_reserve_bytes': 64 * 2**20, 'writable_root_bytes': writable, 'free_bytes': min(filesystem.f_bavail * filesystem.f_frsize, docker_filesystem.f_bavail * docker_filesystem.f_frsize), 'free_inodes': min(filesystem.f_favail, docker_filesystem.f_favail), 'available_memory_bytes': int(memory['MemAvailable'].split()[0]) * 1024, 'containers': containers}
+    row = {'kernel': kernel, 'work_bytes': usage[str(root)], 'docker_allocated_bytes': usage[str(docker_root)], 'checkout_bytes': usage[str(source)], 'carry_in_bytes': inputs['carry_in_bytes'], 'control_reserve_bytes': 64 * 2**20, 'writable_root_bytes': writable, 'free_bytes': min(value['free_bytes'] for value in current.values()), 'free_inodes': min(value['free_inodes'] for value in current.values()), 'available_memory_bytes': int(memory['MemAvailable'].split()[0]) * 1024, 'containers': containers, 'filesystems': current, 'immutable_preinstalled_payloads': len(excluded)}
+    row.update(charge_allocation(usage, root, source, docker_root, current, baseline, inputs['carry_in_bytes'], initial_charge))
     workers = []
     for proc in pathlib.Path('/proc').iterdir():
+        q.remaining(deadline)
         if not proc.name.isdigit():
             continue
         try:
@@ -312,14 +420,16 @@ def sample(root, inputs, docker_root, docker_baseline):
             workers.append({'pid': int(proc.name), 'executable': executable.decode(), 'cgroup': member_group, 'aggregate_limits_apply': True})
         except (FileNotFoundError, ProcessLookupError):
             pass
+    q.remaining(deadline)
+    q.checks(row)
     if workers:
         with (root / 'evidence/actual-worker-lineage.jsonl').open('a') as stream:
             stream.write(json.dumps(workers) + '\n')
-    row['accounted_bytes'] = sum(row[key] for key in ('work_bytes', 'docker_growth_bytes', 'checkout_bytes', 'carry_in_bytes', 'control_reserve_bytes'))
+    row['captured_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    row['accounting_seconds'] = 20 - q.remaining(deadline)
     q.write(root / 'heartbeat.json', row)
     with (root / 'evidence/resource-samples.jsonl').open('a') as stream:
         stream.write(json.dumps(row) + '\n')
-    q.checks(row)
     return row
 
 
@@ -412,20 +522,18 @@ def host(source, root, event_path, go_root):
     # immutable baseline OS tooling, not a cache downloaded outside accounting.
     if go_root.resolve(strict=True) != go_root or command([str(go_root / 'bin/go'), 'version'], env={'PATH': '/usr/bin:/bin', 'GOTOOLCHAIN': 'local'}) != 'go version go1.26.9 linux/amd64':
         raise q.Stop('preinstalled pinned Go toolchain unavailable')
-    docker_info = docker_json(['info', '--format', '{{json .}}'])
-    if docker_info['CgroupVersion'] != '2' or docker_info['Driver'] != 'overlay2':
-        raise q.Stop('hosted cgroup v2 and overlay2 required')
-    docker_root = pathlib.Path(docker_info['DockerRootDir'])
-    if docker_root.resolve(strict=True) != docker_root:
-        raise q.Stop('indirect Docker data root')
-    docker_baseline = q.du(docker_root)
+    docker_root, excluded, baseline, initial = allocation_preflight(source, root.parent)
+    if root == docker_root or root.is_relative_to(docker_root) or docker_root.is_relative_to(root) or root == source or root.is_relative_to(source) or source.is_relative_to(root):
+        raise q.Stop('overlapping allocation roots')
+    if inputs['carry_in_bytes'] + sum(initial[str(path)] for path in (docker_root, source)) + 64 * 2**20 >= q.SOFT:
+        raise q.Stop('initial allocated storage exceeds admission envelope')
     memory = dict(line.split(':', 1) for line in pathlib.Path('/proc/meminfo').read_text().splitlines())
-    fs = os.statvfs(root.parent)
-    if int(memory['MemAvailable'].split()[0]) * 1024 < 11 * q.GIB or fs.f_favail < 700000 or fs.f_bavail * fs.f_frsize < 13 * q.GIB + (q.SOFT - inputs['carry_in_bytes']):
+    if int(memory['MemAvailable'].split()[0]) * 1024 < 11 * q.GIB or min(value['free_inodes'] for value in baseline.values()) < 700000 or min(value['free_bytes'] for value in baseline.values()) < 13 * q.GIB + (q.SOFT - inputs['carry_in_bytes']):
         raise q.Stop('hosted admission reserve unavailable')
     root.mkdir(mode=0o700)
     (root / 'evidence').mkdir()
     inputs['checkout'] = str(source)
+    q.write(root / 'evidence/Docker-accounting.json', {'method': 'allocated blocks excluding only frozen immutable preinstalled image payloads; no baseline subtraction', 'excluded_payloads': [str(path) for path in excluded], 'filesystem_baseline': baseline, 'initial_allocated_bytes': initial})
     q.write(root / 'inputs.json', inputs)
     q.write(root / 'evidence/source-inputs.json', {key: value for key, value in inputs.items() if key != 'checkout'})
     scope_name = 'pghar-qualification-' + inputs['run_id']
@@ -448,13 +556,13 @@ def host(source, root, event_path, go_root):
             if time.monotonic() - started >= 85 * 60:
                 raise q.Stop('85-minute worker deadline')
             if (root / 'scope.json').exists():
-                sample(root, inputs, docker_root, docker_baseline)
+                sample(root, inputs, docker_root, excluded, baseline, sum(initial.values()))
             elif time.monotonic() - started > 20:
                 raise q.Stop('aggregate cgroup admission missing')
             time.sleep(2)
         if process.returncode:
             raise q.Stop('qualification scope failed')
-        sample(root, inputs, docker_root, docker_baseline)
+        sample(root, inputs, docker_root, excluded, baseline, sum(initial.values()))
     except BaseException as failure:
         error = type(failure).__name__ + ': ' + str(failure)
         q.write(root / 'evidence/FAILURE.json', {'error': error, 'release_admitted': False, 'live_operations': False})
@@ -521,11 +629,17 @@ def main():
     group.add_argument('--scan', type=pathlib.Path)
     group.add_argument('--retain-failure', type=pathlib.Path)
     group.add_argument('--check-upload', type=pathlib.Path)
+    group.add_argument('--check-accounting', action='store_true')
     parser.add_argument('--source', type=pathlib.Path)
     parser.add_argument('--event', type=pathlib.Path)
     parser.add_argument('--go-root', type=pathlib.Path)
     args = parser.parse_args()
-    if args.check_upload:
+    if args.check_accounting:
+        source = args.source.resolve(strict=True)
+        started = time.monotonic()
+        docker_root, excluded, baseline, initial = allocation_preflight(source, source.parent)
+        print(json.dumps({'read_only_accounting_preflight': 'pass', 'immutable_preinstalled_payloads': len(excluded), 'docker_allocated_bytes': initial[str(docker_root)], 'checkout_bytes': initial[str(source)], 'physical_filesystems': len(baseline), 'free_bytes': min(row['free_bytes'] for row in baseline.values()), 'seconds': time.monotonic() - started, 'qualification_executed': False, 'Docker_mutations': False}))
+    elif args.check_upload:
         files = q.inventory(args.check_upload)
         if sum(item['bytes'] for item in files) > q.ARTIFACT_LIMIT or not (args.check_upload / 'evidence-inventory.json').is_file():
             raise q.Stop('fixed evidence transfer not admitted')

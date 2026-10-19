@@ -42,13 +42,45 @@ def write(path, value):
     temporary.replace(path)
 
 
-def du(path):
+def remaining(deadline):
+    seconds = deadline - time.monotonic()
+    if seconds <= 0:
+        raise Stop('allocated storage observation deadline exceeded')
+    return seconds
+
+
+def allocated(paths, excluded=(), *, deadline=None, depth=0):
+    """One bounded traversal; never admit partial, late or interrupted output."""
+    deadline = time.monotonic() + 20 if deadline is None else deadline
+    names = [os.fspath(path) for path in paths]
+    if not names or len(set(names)) != len(names) or any(not pathlib.Path(name).is_absolute() or any(c in name for c in '\n\r\t') for name in names):
+        raise Stop('invalid allocation roots')
+    args = ['du', '-x', '-B1', '--count-links', '--max-depth=' + str(depth)]
+    args += ['--exclude=' + os.fspath(path) for path in excluded]
     for _ in range(3):
-        result = subprocess.run(['du', '-sx', '-B1', os.fspath(path)], capture_output=True, text=True, timeout=20)
+        try:
+            result = subprocess.run([*args, '--', *names], capture_output=True, text=True, timeout=remaining(deadline))
+        except (subprocess.TimeoutExpired, InterruptedError) as error:
+            raise Stop('allocated storage observation interrupted or timed out') from error
+        remaining(deadline)
+        if result.returncode < 0:
+            raise Stop('allocated storage observation was interrupted')
         if result.returncode == 0:
-            return int(result.stdout.split()[0])
-        time.sleep(.1)
+            rows = {}
+            for line in result.stdout.splitlines():
+                fields = line.split('\t', 1)
+                if len(fields) != 2 or not fields[0].isdigit() or fields[1] in rows or not any(pathlib.Path(fields[1]).is_relative_to(name) for name in names):
+                    raise Stop('invalid allocated storage observation')
+                rows[fields[1]] = int(fields[0])
+            if not set(names) <= rows.keys():
+                raise Stop('incomplete allocated storage observation')
+            return rows
+        time.sleep(min(.1, remaining(deadline)))
     raise Stop('allocated storage observation unavailable')
+
+
+def du(path):
+    return allocated([path])[os.fspath(path)]
 
 
 def checks(row):

@@ -31,7 +31,22 @@ transient aggregate cgroup limited to four CPUs, 6,174,015,488 memory bytes,
 zero swap and 1,024 PIDs. SDK and BuildKit containers also retain their own
 limits. The host supervisor verifies actual descendants, kernel limits, OOM
 events, observer heartbeat, Docker writable roots, and physical allocated
-storage including Docker data growth. The full retained carry-in, new source
+storage. Before any task pull, create or import, the supervisor freezes only
+preinstalled immutable image-layer payload paths verified through Docker
+metadata. It excludes those payloads from traversal and charges every remaining
+allocated Docker block, including pending downloads, new layers, container roots,
+logs, volumes and metadata. No Docker baseline is subtracted. Reclaimed task
+files return their actual allocation; unrelated baseline deletion cannot hide
+new task bytes. Owned writable roots are measured in allocated blocks, including
+small-file block slack. One traversal covers all allocation roots within a shared
+20-second observer deadline. Interrupted, incomplete or late results fail closed
+without refreshing the 30-second worker heartbeat. Initial admission allows
+that existing 30-second window before any build starts. Ordinary container CI
+runs the same read-only accounting preflight against its hosted Docker store;
+that probe starts no qualification, container, pull or import. Filesystem free space and
+inodes are checked per physical device, and positive filesystem growth supplies
+an additional conservative allocation floor. No net-growth estimate substitutes
+for the task allocation measurement. The full retained carry-in, new source
 copies, caches, outputs and a 64 MiB control reserve count toward a 10 GiB
 hard ceiling with an 8.5 GiB early stop. Writable roots stop at 2 GiB, free
 disk at 13 GiB, available RAM at 4 GiB, and free inodes at 500,000; admission
