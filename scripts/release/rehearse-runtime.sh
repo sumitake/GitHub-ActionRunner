@@ -2347,7 +2347,7 @@ def main():
         }
         if actual_text != expected_text:
             reject("text authority registry")
-        sanitizer_command = ["python3", "scripts/sanitize_public.py"]
+        sanitizer_command = ["python3", "scripts/sanitize_public.py", "--verified-runner-licenses"]
         for path in text_authorities:
             sanitizer_command.extend(["--generated", os.fspath(path)])
         run(

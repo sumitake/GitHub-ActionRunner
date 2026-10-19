@@ -28,6 +28,7 @@ import json
 import lzma
 import os
 import re
+import stat
 import subprocess
 import sys
 import tarfile
@@ -286,11 +287,9 @@ def _check_ip_literals(line: str, ctx: "LineCtx") -> list[Finding]:
     # module docstring: unconditional shorthand scanning collides with
     # dotted semver strings like "4.10.0", so it is only attempted right
     # after an explicit ip/host/address/cidr label).
-    for m in re.finditer(r"[:=]\s*([0-9xXA-Fa-f.]{1,32})\b", line):
-        prefix = line[: m.start()]
-        if not IP_LABEL_CONTEXT_RE.search(prefix + line[m.start() : m.start() + 1]):
-            if not re.search(r"\b(?:ip|addr|address|host|cidr|loopback_alias|target)\s*$", prefix, re.IGNORECASE):
-                continue
+    # Match the label with the numeric value once; rescanning each growing
+    # prefix makes compact generated inventories quadratic in input length.
+    for m in re.finditer(IP_LABEL_CONTEXT_RE.pattern[:-1] + r"([0-9xXA-Fa-f.]{1,32})\b", line, re.IGNORECASE):
         cand = m.group(1)
         ip = norm.parse_ip_literal(cand)
         if ip is None:
@@ -953,7 +952,88 @@ def scan_tracked(repo_root: Path) -> list[Finding]:
     return out
 
 
-def scan_generated_tree(root_path: Path, repo_root: Path) -> list[Finding]:
+class VerifiedLicenseError(Exception):
+    pass
+
+
+def load_verified_upstream_licenses(repo_root: Path) -> list[tuple[str, bytes]]:
+    """Read only committed, hash-bound public producer documents; never fetch."""
+    try:
+        repo_root = repo_root.resolve(strict=True)
+        registry_path = repo_root / "release/runner-licenses.json"
+        if registry_path.is_symlink() or registry_path.resolve(strict=True) != registry_path or registry_path.stat().st_size > 1048576:
+            raise ValueError("registry path")
+        raw = registry_path.read_bytes()
+        committed = subprocess.run(["git", "show", "HEAD:release/runner-licenses.json"], cwd=repo_root, capture_output=True, check=False, timeout=30)
+        if committed.returncode != 0 or committed.stdout != raw:
+            raise ValueError("uncommitted registry")
+        def pairs(items):
+            value = dict(items)
+            if len(value) != len(items):
+                raise ValueError("duplicate registry key")
+            return value
+        registry = json.loads(raw, object_pairs_hook=pairs)
+        if not isinstance(registry, dict) or set(registry) != {"schema_version", "runner_asset_digest", "packages", "licenses"} or type(registry["schema_version"]) is not int or registry["schema_version"] != 1 or not isinstance(registry["licenses"], list) or not 0 < len(registry["licenses"]) <= 128:
+            raise ValueError("registry schema")
+        documents = {}
+        total = 0
+        for entry in registry["licenses"]:
+            if not isinstance(entry, dict) or not isinstance(entry.get("files"), list) or not 0 < len(entry["files"]) <= 8:
+                raise ValueError("license sources")
+            for item in entry["files"]:
+                if not isinstance(item, dict) or set(item) != {"name", "path", "sha256"} or not isinstance(item["path"], str) or not isinstance(item["sha256"], str) or _SHA256_RE.fullmatch(item["sha256"]) is None:
+                    raise ValueError("license source")
+                relative = item["path"]
+                if relative != "release/runner-license-texts/" + item["sha256"] + ".txt" and re.fullmatch(r"images/runner/build/runner/externals/node(?:20|24)/LICENSE", relative) is None:
+                    raise ValueError("license source path")
+                path = repo_root / relative
+                info = path.lstat()
+                if path.resolve(strict=True) != path or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not 128 <= info.st_size <= 1048576:
+                    raise ValueError("license source file")
+                original = path.read_bytes()
+                original.decode("utf-8", "strict")
+                if hashlib.sha256(original).hexdigest() != item["sha256"] or relative in documents and documents[relative] != original:
+                    raise ValueError("license source hash")
+                if relative not in documents:
+                    total += len(original)
+                    if total > 8 * 1024 * 1024:
+                        raise ValueError("license source budget")
+                    documents[relative] = original
+        return sorted(documents.items(), key=lambda item: (-len(item[1]), item[0]))
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+        raise VerifiedLicenseError("unverified upstream licensing evidence") from exc
+
+
+def scan_generated_bytes(raw: bytes, relpath: str, fixture: bool, upstream_licenses) -> list[Finding]:
+    # The original size/archive checks precede any projection. Every matched
+    # document is scanned independently at its exact source path and line, so
+    # the existing hash-bound allowlist remains the only suppression mechanism.
+    if not upstream_licenses or len(raw) > MAX_FILE_BYTES or _sniff_archive_kind(raw) is not None:
+        return scan_bytes_as_file(raw, relpath, fixture=fixture)
+    try:
+        text = raw.decode("utf-8", "strict")
+    except UnicodeDecodeError:
+        return scan_bytes_as_file(raw, relpath, fixture=fixture)
+    out = []
+    for source_path, original in upstream_licenses:
+        body = original.decode("utf-8", "strict")
+        used = False
+        for representation in dict.fromkeys((body, json.dumps(body, ensure_ascii=True)[1:-1])):
+            if representation in text:
+                newlines = representation.count("\n")
+                marker = "[upstream-license-sha256:" + hashlib.sha256(original).hexdigest() + "]"
+                replacement = marker[:len(representation) - newlines] + "\n" * newlines
+                text = text.replace(representation, replacement)
+                used = True
+        if used:
+            # All rules, including secret/encoding rules, still scan original
+            # bytes. No fixture exemption or generated-path wildcard is added.
+            out += scan_bytes_as_file(original, source_path, fixture=False)
+    out += scan_bytes_as_file(text.encode("utf-8"), relpath, fixture=fixture)
+    return out
+
+
+def scan_generated_tree(root_path: Path, repo_root: Path, upstream_licenses=()) -> list[Finding]:
     out: list[Finding] = []
     root_path = root_path.resolve()
     if not root_path.exists():
@@ -974,7 +1054,7 @@ def scan_generated_tree(root_path: Path, repo_root: Path) -> list[Finding]:
             out += scan_text_content(target, relpath, fixture=fixture)
             continue
         raw = abs_path.read_bytes()
-        out += scan_bytes_as_file(raw, relpath, fixture=fixture)
+        out += scan_generated_bytes(raw, relpath, fixture, upstream_licenses)
     return out
 
 
@@ -1258,6 +1338,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p.add_argument("--generated", action="append", default=[], metavar="PATH", help="scan a generated-output path (repeatable)")
     p.add_argument("--private-denylist", metavar="PATH", help="operator-supplied untracked denylist file (never in CI)")
     p.add_argument("--history", action="store_true", help="scan reachable git history + metadata")
+    p.add_argument("--verified-runner-licenses", action="store_true", help="recognize committed, hash-verified upstream documents in generated text")
     return p.parse_args(argv)
 
 
@@ -1279,6 +1360,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"{ALLOWLIST_FILENAME}:file:ALLOWLIST_INVALID: {exc}")
         return 1
 
+    upstream_licenses = ()
+    if args.verified_runner_licenses:
+        try:
+            if not args.generated:
+                raise VerifiedLicenseError("generated inputs required")
+            upstream_licenses = load_verified_upstream_licenses(repo_root)
+        except VerifiedLicenseError:
+            print("release/runner-licenses.json:file:DECODE_FAIL: unverified upstream licensing evidence")
+            return 1
+
     ran_any = False
     findings: list[Finding] = []
 
@@ -1289,7 +1380,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     for g in args.generated:
         ran_any = True
-        findings += scan_generated_tree(Path(g), repo_root)
+        findings += scan_generated_tree(Path(g), repo_root, upstream_licenses)
 
     if args.private_denylist:
         ran_any = True

@@ -45,8 +45,19 @@ offline fixtures for source tests. An independent replay may use retained SBOMs
 and authenticated license documents without rebuilding runtime artifacts; such a
 replay is not release or target admission.
 
-The existing generated-output sanitizer still applies to the complete SBOM and
-notices, including verbatim upstream text. Producer provenance does not exempt
-that text from public-safety checks. A sanitizer finding continues to block
-release admission; this registry does not suppress findings or redact required
-license terms.
+The generated-output sanitizer recognizes complete upstream document bodies
+only with `--verified-runner-licenses`. The registry must match its committed
+Git blob, and every source document must be a regular canonical file with the
+recorded byte hash. Both plain and JSON-escaped copies are projected to digest
+markers for scanning the remaining metadata. Every recognized original document
+is independently scanned under its exact source path, with all rules enabled.
+The existing allowlist contains only exact source-path, line, rule and content
+hash entries for inspected public Node licensing identifiers. Unknown or altered
+text, extra metadata, secrets, unsafe files and private-denylist matches remain
+blocking. Original size and archive checks precede projection. The released SBOM
+and notices retain their complete original text; the scan does not rewrite them.
+
+The registry is registered as read-only evidence in the existing protected
+candidate inventory. A candidate overlay cannot rewrite its upstream attribution;
+a new asset requires a reviewed registry refresh. Source and generated-output
+sanitization and all vulnerability/admission gates still apply independently.
