@@ -1261,6 +1261,8 @@ def apply_baseline_runner_licenses(clone, baseline, runner, spdx_path, subject_d
     # Other candidates retain the ordinary strict catalog/notices path.
     if runner["linux_x64_asset_digest"] == baseline["linux_x64_asset_digest"]:
         supplement_runner_licenses(clone, runner, spdx_path, subject_digest)
+        return ["--verified-runner-licenses"]
+    return []
 
 
 def generate_notices(sbom_rows, exceptions, output, subject_digests=None):
@@ -2244,6 +2246,7 @@ def main():
         set_stage(RehearsalStage.SBOM)
         syft = os.fspath(acquired["syft"])
         sbom_rows = []
+        license_sanitizer_args = []
         artifact_rows = [
             (item["name"], f"bin/{item['name']}", "sbom")
             for item in runtime["binaries"]
@@ -2281,7 +2284,7 @@ def main():
                 first_party=first_party,
             )
             if relative == "images/runner.oci.tar":
-                apply_baseline_runner_licenses(
+                license_sanitizer_args = apply_baseline_runner_licenses(
                     clone, baseline, runner, normalized,
                     oci_graph(stage / relative)["manifest_digest"].removeprefix("sha256:"),
                 )
@@ -2354,7 +2357,7 @@ def main():
         }
         if actual_text != expected_text:
             reject("text authority registry")
-        sanitizer_command = ["python3", "scripts/sanitize_public.py", "--verified-runner-licenses"]
+        sanitizer_command = ["python3", "scripts/sanitize_public.py", *license_sanitizer_args]
         for path in text_authorities:
             sanitizer_command.extend(["--generated", os.fspath(path)])
         run(

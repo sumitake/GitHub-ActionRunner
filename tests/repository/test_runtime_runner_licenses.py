@@ -138,7 +138,7 @@ class RunnerLicensingMetadata(unittest.TestCase):
         self.write()
         original = self.spdx.read_bytes()
         candidate = {"linux_x64_asset_digest": "sha256:" + "e" * 64}
-        self.n["apply_baseline_runner_licenses"](self.root, {"linux_x64_asset_digest": self.asset}, candidate, self.spdx, self.digest)
+        self.assertEqual(self.n["apply_baseline_runner_licenses"](self.root, {"linux_x64_asset_digest": self.asset}, candidate, self.spdx, self.digest), [])
         self.assertEqual(self.spdx.read_bytes(), original)
         with self.assertRaisesRegex(self.n["RehearsalError"], "package license"):
             self.n["generate_notices"]([("images/runner.oci.tar", self.spdx)], [], self.root / "NOTICES.txt", {"images/runner.oci.tar": self.digest})
@@ -146,14 +146,14 @@ class RunnerLicensingMetadata(unittest.TestCase):
             package["licenseDeclared"] = "MIT"
         self.write()
         original = self.spdx.read_bytes()
-        self.n["apply_baseline_runner_licenses"](self.root, {"linux_x64_asset_digest": self.asset}, candidate, self.spdx, self.digest)
+        self.assertEqual(self.n["apply_baseline_runner_licenses"](self.root, {"linux_x64_asset_digest": self.asset}, candidate, self.spdx, self.digest), [])
         self.assertEqual(self.spdx.read_bytes(), original)
         self.n["generate_notices"]([("images/runner.oci.tar", self.spdx)], [], self.root / "NOTICES.txt", {"images/runner.oci.tar": self.digest})
 
     def test_authenticated_baseline_receives_reviewed_supplement(self):
         self.write()
         baseline = {"linux_x64_asset_digest": self.asset}
-        self.n["apply_baseline_runner_licenses"](self.root, baseline, baseline, self.spdx, self.digest)
+        self.assertEqual(self.n["apply_baseline_runner_licenses"](self.root, baseline, baseline, self.spdx, self.digest), ["--verified-runner-licenses"])
         self.assertEqual(json.loads(self.spdx.read_text())["packages"][1]["licenseDeclared"], "MIT")
 
     def test_subject_digest_mismatch_blocks_metadata(self):

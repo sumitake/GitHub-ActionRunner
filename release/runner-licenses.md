@@ -61,5 +61,6 @@ The registry is registered as read-only evidence in the existing protected
 candidate inventory. A candidate overlay cannot rewrite its upstream attribution;
 other assets use their own catalog declarations through the ordinary strict
 notices path. Unknown declarations still block; extending this supplement to a
-new asset requires reviewed evidence. Source and generated-output
+new asset requires reviewed evidence. The verified-document sanitizer option is
+enabled only when that asset-bound supplement actually succeeds. Source and generated-output
 sanitization and all vulnerability/admission gates still apply independently.
