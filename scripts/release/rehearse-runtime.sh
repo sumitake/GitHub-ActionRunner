@@ -364,6 +364,15 @@ def runner_payload_from_descriptor(raw, runner):
     return {"schema_version": 1, "kind": "dotnet-rebuild", "asset_name": descriptor["asset_name"], "sha256": descriptor["linux_x64_sha256"], "upstream_sha256": upstream_sha, "provenance_sha256": sha256_bytes(raw), "archive_bytes": descriptor["archive_bytes"]}
 
 
+def runner_payload_text_authorities(stage, payload):
+    if payload["kind"] not in ("official", "dotnet-rebuild"):
+        reject("runner payload text authority")
+    paths = [stage / "runner-payload.json"]
+    if payload["kind"] == "dotnet-rebuild":
+        paths.append(stage / "runner-rebuild.json")
+    return paths
+
+
 def copy_rebuilt_runner_archive(source, destination, payload):
     """Copy a local authenticated payload without following aliases or drift."""
     if payload["kind"] != "dotnet-rebuild" or source.name != payload["asset_name"]:
@@ -2467,7 +2476,9 @@ def main():
         ):
             os.chmod(stage / name, 0o444)
 
+        payload_text = runner_payload_text_authorities(stage, payload)
         text_authorities = [
+            *payload_text,
             stage / "runner-release.json",
             stage / "runtime-release.json",
             stage / "checksums.txt",
@@ -2476,6 +2487,7 @@ def main():
             *sorted((stage / "sbom").glob("*.spdx.json")),
         ]
         expected_text = {
+            *{path.name for path in payload_text},
             "runner-release.json",
             "runtime-release.json",
             "checksums.txt",

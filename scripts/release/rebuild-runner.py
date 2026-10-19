@@ -65,9 +65,14 @@ def package_archive(layout, destination, epoch):
         rows.append((path, info))
     if len(rows) >= 16384 or sum(info.st_size for _, info in rows if stat.S_ISREG(info.st_mode)) >= 2**30:
         raise ValueError("oversized rebuild output")
-    with destination.open("xb") as raw, gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0, compresslevel=9) as compressed, tarfile.open(fileobj=compressed, mode="w|", format=tarfile.PAX_FORMAT) as archive:
+    with destination.open("xb") as raw, gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0, compresslevel=9) as compressed, tarfile.open(fileobj=compressed, mode="w|", format=tarfile.USTAR_FORMAT) as archive:
+        root = tarfile.TarInfo("./")
+        root.type = tarfile.DIRTYPE
+        root.mode = 0o755
+        root.mtime = epoch
+        archive.addfile(root)
         for path, source_info in rows:
-            info = tarfile.TarInfo(str(path.relative_to(layout)))
+            info = tarfile.TarInfo("./" + str(path.relative_to(layout)))
             info.uid = info.gid = 0
             info.uname = info.gname = ""
             info.mtime = epoch
@@ -158,6 +163,17 @@ def run(arguments, cwd, env):
     subprocess.run(arguments, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=sys.stderr, check=True, timeout=1800)
 
 
+def take_prepared_externals(prepared, destination):
+    os.chmod(prepared, 0o700)
+    # Moving a directory between parents updates its .. entry and needs write
+    # permission on that directory, even when both parents are private.
+    os.chmod(prepared / "externals", 0o700)
+    (prepared / "externals").rename(destination)
+    for directory, _, _ in os.walk(prepared):
+        os.chmod(directory, 0o700)
+    shutil.rmtree(prepared)
+
+
 def run_sdk(arguments, work, env):
     # Keep the control file outside the build mount so the SDK process cannot
     # redirect cleanup toward a different container.
@@ -232,11 +248,7 @@ def main():
         # Discard the authenticated old bin immediately. Only externals are
         # carried into the new layout, and moving avoids a second large copy.
         stage("upstream-cleanup")
-        os.chmod(prepared, 0o700)
-        (prepared / "externals").rename(work / "externals")
-        for directory, _, _ in os.walk(prepared):
-            os.chmod(directory, 0o700)
-        shutil.rmtree(prepared)
+        take_prepared_externals(prepared, work / "externals")
         official.unlink()
         # The SDK builds at the same absolute path as the reviewed A/B builds;
         # this also avoids path-dependent portable PDB differences.
@@ -264,6 +276,7 @@ def main():
         partial = work / "archive.part"
         package_archive(layout, partial, epoch)
         stage("archive-authentication")
+        print(f"rebuild-runner: archive-sha256={sha256(partial)} archive-bytes={partial.stat().st_size}", file=sys.stderr)
         publish_archive(partial, destination, payload)
     print(destination)
 

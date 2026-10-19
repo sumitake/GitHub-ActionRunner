@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "runner_asset_digest": "sha256:3409ed5b3764e26fce226b65fc97340177eec8fefb934fd254e50e239eb4ce85",
+  "runner_asset_digest": "sha256:abd94fed68a6e31394b68103e1afa8b0eabe36b523cc781e00bf2b01f452ce29",
   "packages": [
     {
       "name": "node",

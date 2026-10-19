@@ -49,3 +49,16 @@ class PublishedPayloadIdentity(unittest.TestCase):
         with self.assertRaises(namespace['ValidationError']):namespace['validate_payload_subjects'](fixture.root,fixture.runner,subjects)
         (fixture.root/'runner-payload.json').write_bytes(namespace['canonical_json'](fixture.select()));(fixture.root/'runner-rebuild.json').write_text('{}\n')
         with self.assertRaises(namespace['ValidationError']):namespace['validate_payload_subjects'](fixture.root,fixture.runner,subjects)
+
+class PayloadTextAuthorities(unittest.TestCase):
+    def test_selected_payload_metadata_is_always_scanned(self):
+        namespace = rehearsal()
+        stage = pathlib.Path('/synthetic/release')
+        select = namespace['runner_payload_text_authorities']
+        self.assertEqual(select(stage, {'kind': 'official'}), [stage / 'runner-payload.json'])
+        self.assertEqual(select(stage, {'kind': 'dotnet-rebuild'}), [stage / 'runner-payload.json', stage / 'runner-rebuild.json'])
+
+    def test_unknown_payload_kind_cannot_omit_metadata_scanning(self):
+        namespace = rehearsal()
+        with self.assertRaises(namespace['RehearsalError']):
+            namespace['runner_payload_text_authorities'](pathlib.Path('/synthetic/release'), {'kind': 'unknown'})

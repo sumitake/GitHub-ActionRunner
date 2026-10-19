@@ -71,3 +71,31 @@ class RebuildArchive(unittest.TestCase):
             with self.assertRaises(subprocess.TimeoutExpired):
                 self.module.run_sdk(["docker", "run", "--rm", "synthetic-image", "dotnet"], work, {})
         self.assertEqual(cleanup.call_args.args[0], ["docker", "rm", "--force", container_id])
+
+    def test_archive_uses_the_existing_strict_extractor_wire_format(self):
+        import tarfile
+        nested = self.layout / "bin/third-party-licenses" / ("synthetic-package-" + "x" * 48) / "1.2.3"
+        nested.mkdir(parents=True)
+        (nested / "producer-record.nuspec").write_bytes(b"synthetic producer metadata\n")
+        target = self.root / "wire-format.tar.gz"
+        self.module.package_archive(self.layout, target, 123)
+        with tarfile.open(target) as archive:
+            members = archive.getmembers()
+        self.assertTrue(members[0].isdir())
+        self.assertEqual(members[0].name, ".")
+        self.assertTrue(all(m.name.startswith("./") for m in members[1:]))
+        self.assertTrue(all(not m.pax_headers for m in members))
+
+    def test_sealed_externals_can_move_without_carrying_the_old_bin(self):
+        prepared = self.root / "prepared"
+        (prepared / "externals").mkdir(parents=True)
+        (prepared / "externals/public-tool").write_bytes(b"synthetic external\n")
+        (prepared / "bin").mkdir()
+        (prepared / "bin/old-runtime").write_bytes(b"old synthetic runtime\n")
+        for path in prepared.rglob("*"):
+            os.chmod(path, 0o555 if path.is_dir() else 0o444)
+        destination = self.root / "externals"
+        self.module.take_prepared_externals(prepared, destination)
+        self.assertEqual((destination / "public-tool").read_bytes(), b"synthetic external\n")
+        self.assertFalse(prepared.exists())
+        self.assertFalse((destination / "old-runtime").exists())

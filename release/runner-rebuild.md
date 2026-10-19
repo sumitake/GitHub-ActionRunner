@@ -41,6 +41,11 @@ mount a Docker socket or user credentials. A different output digest fails
 closed and leaves the destination unpublished. CI and both product release
 builds invoke this recipe when the rebuild is selected.
 
+The archive uses the existing extractor's canonical USTAR format: one `./`
+root entry, `./` relative path prefixes and no PAX metadata. Header corrections
+must preserve and recheck every payload file against both independent build
+manifests; the extractor's acceptance rules remain unchanged.
+
 Both independent builds must produce identical archives. Their qualification
 records must cover all three entrypoints, the actual runtime/package bytes,
 upstream tests, fresh SBOMs, complete notices, and the existing vulnerability,

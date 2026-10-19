@@ -146,7 +146,7 @@
       },
       {
         "path": "internal/buildinfo/runner_rebuild.json",
-        "identity_inventory_sha256": "83eb44abf739e73530d95507056e4b7522e0f7cdc37bf13d974a2d0232615328"
+        "identity_inventory_sha256": "e7e2744dae90c33213abb3afb54536bec3531b98749d6736d4d6324ab4327c9f"
       },
       {
         "path": "internal/runtimelock/lock_test.go",
@@ -154,7 +154,7 @@
       },
       {
         "path": "release/runner-licenses.json",
-        "identity_inventory_sha256": "172e7487c1e7f4d2c65ff08b995b4c96617927ddc16eab649a2e8ae6115b26db"
+        "identity_inventory_sha256": "7506e648061e88d1533ab2dff443c8c0e328068fa8e4476f5e52cec1fd741b8e"
       },
       {
         "path": "tests/boundaries/runtime_boundary_test.go",
