@@ -1113,14 +1113,14 @@ def normalize_first_party_packages(value, identity):
             package["sourceInfo"] = (previous + "\n" if previous else "") + evidence
 
 
-def load_public_dependency_metadata(repository):
+def load_public_dependency_metadata(repository, go_module_cache=None):
     import importlib.util
     path = repository / "scripts/public_dependency_metadata.py"
     try:
         spec = importlib.util.spec_from_file_location("release_public_dependency_metadata", path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        return module, module.load(repository)
+        return module, module.load(repository, go_module_cache=go_module_cache)
     except (OSError, ValueError, ImportError):
         reject("public dependency producer evidence")
 
@@ -2405,7 +2405,7 @@ def main():
         syft = os.fspath(acquired["syft"])
         sbom_rows = []
         license_sanitizer_args = []
-        public_evidence = load_public_dependency_metadata(clone)
+        public_evidence = load_public_dependency_metadata(clone, env["GOMODCACHE"])
         artifact_rows = [
             (item["name"], f"bin/{item['name']}", "sbom")
             for item in runtime["binaries"]

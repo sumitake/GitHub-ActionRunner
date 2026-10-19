@@ -1354,6 +1354,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p.add_argument("--generated", action="append", default=[], metavar="PATH", help="scan a generated-output path (repeatable)")
     p.add_argument("--private-denylist", metavar="PATH", help="operator-supplied untracked denylist file (never in CI)")
     p.add_argument("--history", action="store_true", help="scan reachable git history + metadata")
+    p.add_argument("--dependency-debian-cache", type=Path, help="read pinned Debian producer indexes from this cache instead of HTTPS")
+    p.add_argument("--dependency-go-module-cache", type=Path, help="read producer module ZIPs from this Go module cache (default: GOMODCACHE)")
     p.add_argument("--verified-dependency-metadata", action="store_true", help="recognize committed source-bound public package attribution and complete legal texts")
     p.add_argument("--verified-runner-licenses", action="store_true", help="recognize committed, hash-verified upstream documents in generated text")
     return p.parse_args(argv)
@@ -1392,7 +1394,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         try:
             if not args.generated:
                 raise public_metadata_source.MetadataError("generated inputs required")
-            dependency_metadata = public_metadata_source.load(repo_root)
+            dependency_metadata = public_metadata_source.load(repo_root, debian_cache=args.dependency_debian_cache, go_module_cache=args.dependency_go_module_cache)
             documents = dict(upstream_licenses)
             for path, body in dependency_metadata['documents']:
                 if path in documents and documents[path] != body:
