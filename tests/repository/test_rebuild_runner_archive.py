@@ -138,5 +138,7 @@ class RebuildArchive(unittest.TestCase):
         command = self.module.sdk_container_command(self.root, descriptor, {})
         self.assertIn(descriptor['sdk_container_image'], command)
         self.assertIn('TMPDIR=/work/tmp', command)
+        self.assertIn('XDG_RUNTIME_DIR=/work/runtime', command)
+        self.assertEqual((self.root / 'runtime').stat().st_mode & 0o777, 0o700)
         self.assertEqual((self.root / 'tmp').stat().st_mode & 0o777, 0o700)
         self.assertNotIn('/var/run/docker.sock', ' '.join(command))

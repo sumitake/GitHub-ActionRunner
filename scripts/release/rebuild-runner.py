@@ -167,6 +167,7 @@ def sdk_container_command(work, descriptor, env):
     if re.fullmatch(r"mcr\.microsoft\.com/dotnet/sdk@sha256:[0-9a-f]{64}", image) is None:
         raise ValueError("unbound SDK image")
     (work / "tmp").mkdir(mode=0o700)
+    (work / "runtime").mkdir(mode=0o700)
     command = ["docker", "run", "--platform=linux/amd64", "--cpus=4", "--memory=6174015488", "--memory-swap=6174015488", "--pids-limit=1024", "--user=" + str(os.getuid()) + ":" + str(os.getgid()), "--mount", "type=bind,src=" + str(work) + ",dst=/work", "--workdir=/work/runner-source/src"]
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"):
         if key in env:
@@ -177,7 +178,7 @@ def sdk_container_command(work, descriptor, env):
         if not certificate.is_file():
             raise ValueError("existing CA file unavailable")
         command += ["--mount", "type=bind,src=" + str(certificate) + ",dst=/transport-ca.pem,readonly", "--env", "SSL_CERT_FILE=/transport-ca.pem", "--env", "GIT_SSL_CAINFO=/transport-ca.pem"]
-    settings = {"TMPDIR": "/work/tmp", "HOME": "/work/home", "DOTNET_CLI_HOME": "/work/home", "DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_GENERATE_ASPNET_CERTIFICATE": "false", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1", "NUGET_PACKAGES": "/work/output/sdk-attempt4/nuget-packages", "MSBUILDDISABLENODEREUSE": "1", "DOTNET_PROCESSOR_COUNT": "4"}
+    settings = {"XDG_RUNTIME_DIR": "/work/runtime", "TMPDIR": "/work/tmp", "HOME": "/work/home", "DOTNET_CLI_HOME": "/work/home", "DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_GENERATE_ASPNET_CERTIFICATE": "false", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1", "NUGET_PACKAGES": "/work/output/sdk-attempt4/nuget-packages", "MSBUILDDISABLENODEREUSE": "1", "DOTNET_PROCESSOR_COUNT": "4"}
     for key, value in settings.items():
         command += ["--env", key + "=" + value]
     return command + [image]

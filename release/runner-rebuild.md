@@ -45,6 +45,13 @@ recipe when the rebuild is selected. Before accepting an archive it runs
 Listener, Worker and PluginHost with benign arguments and verifies their
 expected exit behavior and actual app-local CoreCLR traces.
 
+The runtime servicing release also requires a valid user-owned runtime
+directory for named synchronization objects. The build recipe creates a
+private mode-0700 directory and sets `XDG_RUNTIME_DIR`. The runner's closed
+environment points it at the existing mode-0700 `/tmp` tmpfs owned by the
+runner UID. This uses the current mount and memory budget. See the
+[runtime maintainer's compatibility discussion](https://github.com/dotnet/runtime/issues/135726).
+
 The archive uses the existing extractor's canonical USTAR format: one `./`
 root entry, `./` relative path prefixes and no PAX metadata. Header corrections
 must preserve and recheck every payload file against both independent build

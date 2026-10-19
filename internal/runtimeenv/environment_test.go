@@ -8,11 +8,11 @@ import (
 
 func TestClosedRuntimeEnvironmentsAreExactAndCloned(t *testing.T) {
 	image := Image()
-	if !slices.Equal(image, []string{Home, Language, Path}) || !MatchesImage(image) {
+	if !slices.Equal(image, []string{Home, Language, Path, RuntimeDirectory}) || !MatchesImage(image) {
 		t.Fatalf("Image=%q", image)
 	}
 	image[0] = "HOME=/poison"
-	if !slices.Equal(Image(), []string{Home, Language, Path}) {
+	if !slices.Equal(Image(), []string{Home, Language, Path, RuntimeDirectory}) {
 		t.Fatal("Image returned shared mutable state")
 	}
 
@@ -36,7 +36,7 @@ func TestClosedRuntimeEnvironmentsAreExactAndCloned(t *testing.T) {
 		t.Fatal("Proxy returned shared mutable state")
 	}
 
-	wantRuntime := append([]string{Home, Language, Path}, wantProxy...)
+	wantRuntime := append([]string{Home, Language, Path, RuntimeDirectory}, wantProxy...)
 	runtime := Runtime()
 	if !slices.Equal(runtime, wantRuntime) || !MatchesRuntime(runtime) {
 		t.Fatalf("Runtime=%q", runtime)
@@ -60,9 +60,8 @@ func TestClosedRuntimeEnvironmentsAreExactAndCloned(t *testing.T) {
 func TestRuntimeEnvironmentMatchersRejectSupersetsDuplicatesAndReordering(t *testing.T) {
 	runtime := Runtime()
 	wrongLoopback := strings.Join([]string{"127", "0", "0", "2"}, ".")
-	reorderedRuntime := []string{
-		runtime[6], runtime[2], runtime[4], runtime[0], runtime[5], runtime[1], runtime[3],
-	}
+	reorderedRuntime := slices.Clone(runtime)
+	slices.Reverse(reorderedRuntime)
 	if !MatchesRuntime(reorderedRuntime) {
 		t.Fatalf("MatchesRuntime rejected order-independent exact set %q", reorderedRuntime)
 	}
@@ -74,7 +73,7 @@ func TestRuntimeEnvironmentMatchersRejectSupersetsDuplicatesAndReordering(t *tes
 		"runtime missing":       runtime[:len(runtime)-1],
 		"runtime duplicate":     append(slices.Clone(runtime[:len(runtime)-1]), runtime[0]),
 		"runtime extra":         append(slices.Clone(runtime), "HTTP_PROXY="+strings.TrimPrefix(runtime[3], "HTTPS_PROXY=")),
-		"runtime wrong proxy":   append(slices.Clone(runtime[:3]), "HTTPS_PROXY=http://"+wrongLoopback+":18080", runtime[4], runtime[5], runtime[6]),
+		"runtime wrong proxy":   append(slices.Clone(runtime[:4]), "HTTPS_PROXY=http://"+wrongLoopback+":18080", runtime[5], runtime[6], runtime[7]),
 		"listener empty":        Listener(""),
 		"listener NUL":          Listener("bad\x00jit"),
 		"listener extra":        append(Listener("jit"), "EXTRA=value"),
@@ -99,5 +98,19 @@ func TestRuntimeEnvironmentMatchersRejectSupersetsDuplicatesAndReordering(t *tes
 				t.Fatalf("MatchesListener accepted %q", environment)
 			}
 		})
+	}
+}
+
+func TestServicedRuntimeUsesExistingPrivateTemporaryMount(t *testing.T) {
+	for _, environment := range [][]string{Image(), Runtime(), Listener("synthetic-jit")} {
+		count := 0
+		for _, entry := range environment {
+			if entry == "XDG_RUNTIME_DIR=/tmp" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("runtime directory must be fixed to the existing private temporary mount: %q", environment)
+		}
 	}
 }

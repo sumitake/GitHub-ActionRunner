@@ -123,7 +123,8 @@ RUN chmod 0555 /opt/actions-runner /opt/portable-ghar/seed-cache \
 
 ENV HOME=/runner \
     LANG=C.UTF-8 \
-    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    XDG_RUNTIME_DIR=/tmp
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/portable-ghar-runner-gate"]
 CMD ["hold"]
