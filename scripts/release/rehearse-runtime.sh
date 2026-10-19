@@ -1256,6 +1256,13 @@ def supplement_runner_licenses(clone, runner, spdx_path, subject_digest):
     spdx_path.write_bytes(canonical_json(value))
 
 
+def apply_baseline_runner_licenses(clone, baseline, runner, spdx_path, subject_digest):
+    # Evidence for one authenticated asset cannot be retargeted to another.
+    # Other candidates retain the ordinary strict catalog/notices path.
+    if runner["linux_x64_asset_digest"] == baseline["linux_x64_asset_digest"]:
+        supplement_runner_licenses(clone, runner, spdx_path, subject_digest)
+
+
 def generate_notices(sbom_rows, exceptions, output, subject_digests=None):
     if subject_digests is not None and set(subject_digests) != {subject for subject, _ in sbom_rows}:
         reject("SPDX subject registry")
@@ -2274,8 +2281,8 @@ def main():
                 first_party=first_party,
             )
             if relative == "images/runner.oci.tar":
-                supplement_runner_licenses(
-                    clone, runner, normalized,
+                apply_baseline_runner_licenses(
+                    clone, baseline, runner, normalized,
                     oci_graph(stage / relative)["manifest_digest"].removeprefix("sha256:"),
                 )
             os.chmod(normalized, 0o444)

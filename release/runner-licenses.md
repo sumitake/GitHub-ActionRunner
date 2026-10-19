@@ -59,5 +59,7 @@ and notices retain their complete original text; the scan does not rewrite them.
 
 The registry is registered as read-only evidence in the existing protected
 candidate inventory. A candidate overlay cannot rewrite its upstream attribution;
-a new asset requires a reviewed registry refresh. Source and generated-output
+other assets use their own catalog declarations through the ordinary strict
+notices path. Unknown declarations still block; extending this supplement to a
+new asset requires reviewed evidence. Source and generated-output
 sanitization and all vulnerability/admission gates still apply independently.

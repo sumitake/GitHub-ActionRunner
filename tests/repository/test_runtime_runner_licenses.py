@@ -134,6 +134,28 @@ class RunnerLicensingMetadata(unittest.TestCase):
         with self.assertRaisesRegex(self.n["RehearsalError"], "runner licensing text"):
             self.n["generate_notices"]([("images/runner.oci.tar", self.spdx)], [], self.root / "NOTICES.txt", {"images/runner.oci.tar": self.digest})
 
+    def test_other_candidate_asset_uses_its_own_catalog_without_retargeting_evidence(self):
+        self.write()
+        original = self.spdx.read_bytes()
+        candidate = {"linux_x64_asset_digest": "sha256:" + "e" * 64}
+        self.n["apply_baseline_runner_licenses"](self.root, {"linux_x64_asset_digest": self.asset}, candidate, self.spdx, self.digest)
+        self.assertEqual(self.spdx.read_bytes(), original)
+        with self.assertRaisesRegex(self.n["RehearsalError"], "package license"):
+            self.n["generate_notices"]([("images/runner.oci.tar", self.spdx)], [], self.root / "NOTICES.txt", {"images/runner.oci.tar": self.digest})
+        for package in self.value["packages"][1:]:
+            package["licenseDeclared"] = "MIT"
+        self.write()
+        original = self.spdx.read_bytes()
+        self.n["apply_baseline_runner_licenses"](self.root, {"linux_x64_asset_digest": self.asset}, candidate, self.spdx, self.digest)
+        self.assertEqual(self.spdx.read_bytes(), original)
+        self.n["generate_notices"]([("images/runner.oci.tar", self.spdx)], [], self.root / "NOTICES.txt", {"images/runner.oci.tar": self.digest})
+
+    def test_authenticated_baseline_receives_reviewed_supplement(self):
+        self.write()
+        baseline = {"linux_x64_asset_digest": self.asset}
+        self.n["apply_baseline_runner_licenses"](self.root, baseline, baseline, self.spdx, self.digest)
+        self.assertEqual(json.loads(self.spdx.read_text())["packages"][1]["licenseDeclared"], "MIT")
+
     def test_subject_digest_mismatch_blocks_metadata(self):
         self.value["packages"][0]["checksums"][0]["checksumValue"] = "f" * 64
         with self.assertRaises(self.n["RehearsalError"]): self.apply()
