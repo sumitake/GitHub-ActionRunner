@@ -64,7 +64,7 @@ EXPECTED_SCHEDULED_WATCH_CONTEXTS = {
 }
 EXPECTED_ALL_CONTEXTS = (
     EXPECTED_STABLE_CONTEXTS
-    | {"codeql"}
+    | {"codeql", "bounded-qualification"}
     | EXPECTED_RUNTIME_RELEASE_CONTEXTS
     | EXPECTED_SCHEDULED_WATCH_CONTEXTS
 )
@@ -505,7 +505,7 @@ class RealCiWorkflowTest(unittest.TestCase):
                 )
 
         # The full job-id set across every workflow file is exactly the
-        # seven stable contexts plus the CodeQL scan job -- nothing missing,
+        # seven stable contexts plus the explicit optional jobs -- nothing missing,
         # nothing stray.
         self.assertEqual(set(context_sources.keys()), EXPECTED_ALL_CONTEXTS)
 
