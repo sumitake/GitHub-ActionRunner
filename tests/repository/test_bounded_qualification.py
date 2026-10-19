@@ -134,16 +134,15 @@ class BoundedQualification(unittest.TestCase):
         self.assertIn('ref: ${{ github.sha }}', section)
 
     def test_raw_outputs_survive_failed_text_gate_without_admission(self):
-        import types
-        (self.root / 'source').mkdir()
+        (self.root / 'source').symlink_to(ROOT, target_is_directory=True)
         evidence = self.root / 'evidence'
         (evidence / 'artifacts/images-A').mkdir(parents=True)
         (evidence / 'artifacts/images-B').mkdir()
         for phase in ('A', 'B'):
             (evidence / ('artifacts/images-' + phase) / 'blob').write_bytes(b'raw independent synthetic OCI export')
         (evidence / 'RESULT.json').write_text('{"status":"pass"}')
-        with mock.patch.object(host.subprocess, 'run', return_value=types.SimpleNamespace(returncode=1)):
-            with self.assertRaises(q.Stop): host.export_evidence(self.root)
+        (evidence / 'unsafe.log').write_text('unpublishable path /home/synthetic/private')
+        with self.assertRaises(q.Stop): host.export_evidence(self.root)
         public = self.root / 'public'
         self.assertEqual((public / 'artifacts/images-A/blob').read_bytes(), (public / 'artifacts/images-B/blob').read_bytes())
         self.assertEqual(json.loads((public / 'RESULT.json').read_text())['status'], 'fail')

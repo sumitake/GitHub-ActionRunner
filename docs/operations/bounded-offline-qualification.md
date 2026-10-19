@@ -92,3 +92,30 @@ completed raw exports and write at most 1 MiB of control metadata. It runs
 with the same CPU, memory, swap and PID limits for at most two minutes;
 it performs no build, scan, download or raw payload copy. Evidence exceeding
 the fixed transfer cap remains unadmitted.
+
+# Failure diagnostics
+
+The composed worker sets `SSL_CERT_FILE` to its copied
+`/etc/ssl/certs/ca-certificates.crt` bundle. Python HTTPS acquisition therefore
+does not depend on the host OpenSSL build's default path aliases being present
+inside the worker. Certificate and hostname verification remain required.
+
+An incomplete producer cache grants no metadata or licensing projection. The
+exporter validates the original producer registry, dependency cache and runner
+license authority before using those projections. If authority is unavailable,
+diagnostics use the unchanged strict raw scanner and full qualification remains
+unadmitted. Existing source allowlist checks still apply; no fixture exemption
+or content-rule exception is added.
+
+Text is scanned and copied byte-for-byte under its retained logical evidence
+name. The hosted supervisor's ambient `/home` location is not a published file
+label. Private paths or sensitive data within the original contents remain
+blocking and are withheld. Files that fail policy are inventoried by digest and
+size; their contents are not published. Diagnostic preservation does not turn a
+failed build, incomplete resource proof or withheld text into a successful run.
+
+Build, scan and scope failure receipts contain fixed stage, exception type and
+validated HTTP status classifications only. Messages, URLs, headers and
+tracebacks are excluded from those receipts. The Debian-input acquisition stage
+is recorded before its first request. Raw completed exports remain independent
+of diagnostic retention. An additional full attempt requires separate approval.

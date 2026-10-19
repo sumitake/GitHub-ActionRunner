@@ -65,6 +65,12 @@ def safe_environment(root, go_root):
     return value
 
 
+def worker_environment(environment):
+    # compose_worker copies this CA bundle, not the host's OpenSSL default
+    # path aliases. Keep verification enabled with that exact copied store.
+    return {**environment, 'PATH': '/toolchain/go/bin:/usr/bin:/bin', 'GOROOT': '/toolchain/go', 'SSL_CERT_FILE': '/etc/ssl/certs/ca-certificates.crt'}
+
+
 def docker_json(args, **kwargs):
     return json.loads(command(['docker', *args], **kwargs))
 
@@ -313,7 +319,7 @@ def child(root, go_root):
         q.write(root / 'phase.json', {'phase': 'worker-bootstrap'})
         image = compose_worker(root, label)
         args = ['docker', 'create', '--pull=never', '--cpus=4', '--memory=' + str(q.MEMORY), '--memory-swap=' + str(q.MEMORY), '--pids-limit=1024', '--cgroup-parent', parent, '--label', label, '--restart=no', '--log-opt=max-size=5m', '--log-opt=max-file=2', '--mount', 'type=bind,src=' + str(root) + ',dst=/work', '--mount', 'type=bind,src=' + str(go_root) + ',dst=/toolchain/go,readonly']
-        worker_env = {**environment, 'PATH': '/toolchain/go/bin:/usr/bin:/bin', 'GOROOT': '/toolchain/go'}
+        worker_env = worker_environment(environment)
         for key, entry in worker_env.items():
             args += ['--env', key + '=' + entry]
         for mode, privileged in (('worker', True), ('scan', False)):
@@ -335,6 +341,9 @@ def child(root, go_root):
         names = {row['executable'] for line in lineage.read_text().splitlines() for row in json.loads(line)} if lineage.exists() else set()
         if not {'dotnet', 'buildkit-runc'} <= names:
             raise q.Stop('actual SDK/BuildKit descendant proof missing')
+    except BaseException as failure:
+        q.failure_receipt(root, 'scope', failure)
+        raise
     finally:
         if worker is not None:
             subprocess.run(['docker', 'rm', '--force', worker], timeout=30, check=False)
@@ -433,6 +442,35 @@ def sample(root, inputs, docker_root, excluded, baseline, initial_charge):
     return row
 
 
+def export_policy(source, root):
+    """Use existing public rules with exact authority or strict raw scanning."""
+    sanitizer = q.module(source, 'sanitize_public.py')
+    allowlist = sanitizer.load_allowlist(source / sanitizer.ALLOWLIST_FILENAME)
+    upstream, metadata = (), None
+    verified = False
+    if (root / 'debian-cache').is_dir() and (root / 'go-mod').is_dir():
+        try:
+            upstream = sanitizer.load_verified_upstream_licenses(source)
+            metadata = sanitizer.public_metadata_source.load(source, debian_cache=root / 'debian-cache', go_module_cache=root / 'go-mod')
+            findings = sanitizer.scan_bytes_as_file(metadata['source_raw'], metadata['source_path'], fixture=False)
+            if list(allowlist.filter(findings)):
+                raise q.Stop('producer registry failed public policy')
+            documents = dict(upstream)
+            for path, body in metadata['documents']:
+                if path in documents and documents[path] != body:
+                    raise q.Stop('conflicting producer documents')
+                documents[path] = body
+            if sum(len(body) for body in documents.values()) > 8 * 1024 * 1024:
+                raise q.Stop('producer document budget')
+            upstream = sorted(documents.items(), key=lambda item: (-len(item[1]), item[0]))
+            verified = True
+        except (sanitizer.VerifiedLicenseError, sanitizer.public_metadata_source.MetadataError, OSError, subprocess.SubprocessError):
+            # Incomplete acquisition is not exemption authority. Diagnostics
+            # can still pass the original raw rules; qualification cannot pass.
+            upstream, metadata = (), None
+    return sanitizer, allowlist, upstream, metadata, verified
+
+
 def export_evidence(root, guarded=False):
     """Always retain raw exports; publish only text that passes public policy."""
     source, evidence, public = root / 'source', root / 'evidence', root / 'public'
@@ -452,29 +490,37 @@ def export_evidence(root, guarded=False):
     if raw.exists():
         raw.rename(public / 'artifacts')
     rejected = []
-    producer_available = (root / 'debian-cache').exists() and (root / 'go-mod').exists()
+    sanitizer, allowlist, upstream, metadata, producer_verified = export_policy(source, root)
+    q.write(evidence / 'export-policy.json', {'producer_authority_verified': producer_verified, 'strict_raw_diagnostics_only': not producer_verified, 'release_admitted': False})
     for path in sorted(evidence.rglob('*')):
         if not path.is_file():
             continue
         guard()
-        args = ['python3', str(source / 'scripts/sanitize_public.py'), '--generated', str(path)]
-        if producer_available:
-            args += ['--verified-runner-licenses', '--verified-dependency-metadata', '--dependency-debian-cache', str(root / 'debian-cache'), '--dependency-go-module-cache', str(root / 'go-mod')]
-        result = subprocess.run(args, cwd=source, env={**os.environ, 'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'safe.directory', 'GIT_CONFIG_VALUE_0': str(source)}, capture_output=True, timeout=180)
-        if result.returncode:
-            rejected.append({'path': path.relative_to(evidence).as_posix(), 'sha256': q.sha(path), 'bytes': path.stat().st_size})
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or path.resolve(strict=True) != path:
+            raise q.Stop('unsafe evidence text file')
+        relative = path.relative_to(evidence).as_posix()
+        raw = path.read_bytes()
+        # Ambient hosted paths are not published evidence names. Scan the
+        # exact original bytes under their retained logical name, with no
+        # fixture exemption. Content containing private paths still fails.
+        findings = sanitizer.scan_generated_bytes(raw, 'qualification-evidence/' + relative, False, upstream, public_metadata=metadata)
+        if list(allowlist.filter(findings)):
+            rejected.append({'path': relative, 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)})
             continue
-        target = public / path.relative_to(evidence)
+        target = public / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         guard()
-        shutil.copyfile(path, target)
+        target.write_bytes(raw)
     if rejected:
         q.write(public / 'RESULT.json', {'status': 'fail', 'public_evidence_sanitization': 'fail', 'release_admitted': False, 'live_operations': False})
+    elif not producer_verified and (public / 'RESULT.json').exists() and json.loads((public / 'RESULT.json').read_text()).get('status') == 'pass':
+        q.write(public / 'RESULT.json', {'status': 'fail', 'producer_authority': 'unavailable', 'release_admitted': False, 'live_operations': False})
     guard()
     files = q.inventory(public)
     if sum(item['bytes'] for item in files) > q.ARTIFACT_LIMIT:
         raise q.Stop('raw evidence exceeds fixed 1 GiB transfer cap')
-    q.write(public / 'evidence-inventory.json', {'files': files, 'raw_AB_retained': True, 'unsafe_text_withheld': rejected, 'artifact_qualification_admitted': not rejected and (public / 'RESULT.json').exists() and json.loads((public / 'RESULT.json').read_text()).get('status') == 'pass'})
+    q.write(public / 'evidence-inventory.json', {'files': files, 'raw_AB_retained': True, 'unsafe_text_withheld': rejected, 'producer_authority_verified': producer_verified, 'artifact_qualification_admitted': producer_verified and not rejected and (public / 'RESULT.json').exists() and json.loads((public / 'RESULT.json').read_text()).get('status') == 'pass'})
     # Text failures never waive a release/privacy gate. Complete raw A/B bytes
     # and the safe receipts remain downloadable even on a failed attempt.
     if rejected:
@@ -647,11 +693,18 @@ def main():
     elif args.retain_failure:
         retain_failure(args.retain_failure)
     elif args.scan:
-        q.Qualification(args.scan).scan()
+        try:
+            q.Qualification(args.scan).scan()
+        except BaseException as failure:
+            q.failure_receipt(args.scan, 'scan', failure)
+            raise
     elif args.worker:
         instance = q.Qualification(args.worker)
         try:
             instance.build()
+        except BaseException as failure:
+            q.failure_receipt(args.worker, 'build', failure)
+            raise
         finally:
             if instance.daemon is not None:
                 instance.stop('terminal')

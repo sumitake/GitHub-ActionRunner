@@ -42,6 +42,17 @@ def write(path, value):
     temporary.replace(path)
 
 
+def failure_receipt(root, stage, error):
+    """Retain fixed failure classifications without messages or transport data."""
+    if stage not in ('scope', 'build', 'scan'):
+        raise Stop('unknown qualification failure stage')
+    name = type(error).__name__
+    if re.fullmatch('[A-Za-z_][A-Za-z_0-9]{0,63}', name) is None:
+        name = 'unavailable'
+    status = getattr(error, 'code', None)
+    write(root / 'evidence' / (stage + '-failure.json'), {'stage': stage, 'exception_type': name, 'http_status': status if type(status) is int and 400 <= status <= 599 else None, 'release_admitted': False, 'live_operations': False})
+
+
 def remaining(deadline):
     seconds = deadline - time.monotonic()
     if seconds <= 0:
@@ -285,6 +296,7 @@ class Qualification:
         self.run(label, ['buildctl', 'build', '--no-cache', '--frontend', 'dockerfile.v0', '--local', 'context=' + str(context), '--local', 'dockerfile=' + str(dockerfile), '--opt', 'build-arg:BUILDKIT_SYNTAX=' + FRONTEND, '--opt', 'build-arg:SOURCE_DATE_EPOCH=' + str(self.inputs['epoch']), '--opt', 'force-network-mode=none', '--opt', 'platform=linux/amd64', *extra, '--output', output])
 
     def debian_cache(self):
+        self.record('debian-producer-stage.json', {'stage': 'producer-input-acquisition', 'status': 'started'})
         cache = self.root / 'debian-cache'
         cache.mkdir()
         producer = module(self.source, 'public_dependency_metadata.py')
@@ -344,6 +356,7 @@ class Qualification:
         if {(r['name'], r['version']) for r in records} != wanted or sum(r['bytes'] for r in records) > 150 * 2**20:
             raise Stop('incomplete or oversized APT closure')
         self.record('debian-inputs.json', records)
+        self.record('debian-producer-stage.json', {'stage': 'producer-input-acquisition', 'status': 'complete'})
         self.remove('apt-context')
 
     def image_binaries(self, directory, value, name, stamp):
