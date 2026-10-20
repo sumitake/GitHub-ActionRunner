@@ -260,6 +260,21 @@ jobs:
           retention-days: 1
           overwrite: false
 
+      - name: Admit small qualification control evidence
+        if: always()
+        id: control
+        run: 'set -euo pipefail; python3 scripts/release/qualify-runtime.py --check-control-upload "$RUNNER_TEMP/bounded-qualification/control" >>"$GITHUB_OUTPUT"'
+      - name: Retain small qualification control evidence
+        if: always() && steps.control.outputs.ready == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bounded-qualification-control-${{ github.sha }}
+          path: ${{ runner.temp }}/bounded-qualification/control
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 1
+          overwrite: false
+
   metadata-probe:
     if: github.event_name == 'workflow_dispatch' && inputs.metadata_probe && !inputs.bounded_qualification
     runs-on: ubuntu-24.04

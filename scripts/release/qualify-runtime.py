@@ -299,6 +299,22 @@ def sdk_rebuild(root, environment, parent, label):
         shutil.rmtree(cache)
 
 
+def prepare_public_clone(root, inputs, environment):
+    repository = inputs['repository']
+    if not isinstance(repository, str) or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}', repository) is None or repository.split('/')[1] in ('.', '..'):
+        raise q.Stop('invalid admitted public repository')
+    source = root / 'source'
+    def git(*args):
+        return command(['git', *args], cwd=source, env=environment)
+    if git('rev-parse', 'HEAD') != inputs['commit'] or git('rev-parse', 'HEAD^{tree}') != inputs['tree'] or git('status', '--porcelain', '--untracked-files=all') or git('config', '--get', 'remote.origin.url') != inputs['checkout']:
+        raise q.Stop('disposable clone acquisition mismatch')
+    public_origin = 'https://github.com/' + repository + '.git'
+    git('remote', 'set-url', 'origin', public_origin)
+    if git('config', '--get', 'remote.origin.url') != public_origin:
+        raise q.Stop('public clone origin mismatch')
+    q.write(root / 'evidence/source-acquisition.json', {'method': 'local reviewed checkout clone with --no-local; detached admitted commit; no remote fetch', 'source_commit': inputs['commit'], 'source_tree': inputs['tree'], 'repository': repository, 'origin_matches_admitted_public_repository': True, 'checked_out_identity_verified': True, 'acquisition_location': 'reviewed hosted checkout'})
+
+
 def child(root, go_root):
     inputs = json.loads((root / 'inputs.json').read_text())
     slice_name = 'pghar-qualification-' + inputs['run_id'] + '.slice'
@@ -324,6 +340,7 @@ def child(root, go_root):
         subprocess.run(['git', 'checkout', '--quiet', '--detach', inputs['commit']], cwd=root / 'source', check=True, env=environment, timeout=30)
         probe = inputs.get('metadata_probe') is True
         if not probe:
+            prepare_public_clone(root, inputs, environment)
             q.write(root / 'phase.json', {'phase': 'selected-SDK-rebuild'})
             sdk_rebuild(root, environment, parent, label)
         q.write(root / 'phase.json', {'phase': 'worker-bootstrap'})
@@ -371,7 +388,15 @@ def child(root, go_root):
                 if sys.exc_info()[0] is None:
                     _metadata_probe.export(root)
             else:
-                export_evidence(root, guarded=True)
+                # Only this controller observed both actual workers join
+                # successfully. Their sealed staging manifests transport
+                # producer-aware checks; they are not independently supplied
+                # recognition authority. Failure paths use strict raw scans.
+                staged = None
+                if sys.exc_info()[0] is None and final.get('status') == 'pass':
+                    import _producer_publication
+                    staged = _producer_publication.completed_stages(root)
+                export_evidence(root, guarded=True, staged=staged)
         finally:
             os.environ.clear()
             os.environ.update(old_env)
@@ -487,9 +512,14 @@ def export_policy(source, root):
     return sanitizer, allowlist, upstream, metadata, verified
 
 
-def export_evidence(root, guarded=False):
+def export_evidence(root, guarded=False, *, staged=None):
     """Always retain raw exports; publish only text that passes public policy."""
     source, evidence, public = root / 'source', root / 'evidence', root / 'public'
+    if staged is not None:
+        import _producer_publication
+        if not guarded or not isinstance(staged, _producer_publication.StageAdmission) or staged.root != root:
+            raise q.Stop('producer staging requires successful observed controller')
+        q.write(evidence / 'producer-publication-stages.json', {'producer_checks_completed_in_actual_workers': True, 'files': list(staged.files.values()), 'source_commit': staged.manifests[0]['source_commit'], 'source_tree': staged.manifests[0]['source_tree']})
     # Preflight the whole possible bundle before any copy. Oversized failures
     # retain original raw outputs and cannot allocate a duplicate public tree.
     if sum(path.stat().st_size for path in evidence.rglob('*') if path.is_file()) > q.ARTIFACT_LIMIT - 2**20:
@@ -508,6 +538,7 @@ def export_evidence(root, guarded=False):
     rejected = []
     sanitizer, allowlist, upstream, metadata, producer_verified = export_policy(source, root)
     q.write(evidence / 'export-policy.json', {'producer_authority_verified': producer_verified, 'strict_raw_diagnostics_only': not producer_verified, 'release_admitted': False})
+    consumed_staged = set()
     for path in sorted(evidence.rglob('*')):
         if not path.is_file():
             continue
@@ -520,7 +551,14 @@ def export_evidence(root, guarded=False):
         # Ambient hosted paths are not published evidence names. Scan the
         # exact original bytes under their retained logical name, with no
         # fixture exemption. Content containing private paths still fails.
-        findings = sanitizer.scan_generated_bytes(raw, 'qualification-evidence/' + relative, False, upstream, public_metadata=metadata)
+        if staged is not None and relative in staged.files:
+            row = staged.files[relative]
+            if row['bytes'] != len(raw) or row['sha256'] != hashlib.sha256(raw).hexdigest():
+                raise q.Stop('producer checked report changed before export')
+            consumed_staged.add(relative)
+            findings = []  # The entire exact report view passed in its worker.
+        else:
+            findings = sanitizer.scan_generated_bytes(raw, 'qualification-evidence/' + relative, False, upstream, public_metadata=metadata)
         blocked = list(allowlist.filter(findings))
         if blocked:
             rejected.append({'path': relative, 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw), 'rules': sorted({finding.rule for finding in blocked})})
@@ -529,6 +567,8 @@ def export_evidence(root, guarded=False):
         target.parent.mkdir(parents=True, exist_ok=True)
         guard()
         target.write_bytes(raw)
+    if staged is not None and consumed_staged != set(staged.files):
+        raise q.Stop('producer checked report missing during export')
     if rejected:
         q.write(public / 'RESULT.json', {'status': 'fail', 'public_evidence_sanitization': 'fail', 'release_admitted': False, 'live_operations': False})
     elif not producer_verified and (public / 'RESULT.json').exists() and json.loads((public / 'RESULT.json').read_text()).get('status') == 'pass':
@@ -644,9 +684,10 @@ def host(source, root, event_path, go_root, *, metadata_probe=False):
         for signum, handler in old_handlers.items():
             signal.signal(signum, handler)
         final = json.loads((root / 'evidence/scan-result.json').read_text()) if (root / 'evidence/scan-result.json').exists() else {}
-        final.update(status='pass' if error is None and final.get('status') == 'pass' else 'fail', resource_qualification='pass' if error is None else 'fail', release_admitted=False, live_operations=False)
+        workers_joined = not own_containers('pghar.qualification=' + inputs['run_id'])
+        final.update(status='pass' if error is None and workers_joined and final.get('status') == 'pass' else 'fail', resource_qualification='pass' if error is None and workers_joined else 'fail', workers_joined=workers_joined, scope_exit_code=None if process is None else process.returncode, release_admitted=False, live_operations=False)
         q.write(root / 'evidence/RESULT.json', final)
-        q.write(root / 'evidence/terminal.json', {'workers_joined': not own_containers('pghar.qualification=' + inputs['run_id']), 'scope_exit_code': None if process is None else process.returncode, 'budget_or_execution_error': error, 'live_operations': False, 'production_runners_touched': False})
+        q.write(root / 'evidence/terminal.json', {'workers_joined': workers_joined, 'scope_exit_code': None if process is None else process.returncode, 'budget_or_execution_error': error, 'live_operations': False, 'production_runners_touched': False})
     if metadata_probe:
         if error:
             raise q.Stop('metadata probe resource or execution failure')
@@ -680,6 +721,18 @@ def host(source, root, event_path, go_root, *, metadata_probe=False):
         manifest['files'] = [entry for entry in manifest['files'] if entry['path'] != 'RESULT.json'] + [{'path': 'RESULT.json', 'bytes': (public / 'RESULT.json').stat().st_size, 'sha256': q.sha(public / 'RESULT.json')}]
         manifest['artifact_qualification_admitted'] = final['status'] == 'pass'
         q.write(manifest_path, manifest)
+        import _qualification_control
+        try:
+            _qualification_control.create(public, root / 'control', inputs, q.ARTIFACT_LIMIT)
+        except Exception:
+            # A missing or inconsistent control copy cannot claim success.
+            (root / 'control/control-index.json').unlink(missing_ok=True)
+            final.update(status='fail', control_evidence='fail')
+            q.write(public / 'RESULT.json', final)
+            manifest['files'] = [entry for entry in manifest['files'] if entry['path'] != 'RESULT.json'] + [{'path': 'RESULT.json', 'bytes': (public / 'RESULT.json').stat().st_size, 'sha256': q.sha(public / 'RESULT.json')}]
+            manifest['artifact_qualification_admitted'] = False
+            q.write(manifest_path, manifest)
+            error = error or 'bounded public control evidence failed admission'
     # Upload action is unprivileged and needs only this sanitized bundle.
     if public.exists():
         for path in [public, *public.rglob('*')]:
@@ -702,6 +755,7 @@ def main():
     group.add_argument('--scan', type=pathlib.Path)
     group.add_argument('--retain-failure', type=pathlib.Path)
     group.add_argument('--check-upload', type=pathlib.Path)
+    group.add_argument('--check-control-upload', type=pathlib.Path)
     group.add_argument('--check-accounting', action='store_true')
     parser.add_argument('--source', type=pathlib.Path)
     parser.add_argument('--event', type=pathlib.Path)
@@ -721,6 +775,10 @@ def main():
         started = time.monotonic()
         docker_root, excluded, baseline, initial = allocation_preflight(source, source.parent)
         print(json.dumps({'read_only_accounting_preflight': 'pass', 'immutable_preinstalled_payloads': len(excluded), 'docker_allocated_bytes': initial[str(docker_root)], 'checkout_bytes': initial[str(source)], 'physical_filesystems': len(baseline), 'free_bytes': min(row['free_bytes'] for row in baseline.values()), 'seconds': time.monotonic() - started, 'qualification_executed': False, 'Docker_mutations': False}))
+    elif args.check_control_upload:
+        import _qualification_control
+        _qualification_control.verify(args.check_control_upload)
+        print('ready=true')
     elif args.check_upload:
         files = q.inventory(args.check_upload)
         if sum(item['bytes'] for item in files) > q.ARTIFACT_LIMIT or not (args.check_upload / 'evidence-inventory.json').is_file():

@@ -67,6 +67,11 @@ Full layouts, graphs, file inventories, embedded binary hashes and build
 stamps must match. Directory export avoids a second temporary archive
 extraction during scanning; it does not discard either raw build.
 
+The disposable source clone is acquired from the reviewed local checkout and
+detached at the admitted commit/tree. Before full qualification scans, its origin
+is set to the exact admitted public repository URL. The acquisition receipt
+records the local method and checked-out identity; it claims no remote fetch.
+
 APT verifies the pinned snapshot signatures offline. Only the exact signed
 package closure is acquired. Caches are reclaimed only after their users
 have joined. After compilation, complete legal documents and the module
@@ -86,6 +91,33 @@ notices generator and the resulting notices. Raw Syft reports remain retained
 evidence. The separate evidence publication gate scans those raw reports too;
 any withheld text still prevents full qualification.
 
+Producer-aware publication checks run where the pinned producers actually run.
+They preserve raw Syft namespaces while recognizing only the fresh random UUID
+suffix; the namespace prefix and subject name remain scanned. Known Go legal
+citations bind exact module/version/archive/member bytes. BuildKit recognition
+is limited to its exact default enum atom in a parsed GC-filter position, with
+executable identity checked before and after capture. Trivy Git authors bind
+the admitted public commit headers. Debian maintainers and package identifiers
+bind signed index stanzas, and installed-file names bind the authenticated
+package archive. Advisory values bind exact records in the unchanged public
+scanner database before its normal reclamation. Finding fingerprints are
+recomputed from the pinned producer's artifact/target/package/vulnerability
+formula; an opaque hash pattern alone grants no recognition.
+One exact signed-index `adduser` archive, bounded to 1 MiB and charged until
+cleanup, supplies the public installed-file-name evidence when absent from the
+existing cache.
+
+These checks construct private scan views, then stage unchanged original report
+bytes only after the entire view passes. Recognized scalars also retain secret,
+encoding and all other checks outside their finite metadata rule classes, on
+their original tokens and decoded values. Unknown fields and neighboring text
+remain blocking. After both actual workers join successfully, the controller
+requires the complete forty-report membership, exact sizes and hashes before
+using those staged checks. Other evidence, including late logs and terminal
+receipts, still passes the strict publication gate. Missing, changed, extra or
+withheld evidence prevents admission. Staging manifests transport those actual
+worker checks; a supplied report or standalone receipt grants no authority.
+
 A successful offline qualification still does not supply target D2/D5
 facts or authorize a canary. An incomplete, stopped, mismatching or
 security-failing attempt produces no release admission. Raw A/B exports
@@ -98,6 +130,15 @@ completed raw exports and write at most 1 MiB of control metadata. It runs
 with the same CPU, memory, swap and PID limits for at most two minutes;
 it performs no build, scan, download or raw payload copy. Evidence exceeding
 the fixed transfer cap remains unadmitted.
+
+The complete raw bundle is retained alongside a separate control artifact of
+at most 1 MiB, both for one day. The control artifact copies the original
+inventory and selected small public receipts with exact hashes and source
+identity; it contains no raw payloads and grants no release admission.
+Duplicated receipts count toward the same aggregate 1 GiB transfer cap.
+Optional resource samples may be omitted for size, with the omission recorded.
+This copy supports checking the result through a size-limited artifact client;
+it does not establish a local download and hash check of the complete raw ZIP.
 
 ## Failure diagnostics
 
@@ -147,7 +188,18 @@ the inventory separately hashes every complete original trace byte. Trace
 verbosity and the app-local CoreCLR startup proof remain unchanged.
 
 Text is scanned and copied byte-for-byte under its retained logical evidence
-name. The hosted supervisor's ambient `/home` location is not a published file
+name. Fresh Trivy reports have one explicit producer-rendering step before that
+gate: the unique root `ReportID` value token is replaced with a domain-separated
+SHA-256 identity of every byte before and after that token. All other native
+bytes, including findings, provenance, unknown fields, escapes and number
+representations, remain unchanged. Each capture uses the joined pinned producer,
+pre/post executable and subject identities, and a fresh private working directory.
+Native bytes remain intact and charged until ordinary task cleanup. Public
+receipts bind native/output sizes and hashes, the original ID hash and method.
+The entire rendered report still passes the unchanged privacy gate; no field
+recognition, scanner rule or allowlist exception follows from rendering.
+
+The hosted supervisor's ambient `/home` location is not a published file
 label. Private paths or sensitive data within the original contents remain
 blocking and are withheld. Files that fail policy are inventoried by digest and
 size and blocking rule identifiers; their contents are not published. Initial

@@ -16,6 +16,10 @@ import tarfile
 import time
 import types
 
+import _trivy_report
+import _trivy_db
+import _producer_publication
+
 GIB = 2**30
 MEMORY = 6174015488
 SOFT = 10 * GIB
@@ -252,6 +256,9 @@ class Qualification:
         state = self.root / 'buildkit-state'
         if self.daemon is not None or state.exists():
             raise Stop('BuildKit state was reused')
+        pins = json.loads((self.output / 'worker-inputs.json').read_text())['buildkit_binaries']
+        if any(sha('/usr/bin/' + name) != pins[name] for name in ('buildkitd', 'buildctl')):
+            raise Stop('BuildKit executable identity changed')
         self.env['BUILDKIT_HOST'] = 'unix://' + str(self.root / 'buildkit.sock')
         stream = (self.output / ('buildkit-' + label + '.log')).open('wb')
         self.daemon = subprocess.Popen(['buildkitd', '--addr', self.env['BUILDKIT_HOST'], '--root', str(state), '--containerd-worker=false', '--oci-worker-snapshotter=overlayfs', '--oci-worker-net=host'], env=self.env, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
@@ -262,6 +269,14 @@ class Qualification:
                 if 'overlayfs' not in result.stdout or 'native' in result.stdout:
                     raise Stop('copy-on-write worker not proven')
                 self.record('buildkit-workers-' + label + '.json', {'stdout': result.stdout, 'pid': self.daemon.pid})
+                if any(sha('/usr/bin/' + name) != pins[name] for name in ('buildkitd', 'buildctl')):
+                    raise Stop('BuildKit executable identity changed during capture')
+                if self.inputs.get('metadata_probe') is not True:
+                    if not hasattr(self, 'buildkit_publication'):
+                        self.buildkit_publication = _producer_publication.Stage(self.root, 'buildkit', module(self.source, 'sanitize_public.py'), module(self.source, 'public_dependency_metadata.py'))
+                    path = self.output / ('buildkit-workers-' + label + '.json')
+                    raw = _trivy_report.stable_bytes(path, _trivy_report.LIMIT)
+                    self.buildkit_publication.add(path, raw, _producer_publication.buildkit_view(raw, self.buildkit_publication.producer, self.buildkit_publication.scanner))
                 return
             if self.daemon.poll() is not None:
                 raise Stop('BuildKit exited before readiness')
@@ -500,6 +515,7 @@ class Qualification:
             self.remove('source/images/trust/build')
         for path in (self.root / 'debian-cache').rglob('*.deb'):
             path.unlink()
+        self.buildkit_publication.finish()
         self.record('build-result.json', {'status': 'pass', 'binaries': 22, 'images': 12, 'fresh_state_per_image': True, 'raw_format': 'OCI image-layout directories; both complete independent exports retained'})
 
     def sanitize_release_outputs(self, rows, notices):
@@ -512,10 +528,45 @@ class Qualification:
             args += ['--generated', str(path)]
         self.run('generated-sanitization', args)
 
+    def trivy_report(self, name, executable, arguments, subject, destination, *, timeout=1800):
+        def invoke(native):
+            code, _elapsed = self.run(name, [str(executable), *arguments, '--format', 'json', '--output', str(native)], timeout=timeout, allow_failure=True)
+            return code
+        code, receipt = _trivy_report.capture(executable, self.trivy_binary_sha256, self.root / 'native-trivy', destination, lambda: inventory(subject), invoke)
+        self.trivy_renderings.append({'report': destination.relative_to(self.output).as_posix(), **receipt})
+        self.record('trivy-report-rendering.json', self.trivy_renderings)
+        raw = _trivy_report.stable_bytes(destination, _trivy_report.LIMIT)
+        document = json.loads(raw)
+        if document.get('ArtifactName') != str(subject):
+            raise Stop('Trivy report subject name mismatch')
+        if subject == self.source and (document.get('ArtifactType') != 'repository' or document.get('Metadata', {}).get('Commit') != self.commit):
+            raise Stop('Trivy source provenance incomplete')
+        if (subject / 'oci-layout').is_file() and (document.get('ArtifactType') != 'container_image' or document.get('Metadata', {}).get('ImageID') != graph(subject, self.release)['config_digest']):
+            raise Stop('Trivy image subject identity mismatch')
+        self.publication.add(destination, raw, self.publication.trivy_view(raw, self.trivy_database, self.git_public_identity, receipt))
+        return code
+
     def scan(self):
         if json.loads((self.output / 'build-result.json').read_text())['status'] != 'pass':
             raise Stop('build phase incomplete')
         images = json.loads((self.output / 'image-results.json').read_text())
+        producer = module(self.source, 'public_dependency_metadata.py')
+        public_metadata = producer.load(self.source, debian_cache=self.root / 'debian-cache', go_module_cache=self.root / 'go-mod')
+        scanner = module(self.source, 'sanitize_public.py')
+        documents = dict(scanner.load_verified_upstream_licenses(self.source))
+        for path, body in public_metadata['documents']:
+            if path in documents and documents[path] != body:
+                raise Stop('conflicting producer legal documents')
+            documents[path] = body
+        if sum(map(len, documents.values())) > 8 * 2**20:
+            raise Stop('producer legal document budget')
+        self.publication = _producer_publication.Stage(self.root, 'scan', scanner, producer, metadata=public_metadata, upstream=sorted(documents.items(), key=lambda item: (-len(item[1]), item[0])))
+        def git(*args):
+            return subprocess.check_output(['git', *args], cwd=self.source, env=self.env, text=True, timeout=10).rstrip('\n')
+        expected_origin = 'https://github.com/' + self.inputs['repository'] + '.git'
+        if git('rev-parse', 'HEAD') != self.commit or git('rev-parse', 'HEAD^{tree}') != self.inputs['tree'] or git('config', '--get', 'remote.origin.url') != expected_origin:
+            raise Stop('scanner source acquisition identity changed')
+        self.git_public_identity = {'RepoURL': expected_origin, 'Commit': self.commit, 'Author': git('show', '-s', '--format=%an <%ae>', 'HEAD'), 'Committer': git('show', '-s', '--format=%cn <%ce>', 'HEAD')}
         tools = self.root / 'security-tools'
         tools.mkdir()
         def acquire(name):
@@ -528,6 +579,8 @@ class Qualification:
             self.record('tool-' + name + '.json', {'pin': row, 'binary_sha256': sha(tools / name)})
         # Defer Syft until the live Trivy DB has been verified and reclaimed.
         acquire('trivy')
+        self.trivy_binary_sha256 = sha(tools / 'trivy')
+        self.trivy_renderings = []
         self.env.update(TRIVY_CACHE_DIR=str(self.root / 'trivy-cache'), TRIVY_DISABLE_VEX_NOTICE='true')
         trivy = str(tools / 'trivy')
         self.run('database-download', [trivy, 'image', '--download-db-only'], timeout=1200)
@@ -536,10 +589,12 @@ class Qualification:
         if datetime.datetime.fromisoformat(metadata['NextUpdate'].replace('Z', '+00:00')) <= datetime.datetime.now(datetime.timezone.utc):
             raise Stop('scanner database stale')
         db_inventory = inventory(self.root / 'trivy-cache/db')
+        db_sha = next(row['sha256'] for row in db_inventory if row['path'] == 'trivy.db')
+        self.trivy_database = _trivy_db.Reader(self.root / 'trivy-cache/db/trivy.db', db_sha)
         self.record('scanner-database-before.json', {'metadata': metadata, 'files': db_inventory})
         results = []
         for name, path in [('source', self.source), ('binaries-A', self.artifacts / 'binaries-A'), ('binaries-B', self.artifacts / 'binaries-B')]:
-            code, _ = self.run('security-' + name, [trivy, 'fs', '--skip-db-update', '--scanners', 'vuln,secret', '--severity', 'HIGH,CRITICAL', '--exit-code', '1', '--no-progress', '--format', 'json', '--output', str(self.output / ('security-' + name + '.json')), str(path)], timeout=1800, allow_failure=True)
+            code = self.trivy_report('security-' + name, tools / 'trivy', ['fs', '--skip-db-update', '--scanners', 'vuln,secret', '--severity', 'HIGH,CRITICAL', '--exit-code', '1', '--no-progress', str(path)], path, self.output / ('security-' + name + '.json'))
             results.append({'subject': name, 'exit_code': code})
         for row in images:
             if row['phase'] != 'B':
@@ -547,11 +602,12 @@ class Qualification:
             path = self.output / row['path']
             if graph(path, self.release) != row['oci_graph'] or inventory(path) != row['files']:
                 raise Stop('OCI output drift before scanning')
-            code, _ = self.run('security-image-' + row['image'], [trivy, 'image', '--input', str(path), '--skip-db-update', '--scanners', 'vuln,secret', '--severity', 'HIGH,CRITICAL', '--ignore-unfixed', '--exit-code', '1', '--no-progress', '--format', 'json', '--output', str(self.output / ('security-image-' + row['image'] + '.json'))], timeout=1800, allow_failure=True)
+            code = self.trivy_report('security-image-' + row['image'], tools / 'trivy', ['image', '--input', str(path), '--skip-db-update', '--scanners', 'vuln,secret', '--severity', 'HIGH,CRITICAL', '--ignore-unfixed', '--exit-code', '1', '--no-progress'], path, self.output / ('security-image-' + row['image'] + '.json'))
             results.append({'subject': row['image'], 'exit_code': code})
         runner = next(row for row in images if row['phase'] == 'B' and row['image'] == 'runner')
         all_findings = self.output / 'runner-all-severities.json'
-        self.run('runner-all-severities', [trivy, 'image', '--input', str(self.output / runner['path']), '--skip-db-update', '--scanners', 'vuln,secret', '--severity', 'UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL', '--no-progress', '--format', 'json', '--output', str(all_findings)], timeout=1800)
+        if self.trivy_report('runner-all-severities', tools / 'trivy', ['image', '--input', str(self.output / runner['path']), '--skip-db-update', '--scanners', 'vuln,secret', '--severity', 'UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL', '--no-progress'], self.output / runner['path'], all_findings) != 0:
+            raise Stop('all-severity scanner failed')
         report = json.loads(all_findings.read_text())
         if report.get('ArtifactType') != 'container_image' or report.get('Metadata', {}).get('OS', {}).get('Family') != 'debian':
             raise Stop('runner image was not analyzed as Debian')
@@ -570,12 +626,13 @@ class Qualification:
             raise Stop('scanner database changed')
         self.record('security-results.json', results)
         self.record('scanner-database-after.json', {'same_authenticated_database_unchanged': True, 'files': db_inventory})
+        self.trivy_database.close()
         self.remove('trivy-cache')
         (tools / 'trivy').unlink()
         acquire('syft')
+        syft_binary_sha256 = sha(tools / 'syft')
         self.env.update(SYFT_CHECK_FOR_APP_UPDATE='false', SYFT_GOLANG_SEARCH_LOCAL_MOD_CACHE_LICENSES='true', SYFT_GOLANG_LOCAL_MOD_CACHE_DIR=str(self.root / 'go-mod'), SYFT_GOLANG_SEARCH_REMOTE_LICENSES='false')
-        producer = module(self.source, 'public_dependency_metadata.py')
-        evidence = (producer, producer.load(self.source, debian_cache=self.root / 'debian-cache', go_module_cache=self.root / 'go-mod'))
+        evidence = (producer, public_metadata)
         sbom = self.output / 'sbom'
         sbom.mkdir()
         identity = self.release['first_party_metadata'](self.source, self.version, self.commit)
@@ -586,7 +643,15 @@ class Qualification:
         for relative, path, scheme in subjects:
             name = path.name
             raw, normalized = sbom / (name + '.raw.spdx.json'), sbom / (name + '.spdx.json')
-            self.run('sbom-' + name, [str(tools / 'syft'), 'scan', scheme + ':' + str(path), '--output', 'spdx-json=' + str(raw)])
+            executable = tools / 'syft'
+            before_tool, before_subject = sha(executable), inventory(path) if path.is_dir() else sha(path)
+            if before_tool != syft_binary_sha256:
+                raise Stop('Syft executable changed before capture')
+            self.run('sbom-' + name, [str(executable), 'scan', scheme + ':' + str(path), '--output', 'spdx-json=' + str(raw)])
+            if sha(executable) != before_tool or (inventory(path) if path.is_dir() else sha(path)) != before_subject:
+                raise Stop('Syft producer or subject identity changed')
+            original = _trivy_report.stable_bytes(raw, _trivy_report.LIMIT)
+            self.publication.add(raw, original, _producer_publication.syft_view(original, public_metadata, producer, scanner))
             digest = graph(path, self.release)['manifest_digest'][7:] if scheme == 'oci-dir' else sha(path)
             self.release['normalize_spdx'](raw, normalized, name, digest, self.inputs['epoch'], first_party=identity, public_evidence=evidence)
             if name == 'runner' and scheme == 'oci-dir':
@@ -598,5 +663,6 @@ class Qualification:
         self.sanitize_release_outputs(rows, notices)
         if any(r['exit_code'] != 0 for r in results):
             raise Stop('vulnerability or secret gate failed')
+        self.publication.finish()
         self.remove('security-tools')
         self.record('scan-result.json', {'status': 'pass', 'source_commit': self.commit, 'source_tree': self.inputs['tree'], 'binary_AB': 11, 'OCI_AB': 6, 'SBOM_subjects': len(rows), 'strict_notices': 'pass', 'security_gates': 'pass', 'generated_sanitization': 'pass', 'live_operations': False, 'production_runners_touched': False, 'release_authority_written': False, 'target_conformance_executed': False, 'candidate_test_plan_end_state': 'stopped/disabled at N+2; operator-led recovery; no observer enrollment'})
