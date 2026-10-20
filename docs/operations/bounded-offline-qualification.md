@@ -101,6 +101,27 @@ the fixed transfer cap remains unadmitted.
 
 ## Failure diagnostics
 
+An explicitly selected `metadata_probe` dispatch runs a prospective producer
+diagnostic instead of qualification. Its job has only `contents: read`, a
+15-minute timeout and the existing aggregate resource/storage safeguards;
+the worker deadline is 10 minutes. It reproduces the local clone and `/work`
+mount context, inspects one fresh BuildKit worker without builds, scans tiny
+synthetic file/OCI subjects with pinned Syft, and runs pinned Trivy with only
+the secret scanner. It downloads no vulnerability database or historical
+artifact and performs no runtime rebuild, live operation or qualification.
+Ordinary CI jobs and full qualification are skipped for that dispatch.
+
+Native reports and logs stay in the task workspace until cleanup. The only
+upload is at most 1 MiB of sanitizer-checked structural diagnostics and its
+inventory, retained for at most one day. Matched values and unknown field
+names are represented by hashes and lengths; source provenance is compared
+in memory. The final observer must pass and all workers must join before
+upload admission. Any remaining private text prevents upload. This evidence
+cannot recover previously withheld report bytes, clear the earlier failed
+qualification or waive the raw Syft publication requirement above. Before a
+probe dispatch, fresh capacity and aggregate lifetime storage accounting must
+admit its reserved cost within the existing task allowance.
+
 The composed worker sets `SSL_CERT_FILE` to its copied
 `/etc/ssl/certs/ca-certificates.crt` bundle. Python HTTPS acquisition therefore
 does not depend on the host OpenSSL build's default path aliases being present

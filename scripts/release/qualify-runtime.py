@@ -26,7 +26,7 @@ def command(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=kwargs.pop('timeout', 60), **kwargs).strip()
 
 
-def admission(source, event, environment):
+def admission(source, event, environment, *, metadata_probe=False):
     if environment.get('GITHUB_EVENT_NAME') != 'workflow_dispatch' or environment.get('RUNNER_ENVIRONMENT') != 'github-hosted' or environment.get('RUNNER_OS') != 'Linux' or environment.get('RUNNER_ARCH') != 'X64':
         raise q.Stop('manual standard hosted Linux runner required')
     repository = event.get('repository', {})
@@ -36,7 +36,8 @@ def admission(source, event, environment):
     if environment.get('GITHUB_REF') != 'refs/heads/codex/runner-dotnet-servicing' or environment.get('GITHUB_RUN_ATTEMPT') != '1':
         raise q.Stop('candidate branch required')
     values = event.get('inputs')
-    if not isinstance(values, dict) or set(values) != {'bounded_qualification', 'expected_commit', 'expected_tree', 'carry_in_bytes'} or values['bounded_qualification'] != 'true':
+    required = {'bounded_qualification', 'expected_commit', 'expected_tree', 'carry_in_bytes'}
+    if not isinstance(values, dict) or set(values) not in (required, required | {'metadata_probe'}) or values.get('bounded_qualification') != ('false' if metadata_probe else 'true') or values.get('metadata_probe', 'false') != ('true' if metadata_probe else 'false'):
         raise q.Stop('closed bounded dispatch inputs required')
     commit, tree = values['expected_commit'], values['expected_tree']
     if not isinstance(commit, str) or re.fullmatch('[0-9a-f]{40}', commit) is None or not isinstance(tree, str) or re.fullmatch('[0-9a-f]{40}', tree) is None or environment.get('GITHUB_SHA') != commit:
@@ -50,7 +51,7 @@ def admission(source, event, environment):
     if re.fullmatch('[1-9][0-9]{0,19}', run_id) is None:
         raise q.Stop('run identity unavailable')
     epoch = int(command(['git', '-c', 'safe.directory=' + str(source), 'show', '-s', '--format=%ct', 'HEAD'], cwd=source))
-    return {'schema_version': 1, 'commit': commit, 'tree': tree, 'epoch': epoch, 'carry_in_bytes': int(carry), 'run_id': run_id, 'repository': repository['full_name'], 'candidate_test_plan_end_state': 'stopped/disabled at N+2; production runners untouched; operator-led recovery', 'live_operations': False}
+    return {'schema_version': 1, 'metadata_probe': metadata_probe, 'commit': commit, 'tree': tree, 'epoch': epoch, 'carry_in_bytes': int(carry), 'run_id': run_id, 'repository': repository['full_name'], 'candidate_test_plan_end_state': 'stopped/disabled at N+2; production runners untouched; operator-led recovery', 'live_operations': False}
 
 
 def safe_environment(root, go_root):
@@ -321,15 +322,18 @@ def child(root, go_root):
     try:
         subprocess.run(['git', '-c', 'safe.directory=' + str(inputs['checkout']), 'clone', '--no-local', '--quiet', str(inputs['checkout']), str(root / 'source')], check=True, env=environment, timeout=90)
         subprocess.run(['git', 'checkout', '--quiet', '--detach', inputs['commit']], cwd=root / 'source', check=True, env=environment, timeout=30)
-        q.write(root / 'phase.json', {'phase': 'selected-SDK-rebuild'})
-        sdk_rebuild(root, environment, parent, label)
+        probe = inputs.get('metadata_probe') is True
+        if not probe:
+            q.write(root / 'phase.json', {'phase': 'selected-SDK-rebuild'})
+            sdk_rebuild(root, environment, parent, label)
         q.write(root / 'phase.json', {'phase': 'worker-bootstrap'})
         image = compose_worker(root, label)
         args = ['docker', 'create', '--pull=never', '--hostname=example', '--cpus=4', '--memory=' + str(q.MEMORY), '--memory-swap=' + str(q.MEMORY), '--pids-limit=1024', '--cgroup-parent', parent, '--label', label, '--restart=no', '--log-opt=max-size=5m', '--log-opt=max-file=2', '--mount', 'type=bind,src=' + str(root) + ',dst=/work', '--mount', 'type=bind,src=' + str(go_root) + ',dst=/toolchain/go,readonly']
         worker_env = worker_environment(environment)
         for key, entry in worker_env.items():
             args += ['--env', key + '=' + entry]
-        for mode, privileged in (('worker', True), ('scan', False)):
+        modes = (('metadata-buildkit', True), ('metadata-scan', False)) if probe else (('worker', True), ('scan', False))
+        for mode, privileged in modes:
             q.write(root / 'phase.json', {'phase': 'build-worker' if privileged else 'fresh-security-and-SBOM'})
             worker = command(args[:2] + (['--privileged'] if privileged else []) + args[2:] + [image, 'python3', '/work/source/scripts/release/qualify-runtime.py', '--' + mode, '/work'])
             q.write(root / 'worker.json', {'container_id': worker, 'image_id': image, 'parent': parent, 'privileged': privileged})
@@ -346,7 +350,7 @@ def child(root, go_root):
             worker = None
         lineage = root / 'evidence/actual-worker-lineage.jsonl'
         names = {row['executable'] for line in lineage.read_text().splitlines() for row in json.loads(line)} if lineage.exists() else set()
-        if not {'dotnet', 'buildkit-runc'} <= names:
+        if not probe and not {'dotnet', 'buildkit-runc'} <= names:
             raise q.Stop('actual SDK/BuildKit descendant proof missing')
     except BaseException as failure:
         q.failure_receipt(root, 'scope', failure)
@@ -362,7 +366,12 @@ def child(root, go_root):
             q.write(root / 'evidence/RESULT.json', final)
             # Export remains inside the common cgroup while the host observer
             # enforces retained allocation, kernel limits and reserve floors.
-            export_evidence(root, guarded=True)
+            if inputs.get('metadata_probe') is True:
+                import _metadata_probe
+                if sys.exc_info()[0] is None:
+                    _metadata_probe.export(root)
+            else:
+                export_evidence(root, guarded=True)
         finally:
             os.environ.clear()
             os.environ.update(old_env)
@@ -562,14 +571,14 @@ def retain_failure(root):
     (public / 'evidence-inventory.json').write_text(encoded)
 
 
-def host(source, root, event_path, go_root):
+def host(source, root, event_path, go_root, *, metadata_probe=False):
     if os.geteuid() != 0:
         raise q.Stop('ephemeral hosted root supervisor required')
     info = event_path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not 0 < info.st_size <= 2**20 or event_path.resolve(strict=True) != event_path:
         raise q.Stop('unsafe dispatch event')
     event = json.loads(event_path.read_text(), object_pairs_hook=lambda pairs: dict(pairs) if len(dict(pairs)) == len(pairs) else (_ for _ in ()).throw(q.Stop('duplicate event key')))
-    inputs = admission(source, event, os.environ)
+    inputs = admission(source, event, os.environ, metadata_probe=metadata_probe)
     if root.exists() or root.parent.resolve(strict=True) != root.parent or not root.is_absolute():
         raise q.Stop('fresh canonical output directory required')
     # The selected Go toolchain must already exist in the hosted image. It is
@@ -607,8 +616,8 @@ def host(source, root, event_path, go_root):
         log.close()
         started = time.monotonic()
         while process.poll() is None:
-            if time.monotonic() - started >= 85 * 60:
-                raise q.Stop('85-minute worker deadline')
+            if time.monotonic() - started >= (10 if metadata_probe else 85) * 60:
+                raise q.Stop('bounded worker deadline')
             if (root / 'scope.json').exists():
                 sample(root, inputs, docker_root, excluded, baseline, sum(initial.values()))
             elif time.monotonic() - started > 20:
@@ -638,6 +647,12 @@ def host(source, root, event_path, go_root):
         final.update(status='pass' if error is None and final.get('status') == 'pass' else 'fail', resource_qualification='pass' if error is None else 'fail', release_admitted=False, live_operations=False)
         q.write(root / 'evidence/RESULT.json', final)
         q.write(root / 'evidence/terminal.json', {'workers_joined': not own_containers('pghar.qualification=' + inputs['run_id']), 'scope_exit_code': None if process is None else process.returncode, 'budget_or_execution_error': error, 'live_operations': False, 'production_runners_touched': False})
+    if metadata_probe:
+        if error:
+            raise q.Stop('metadata probe resource or execution failure')
+        import _metadata_probe
+        _metadata_probe.admit_upload(root)
+        return
     if not (root / 'public/evidence-inventory.json').exists():
         # A budget/deadline kill can interrupt child finally. Only move completed
         # raw exports into the upload bundle, under unchanged kernel limits.
@@ -678,6 +693,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--host', type=pathlib.Path)
+    group.add_argument('--metadata-host', type=pathlib.Path)
+    group.add_argument('--metadata-buildkit', type=pathlib.Path)
+    group.add_argument('--metadata-scan', type=pathlib.Path)
+    group.add_argument('--check-metadata-upload', type=pathlib.Path)
     group.add_argument('--scope-child', type=pathlib.Path)
     group.add_argument('--worker', type=pathlib.Path)
     group.add_argument('--scan', type=pathlib.Path)
@@ -688,7 +707,16 @@ def main():
     parser.add_argument('--event', type=pathlib.Path)
     parser.add_argument('--go-root', type=pathlib.Path)
     args = parser.parse_args()
-    if args.check_accounting:
+    if args.metadata_buildkit or args.metadata_scan or args.check_metadata_upload:
+        import _metadata_probe
+        if args.metadata_buildkit:
+            _metadata_probe.buildkit(args.metadata_buildkit)
+        elif args.metadata_scan:
+            _metadata_probe.scan(args.metadata_scan)
+        else:
+            _metadata_probe.check_upload(args.check_metadata_upload)
+            print('ready=true')
+    elif args.check_accounting:
         source = args.source.resolve(strict=True)
         started = time.monotonic()
         docker_root, excluded, baseline, initial = allocation_preflight(source, source.parent)
@@ -719,12 +747,15 @@ def main():
     elif args.scope_child:
         child(args.scope_child, args.go_root)
     else:
-        host(args.source, args.host, args.event, args.go_root)
+        host(args.source, args.metadata_host or args.host, args.event, args.go_root, metadata_probe=args.metadata_host is not None)
 
 
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, OSError, subprocess.SubprocessError) as error:
-        print('bounded-qualification: ' + str(error), file=sys.stderr)
+    except Exception as error:
+        private_probe = any(value.startswith(('--metadata-', '--check-metadata-')) for value in sys.argv[1:])
+        if not private_probe and not isinstance(error, (ValueError, OSError, subprocess.SubprocessError)):
+            raise
+        print('metadata-probe: ' + type(error).__name__ if private_probe else 'bounded-qualification: ' + str(error), file=sys.stderr)
         sys.exit(1)

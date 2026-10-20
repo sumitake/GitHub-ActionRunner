@@ -64,7 +64,7 @@ EXPECTED_SCHEDULED_WATCH_CONTEXTS = {
 }
 EXPECTED_ALL_CONTEXTS = (
     EXPECTED_STABLE_CONTEXTS
-    | {"codeql", "bounded-qualification"}
+    | {"codeql", "bounded-qualification", "metadata-probe"}
     | EXPECTED_RUNTIME_RELEASE_CONTEXTS
     | EXPECTED_SCHEDULED_WATCH_CONTEXTS
 )
