@@ -47,8 +47,9 @@ that probe starts no qualification, container, pull or import. Filesystem free s
 inodes are checked per physical device, and positive filesystem growth supplies
 an additional conservative allocation floor. No net-growth estimate substitutes
 for the task allocation measurement. The full retained carry-in, new source
-copies, caches, outputs and a 64 MiB control reserve count toward a 10 GiB
-hard ceiling with an 8.5 GiB early stop. Writable roots stop at 2 GiB, free
+copies, caches, outputs and a 64 MiB control reserve count toward an 11.5 GiB
+hard ceiling with a 10 GiB early stop, retaining a 1.5 GiB reserve between
+the two limits. Writable roots stop at 2 GiB, free
 disk at 13 GiB, available RAM at 4 GiB, and free inodes at 500,000; admission
 requires 11 GiB available RAM and 700,000 free inodes. Caps cannot be
 changed through dispatch inputs. Work ends after 85 minutes, within the

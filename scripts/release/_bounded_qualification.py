@@ -18,8 +18,8 @@ import types
 
 GIB = 2**30
 MEMORY = 6174015488
-SOFT = 17 * GIB // 2
-HARD = 10 * GIB
+SOFT = 10 * GIB
+HARD = 23 * GIB // 2
 RESERVE = 3758096384
 BUILDKit = 'moby/buildkit:v0.32.0@sha256:1f8167fcb0eca5b7126353d35299386945cbb8949cc516c592a49f80cfce4fa2'
 FRONTEND = 'docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e'

@@ -69,6 +69,18 @@ class BoundedQualification(unittest.TestCase):
         for key, value in [('cpu.max', 'max 100000'), ('memory.max', str(7 * q.GIB)), ('memory.swap.max', '1024'), ('pids.max', 'max'), ('memory.events', 'oom 1\noom_kill 0')]:
             with self.subTest(key=key), self.assertRaises(q.Stop): q.checks({**row, 'kernel': {**row['kernel'], key: value}})
 
+    def test_approved_disk_budget_retains_reserve_and_enforces_new_boundary(self):
+        self.assertEqual(q.SOFT, 10737418240)
+        self.assertEqual(q.HARD, 12348030976)
+        self.assertEqual(q.HARD - q.SOFT, 1610612736)
+        self.assertEqual(q.RESERVE, 3758096384)
+        self.assertEqual(q.MEMORY, 6174015488)
+        self.assertEqual(q.ARTIFACT_LIMIT, q.GIB)
+        row = {'kernel': {'cpu.max': '400000 100000', 'memory.max': str(q.MEMORY), 'memory.swap.max': '0', 'pids.max': '1024', 'memory.events': 'oom 0\noom_kill 0'}, 'accounted_bytes': q.SOFT - 1, 'writable_root_bytes': 2 * q.GIB - 1, 'free_bytes': 13 * q.GIB, 'free_inodes': 500000, 'available_memory_bytes': 4 * q.GIB}
+        q.checks(row)
+        with self.assertRaises(q.Stop):
+            q.checks({**row, 'accounted_bytes': q.SOFT})
+
     def layout(self):
         layout = self.root / 'layout'
         blobs = layout / 'blobs/sha256'
