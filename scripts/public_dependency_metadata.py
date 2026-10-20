@@ -91,12 +91,20 @@ def debian_bytes(url, maximum, cache, expected_sha=None):
     class SnapshotRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, request, response, code, message, headers, target):
             target_url = source_url(target, 'snapshot.debian.org')
-            names = [pathlib.PurePosixPath(parsed.path).name]
-            if expected_sha is not None:
-                names.append(expected_sha)
-            content_path = r'/file/[0-9a-f]{40}(?:/(?:' + '|'.join(re.escape(name) for name in names) + r'))?/?'
-            if re.fullmatch(content_path, target_url.path) is None:
+            match = re.fullmatch(r'/file/[0-9a-f]{40}(?:/([^/]+))?/?', target_url.path)
+            if match is None:
                 raise MetadataError('producer source redirect')
+            try:
+                names = {urllib.parse.unquote(pathlib.PurePosixPath(parsed.path).name, errors='strict')}
+                if expected_sha is not None:
+                    names.add(expected_sha)
+                # Snapshot percent-encodes package filename '+' characters.
+                # Decode only this basename once; origin and content-path
+                # structure remain literal, and callers still verify SHA256.
+                if match[1] is not None and urllib.parse.unquote(match[1], errors='strict') not in names:
+                    raise MetadataError('producer source redirect')
+            except UnicodeError:
+                raise MetadataError('producer source redirect') from None
             return super().redirect_request(request, response, code, message, headers, target)
     proxies = {kind: value for kind, value in urllib.request.getproxies().items() if kind in ('http', 'https', 'all', 'no')}
     for kind, value in proxies.items():

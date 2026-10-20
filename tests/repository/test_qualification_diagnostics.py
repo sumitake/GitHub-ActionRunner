@@ -78,6 +78,19 @@ class QualificationDiagnostics(unittest.TestCase):
         public = self.root / 'public'
         self.assertFalse((public / 'empty.log').exists())
         self.assertEqual(json.loads((public / 'RESULT.json').read_text())['status'], 'fail')
+        withheld = json.loads((public / 'evidence-inventory.json').read_text())['unsafe_text_withheld']
+        self.assertIn('PATH001', next(row for row in withheld if row['path'] == 'empty.log')['rules'])
+
+    def test_public_allocation_counters_preserve_measurements_without_private_paths(self):
+        docker = pathlib.Path('/var/lib/docker')
+        checkout = self.root / 'checkout'
+        measured = {str(docker): 123456, str(checkout): 234567}
+        public = host.public_initial_allocations(measured, docker, checkout)
+        self.assertEqual(sum(public.values()), sum(measured.values()))
+        raw = json.dumps(public).encode()
+        self.assertNotIn(str(checkout).encode(), raw)
+        self.assertEqual(self.sanitizer.scan_generated_bytes(raw, 'qualification-evidence/Docker-accounting.json', False, ()), [])
+        with self.assertRaises(q.Stop): host.public_initial_allocations({**measured, 'unexpected': 1}, docker, checkout)
 
     def test_fixture_label_never_applies_and_scanned_bytes_are_copied_exactly(self):
         original = self.sanitizer.scan_generated_bytes

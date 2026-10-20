@@ -331,6 +331,43 @@ class PublicDependencyMetadata(unittest.TestCase):
             response.read.return_value = b'x' * 11
             with self.assertRaises(self.module.MetadataError): self.module.debian_bytes(self.registry['debian_indexes'][0]['inrelease_url'], 10, None)
 
+    def test_package_redirect_accepts_only_equivalent_single_decoded_filenames(self):
+        from unittest import mock
+        name = 'example_1.2.3+deb1_amd64.deb'
+        url = 'https://snapshot.debian.org/archive/debian/20000101T000000Z/pool/main/e/example/' + name
+        prefix = 'https://snapshot.debian.org/file/' + 'a' * 40
+        response = mock.MagicMock()
+        response.status = 200
+        response.__enter__.return_value = response
+        response.read.return_value = b'synthetic public archive bytes'
+        opener = mock.Mock()
+        opener.open.return_value = response
+        with mock.patch.object(self.module.urllib.request, 'build_opener', return_value=opener) as build:
+            self.module.debian_bytes(url, 100, None, 'f' * 64)
+            redirect = build.call_args.args[1]
+            request = self.module.urllib.request.Request(url)
+            for filename in (name, name.replace('+', '%2B'), name.replace('+', '%2b')):
+                target = prefix + '/' + filename
+                with self.subTest(accepted=filename):
+                    self.assertEqual(redirect.redirect_request(request, None, 302, '', {}, target).full_url, target)
+            rejected = [
+                prefix + '/' + name.replace('+', '%252B'),
+                prefix + '/' + name.replace('+', '%2F'),
+                prefix + '/' + name.replace('+', '%5C'),
+                prefix + '/' + name.replace('1.2.3', '9.9.9'),
+                prefix + '/%2e%2e/' + name,
+                prefix + '/subdirectory/' + name,
+                prefix + '/' + name + '?download=1',
+                prefix + '/' + name + '#fragment',
+                prefix.replace('https:', 'http:') + '/' + name,
+                prefix.replace('snapshot.debian.org', 'other.invalid') + '/' + name,
+                prefix.replace('snapshot.debian.org', 'synthetic@snapshot.debian.org') + '/' + name,
+                prefix.replace('/file/a', '/file/%61', 1) + '/' + name,
+            ]
+            for target in rejected:
+                with self.subTest(rejected=target), self.assertRaises(self.module.MetadataError):
+                    redirect.redirect_request(request, None, 302, '', {}, target)
+
     def test_producer_network_never_transmits_proxy_credentials(self):
         from unittest import mock
         with mock.patch.object(self.module.urllib.request, 'getproxies', return_value={'https': 'http://synthetic:credential@proxy.invalid:8080'}):

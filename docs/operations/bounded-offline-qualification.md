@@ -105,14 +105,30 @@ exporter validates the original producer registry, dependency cache and runner
 license authority before using those projections. If authority is unavailable,
 diagnostics use the unchanged strict raw scanner and full qualification remains
 unadmitted. Existing source allowlist checks still apply; no fixture exemption
-or content-rule exception is added.
+or broad content-rule exception is added.
+
+The three full CoreHost startup traces contain public producer assembly/native
+version fields that resemble addresses and one runtime identifier that resembles
+a hostname. Their reviewed exceptions use the existing exact path, line, rule
+and canonical-line SHA-256 allowlist. The read-only
+`scripts/release/audit-startup-trace-allowlist.py` audit binds every exception to
+the three dependency manifests inside the descriptor's digest-pinned runner
+archive. It requires complete coverage without unrelated findings or stale
+exceptions. Other content, contexts and rules remain blocking. Canonical hashing
+retains its existing Unicode, line-ending and trailing-whitespace normalization;
+the inventory separately hashes every complete original trace byte. Trace
+verbosity and the app-local CoreCLR startup proof remain unchanged.
 
 Text is scanned and copied byte-for-byte under its retained logical evidence
 name. The hosted supervisor's ambient `/home` location is not a published file
 label. Private paths or sensitive data within the original contents remain
 blocking and are withheld. Files that fail policy are inventoried by digest and
-size; their contents are not published. Diagnostic preservation does not turn a
-failed build, incomplete resource proof or withheld text into a successful run.
+size and blocking rule identifiers; their contents are not published. Initial
+allocation counters use logical root names while retaining the exact measured
+values. Worker containers use a fixed placeholder hostname, and source Git
+operations run quietly to avoid collecting ambient paths in successful output.
+Diagnostic preservation does not turn a failed build, incomplete resource proof
+or withheld text into a successful run.
 
 Build, scan and scope failure receipts contain fixed stage, exception type and
 validated HTTP status classifications only. Messages, URLs, headers and

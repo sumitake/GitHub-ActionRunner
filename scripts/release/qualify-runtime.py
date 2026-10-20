@@ -71,6 +71,13 @@ def worker_environment(environment):
     return {**environment, 'PATH': '/toolchain/go/bin:/usr/bin:/bin', 'GOROOT': '/toolchain/go', 'SSL_CERT_FILE': '/etc/ssl/certs/ca-certificates.crt'}
 
 
+def public_initial_allocations(initial, docker_root, source):
+    # Publish exact measured values without embedding the hosted user's path.
+    if set(initial) != {str(docker_root), str(source)}:
+        raise q.Stop('unexpected initial allocation roots')
+    return {'Docker_store': initial[str(docker_root)], 'checkout': initial[str(source)]}
+
+
 def docker_json(args, **kwargs):
     return json.loads(command(['docker', *args], **kwargs))
 
@@ -318,7 +325,7 @@ def child(root, go_root):
         sdk_rebuild(root, environment, parent, label)
         q.write(root / 'phase.json', {'phase': 'worker-bootstrap'})
         image = compose_worker(root, label)
-        args = ['docker', 'create', '--pull=never', '--cpus=4', '--memory=' + str(q.MEMORY), '--memory-swap=' + str(q.MEMORY), '--pids-limit=1024', '--cgroup-parent', parent, '--label', label, '--restart=no', '--log-opt=max-size=5m', '--log-opt=max-file=2', '--mount', 'type=bind,src=' + str(root) + ',dst=/work', '--mount', 'type=bind,src=' + str(go_root) + ',dst=/toolchain/go,readonly']
+        args = ['docker', 'create', '--pull=never', '--hostname=example', '--cpus=4', '--memory=' + str(q.MEMORY), '--memory-swap=' + str(q.MEMORY), '--pids-limit=1024', '--cgroup-parent', parent, '--label', label, '--restart=no', '--log-opt=max-size=5m', '--log-opt=max-file=2', '--mount', 'type=bind,src=' + str(root) + ',dst=/work', '--mount', 'type=bind,src=' + str(go_root) + ',dst=/toolchain/go,readonly']
         worker_env = worker_environment(environment)
         for key, entry in worker_env.items():
             args += ['--env', key + '=' + entry]
@@ -505,8 +512,9 @@ def export_evidence(root, guarded=False):
         # exact original bytes under their retained logical name, with no
         # fixture exemption. Content containing private paths still fails.
         findings = sanitizer.scan_generated_bytes(raw, 'qualification-evidence/' + relative, False, upstream, public_metadata=metadata)
-        if list(allowlist.filter(findings)):
-            rejected.append({'path': relative, 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)})
+        blocked = list(allowlist.filter(findings))
+        if blocked:
+            rejected.append({'path': relative, 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw), 'rules': sorted({finding.rule for finding in blocked})})
             continue
         target = public / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -579,7 +587,7 @@ def host(source, root, event_path, go_root):
     root.mkdir(mode=0o700)
     (root / 'evidence').mkdir()
     inputs['checkout'] = str(source)
-    q.write(root / 'evidence/Docker-accounting.json', {'method': 'allocated blocks excluding only frozen immutable preinstalled image payloads; no baseline subtraction', 'excluded_payloads': [str(path) for path in excluded], 'filesystem_baseline': baseline, 'initial_allocated_bytes': initial})
+    q.write(root / 'evidence/Docker-accounting.json', {'method': 'allocated blocks excluding only frozen immutable preinstalled image payloads; no baseline subtraction', 'excluded_payloads': [str(path) for path in excluded], 'filesystem_baseline': baseline, 'initial_allocated_bytes': public_initial_allocations(initial, docker_root, source)})
     q.write(root / 'inputs.json', inputs)
     q.write(root / 'evidence/source-inputs.json', {key: value for key, value in inputs.items() if key != 'checkout'})
     scope_name = 'pghar-qualification-' + inputs['run_id']

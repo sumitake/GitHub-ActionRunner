@@ -295,9 +295,9 @@ def main():
                     raise ValueError("credentialed proxy is not a build input")
         stage("public-source")
         source = work / "runner-source"
-        run(["git", "init", str(source)], work, env)
-        run(["git", "-C", str(source), "fetch", "--depth=1", "https://github.com/actions/runner.git", descriptor["upstream_source_commit"]], work, env)
-        run(["git", "-C", str(source), "checkout", "--detach", "FETCH_HEAD"], work, env)
+        run(["git", "init", "--quiet", str(source)], work, env)
+        run(["git", "-C", str(source), "fetch", "--quiet", "--depth=1", "https://github.com/actions/runner.git", descriptor["upstream_source_commit"]], work, env)
+        run(["git", "-C", str(source), "checkout", "--quiet", "--detach", "FETCH_HEAD"], work, env)
         run(["git", "-C", str(source), "apply", str(ROOT / "release/runner-rebuild.patch")], work, env)
         stage("upstream-acquisition")
         official = work / runner["linux_x64_asset_name"]
