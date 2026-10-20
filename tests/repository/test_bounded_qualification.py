@@ -163,6 +163,54 @@ class BoundedQualification(unittest.TestCase):
         for entry in manifest['files']:
             self.assertEqual(q.sha(public / entry['path']), entry['sha256'])
 
+    def test_release_check_uses_normalized_outputs_but_raw_evidence_still_blocks_export(self):
+        sanitizer = q.module(ROOT, 'sanitize_public.py')
+        (self.root / 'source').symlink_to(ROOT, target_is_directory=True)
+        sbom = self.root / 'evidence/sbom'
+        sbom.mkdir(parents=True)
+        raw = sbom / 'synthetic.raw.spdx.json'
+        raw.write_text('{"fileName":"/home/synthetic/private"}')
+        normalized = sbom / 'synthetic.spdx.json'
+        normalized.write_text('{"fileName":"./bin/synthetic"}')
+        notices = self.root / 'evidence/THIRD-PARTY-NOTICES.txt'
+        notices.write_text('Synthetic public notice\n')
+        original = raw.read_bytes()
+        worker = object.__new__(q.Qualification)
+        worker.root = self.root
+        observed = []
+        def run(_name, args):
+            paths = [pathlib.Path(args[index + 1]) for index, value in enumerate(args) if value == '--generated']
+            observed.extend(paths)
+            findings = [finding for path in paths for finding in sanitizer.scan_generated_tree(path, ROOT)]
+            if findings:
+                raise q.Stop('generated-sanitization failed')
+        worker.run = run
+        worker.sanitize_release_outputs([('bin/synthetic', normalized)], notices)
+        self.assertEqual(observed, [normalized, notices])
+        self.assertEqual(raw.read_bytes(), original)
+        with self.assertRaises(q.Stop):
+            host.export_evidence(self.root)
+        manifest = json.loads((self.root / 'public/evidence-inventory.json').read_text())
+        self.assertFalse(manifest['artifact_qualification_admitted'])
+        self.assertEqual(manifest['unsafe_text_withheld'][0]['path'], 'sbom/synthetic.raw.spdx.json')
+        self.assertEqual(raw.read_bytes(), original)
+
+    def test_sensitive_normalized_output_still_fails_release_check(self):
+        sanitizer = q.module(ROOT, 'sanitize_public.py')
+        normalized = self.root / 'synthetic.spdx.json'
+        normalized.write_text('{"fileName":"/home/synthetic/private"}')
+        notices = self.root / 'notices.txt'
+        notices.write_text('Synthetic public notice\n')
+        worker = object.__new__(q.Qualification)
+        worker.root = self.root
+        def run(_name, args):
+            paths = [pathlib.Path(args[index + 1]) for index, value in enumerate(args) if value == '--generated']
+            if any(sanitizer.scan_generated_tree(path, ROOT) for path in paths):
+                raise q.Stop('generated-sanitization failed')
+        worker.run = run
+        with self.assertRaises(q.Stop):
+            worker.sanitize_release_outputs([('bin/synthetic', normalized)], notices)
+
     def test_oversized_export_refuses_before_copying_or_moving_raw_outputs(self):
         evidence = self.root / 'evidence'
         (evidence / 'artifacts').mkdir(parents=True)

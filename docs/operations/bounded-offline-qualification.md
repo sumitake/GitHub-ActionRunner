@@ -81,6 +81,11 @@ under the aggregate observer and preflights the full transfer cap before
 copying any text. Seventeen fresh SBOMs, complete notices and the
 producer-authenticated public sanitizer must pass.
 
+The release-output check scans the seventeen normalized SBOMs used by the
+notices generator and the resulting notices. Raw Syft reports remain retained
+evidence. The separate evidence publication gate scans those raw reports too;
+any withheld text still prevents full qualification.
+
 A successful offline qualification still does not supply target D2/D5
 facts or authorize a canary. An incomplete, stopped, mismatching or
 security-failing attempt produces no release admission. Raw A/B exports

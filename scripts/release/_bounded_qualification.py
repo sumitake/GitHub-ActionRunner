@@ -502,6 +502,16 @@ class Qualification:
             path.unlink()
         self.record('build-result.json', {'status': 'pass', 'binaries': 22, 'images': 12, 'fresh_state_per_image': True, 'raw_format': 'OCI image-layout directories; both complete independent exports retained'})
 
+    def sanitize_release_outputs(self, rows, notices):
+        # Syft's raw producer reports remain evidence, but the release-output
+        # check consumes the normalized SBOMs used to generate the notices.
+        # Export independently scans every retained raw report and still fails
+        # qualification if any text is withheld.
+        args = ['python3', 'scripts/sanitize_public.py', '--verified-runner-licenses', '--verified-dependency-metadata', '--dependency-debian-cache', str(self.root / 'debian-cache'), '--dependency-go-module-cache', str(self.root / 'go-mod')]
+        for path in [*(path for _relative, path in rows), notices]:
+            args += ['--generated', str(path)]
+        self.run('generated-sanitization', args)
+
     def scan(self):
         if json.loads((self.output / 'build-result.json').read_text())['status'] != 'pass':
             raise Stop('build phase incomplete')
@@ -585,7 +595,7 @@ class Qualification:
             digests[relative] = digest
         notices = self.output / 'THIRD-PARTY-NOTICES.txt'
         self.release['generate_notices'](rows, self.runtime['license_exceptions'], notices, digests)
-        self.run('generated-sanitization', ['python3', 'scripts/sanitize_public.py', '--verified-runner-licenses', '--verified-dependency-metadata', '--dependency-debian-cache', str(self.root / 'debian-cache'), '--dependency-go-module-cache', str(self.root / 'go-mod'), '--generated', str(sbom), '--generated', str(notices)])
+        self.sanitize_release_outputs(rows, notices)
         if any(r['exit_code'] != 0 for r in results):
             raise Stop('vulnerability or secret gate failed')
         self.remove('security-tools')
