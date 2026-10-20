@@ -8,14 +8,15 @@ import (
 )
 
 const (
-	Home     = "HOME=/runner"
-	Language = "LANG=C.UTF-8"
-	Path     = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-	JITName  = "ACTIONS_RUNNER_INPUT_JITCONFIG="
+	Home             = "HOME=/runner"
+	RuntimeDirectory = "XDG_RUNTIME_DIR=/tmp"
+	Language         = "LANG=C.UTF-8"
+	Path             = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	JITName          = "ACTIONS_RUNNER_INPUT_JITCONFIG="
 )
 
 var (
-	imageEnvironment = []string{Home, Language, Path}
+	imageEnvironment = []string{Home, Language, Path, RuntimeDirectory}
 	proxyEnvironment = func() []string {
 		loopback := strings.Join([]string{"127", "0", "0", "1"}, ".")
 		ipv6Loopback := strings.Join([]string{"", "", "1"}, ":")

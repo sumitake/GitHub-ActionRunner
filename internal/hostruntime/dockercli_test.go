@@ -1782,13 +1782,12 @@ func validRunnerSpec(adapter AdapterHandle, seccomp SeccompBinding) RunnerSpec {
 func TestHeldRunnerEnvironmentIsClosedAndOrderIndependent(t *testing.T) {
 	expected := runtimeenv.Runtime()
 	extraHTTPProxy := "HTTP_PROXY=" +
-		strings.TrimPrefix(expected[3], "HTTPS_PROXY=")
+		strings.TrimPrefix(expected[4], "HTTPS_PROXY=")
 	wrongLoopback := strings.Join([]string{"127", "0", "0", "2"}, ".")
-	valid := [][]string{
-		expected,
-		{expected[6], expected[5], expected[4], expected[3], expected[2], expected[1], expected[0]},
-		{expected[2], expected[4], expected[0], expected[6], expected[1], expected[5], expected[3]},
-	}
+	reversed := slices.Clone(expected)
+	slices.Reverse(reversed)
+	rotated := append(slices.Clone(expected[1:]), expected[0])
+	valid := [][]string{expected, reversed, rotated}
 	for _, environment := range valid {
 		if !runtimeenv.MatchesRuntime(environment) {
 			t.Fatalf("MatchesRuntime rejected %q", environment)
@@ -1805,9 +1804,9 @@ func TestHeldRunnerEnvironmentIsClosedAndOrderIndependent(t *testing.T) {
 		append(slices.Clone(expected), "TOKEN=secret"),
 		append([]string{"HOME=/tmp"}, expected[1:]...),
 		append([]string{expected[0], "LANG=en_US.UTF-8"}, expected[2:]...),
-		append(slices.Clone(expected[:3]),
+		append(slices.Clone(expected[:4]),
 			"HTTPS_PROXY=http://"+wrongLoopback+":18080",
-			expected[4], expected[5], expected[6]),
+			expected[5], expected[6], expected[7]),
 	}
 	for _, environment := range invalid {
 		if runtimeenv.MatchesRuntime(environment) {

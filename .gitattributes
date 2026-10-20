@@ -5,3 +5,9 @@
 *.gz binary
 # Preserve upstream license-document bytes and their recorded SHA-256 values.
 release/runner-license-texts/*.txt -text whitespace=-blank-at-eol,-blank-at-eof
+
+# Preserve unified diff context, including its leading space on blank lines.
+release/runner-rebuild.patch -text whitespace=-blank-at-eol
+
+# Preserve complete authenticated dependency legal texts byte for byte.
+release/public-dependency-texts/*.txt -text whitespace=-blank-at-eol

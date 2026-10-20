@@ -150,10 +150,14 @@ func newImageLayoutFixture(t *testing.T) imageLayoutFixture {
 		treeLockDigest: shaHex(runnerTreeLock),
 	}
 	pins := buildinfo.Pins()
+	payload, err := pins.RunnerPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
 	lock := runtimelock.Lock{
 		SchemaVersion:         1,
 		RunnerVersion:         pins.UpstreamRunner.Version,
-		RunnerArchiveSHA256:   pins.UpstreamRunner.LinuxX64SHA256,
+		RunnerArchiveSHA256:   payload.SHA256,
 		RunnerSourceCommit:    pins.UpstreamRunner.SourceCommit,
 		CommandSettingsSHA256: pins.UpstreamRunner.CommandSettingsSHA256,
 		RunnerBaseImage:       pins.RunnerBaseImage,

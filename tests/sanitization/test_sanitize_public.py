@@ -265,6 +265,16 @@ class H4Hostnames(unittest.TestCase):
         f = line("mDNS target: printer.local reachable", "notes.md")
         self.assertIn("HOST001", rules_of(f))
 
+    def test_private_suffix_must_end_the_dns_name(self):
+        for value in ("bin/System.Transactions.Local.dll", "SPDXRef-File-bin-System.Transactions.Local.dll-" + "a" * 16):
+            with self.subTest(value=value):
+                self.assertNotIn("HOST001", rules_of(line(value, "sbom/runner.spdx.json")))
+
+    def test_real_local_hosts_and_labeled_names_still_block(self):
+        for value in ("printer.local", "printer.local.", "printer.local:7443", "ssh user@printer.local", "host: printer.local.dll"):
+            with self.subTest(value=value):
+                self.assertIn("HOST001", rules_of(line(value, "notes.md")))
+
     def test_non_allowlisted_fqdn_labeled_context(self):
         f = line("hostname: rhohaus.johnosumi.example", "notes.md")
         self.assertIn("HOST001", rules_of(f))
@@ -414,6 +424,28 @@ class H8PathGrammar(unittest.TestCase):
         ):
             with self.subTest(text=text):
                 self.assertNotIn("PATH001", rules_of(line(text)))
+
+    def test_root_relative_unix_shared_data_paths_in_sbom_are_allowed(self):
+        for text in (
+            "usr/share/portable-ghar/dpkg-manifest.tsv",
+            "usr/local/share/portable-ghar/notice.txt",
+            '{"fileName":"usr/share/doc/example/copyright"}',
+            '{"files":[{"fileName":"usr/share/doc/example/a"},{"fileName":"usr/local/share/example/b"}]}',
+        ):
+            with self.subTest(text=text):
+                self.assertNotIn("PATH001", rules_of(line(text)))
+
+    def test_relative_system_prefix_does_not_hide_other_share_roots(self):
+        for text in (
+            "evilusr/share/private",
+            "evil-usr/share/private",
+            "evilusr/local/share/private",
+            "usr/share/public /share/CACHEDEV1_DATA/private",
+            "usr/share/../../share/CACHEDEV1_DATA/private",
+            'file://usr/share/example',
+        ):
+            with self.subTest(text=text):
+                self.assertIn("PATH001", rules_of(line(text)))
 
     def test_nas_paths_remain_detected_in_attached_and_dot_forms(self):
         for text in (

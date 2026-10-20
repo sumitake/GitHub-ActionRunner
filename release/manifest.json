@@ -130,7 +130,7 @@
       },
       {
         "path": "cmd/portable-ghar-runtime-lock/main_test.go",
-        "identity_inventory_sha256": "14f549370533f590973c0e24d7e14a55915b743e4a7de389621807b5d5d2fe23"
+        "identity_inventory_sha256": "b57684fe6261743b2b6370eacab63563f5675bce17f5686d1ef59a6b551e2b32"
       },
       {
         "path": "internal/archive/runner_archive_test.go",
@@ -145,12 +145,16 @@
         "identity_inventory_sha256": "ec1dc4b6f14d8adde96a069f7cd45fb01a93a31555be51bc6c9bcf5cbec9ae2b"
       },
       {
+        "path": "internal/buildinfo/runner_rebuild.json",
+        "identity_inventory_sha256": "2cf6f16f294e4f78af718d17b52c39fe70bc5ebc2a8115ac3a9850a13220d6ca"
+      },
+      {
         "path": "internal/runtimelock/lock_test.go",
         "identity_inventory_sha256": "3e120eae69da9743b84639c379ca5171e05daf648942c13dedf07dff10dd704e"
       },
       {
         "path": "release/runner-licenses.json",
-        "identity_inventory_sha256": "78443b1047023b26c7886a122877f14e86648460b57f339139254700f0e031a8"
+        "identity_inventory_sha256": "7506e648061e88d1533ab2dff443c8c0e328068fa8e4476f5e52cec1fd741b8e"
       },
       {
         "path": "tests/boundaries/runtime_boundary_test.go",
@@ -185,13 +189,13 @@
       {
         "path": "cmd/portable-ghar-runtime-lock/main_test.go",
         "token": "version_bare",
-        "count": 13,
+        "count": 12,
         "replace": true
       },
       {
         "path": "cmd/portable-ghar-runtime-lock/main_test.go",
         "token": "linux_x64_sha256",
-        "count": 3,
+        "count": 2,
         "replace": true
       },
       {
@@ -261,6 +265,24 @@
         "replace": true
       },
       {
+        "path": "internal/buildinfo/runner_rebuild.json",
+        "token": "version_bare",
+        "count": 2,
+        "replace": false
+      },
+      {
+        "path": "internal/buildinfo/runner_rebuild.json",
+        "token": "linux_x64_sha256",
+        "count": 1,
+        "replace": false
+      },
+      {
+        "path": "internal/buildinfo/runner_rebuild.json",
+        "token": "source_commit",
+        "count": 1,
+        "replace": false
+      },
+      {
         "path": "internal/runtimelock/lock_test.go",
         "token": "version_bare",
         "count": 2,
@@ -268,20 +290,14 @@
       },
       {
         "path": "release/runner-licenses.json",
-        "token": "linux_x64_sha256",
-        "count": 1,
+        "token": "version_bare",
+        "count": 14,
         "replace": false
       },
       {
         "path": "release/runner-licenses.json",
         "token": "source_commit",
         "count": 7,
-        "replace": false
-      },
-      {
-        "path": "release/runner-licenses.json",
-        "token": "version_bare",
-        "count": 14,
         "replace": false
       },
       {

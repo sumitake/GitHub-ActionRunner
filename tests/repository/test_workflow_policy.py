@@ -64,7 +64,7 @@ EXPECTED_SCHEDULED_WATCH_CONTEXTS = {
 }
 EXPECTED_ALL_CONTEXTS = (
     EXPECTED_STABLE_CONTEXTS
-    | {"codeql"}
+    | {"codeql", "bounded-qualification", "metadata-probe"}
     | EXPECTED_RUNTIME_RELEASE_CONTEXTS
     | EXPECTED_SCHEDULED_WATCH_CONTEXTS
 )
@@ -505,7 +505,7 @@ class RealCiWorkflowTest(unittest.TestCase):
                 )
 
         # The full job-id set across every workflow file is exactly the
-        # seven stable contexts plus the CodeQL scan job -- nothing missing,
+        # seven stable contexts plus the explicit optional jobs -- nothing missing,
         # nothing stray.
         self.assertEqual(set(context_sources.keys()), EXPECTED_ALL_CONTEXTS)
 
@@ -844,6 +844,15 @@ class RealCiWorkflowTest(unittest.TestCase):
                     "compare-runtime-rebuilds.sh",
                     self._run_text(root["jobs"][publish_id]),
                 )
+
+    def test_vuln_watch_passes_the_selected_rebuild_to_image_preparation(self) -> None:
+        root = self._load_real_workflow("vuln-watch.yml")
+        steps = root["jobs"]["runner-image-fixable"]["steps"]
+        rebuild = next(step for step in steps if step.get("id") == "runner-payload")
+        prepare = next(step for step in steps if step.get("name") == "Prepare Task 5 image contexts")
+        self.assertIn("rebuild-runner.py --if-selected", rebuild["run"])
+        self.assertEqual(prepare["env"]["REBUILT_RUNNER_ARCHIVE"], "${{ steps.runner-payload.outputs.archive }}")
+        self.assertIn('--runner-archive "$REBUILT_RUNNER_ARCHIVE"', prepare["run"])
 
     def test_vuln_watch_scans_built_runner_image(self) -> None:
         root = self._load_real_workflow("vuln-watch.yml")

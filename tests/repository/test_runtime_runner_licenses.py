@@ -80,6 +80,18 @@ class RunnerLicensingMetadata(unittest.TestCase):
         self.n["generate_notices"]([("images/runner.oci.tar", self.spdx)], [], notices, {"images/runner.oci.tar": self.digest})
         self.assertIn(self.text_path.read_text(), notices.read_text())
 
+    def test_rebuild_licenses_bind_actual_archive_separately(self):
+        self.write()
+        official = {"linux_x64_asset_digest": "sha256:" + "f" * 64}
+        payload = {"kind": "dotnet-rebuild", "sha256": self.asset.removeprefix("sha256:"), "upstream_sha256": "f" * 64}
+        flags = self.n["apply_baseline_runner_licenses"](self.root, official, official, self.spdx, self.digest, payload=payload)
+        self.assertEqual(flags, ["--verified-runner-licenses"])
+        self.assertEqual(json.loads(self.spdx.read_text())["packages"][1]["licenseDeclared"], "MIT")
+        self.write()
+        payload["upstream_sha256"] = "e" * 64
+        with self.assertRaises(self.n["RehearsalError"]):
+            self.n["apply_baseline_runner_licenses"](self.root, official, official, self.spdx, self.digest, payload=payload)
+
     def test_other_runner_asset_is_refused(self):
         with self.assertRaises(self.n["RehearsalError"]):
             self.apply("sha256:" + "e" * 64)

@@ -79,9 +79,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: 'set -euo pipefail; mkdir -m 700 "$RUNNER_TEMP/release-runner"; gh run download "$GITHUB_RUN_ID" --name release-runner-manifest --dir "$RUNNER_TEMP/release-runner"; test "$(find "$RUNNER_TEMP/release-runner" -type f | wc -l)" -eq 1; test -f "$RUNNER_TEMP/release-runner/runner-release.json"'
+      - name: Rebuild selected app-local runner archive
+        id: runner-payload
+        run: 'set -euo pipefail; archive_directory="$RUNNER_TEMP/rebuilt-runner"; mkdir -m 700 "$archive_directory"; archive="$(python3 scripts/release/rebuild-runner.py --if-selected --output-directory "$archive_directory")"; printf "archive=%s\n" "$archive" >>"$GITHUB_OUTPUT"'
       - name: Rehearse product runtime and package deterministic tree
         id: package
-        run: 'set -euo pipefail; export GOCACHE="$RUNNER_TEMP/workflow-go-build-a" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-a"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind product --version "$RELEASE_VERSION" --runner-manifest "$RUNNER_TEMP/release-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
+        env:
+          REBUILT_RUNNER_ARCHIVE: ${{ steps.runner-payload.outputs.archive }}
+        run: 'set -euo pipefail; set --; if [ -n "$REBUILT_RUNNER_ARCHIVE" ]; then set -- --runner-archive "$REBUILT_RUNNER_ARCHIVE"; fi; export GOCACHE="$RUNNER_TEMP/workflow-go-build-a" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-a"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind product --version "$RELEASE_VERSION" --runner-manifest "$RUNNER_TEMP/release-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree" "$@"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
       - name: Upload rebuild A
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -128,9 +133,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: 'set -euo pipefail; mkdir -m 700 "$RUNNER_TEMP/release-runner"; gh run download "$GITHUB_RUN_ID" --name release-runner-manifest --dir "$RUNNER_TEMP/release-runner"; test "$(find "$RUNNER_TEMP/release-runner" -type f | wc -l)" -eq 1; test -f "$RUNNER_TEMP/release-runner/runner-release.json"'
+      - name: Rebuild selected app-local runner archive
+        id: runner-payload
+        run: 'set -euo pipefail; archive_directory="$RUNNER_TEMP/rebuilt-runner"; mkdir -m 700 "$archive_directory"; archive="$(python3 scripts/release/rebuild-runner.py --if-selected --output-directory "$archive_directory")"; printf "archive=%s\n" "$archive" >>"$GITHUB_OUTPUT"'
       - name: Rehearse product runtime and package deterministic tree
         id: package
-        run: 'set -euo pipefail; export GOCACHE="$RUNNER_TEMP/workflow-go-build-b" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-b"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind product --version "$RELEASE_VERSION" --runner-manifest "$RUNNER_TEMP/release-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
+        env:
+          REBUILT_RUNNER_ARCHIVE: ${{ steps.runner-payload.outputs.archive }}
+        run: 'set -euo pipefail; set --; if [ -n "$REBUILT_RUNNER_ARCHIVE" ]; then set -- --runner-archive "$REBUILT_RUNNER_ARCHIVE"; fi; export GOCACHE="$RUNNER_TEMP/workflow-go-build-b" GOMODCACHE="$RUNNER_TEMP/workflow-go-mod-b"; mkdir -m 700 "$GOCACHE" "$GOMODCACHE"; scripts/release/rehearse-runtime.sh --release-kind product --version "$RELEASE_VERSION" --runner-manifest "$RUNNER_TEMP/release-runner/runner-release.json" --output "$RUNNER_TEMP/runtime-tree" "$@"; source_epoch="$(git show -s --format=%ct HEAD)"; tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/publication-tree.tar" -C "$RUNNER_TEMP/runtime-tree" .; tree_tar_sha256="$(sha256sum "$RUNNER_TEMP/publication-tree.tar" | awk ''{print $1}'')"; printf "tree_tar_sha256=%s\n" "$tree_tar_sha256" >>"$GITHUB_OUTPUT"'
       - name: Upload rebuild B
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

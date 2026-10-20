@@ -72,6 +72,8 @@ SUBJECT_TYPES = {
     "sbom",
     "notices",
     "runner-manifest",
+    "runner-payload",
+    "runner-rebuild-provenance",
     "source-archive",
     "source-sbom",
 }
@@ -423,6 +425,61 @@ def validate_oci(path):
     }
 
 
+def runner_payload_from_descriptor(raw, runner):
+    if not 0 < len(raw) <= 8192:
+        reject("runner rebuild descriptor size")
+    descriptor = parse_json(raw)
+    ordered = ("schema_version", "enabled", "upstream_version", "upstream_source_commit", "upstream_linux_x64_sha256", "dotnet_sdk_version", "dotnet_runtime_version", "sdk_container_image", "sdk_archive_sha512", "source_patch_sha256", "asset_name", "linux_x64_sha256", "archive_bytes")
+    if not isinstance(descriptor, dict) or type(descriptor.get("schema_version")) is not int or descriptor["schema_version"] != 1 or type(descriptor.get("enabled")) is not bool:
+        reject("runner rebuild schema")
+    keys = ordered if descriptor["enabled"] else ordered[:2]
+    if set(descriptor) != set(keys) or (json.dumps({key: descriptor[key] for key in keys}, indent=2, ensure_ascii=True) + "\n").encode() != raw:
+        reject("runner rebuild encoding")
+    upstream_sha = runner["linux_x64_asset_digest"].removeprefix("sha256:")
+    official = {"schema_version": 1, "kind": "official", "asset_name": runner["linux_x64_asset_name"], "sha256": upstream_sha, "upstream_sha256": upstream_sha}
+    if not descriptor["enabled"]:
+        return official
+    for key, length in (("upstream_source_commit", 40), ("upstream_linux_x64_sha256", 64), ("linux_x64_sha256", 64), ("source_patch_sha256", 64), ("sdk_archive_sha512", 128)):
+        if not isinstance(descriptor[key], str) or re.fullmatch("[0-9a-f]{" + str(length) + "}", descriptor[key]) is None:
+            reject("runner rebuild digest")
+    if (not isinstance(descriptor["upstream_version"], str) or re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", descriptor["upstream_version"]) is None
+        or descriptor["dotnet_sdk_version"] != "8.0.426" or descriptor["dotnet_runtime_version"] != "8.0.32"
+        or not isinstance(descriptor["sdk_container_image"], str) or re.fullmatch(r"mcr\.microsoft\.com/dotnet/sdk@sha256:[0-9a-f]{64}", descriptor["sdk_container_image"]) is None
+        or type(descriptor["archive_bytes"]) is not int or not 0 < descriptor["archive_bytes"] <= 512 * 1024 * 1024
+        or descriptor["linux_x64_sha256"] == descriptor["upstream_linux_x64_sha256"]
+        or descriptor["asset_name"] != "actions-runner-linux-x64-" + descriptor["upstream_version"][1:] + "-dotnet-8.0.32.tar.gz"):
+        reject("runner rebuild identity")
+    if descriptor["upstream_linux_x64_sha256"] != upstream_sha:
+        return official
+    if descriptor["upstream_version"] != runner["version"] or descriptor["upstream_source_commit"] != runner["source_commit_sha"]:
+        reject("runner rebuild upstream binding")
+    return {"schema_version": 1, "kind": "dotnet-rebuild", "asset_name": descriptor["asset_name"], "sha256": descriptor["linux_x64_sha256"], "upstream_sha256": upstream_sha, "provenance_sha256": sha256_bytes(raw), "archive_bytes": descriptor["archive_bytes"]}
+
+
+def validate_payload_subjects(root, runner, subjects):
+    payload_subjects = {key for key, value in subjects.items() if value["type"] == "runner-payload"}
+    rebuild_subjects = {key for key, value in subjects.items() if value["type"] == "runner-rebuild-provenance"}
+    # Preserve read-only validation of historical official release trees.
+    if not payload_subjects and not rebuild_subjects:
+        return
+    if payload_subjects != {"runner-payload.json"} or rebuild_subjects not in (set(), {"runner-rebuild.json"}):
+        reject("runner payload subject paths")
+    raw = read_small(root / "runner-payload.json")
+    payload = parse_json(raw)
+    if not isinstance(payload, dict) or canonical_json(payload) != raw:
+        reject("runner payload encoding")
+    if payload.get("kind") == "dotnet-rebuild":
+        if rebuild_subjects != {"runner-rebuild.json"}:
+            reject("runner rebuild provenance missing")
+        descriptor = read_small(root / "runner-rebuild.json")
+    else:
+        if rebuild_subjects:
+            reject("unexpected runner rebuild provenance")
+        descriptor = b'{\n  "schema_version": 1,\n  "enabled": false\n}\n'
+    if runner_payload_from_descriptor(descriptor, runner) != payload:
+        reject("runner payload provenance mismatch")
+
+
 def validate_tree(argument):
     root = pathlib.Path(argument)
     try:
@@ -562,6 +619,8 @@ def validate_tree(argument):
             source_sbom_count += 1
         paths.append(relative)
         parsed_subjects[relative] = subject
+
+    validate_payload_subjects(root, runtime["runner_release"], parsed_subjects)
 
     if paths != sorted(paths, key=lambda item: item.encode("utf-8")):
         reject("subject ordering")

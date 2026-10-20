@@ -693,6 +693,7 @@ func newFakeListenerEnvironment(document []byte) *fakeListenerEnvironment {
 		entries: runtimeenv.Listener(string(document)),
 		values: map[string]string{
 			"HOME":                     "/runner",
+			"XDG_RUNTIME_DIR":          "/tmp",
 			"LANG":                     "C.UTF-8",
 			"PATH":                     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 			listenerJITEnvironmentName: string(document),

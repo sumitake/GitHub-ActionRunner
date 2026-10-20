@@ -3,9 +3,31 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      bounded_qualification:
+        description: Run only bounded offline candidate qualification
+        type: boolean
+        default: false
+      metadata_probe:
+        description: Run only bounded prospective producer metadata diagnostics
+        type: boolean
+        default: false
+      expected_commit:
+        description: Exact candidate commit (required for bounded mode)
+        type: string
+        default: ""
+      expected_tree:
+        description: Exact candidate tree (required for bounded mode)
+        type: string
+        default: ""
+      carry_in_bytes:
+        description: Conservatively measured retained task bytes, including fixed reserve
+        type: string
+        default: ""
 permissions: {}
 jobs:
   go:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -38,6 +60,7 @@ jobs:
         run: go tool govulncheck ./...
 
   worker:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -64,6 +87,7 @@ jobs:
         run: npm run worker:test
 
   shell:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -92,6 +116,7 @@ jobs:
         run: bats tests/shell/*.bats tests/shell/qts/*.bats
 
   repository-metadata:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -140,6 +165,7 @@ jobs:
         run: python3 scripts/sanitize_public.py --tracked
 
   container:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -154,6 +180,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check read-only hosted allocation accounting
+        run: sudo /usr/bin/python3 -B scripts/release/qualify-runtime.py --check-accounting --source "$GITHUB_WORKSPACE"
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -162,8 +190,13 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Prepare Task 6 image contexts
         run: scripts/prepare-task6-images.sh
+      - name: Rebuild selected app-local runner archive
+        id: runner-payload
+        run: 'set -euo pipefail; archive_directory="$RUNNER_TEMP/rebuilt-runner"; mkdir -m 700 "$archive_directory"; archive="$(python3 scripts/release/rebuild-runner.py --if-selected --output-directory "$archive_directory")"; printf "archive=%s\n" "$archive" >>"$GITHUB_OUTPUT"'
       - name: Prepare Task 5 image contexts
-        run: 'repository="$(pwd -P)"; scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID" --ca-bundle "$repository/images/trust/build/ca-bundle.pem"'
+        env:
+          REBUILT_RUNNER_ARCHIVE: ${{ steps.runner-payload.outputs.archive }}
+        run: 'set -euo pipefail; repository="$(pwd -P)"; archive_args=(); if [ -n "$REBUILT_RUNNER_ARCHIVE" ]; then archive_args=(--runner-archive "$REBUILT_RUNNER_ARCHIVE"); fi; scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID" --ca-bundle "$repository/images/trust/build/ca-bundle.pem" "${archive_args[@]}"'
       - name: Prepare Task 11 image context
         run: scripts/prepare-task11-images.sh --generation "$GITHUB_RUN_ID"
       - name: Run Linux and Docker release gate
@@ -194,3 +227,82 @@ jobs:
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: 1
+
+  bounded-qualification:
+    if: github.event_name == 'workflow_dispatch' && inputs.bounded_qualification && !inputs.metadata_probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-bounded-qualification-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout exact dispatch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Run bounded offline qualification
+        run: 'set -euo pipefail; pinned_go="$RUNNER_TOOL_CACHE/go/1.26.9/x64"; test -d "$pinned_go"; sudo --preserve-env=GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_REPOSITORY,GITHUB_ACTOR,GITHUB_REF,GITHUB_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,RUNNER_ENVIRONMENT,RUNNER_OS,RUNNER_ARCH,HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,http_proxy,https_proxy,all_proxy,no_proxy /usr/bin/python3 scripts/release/qualify-runtime.py --host "$RUNNER_TEMP/bounded-qualification" --source "$GITHUB_WORKSPACE" --event "$GITHUB_EVENT_PATH" --go-root "$pinned_go"'
+      - name: Admit bounded evidence transfer
+        if: always()
+        id: evidence
+        run: 'set -euo pipefail; python3 scripts/release/qualify-runtime.py --check-upload "$RUNNER_TEMP/bounded-qualification/public" >>"$GITHUB_OUTPUT"'
+      - name: Retain raw A and B outputs and sanitized verification evidence
+        if: always() && steps.evidence.outputs.ready == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bounded-qualification-${{ github.sha }}
+          path: ${{ runner.temp }}/bounded-qualification/public
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 1
+          overwrite: false
+
+      - name: Admit small qualification control evidence
+        if: always()
+        id: control
+        run: 'set -euo pipefail; python3 scripts/release/qualify-runtime.py --check-control-upload "$RUNNER_TEMP/bounded-qualification/control" >>"$GITHUB_OUTPUT"'
+      - name: Retain small qualification control evidence
+        if: always() && steps.control.outputs.ready == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bounded-qualification-control-${{ github.sha }}
+          path: ${{ runner.temp }}/bounded-qualification/control
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 1
+          overwrite: false
+
+  metadata-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.metadata_probe && !inputs.bounded_qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-metadata-probe-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout exact dispatch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Run bounded producer metadata probe
+        run: 'set -euo pipefail; pinned_go="$RUNNER_TOOL_CACHE/go/1.26.9/x64"; test -d "$pinned_go"; sudo --preserve-env=GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_REPOSITORY,GITHUB_ACTOR,GITHUB_REF,GITHUB_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,RUNNER_ENVIRONMENT,RUNNER_OS,RUNNER_ARCH,HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,http_proxy,https_proxy,all_proxy,no_proxy /usr/bin/python3 scripts/release/qualify-runtime.py --metadata-host "$RUNNER_TEMP/metadata-probe" --source "$GITHUB_WORKSPACE" --event "$GITHUB_EVENT_PATH" --go-root "$pinned_go"'
+      - name: Admit sanitized metadata diagnostic transfer
+        if: always()
+        id: evidence
+        run: 'set -euo pipefail; python3 scripts/release/qualify-runtime.py --check-metadata-upload "$RUNNER_TEMP/metadata-probe/public" >>"$GITHUB_OUTPUT"'
+      - name: Retain sanitized structural metadata only
+        if: always() && steps.evidence.outputs.ready == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: metadata-probe-${{ github.sha }}
+          path: ${{ runner.temp }}/metadata-probe/public
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 1
+          overwrite: false

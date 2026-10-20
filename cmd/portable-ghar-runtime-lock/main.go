@@ -87,6 +87,25 @@ func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 			return unavailable(stderr, 1)
 		}
 		return 0
+	case "runner-payload-spec":
+		if len(args) != 1 {
+			return unavailable(stderr, 2)
+		}
+		payload, err := buildinfo.Pins().RunnerPayload()
+		if err != nil {
+			return unavailable(stderr, 1)
+		}
+		document, err := encodeCanonical(struct {
+			SchemaVersion uint32 `json:"schema_version"`
+			buildinfo.RunnerPayload
+		}{SchemaVersion: 1, RunnerPayload: payload})
+		if err != nil {
+			return unavailable(stderr, 1)
+		}
+		if _, err := stdout.Write(document); err != nil {
+			return unavailable(stderr, 1)
+		}
+		return 0
 	case "runner-download-spec":
 		if len(args) != 1 {
 			return unavailable(stderr, 2)
@@ -244,15 +263,18 @@ func extractRunnerRuntimeWith(options extractOptions, hook extractHook, extracto
 		return err
 	}
 
-	pins := buildinfo.Pins()
-	expectedAsset := "actions-runner-linux-x64-" + strings.TrimPrefix(pins.UpstreamRunner.Version, "v") + ".tar.gz"
+	payload, err := buildinfo.Pins().RunnerPayload()
+	if err != nil {
+		return errors.New("runtime-lock: runner payload invalid")
+	}
+	expectedAsset := payload.AssetName
 	if filepath.Base(options.archivePath) != expectedAsset {
 		return errors.New("runtime-lock: runner archive asset name invalid")
 	}
 	publishedRoot := filepath.Join(options.outputDirectory, "runner")
 	published, err := extractor(seedarchive.RunnerExtractOptions{
 		ArchivePath:        options.archivePath,
-		ExpectedSHA256:     pins.UpstreamRunner.LinuxX64SHA256,
+		ExpectedSHA256:     payload.SHA256,
 		EvidenceGeneration: options.evidenceGeneration,
 		OutputDirectory:    publishedRoot,
 	})
