@@ -1104,8 +1104,12 @@ def _scan_public_history_metadata(value: str, label: str) -> list[Finding]:
 def scan_history(repo_root: Path) -> list[Finding]:
     out: list[Finding] = []
 
-    # Reachable blobs across every ref that would exist on a public remote.
-    rev_list = _run_git(["rev-list", "--objects", "--all"], repo_root)
+    # Blob and commit history is the history reachable from the checked-out
+    # commit, judged by that commit's own scanner and allowlist. Every pushed
+    # ref runs this scan on its own push, so another branch's history is
+    # judged by that branch's rules, never by this checkout's. Ref names and
+    # tags below still cover every ref.
+    rev_list = _run_git(["rev-list", "--objects", "HEAD"], repo_root)
     blob_entries = []
     for line in rev_list.splitlines():
         if not line.strip():
@@ -1154,7 +1158,7 @@ def scan_history(repo_root: Path) -> list[Finding]:
             ]
 
     # Commit metadata: subject, body, author/committer identity.
-    log = _run_git(["log", "--all", "--format=%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%s%x1f%b%x1e"], repo_root)
+    log = _run_git(["log", "HEAD", "--format=%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%s%x1f%b%x1e"], repo_root)
     for record in log.split("\x1e"):
         record = record.strip("\n")
         if not record.strip():
@@ -1192,7 +1196,7 @@ def scan_history(repo_root: Path) -> list[Finding]:
 
     # Deleted-file path strings (identifier-bearing filenames survive even
     # though the blob walk above already covers their *content*).
-    deleted = _run_git(["log", "--all", "--diff-filter=D", "--name-only", "--pretty=format:"], repo_root)
+    deleted = _run_git(["log", "HEAD", "--diff-filter=D", "--name-only", "--pretty=format:"], repo_root)
     for path in sorted(set(p for p in deleted.splitlines() if p.strip())):
         for f in scan_text_content(path, f"<deleted-path>", fixture=is_fixture_path(path)):
             out.append(f._replace(rule="HISTORY_META", message=f"identifier in a deleted filename: {f.message}"))
@@ -1257,7 +1261,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p.add_argument("--tracked", action="store_true", help="scan git-tracked files")
     p.add_argument("--generated", action="append", default=[], metavar="PATH", help="scan a generated-output path (repeatable)")
     p.add_argument("--private-denylist", metavar="PATH", help="operator-supplied untracked denylist file (never in CI)")
-    p.add_argument("--history", action="store_true", help="scan reachable git history + metadata")
+    p.add_argument("--history", action="store_true", help="scan git history reachable from HEAD + ref and tag metadata")
     return p.parse_args(argv)
 
 

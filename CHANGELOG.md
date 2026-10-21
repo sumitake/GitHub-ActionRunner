@@ -49,6 +49,7 @@ Nothing in this section has shipped as a tagged release.
 
 ### Security
 
+- The push/schedule history sanitization scans the blobs and commit metadata reachable from the checked-out commit instead of every fetched ref. Scanning every ref judged other branches' history with the checked-out branch's scanner and allowlist, so an unmerged branch's reviewed historical allowances turned `main` red. Each pushed ref still runs the same history scan on its own push; branch and tag names are still scanned across every ref.
 - Added replacement-resistant Unix-socket guards, exact connected-stream
   framing, crash-safe journal locking, full-history public sanitization,
   and hosted CI checks for Linux, containers, supply chain, and static
