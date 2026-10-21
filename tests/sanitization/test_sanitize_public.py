@@ -615,6 +615,28 @@ class H10History(unittest.TestCase):
         )
         self.assertEqual([], exact_history_allowance.filter([finding]))
 
+    def test_history_is_scoped_to_checked_out_commit(self):
+        run = lambda *args: subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
+        run("checkout", "-q", "-b", "side")
+        (self.repo / "side.txt").write_text("internal_id 6ba7b810-9dad-11d1-80b4-00c04fd430c8\n")
+        run("add", "side.txt")
+        run("commit", "-q", "-m", "side branch subject 6ba7b811-9dad-11d1-80b4-00c04fd430c8")
+        run("checkout", "-q", "main")
+
+        def side_findings():
+            return [
+                f
+                for f in sp.scan_history(self.repo)
+                if f.path.startswith("side.txt@")
+                or (f.rule == "HISTORY_META" and "6ba7b811" in str(f.content))
+            ]
+
+        self.assertEqual([], side_findings())
+        run("checkout", "-q", "side")
+        found = side_findings()
+        self.assertTrue(any(f.path.startswith("side.txt@") for f in found), found)
+        self.assertTrue(any(f.rule == "HISTORY_META" for f in found), found)
+
     def test_commit_message_identifier_caught(self):
         findings = sp.scan_history(self.repo)
         self.assertTrue(any(f.rule == "HISTORY_META" and "subject" in f.path for f in findings), findings)
