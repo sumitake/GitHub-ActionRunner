@@ -36,6 +36,11 @@ def admission(source, event, environment, *, metadata_probe=False):
     if environment.get('GITHUB_REF') != 'refs/heads/codex/runner-dotnet-servicing' or environment.get('GITHUB_RUN_ATTEMPT') != '1':
         raise q.Stop('candidate branch required')
     values = event.get('inputs')
+    # The new CI selector must be explicitly false for existing modes.
+    if isinstance(values, dict) and 'payload_reconstruction' in values:
+        if values['payload_reconstruction'] != 'false':
+            raise q.Stop('reconstruction cannot enter qualification')
+        values = {key: value for key, value in values.items() if key != 'payload_reconstruction'}
     required = {'bounded_qualification', 'expected_commit', 'expected_tree', 'carry_in_bytes'}
     if not isinstance(values, dict) or set(values) not in (required, required | {'metadata_probe'}) or values.get('bounded_qualification') != ('false' if metadata_probe else 'true') or values.get('metadata_probe', 'false') != ('true' if metadata_probe else 'false'):
         raise q.Stop('closed bounded dispatch inputs required')
@@ -315,7 +320,7 @@ def prepare_public_clone(root, inputs, environment):
     q.write(root / 'evidence/source-acquisition.json', {'method': 'local reviewed checkout clone with --no-local; detached admitted commit; no remote fetch', 'source_commit': inputs['commit'], 'source_tree': inputs['tree'], 'repository': repository, 'origin_matches_admitted_public_repository': True, 'checked_out_identity_verified': True, 'acquisition_location': 'reviewed hosted checkout'})
 
 
-def child(root, go_root):
+def child(root, go_root, *, reconstruction=False):
     inputs = json.loads((root / 'inputs.json').read_text())
     slice_name = 'pghar-qualification-' + inputs['run_id'] + '.slice'
     subprocess.run(['systemctl', 'set-property', '--runtime', slice_name, 'CPUQuota=400%', 'CPUQuotaPeriodSec=100ms', 'MemoryMax=' + str(q.MEMORY), 'MemorySwapMax=0', 'TasksMax=1024'], check=True, timeout=20)
@@ -338,6 +343,11 @@ def child(root, go_root):
     try:
         subprocess.run(['git', '-c', 'safe.directory=' + str(inputs['checkout']), 'clone', '--no-local', '--quiet', str(inputs['checkout']), str(root / 'source')], check=True, env=environment, timeout=90)
         subprocess.run(['git', 'checkout', '--quiet', '--detach', inputs['commit']], cwd=root / 'source', check=True, env=environment, timeout=30)
+        if reconstruction:
+            import _payload_reconstruction as reconstruct
+            reconstruct.verify_source(root / 'source', command)
+            tooling = pathlib.Path(inputs['tooling_checkout'])
+            reconstruct.stage_tooling(tooling, root / 'tooling', command)
         probe = inputs.get('metadata_probe') is True
         if not probe:
             prepare_public_clone(root, inputs, environment)
@@ -349,10 +359,11 @@ def child(root, go_root):
         worker_env = worker_environment(environment)
         for key, entry in worker_env.items():
             args += ['--env', key + '=' + entry]
-        modes = (('metadata-buildkit', True), ('metadata-scan', False)) if probe else (('worker', True), ('scan', False))
+        modes = (('reconstruct-worker', True),) if reconstruction else ((('metadata-buildkit', True), ('metadata-scan', False)) if probe else (('worker', True), ('scan', False)))
         for mode, privileged in modes:
             q.write(root / 'phase.json', {'phase': 'build-worker' if privileged else 'fresh-security-and-SBOM'})
-            worker = command(args[:2] + (['--privileged'] if privileged else []) + args[2:] + [image, 'python3', '/work/source/scripts/release/qualify-runtime.py', '--' + mode, '/work'])
+            entrypoint = '/work/tooling/qualify-runtime.py' if reconstruction else '/work/source/scripts/release/qualify-runtime.py'
+            worker = command(args[:2] + (['--privileged'] if privileged else []) + args[2:] + [image, 'python3', entrypoint, '--' + mode, '/work'])
             q.write(root / 'worker.json', {'container_id': worker, 'image_id': image, 'parent': parent, 'privileged': privileged})
             subprocess.run(['docker', 'start', worker], check=True, timeout=30)
             # Only BuildKit needs privilege. Scanners receive the same bounded
@@ -378,12 +389,18 @@ def child(root, go_root):
         if image is not None:
             subprocess.run(['docker', 'image', 'rm', image], timeout=60, check=False)
         try:
-            final = json.loads((root / 'evidence/scan-result.json').read_text()) if (root / 'evidence/scan-result.json').exists() else {}
+            result_name = 'reconstruction-result.json' if reconstruction else 'scan-result.json'
+            result_path = root / 'evidence' / result_name
+            final = json.loads(result_path.read_text()) if result_path.exists() else {}
             final.update(status='pass' if sys.exc_info()[0] is None and final.get('status') == 'pass' else 'fail', resource_qualification='pending-final-observer', release_admitted=False, live_operations=False)
             q.write(root / 'evidence/RESULT.json', final)
             # Export remains inside the common cgroup while the host observer
             # enforces retained allocation, kernel limits and reserve floors.
-            if inputs.get('metadata_probe') is True:
+            if reconstruction:
+                # Identity-matched subjects were staged under the same guard.
+                # Never call qualification/publication admission for this mode.
+                pass
+            elif inputs.get('metadata_probe') is True:
                 import _metadata_probe
                 if sys.exc_info()[0] is None:
                     _metadata_probe.export(root)
@@ -404,7 +421,7 @@ def child(root, go_root):
 
 def sample(root, inputs, docker_root, excluded, baseline, initial_charge):
     deadline = time.monotonic() + 20
-    source = pathlib.Path(inputs['checkout'])
+    source = pathlib.Path(inputs.get('accounting_source', inputs['checkout']))
     scope = json.loads((root / 'scope.json').read_text())
     control = pathlib.Path(scope['cgroup'])
     kernel = {key: (control / key).read_text().strip() for key in ('cpu.max', 'memory.max', 'memory.swap.max', 'memory.events', 'memory.current', 'memory.peak', 'pids.max', 'pids.current', 'pids.peak')}
@@ -611,24 +628,31 @@ def retain_failure(root):
     (public / 'evidence-inventory.json').write_text(encoded)
 
 
-def host(source, root, event_path, go_root, *, metadata_probe=False):
+def host(source, root, event_path, go_root, *, metadata_probe=False, reconstruction=False):
     if os.geteuid() != 0:
         raise q.Stop('ephemeral hosted root supervisor required')
     info = event_path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not 0 < info.st_size <= 2**20 or event_path.resolve(strict=True) != event_path:
         raise q.Stop('unsafe dispatch event')
     event = json.loads(event_path.read_text(), object_pairs_hook=lambda pairs: dict(pairs) if len(dict(pairs)) == len(pairs) else (_ for _ in ()).throw(q.Stop('duplicate event key')))
-    inputs = admission(source, event, os.environ, metadata_probe=metadata_probe)
+    if reconstruction:
+        import _payload_reconstruction as reconstruct
+        tooling = pathlib.Path(__file__).resolve().parents[2]
+        inputs = reconstruct.admission(source, tooling, event, os.environ, command)
+        accounting_source = source.parent
+    else:
+        inputs = admission(source, event, os.environ, metadata_probe=metadata_probe)
+        accounting_source = source
     if root.exists() or root.parent.resolve(strict=True) != root.parent or not root.is_absolute():
         raise q.Stop('fresh canonical output directory required')
     # The selected Go toolchain must already exist in the hosted image. It is
     # immutable baseline OS tooling, not a cache downloaded outside accounting.
     if go_root.resolve(strict=True) != go_root or command([str(go_root / 'bin/go'), 'version'], env={'PATH': '/usr/bin:/bin', 'GOTOOLCHAIN': 'local'}) != 'go version go1.26.9 linux/amd64':
         raise q.Stop('preinstalled pinned Go toolchain unavailable')
-    docker_root, excluded, baseline, initial = allocation_preflight(source, root.parent)
-    if root == docker_root or root.is_relative_to(docker_root) or docker_root.is_relative_to(root) or root == source or root.is_relative_to(source) or source.is_relative_to(root):
+    docker_root, excluded, baseline, initial = allocation_preflight(accounting_source, root.parent)
+    if root == docker_root or root.is_relative_to(docker_root) or docker_root.is_relative_to(root) or root == accounting_source or root.is_relative_to(accounting_source) or accounting_source.is_relative_to(root):
         raise q.Stop('overlapping allocation roots')
-    if inputs['carry_in_bytes'] + sum(initial[str(path)] for path in (docker_root, source)) + 64 * 2**20 >= q.SOFT:
+    if inputs['carry_in_bytes'] + sum(initial[str(path)] for path in (docker_root, accounting_source)) + 64 * 2**20 >= q.SOFT:
         raise q.Stop('initial allocated storage exceeds admission envelope')
     memory = dict(line.split(':', 1) for line in pathlib.Path('/proc/meminfo').read_text().splitlines())
     if int(memory['MemAvailable'].split()[0]) * 1024 < 11 * q.GIB or min(value['free_inodes'] for value in baseline.values()) < 700000 or min(value['free_bytes'] for value in baseline.values()) < 13 * q.GIB + (q.SOFT - inputs['carry_in_bytes']):
@@ -636,9 +660,11 @@ def host(source, root, event_path, go_root, *, metadata_probe=False):
     root.mkdir(mode=0o700)
     (root / 'evidence').mkdir()
     inputs['checkout'] = str(source)
-    q.write(root / 'evidence/Docker-accounting.json', {'method': 'allocated blocks excluding only frozen immutable preinstalled image payloads; no baseline subtraction', 'excluded_payloads': [str(path) for path in excluded], 'filesystem_baseline': baseline, 'initial_allocated_bytes': public_initial_allocations(initial, docker_root, source)})
+    if reconstruction:
+        inputs['accounting_source'] = str(accounting_source)
+    q.write(root / 'evidence/Docker-accounting.json', {'method': 'allocated blocks excluding only frozen immutable preinstalled image payloads; no baseline subtraction', 'excluded_payloads': [str(path) for path in excluded], 'filesystem_baseline': baseline, 'initial_allocated_bytes': public_initial_allocations(initial, docker_root, accounting_source)})
     q.write(root / 'inputs.json', inputs)
-    q.write(root / 'evidence/source-inputs.json', {key: value for key, value in inputs.items() if key != 'checkout'})
+    q.write(root / 'evidence/source-inputs.json', {key: value for key, value in inputs.items() if key not in ('checkout', 'tooling_checkout', 'accounting_source')})
     scope_name = 'pghar-qualification-' + inputs['run_id']
     process = None
     error = None
@@ -648,7 +674,8 @@ def host(source, root, event_path, go_root, *, metadata_probe=False):
     for signum in (signal.SIGINT, signal.SIGTERM):
         old_handlers[signum] = signal.signal(signum, cancelled)
     try:
-        args = ['systemd-run', '--scope', '--quiet', '--unit=' + scope_name, '--slice=' + scope_name + '.slice', '/usr/bin/python3', str(pathlib.Path(__file__).resolve()), '--scope-child', str(root), '--go-root', str(go_root)]
+        child_mode = '--reconstruction-scope-child' if reconstruction else '--scope-child'
+        args = ['systemd-run', '--scope', '--quiet', '--unit=' + scope_name, '--slice=' + scope_name + '.slice', '/usr/bin/python3', str(pathlib.Path(__file__).resolve()), child_mode, str(root), '--go-root', str(go_root)]
         # Only this control supervisor sees the dispatch metadata. Credentials
         # and Actions runtime tokens are excluded from every child environment.
         log = (root / 'evidence/supervisor.log').open('wb')
@@ -683,11 +710,16 @@ def host(source, root, event_path, go_root, *, metadata_probe=False):
                 process.wait(timeout=5)
         for signum, handler in old_handlers.items():
             signal.signal(signum, handler)
-        final = json.loads((root / 'evidence/scan-result.json').read_text()) if (root / 'evidence/scan-result.json').exists() else {}
+        result_path = root / 'evidence' / ('reconstruction-result.json' if reconstruction else 'scan-result.json')
+        final = json.loads(result_path.read_text()) if result_path.exists() else {}
         workers_joined = not own_containers('pghar.qualification=' + inputs['run_id'])
         final.update(status='pass' if error is None and workers_joined and final.get('status') == 'pass' else 'fail', resource_qualification='pass' if error is None and workers_joined else 'fail', workers_joined=workers_joined, scope_exit_code=None if process is None else process.returncode, release_admitted=False, live_operations=False)
         q.write(root / 'evidence/RESULT.json', final)
         q.write(root / 'evidence/terminal.json', {'workers_joined': workers_joined, 'scope_exit_code': None if process is None else process.returncode, 'budget_or_execution_error': error, 'live_operations': False, 'production_runners_touched': False})
+    if reconstruction:
+        final['qualification_executed'] = False
+        reconstruct.finalize(root, final)
+        return
     if metadata_probe:
         if error:
             raise q.Stop('metadata probe resource or execution failure')
@@ -746,6 +778,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--host', type=pathlib.Path)
+    group.add_argument('--reconstruction-host', type=pathlib.Path)
+    group.add_argument('--reconstruction-scope-child', type=pathlib.Path)
+    group.add_argument('--reconstruct-worker', type=pathlib.Path)
+    group.add_argument('--check-reconstruction-upload', type=pathlib.Path)
     group.add_argument('--metadata-host', type=pathlib.Path)
     group.add_argument('--metadata-buildkit', type=pathlib.Path)
     group.add_argument('--metadata-scan', type=pathlib.Path)
@@ -761,7 +797,24 @@ def main():
     parser.add_argument('--event', type=pathlib.Path)
     parser.add_argument('--go-root', type=pathlib.Path)
     args = parser.parse_args()
-    if args.metadata_buildkit or args.metadata_scan or args.check_metadata_upload:
+    if args.check_reconstruction_upload:
+        import _payload_reconstruction as reconstruct
+        reconstruct.check_upload(args.check_reconstruction_upload)
+        print('ready=true')
+    elif args.reconstruct_worker:
+        import _payload_reconstruction as reconstruct
+        instance = q.Qualification(args.reconstruct_worker)
+        try:
+            instance.build(reconstruction=True)
+            reconstruct.compare(args.reconstruct_worker, instance, reconstruct.expected())
+        finally:
+            if instance.daemon is not None:
+                instance.stop('terminal')
+    elif args.reconstruction_scope_child:
+        child(args.reconstruction_scope_child, args.go_root, reconstruction=True)
+    elif args.reconstruction_host:
+        host(args.source, args.reconstruction_host, args.event, args.go_root, reconstruction=True)
+    elif args.metadata_buildkit or args.metadata_scan or args.check_metadata_upload:
         import _metadata_probe
         if args.metadata_buildkit:
             _metadata_probe.buildkit(args.metadata_buildkit)

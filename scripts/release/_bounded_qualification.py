@@ -402,7 +402,9 @@ class Qualification:
             raise Stop('private runtime environment changed')
         return {'uid': '65532:65532', 'embedded_binaries': observed, 'stamp': stamp}
 
-    def build(self):
+    def build(self, *, reconstruction=False):
+        phases = ('A',) if reconstruction else ('A', 'B')
+        image_names = {'runner', 'network-adapter', 'network-broker-dialer', 'network-helper', 'network-verifier'}
         self.release['validate_release_manifest'](json.loads((self.source / 'release/manifest.json').read_text()))
         self.release['validate_dockerfiles'](self.source, self.runtime)
         if subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.source, env=self.env, text=True).strip() != self.commit or subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=self.source, env=self.env, text=True).strip() != self.inputs['tree']:
@@ -416,7 +418,7 @@ class Qualification:
         flags = '-s -w -buildid= -X github.com/sumitake/portable-ghar/internal/buildinfo.version=' + self.version + ' -X github.com/sumitake/portable-ghar/internal/buildinfo.commit=' + self.commit + ' -X github.com/sumitake/portable-ghar/internal/buildinfo.stamp=' + stamp
         self.run('linked-identity-test', ['go', 'test', '-run', '^TestLinkedIdentity$', '-count=1', '-ldflags=' + flags, './internal/buildinfo'], extra={'PGHAR_EXPECTED_BUILD_VERSION': self.version, 'PGHAR_EXPECTED_BUILD_COMMIT': self.commit})
         binaries = []
-        for letter in ('A', 'B'):
+        for letter in phases:
             for row in self.runtime['binaries']:
                 path = self.artifacts / ('binaries-' + letter) / row['name']
                 path.parent.mkdir(exist_ok=True)
@@ -426,9 +428,12 @@ class Qualification:
                     raise Stop('unstamped or wrong binary')
                 binaries.append({'phase': letter, 'name': row['name'], 'sha256': sha(path), 'bytes': len(data)})
             self.remove('go-build')
-        if any(a['sha256'] != b['sha256'] for a, b in zip(binaries[:11], binaries[11:])) or len(binaries) != 22:
+        if not reconstruction and (any(a['sha256'] != b['sha256'] for a, b in zip(binaries[:11], binaries[11:])) or len(binaries) != 22):
             raise Stop('binary A/B mismatch')
-        self.record('binary-comparison.json', {'source_commit': self.commit, 'stamp': stamp, 'binaries': binaries, 'all_eleven_identical': True})
+        binary_result = {'source_commit': self.commit, 'stamp': stamp, 'binaries': binaries, 'all_eleven_identical': not reconstruction}
+        if reconstruction:
+            binary_result['reconstruction_only'] = True
+        self.record('binary-comparison.json', binary_result)
         self.run('prepare-task6', ['scripts/prepare-task6-images.sh'])
         runner = self.runtime['runner_release']
         payload = self.release['select_runner_payload'](self.source, runner)
@@ -471,9 +476,11 @@ class Qualification:
                 path.unlink()
         self.record('retained-module-legal-inputs.json', retained)
         self.debian_cache()
-        for letter in ('A', 'B'):
+        for letter in phases:
             for image in sorted(self.runtime['images'], key=lambda r: (r['name'] != 'runner', r['name'])):
                 name = image['name']
+                if reconstruction and name not in image_names:
+                    continue
                 directory = self.artifacts / ('images-' + letter) / name
                 directory.parent.mkdir(exist_ok=True)
                 self.start(letter + '-' + name)
@@ -516,7 +523,10 @@ class Qualification:
         for path in (self.root / 'debian-cache').rglob('*.deb'):
             path.unlink()
         self.buildkit_publication.finish()
-        self.record('build-result.json', {'status': 'pass', 'binaries': 22, 'images': 12, 'fresh_state_per_image': True, 'raw_format': 'OCI image-layout directories; both complete independent exports retained'})
+        build_result = {'status': 'pass', 'binaries': len(binaries), 'images': len(self.images), 'fresh_state_per_image': True, 'raw_format': 'OCI image-layout directories; both complete independent exports retained'}
+        if reconstruction:
+            build_result.update(raw_format='OCI image-layout directories; exact-subject reconstruction', reconstruction_only=True, qualification_executed=False)
+        self.record('build-result.json', build_result)
 
     def sanitize_release_outputs(self, rows, notices):
         # Syft's raw producer reports remain evidence, but the release-output

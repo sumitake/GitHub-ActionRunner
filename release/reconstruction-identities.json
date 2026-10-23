@@ -1,0 +1,511 @@
+{
+  "schema_version": 1,
+  "scope": "Proposed single-generation reconstruction of target runtime subjects only; not a new qualification run or full product release",
+  "source_commit": "874fcc9557166d94a97026ae7c966c99fa598fa9",
+  "source_tree": "8fbc190401b664d434bb405303efd714e0fce1aa",
+  "qualified_run": 39382640368,
+  "original_evidence_inventory_sha256": "c4d4f20db58a8592e9969459844d1b5086fb2c1cb2dfd38381a13ff125c0be34",
+  "qualified_control_zip_sha256": "51d055d54ff2d797e67d37cd5e538154bf8ffe266bdaabb4093f13cdc741fd59",
+  "binaries": [
+    {
+      "name": "portable-ghar",
+      "bytes": 11542654,
+      "sha256": "456d437a7c1ee0ff1c096da61be729d0814315884ed2f45f49c4a7cb58f92ceb"
+    },
+    {
+      "name": "portable-ghar-controller",
+      "bytes": 14700670,
+      "sha256": "ac20de6e21d225182299ca62e42280d57244e366f62d5c3cc955669ffa91a7c1"
+    },
+    {
+      "name": "portable-ghar-fleet-fence",
+      "bytes": 9846910,
+      "sha256": "b6a41efb8deaac32e52e381e9f5b32a55ad81f2fde45fee5f2cdd1536b97fd47"
+    },
+    {
+      "name": "portable-ghar-network-adapter",
+      "bytes": 9687166,
+      "sha256": "0ac8be85374acf66db078d3a325f332c97c43de2bba7ffa8dffdc9ffc0a9e62b"
+    },
+    {
+      "name": "portable-ghar-network-broker-dialer",
+      "bytes": 11153534,
+      "sha256": "30705f6c983fa0b7c023c3e8b5b3652d03b8e53340755820701253e2ab7ee845"
+    },
+    {
+      "name": "portable-ghar-network-broker-parser",
+      "bytes": 10010750,
+      "sha256": "42dcf688e6388c50702c8ecc4993d3a100def376acb855cb23d720749e296089"
+    },
+    {
+      "name": "portable-ghar-network-helper",
+      "bytes": 9658494,
+      "sha256": "6f700d67f68dd9977ca8838b969d9a352914e11f99b8ea977d701a4aa2ca942f"
+    },
+    {
+      "name": "portable-ghar-network-verifier",
+      "bytes": 9928830,
+      "sha256": "7944000ad4eeb4529d4aa9c21731688ec9ddf272b6739d20eac2b931da42d0b3"
+    },
+    {
+      "name": "portable-ghar-runner-gate",
+      "bytes": 10088574,
+      "sha256": "c71265aa727fbef45206d40db5d034772c5e488a594b34a27c3a9ebdd1c2bb74"
+    },
+    {
+      "name": "portable-ghar-runtime-lock",
+      "bytes": 10068094,
+      "sha256": "fa6eea05f912f363cb71a586a15b3900eb87042eac912b437516c5168d8694fc"
+    },
+    {
+      "name": "portable-ghar-watchdog",
+      "bytes": 10432638,
+      "sha256": "62e36b129c2e9642a01a6fa03376bbd638ffbe2520992e4f0068ac5da6c6d5e3"
+    }
+  ],
+  "runtime_images": {
+    "runner": {
+      "image": "runner",
+      "oci_graph": {
+        "index_digest": "sha256:7b21197e96e0c1c73b6274c578f3cba0992854b601653decd408db6be4bd03f5",
+        "manifest_digest": "sha256:1fcd2dedfbc4fec266a3434907a981f05e46b43f073f44d5f893a9c43a720226",
+        "config_digest": "sha256:56be5f0830a2351e2a88eb2e480c1781ac087529a1eb9540683fc1eb4cd5affe",
+        "layer_digests": [
+          "sha256:a8ac7f6c67abc236e4c745052c404112b8fab6fe8ac3a329d1ef3b867ad67c71",
+          "sha256:3bf6385b9522bd18b893198886dc4ac639541f2859219ee045ffd50d81e5d844",
+          "sha256:c4ebd61328eafbc436d27943088329a88c3e0f2b32d86ef0352c69aa9320ced4",
+          "sha256:d7957a0c2e7d313dff9b4e70a77bc70e6b4330c0e244ad3243c76b1dca19f322",
+          "sha256:d3facc9f73ff75861c41f6fac813dd468aff2589ab32b85845d1f5765fc2f67b"
+        ]
+      },
+      "source_to_image": {
+        "uid": "65532:65532",
+        "embedded_binaries": {
+          "usr/local/bin/portable-ghar-runner-gate": "c71265aa727fbef45206d40db5d034772c5e488a594b34a27c3a9ebdd1c2bb74"
+        },
+        "stamp": "portable-ghar-build-identity-v1|candidate-874fcc955716|874fcc9557166d94a97026ae7c966c99fa598fa9"
+      }
+    },
+    "adapter": {
+      "image": "network-adapter",
+      "oci_graph": {
+        "index_digest": "sha256:53436ad21633a926a037be644694fb644d5be6512fb4d0d17966692e19d6089f",
+        "manifest_digest": "sha256:648d90ef8c89bad55555b76f20d2fc98407bda91f1b0ef858e11bdeaa8da073b",
+        "config_digest": "sha256:d4c0cd95d40570c62b815bade53e4c0afe284f91641b58a195a86bd53d953a3f",
+        "layer_digests": [
+          "sha256:29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1",
+          "sha256:3a301d419e8b46c0a4559cf84718604f8df37e5c23e6abb05998950d4241e840",
+          "sha256:22b5495ff28241c6ab93153cc7c295ef29cf5ba2ab4c58b223b26fab11f86817",
+          "sha256:ba448ec34816b83d6a3c31d32e09dc1eacac4a151da2e63598a22bbeed407e56"
+        ]
+      },
+      "source_to_image": {
+        "uid": "65532:65532",
+        "embedded_binaries": {
+          "usr/local/bin/portable-ghar-network-adapter": "0ac8be85374acf66db078d3a325f332c97c43de2bba7ffa8dffdc9ffc0a9e62b"
+        },
+        "stamp": "portable-ghar-build-identity-v1|candidate-874fcc955716|874fcc9557166d94a97026ae7c966c99fa598fa9"
+      }
+    },
+    "broker": {
+      "image": "network-broker-dialer",
+      "oci_graph": {
+        "index_digest": "sha256:7711bf9d3cc8c5820e9a6a377fc36a7f80e3c448cb6dc5395589ead265ee902e",
+        "manifest_digest": "sha256:e37a2ec2ef53e9519e738b4ad150b9c326bd5e41f77c78bca8f689423990325b",
+        "config_digest": "sha256:6257adafaa973616e39fe0fe1c377391e3348eaf30e12e879f92f9d30025eb07",
+        "layer_digests": [
+          "sha256:29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1",
+          "sha256:8c51d0406cae0546cb5a44580320b372ea882cd194cad8b13cd43f2a3267404d",
+          "sha256:40b1deee2a78422c503d7f8fe9ef1efa1c01274f476bf851cd7c133688dd4de5",
+          "sha256:cab4db7b6fdb8c71b9476f3dc9011c048eb92e9618ba31d4276bbe49b9171d20",
+          "sha256:ba448ec34816b83d6a3c31d32e09dc1eacac4a151da2e63598a22bbeed407e56",
+          "sha256:6d2431fd308a929f6a192e123be0b41f443f342b06ceb2e0db4027463954dd78",
+          "sha256:481a4a38b77c41fbe2724e9373c4892ae94dd381a9ed96fdfacb25268f9c992a",
+          "sha256:943538a42bb9ea9df31b312fd8f8aad7c6efb481ffcc653eef0dc0734b9175e3",
+          "sha256:561bb29f6e6f8a6303a9e4432c4f3b120dbfbb188721b68df9b07c26721a465d",
+          "sha256:2a5d924be0ae5140239bbe5d4295008758660ee906038c42c7b34d3fd0d9519b"
+        ]
+      },
+      "source_to_image": {
+        "uid": "65532:65532",
+        "embedded_binaries": {
+          "usr/local/bin/portable-ghar-network-broker-dialer": "30705f6c983fa0b7c023c3e8b5b3652d03b8e53340755820701253e2ab7ee845",
+          "usr/local/bin/portable-ghar-network-broker-parser": "42dcf688e6388c50702c8ecc4993d3a100def376acb855cb23d720749e296089"
+        },
+        "stamp": "portable-ghar-build-identity-v1|candidate-874fcc955716|874fcc9557166d94a97026ae7c966c99fa598fa9"
+      }
+    },
+    "helper": {
+      "image": "network-helper",
+      "oci_graph": {
+        "index_digest": "sha256:01eb6096e572f5c2b49d37ba9e5e6ad34119d8f36a32a6e03eb2366044a139bb",
+        "manifest_digest": "sha256:d06803ffd0a673dd84e775fb1b1eed527871f75a2e1ba05d6e51a946b6b7afeb",
+        "config_digest": "sha256:665fbd5b1d5f814bc70250848501e9db7d461a2ea7afb3e4618f7bed119d0f24",
+        "layer_digests": [
+          "sha256:29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1",
+          "sha256:eceee1c5448e14b9542725f258510e2a499d1712d6f5d4251f98b038ebf40b91",
+          "sha256:9da6a69c94f719d86e304c0b12beb24036fcbd3ed290d02cd4c8da8668f03fd1",
+          "sha256:df758cd338626cd77ed869167aa830b0684b637113e81e6e76d4f9c5f5b9309d",
+          "sha256:2c3b4e5c5fcc7a0dcc32684d01a11f7222ace414b549ee9620c64cfca9b73d1a",
+          "sha256:6ad90c572b94edf67584180ff5b9d82d200cf3e14704e81dbe4eafa129475799"
+        ]
+      },
+      "source_to_image": {
+        "uid": "65532:65532",
+        "embedded_binaries": {
+          "usr/local/bin/portable-ghar-network-helper": "6f700d67f68dd9977ca8838b969d9a352914e11f99b8ea977d701a4aa2ca942f"
+        },
+        "stamp": "portable-ghar-build-identity-v1|candidate-874fcc955716|874fcc9557166d94a97026ae7c966c99fa598fa9"
+      }
+    },
+    "verifier": {
+      "image": "network-verifier",
+      "oci_graph": {
+        "index_digest": "sha256:233a602a8f1418ffa6b34bef5da4f171b0b683521e3e2f5af78e731384d4200e",
+        "manifest_digest": "sha256:48291e022c5146653c2f4f735b83a47716b83fa02719c7f40e0b49e26d27aea4",
+        "config_digest": "sha256:39ac6d09c65e8929bf1392965e89e3211178dd25053e96d9d1dc8d31d5cf39e0",
+        "layer_digests": [
+          "sha256:29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1",
+          "sha256:8c51d0406cae0546cb5a44580320b372ea882cd194cad8b13cd43f2a3267404d",
+          "sha256:40b1deee2a78422c503d7f8fe9ef1efa1c01274f476bf851cd7c133688dd4de5",
+          "sha256:eb62ea209d50a329faa4e0ff0a6c49dcf54688a8e1606190ddf3f0f33cb55112",
+          "sha256:943538a42bb9ea9df31b312fd8f8aad7c6efb481ffcc653eef0dc0734b9175e3",
+          "sha256:561bb29f6e6f8a6303a9e4432c4f3b120dbfbb188721b68df9b07c26721a465d",
+          "sha256:2a5d924be0ae5140239bbe5d4295008758660ee906038c42c7b34d3fd0d9519b"
+        ]
+      },
+      "source_to_image": {
+        "uid": "65532:65532",
+        "embedded_binaries": {
+          "usr/local/bin/portable-ghar-network-verifier": "7944000ad4eeb4529d4aa9c21731688ec9ddf272b6739d20eac2b931da42d0b3"
+        },
+        "stamp": "portable-ghar-build-identity-v1|candidate-874fcc955716|874fcc9557166d94a97026ae7c966c99fa598fa9"
+      }
+    }
+  },
+  "required_original_members": [
+    {
+      "path": "artifacts/binaries-A/portable-ghar",
+      "bytes": 11542654,
+      "sha256": "456d437a7c1ee0ff1c096da61be729d0814315884ed2f45f49c4a7cb58f92ceb"
+    },
+    {
+      "path": "artifacts/binaries-A/portable-ghar-controller",
+      "bytes": 14700670,
+      "sha256": "ac20de6e21d225182299ca62e42280d57244e366f62d5c3cc955669ffa91a7c1"
+    },
+    {
+      "path": "artifacts/binaries-A/portable-ghar-fleet-fence",
+      "bytes": 9846910,
+      "sha256": "b6a41efb8deaac32e52e381e9f5b32a55ad81f2fde45fee5f2cdd1536b97fd47"
+    },
+    {
+      "path": "artifacts/binaries-A/portable-ghar-network-adapter",
+      "bytes": 9687166,
+      "sha256": "0ac8be85374acf66db078d3a325f332c97c43de2bba7ffa8dffdc9ffc0a9e62b"
+    },
+    {
+      "path": "artifacts/binaries-A/portable-ghar-network-broker-dialer",
+      "bytes": 11153534,
+      "sha256": "30705f6c983fa0b7c023c3e8b5b3652d03b8e53340755820701253e2ab7ee845"
+    },
+    {
+      "path": "artifacts/binaries-A/portable-ghar-network-broker-parser",
+      "bytes": 10010750,
+      "sha256": "42dcf688e6388c50702c8ecc4993d3a100def376acb855cb23d720749e296089"
+    },
+    {
+      "path": "artifacts/binaries-A/portable-ghar-network-helper",
+      "bytes": 9658494,
+      "sha256": "6f700d67f68dd9977ca8838b969d9a352914e11f99b8ea977d701a4aa2ca942f"
+    },
+    {
+      "path": "artifacts/binaries-A/portable-ghar-network-verifier",
+      "bytes": 9928830,
+      "sha256": "7944000ad4eeb4529d4aa9c21731688ec9ddf272b6739d20eac2b931da42d0b3"
+    },
+    {
+      "path": "artifacts/binaries-A/portable-ghar-runner-gate",
+      "bytes": 10088574,
+      "sha256": "c71265aa727fbef45206d40db5d034772c5e488a594b34a27c3a9ebdd1c2bb74"
+    },
+    {
+      "path": "artifacts/binaries-A/portable-ghar-runtime-lock",
+      "bytes": 10068094,
+      "sha256": "fa6eea05f912f363cb71a586a15b3900eb87042eac912b437516c5168d8694fc"
+    },
+    {
+      "path": "artifacts/binaries-A/portable-ghar-watchdog",
+      "bytes": 10432638,
+      "sha256": "62e36b129c2e9642a01a6fa03376bbd638ffbe2520992e4f0068ac5da6c6d5e3"
+    },
+    {
+      "path": "artifacts/images-A/network-adapter/blobs/sha256/22b5495ff28241c6ab93153cc7c295ef29cf5ba2ab4c58b223b26fab11f86817",
+      "bytes": 140,
+      "sha256": "22b5495ff28241c6ab93153cc7c295ef29cf5ba2ab4c58b223b26fab11f86817"
+    },
+    {
+      "path": "artifacts/images-A/network-adapter/blobs/sha256/29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1",
+      "bytes": 123,
+      "sha256": "29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1"
+    },
+    {
+      "path": "artifacts/images-A/network-adapter/blobs/sha256/3a301d419e8b46c0a4559cf84718604f8df37e5c23e6abb05998950d4241e840",
+      "bytes": 4246660,
+      "sha256": "3a301d419e8b46c0a4559cf84718604f8df37e5c23e6abb05998950d4241e840"
+    },
+    {
+      "path": "artifacts/images-A/network-adapter/blobs/sha256/648d90ef8c89bad55555b76f20d2fc98407bda91f1b0ef858e11bdeaa8da073b",
+      "bytes": 1384,
+      "sha256": "648d90ef8c89bad55555b76f20d2fc98407bda91f1b0ef858e11bdeaa8da073b"
+    },
+    {
+      "path": "artifacts/images-A/network-adapter/blobs/sha256/ba448ec34816b83d6a3c31d32e09dc1eacac4a151da2e63598a22bbeed407e56",
+      "bytes": 91,
+      "sha256": "ba448ec34816b83d6a3c31d32e09dc1eacac4a151da2e63598a22bbeed407e56"
+    },
+    {
+      "path": "artifacts/images-A/network-adapter/blobs/sha256/d4c0cd95d40570c62b815bade53e4c0afe284f91641b58a195a86bd53d953a3f",
+      "bytes": 1660,
+      "sha256": "d4c0cd95d40570c62b815bade53e4c0afe284f91641b58a195a86bd53d953a3f"
+    },
+    {
+      "path": "artifacts/images-A/network-adapter/index.json",
+      "bytes": 553,
+      "sha256": "53436ad21633a926a037be644694fb644d5be6512fb4d0d17966692e19d6089f"
+    },
+    {
+      "path": "artifacts/images-A/network-adapter/oci-layout",
+      "bytes": 30,
+      "sha256": "18f0797eab35a4597c1e9624aa4f15fd91f6254e5538c1e0d193b2a95dd4acc6"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1",
+      "bytes": 123,
+      "sha256": "29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/2a5d924be0ae5140239bbe5d4295008758660ee906038c42c7b34d3fd0d9519b",
+      "bytes": 742,
+      "sha256": "2a5d924be0ae5140239bbe5d4295008758660ee906038c42c7b34d3fd0d9519b"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/40b1deee2a78422c503d7f8fe9ef1efa1c01274f476bf851cd7c133688dd4de5",
+      "bytes": 141,
+      "sha256": "40b1deee2a78422c503d7f8fe9ef1efa1c01274f476bf851cd7c133688dd4de5"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/481a4a38b77c41fbe2724e9373c4892ae94dd381a9ed96fdfacb25268f9c992a",
+      "bytes": 4337969,
+      "sha256": "481a4a38b77c41fbe2724e9373c4892ae94dd381a9ed96fdfacb25268f9c992a"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/561bb29f6e6f8a6303a9e4432c4f3b120dbfbb188721b68df9b07c26721a465d",
+      "bytes": 403,
+      "sha256": "561bb29f6e6f8a6303a9e4432c4f3b120dbfbb188721b68df9b07c26721a465d"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/6257adafaa973616e39fe0fe1c377391e3348eaf30e12e879f92f9d30025eb07",
+      "bytes": 3263,
+      "sha256": "6257adafaa973616e39fe0fe1c377391e3348eaf30e12e879f92f9d30025eb07"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/6d2431fd308a929f6a192e123be0b41f443f342b06ceb2e0db4027463954dd78",
+      "bytes": 4825000,
+      "sha256": "6d2431fd308a929f6a192e123be0b41f443f342b06ceb2e0db4027463954dd78"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/8c51d0406cae0546cb5a44580320b372ea882cd194cad8b13cd43f2a3267404d",
+      "bytes": 128,
+      "sha256": "8c51d0406cae0546cb5a44580320b372ea882cd194cad8b13cd43f2a3267404d"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/943538a42bb9ea9df31b312fd8f8aad7c6efb481ffcc653eef0dc0734b9175e3",
+      "bytes": 106859,
+      "sha256": "943538a42bb9ea9df31b312fd8f8aad7c6efb481ffcc653eef0dc0734b9175e3"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/ba448ec34816b83d6a3c31d32e09dc1eacac4a151da2e63598a22bbeed407e56",
+      "bytes": 91,
+      "sha256": "ba448ec34816b83d6a3c31d32e09dc1eacac4a151da2e63598a22bbeed407e56"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/cab4db7b6fdb8c71b9476f3dc9011c048eb92e9618ba31d4276bbe49b9171d20",
+      "bytes": 182,
+      "sha256": "cab4db7b6fdb8c71b9476f3dc9011c048eb92e9618ba31d4276bbe49b9171d20"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/blobs/sha256/e37a2ec2ef53e9519e738b4ad150b9c326bd5e41f77c78bca8f689423990325b",
+      "bytes": 3029,
+      "sha256": "e37a2ec2ef53e9519e738b4ad150b9c326bd5e41f77c78bca8f689423990325b"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/index.json",
+      "bytes": 559,
+      "sha256": "7711bf9d3cc8c5820e9a6a377fc36a7f80e3c448cb6dc5395589ead265ee902e"
+    },
+    {
+      "path": "artifacts/images-A/network-broker-dialer/oci-layout",
+      "bytes": 30,
+      "sha256": "18f0797eab35a4597c1e9624aa4f15fd91f6254e5538c1e0d193b2a95dd4acc6"
+    },
+    {
+      "path": "artifacts/images-A/network-helper/blobs/sha256/29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1",
+      "bytes": 123,
+      "sha256": "29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1"
+    },
+    {
+      "path": "artifacts/images-A/network-helper/blobs/sha256/2c3b4e5c5fcc7a0dcc32684d01a11f7222ace414b549ee9620c64cfca9b73d1a",
+      "bytes": 928,
+      "sha256": "2c3b4e5c5fcc7a0dcc32684d01a11f7222ace414b549ee9620c64cfca9b73d1a"
+    },
+    {
+      "path": "artifacts/images-A/network-helper/blobs/sha256/665fbd5b1d5f814bc70250848501e9db7d461a2ea7afb3e4618f7bed119d0f24",
+      "bytes": 2310,
+      "sha256": "665fbd5b1d5f814bc70250848501e9db7d461a2ea7afb3e4618f7bed119d0f24"
+    },
+    {
+      "path": "artifacts/images-A/network-helper/blobs/sha256/6ad90c572b94edf67584180ff5b9d82d200cf3e14704e81dbe4eafa129475799",
+      "bytes": 1289,
+      "sha256": "6ad90c572b94edf67584180ff5b9d82d200cf3e14704e81dbe4eafa129475799"
+    },
+    {
+      "path": "artifacts/images-A/network-helper/blobs/sha256/9da6a69c94f719d86e304c0b12beb24036fcbd3ed290d02cd4c8da8668f03fd1",
+      "bytes": 4232227,
+      "sha256": "9da6a69c94f719d86e304c0b12beb24036fcbd3ed290d02cd4c8da8668f03fd1"
+    },
+    {
+      "path": "artifacts/images-A/network-helper/blobs/sha256/d06803ffd0a673dd84e775fb1b1eed527871f75a2e1ba05d6e51a946b6b7afeb",
+      "bytes": 1937,
+      "sha256": "d06803ffd0a673dd84e775fb1b1eed527871f75a2e1ba05d6e51a946b6b7afeb"
+    },
+    {
+      "path": "artifacts/images-A/network-helper/blobs/sha256/df758cd338626cd77ed869167aa830b0684b637113e81e6e76d4f9c5f5b9309d",
+      "bytes": 6648,
+      "sha256": "df758cd338626cd77ed869167aa830b0684b637113e81e6e76d4f9c5f5b9309d"
+    },
+    {
+      "path": "artifacts/images-A/network-helper/blobs/sha256/eceee1c5448e14b9542725f258510e2a499d1712d6f5d4251f98b038ebf40b91",
+      "bytes": 1958679,
+      "sha256": "eceee1c5448e14b9542725f258510e2a499d1712d6f5d4251f98b038ebf40b91"
+    },
+    {
+      "path": "artifacts/images-A/network-helper/index.json",
+      "bytes": 552,
+      "sha256": "01eb6096e572f5c2b49d37ba9e5e6ad34119d8f36a32a6e03eb2366044a139bb"
+    },
+    {
+      "path": "artifacts/images-A/network-helper/oci-layout",
+      "bytes": 30,
+      "sha256": "18f0797eab35a4597c1e9624aa4f15fd91f6254e5538c1e0d193b2a95dd4acc6"
+    },
+    {
+      "path": "artifacts/images-A/network-verifier/blobs/sha256/29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1",
+      "bytes": 123,
+      "sha256": "29a44149a86d6deb12d332ed96c6fabce5b45ff6ec50c9143ce9bb3abf4d2ae1"
+    },
+    {
+      "path": "artifacts/images-A/network-verifier/blobs/sha256/2a5d924be0ae5140239bbe5d4295008758660ee906038c42c7b34d3fd0d9519b",
+      "bytes": 742,
+      "sha256": "2a5d924be0ae5140239bbe5d4295008758660ee906038c42c7b34d3fd0d9519b"
+    },
+    {
+      "path": "artifacts/images-A/network-verifier/blobs/sha256/39ac6d09c65e8929bf1392965e89e3211178dd25053e96d9d1dc8d31d5cf39e0",
+      "bytes": 2557,
+      "sha256": "39ac6d09c65e8929bf1392965e89e3211178dd25053e96d9d1dc8d31d5cf39e0"
+    },
+    {
+      "path": "artifacts/images-A/network-verifier/blobs/sha256/40b1deee2a78422c503d7f8fe9ef1efa1c01274f476bf851cd7c133688dd4de5",
+      "bytes": 141,
+      "sha256": "40b1deee2a78422c503d7f8fe9ef1efa1c01274f476bf851cd7c133688dd4de5"
+    },
+    {
+      "path": "artifacts/images-A/network-verifier/blobs/sha256/48291e022c5146653c2f4f735b83a47716b83fa02719c7f40e0b49e26d27aea4",
+      "bytes": 2207,
+      "sha256": "48291e022c5146653c2f4f735b83a47716b83fa02719c7f40e0b49e26d27aea4"
+    },
+    {
+      "path": "artifacts/images-A/network-verifier/blobs/sha256/561bb29f6e6f8a6303a9e4432c4f3b120dbfbb188721b68df9b07c26721a465d",
+      "bytes": 403,
+      "sha256": "561bb29f6e6f8a6303a9e4432c4f3b120dbfbb188721b68df9b07c26721a465d"
+    },
+    {
+      "path": "artifacts/images-A/network-verifier/blobs/sha256/8c51d0406cae0546cb5a44580320b372ea882cd194cad8b13cd43f2a3267404d",
+      "bytes": 128,
+      "sha256": "8c51d0406cae0546cb5a44580320b372ea882cd194cad8b13cd43f2a3267404d"
+    },
+    {
+      "path": "artifacts/images-A/network-verifier/blobs/sha256/943538a42bb9ea9df31b312fd8f8aad7c6efb481ffcc653eef0dc0734b9175e3",
+      "bytes": 106859,
+      "sha256": "943538a42bb9ea9df31b312fd8f8aad7c6efb481ffcc653eef0dc0734b9175e3"
+    },
+    {
+      "path": "artifacts/images-A/network-verifier/blobs/sha256/eb62ea209d50a329faa4e0ff0a6c49dcf54688a8e1606190ddf3f0f33cb55112",
+      "bytes": 4313197,
+      "sha256": "eb62ea209d50a329faa4e0ff0a6c49dcf54688a8e1606190ddf3f0f33cb55112"
+    },
+    {
+      "path": "artifacts/images-A/network-verifier/index.json",
+      "bytes": 554,
+      "sha256": "233a602a8f1418ffa6b34bef5da4f171b0b683521e3e2f5af78e731384d4200e"
+    },
+    {
+      "path": "artifacts/images-A/network-verifier/oci-layout",
+      "bytes": 30,
+      "sha256": "18f0797eab35a4597c1e9624aa4f15fd91f6254e5538c1e0d193b2a95dd4acc6"
+    },
+    {
+      "path": "artifacts/images-A/runner/blobs/sha256/1fcd2dedfbc4fec266a3434907a981f05e46b43f073f44d5f893a9c43a720226",
+      "bytes": 1588,
+      "sha256": "1fcd2dedfbc4fec266a3434907a981f05e46b43f073f44d5f893a9c43a720226"
+    },
+    {
+      "path": "artifacts/images-A/runner/blobs/sha256/3bf6385b9522bd18b893198886dc4ac639541f2859219ee045ffd50d81e5d844",
+      "bytes": 106796,
+      "sha256": "3bf6385b9522bd18b893198886dc4ac639541f2859219ee045ffd50d81e5d844"
+    },
+    {
+      "path": "artifacts/images-A/runner/blobs/sha256/56be5f0830a2351e2a88eb2e480c1781ac087529a1eb9540683fc1eb4cd5affe",
+      "bytes": 6857,
+      "sha256": "56be5f0830a2351e2a88eb2e480c1781ac087529a1eb9540683fc1eb4cd5affe"
+    },
+    {
+      "path": "artifacts/images-A/runner/blobs/sha256/a8ac7f6c67abc236e4c745052c404112b8fab6fe8ac3a329d1ef3b867ad67c71",
+      "bytes": 28232655,
+      "sha256": "a8ac7f6c67abc236e4c745052c404112b8fab6fe8ac3a329d1ef3b867ad67c71"
+    },
+    {
+      "path": "artifacts/images-A/runner/blobs/sha256/c4ebd61328eafbc436d27943088329a88c3e0f2b32d86ef0352c69aa9320ced4",
+      "bytes": 57470868,
+      "sha256": "c4ebd61328eafbc436d27943088329a88c3e0f2b32d86ef0352c69aa9320ced4"
+    },
+    {
+      "path": "artifacts/images-A/runner/blobs/sha256/d3facc9f73ff75861c41f6fac813dd468aff2589ab32b85845d1f5765fc2f67b",
+      "bytes": 363,
+      "sha256": "d3facc9f73ff75861c41f6fac813dd468aff2589ab32b85845d1f5765fc2f67b"
+    },
+    {
+      "path": "artifacts/images-A/runner/blobs/sha256/d7957a0c2e7d313dff9b4e70a77bc70e6b4330c0e244ad3243c76b1dca19f322",
+      "bytes": 228434454,
+      "sha256": "d7957a0c2e7d313dff9b4e70a77bc70e6b4330c0e244ad3243c76b1dca19f322"
+    },
+    {
+      "path": "artifacts/images-A/runner/index.json",
+      "bytes": 544,
+      "sha256": "7b21197e96e0c1c73b6274c578f3cba0992854b601653decd408db6be4bd03f5"
+    },
+    {
+      "path": "artifacts/images-A/runner/oci-layout",
+      "bytes": 30,
+      "sha256": "18f0797eab35a4597c1e9624aa4f15fd91f6254e5538c1e0d193b2a95dd4acc6"
+    }
+  ],
+  "file_count": 63,
+  "file_content_bytes": 455533293,
+  "not_required_for_five_role_target_runtime": {
+    "image": "network-broker-parser",
+    "reason": "Standalone parser image is an additional qualification/release subject. Runtime manifest has five image references and broker-dialer already embeds the verified parser binary. Its original evidence remains retained; no new full-release claim is made."
+  },
+  "comparison_rule": "Exact regular-file membership, sizes and SHA256; full OCI index/manifest/config/layer graph and embedded identity equality; Linux/amd64 and UID65532; preserve original evidence. No mismatch tolerance or old hash updates.",
+  "builder_and_execution_status": "Not selected/executed; existing supported Linux/amd64 bounded build route and fresh resource/cost admission must be fixed before run. Existing CI bounded qualification has no build-only switch; do not dispatch it as reconstruction or fabricate event metadata."
+}
