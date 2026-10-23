@@ -340,7 +340,7 @@ jobs:
           path: product
       - name: Verify reconstruction and unchanged qualification guards offline
         working-directory: tooling
-        run: 'python3 -B scripts/release/check-reconstruction-preparation.py'
+        run: "python3 -B scripts/release/check-reconstruction-preparation.py"
       - name: Refresh Go under existing aggregate guard and verify A/B identities
         run: 'set -euo pipefail; sudo --preserve-env=GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_REPOSITORY,GITHUB_ACTOR,GITHUB_REF,GITHUB_SHA,GITHUB_WORKSPACE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,RUNNER_ENVIRONMENT,RUNNER_OS,RUNNER_ARCH,HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,http_proxy,https_proxy,all_proxy,no_proxy /usr/bin/python3 -B tooling/scripts/release/qualify-runtime.py --reconstruction-host "$RUNNER_TEMP/payload-reconstruction" --source "$GITHUB_WORKSPACE/product" --event "$GITHUB_EVENT_PATH"'
       - name: Recheck complete payload before upload under bounded read-only scope
