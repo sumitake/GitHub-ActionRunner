@@ -17582,5 +17582,12 @@
     "rule": "IP001",
     "sha256": "57664d38544fa0f04a9b93d10d9d757d68f26f66e2610de2a928582b85fe656d",
     "reason": "Public producer assembly/native version metadata from Runner.Worker.deps.json in SHA256-pinned rebuilt runner abd94fed68a6e31394b68103e1afa8b0eabe36b523cc781e00bf2b01f452ce29. Exact canonical-line hash only; other content and rules remain blocked."
+  },
+  {
+    "path": "internal/githubscale/adapter_contract_test.go@8095430a4f17ca53bee780f73c1d4a2602fd370c",
+    "line": 886,
+    "rule": "IP001",
+    "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",
+    "reason": "Immutable public-history instance of an inspected synthetic RFC 3849 URL-normalization fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
   }
 ]

@@ -10,7 +10,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 def main():
     os.chdir(ROOT)
-    names = ('test_payload_reconstruction.py', 'test_bounded_qualification.py',
+    names = ('test_go_patch_refresh.py', 'test_payload_reconstruction.py', 'test_bounded_qualification.py',
              'test_qualification_accounting.py', 'test_qualification_control.py',
              'test_workflow_policy.py', 'test_metadata_probe.py')
     suite = unittest.TestSuite(unittest.defaultTestLoader.discover('tests/repository', pattern=name) for name in names)

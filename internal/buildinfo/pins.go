@@ -115,7 +115,7 @@ func Pins() Manifest {
 	return Manifest{
 		RunnerRebuildJSON: append([]byte(nil), runnerRebuildJSON...),
 		GoLanguageVersion: "1.26.0",
-		GoToolchain:       "go1.26.9",
+		GoToolchain:       "go1.26.10",
 		Scaleset: ModulePin{
 			Path:    "github.com/actions/scaleset",
 			Version: "v0.4.0",

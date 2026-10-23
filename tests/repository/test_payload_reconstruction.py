@@ -200,9 +200,9 @@ class Reconstruction(unittest.TestCase):
 
     def test_worker_entrypoint_never_selects_scans_or_normal_qualification(self):
         worker = mock.Mock(daemon=None)
-        with mock.patch.object(sys, 'argv', ['qualify-runtime.py', '--reconstruct-worker', str(self.root)]), mock.patch.object(q, 'Qualification', return_value=worker), mock.patch.object(reconstruction, 'compare') as compare:
+        with mock.patch.object(sys, 'argv', ['qualify-runtime.py', '--reconstruct-worker', str(self.root)]), mock.patch.object(q, 'Qualification', return_value=worker), mock.patch('_go_patch_refresh.compare') as compare:
             host.main()
-        worker.build.assert_called_once_with(reconstruction=True)
+        worker.build.assert_called_once_with(go_patch_refresh=True)
         worker.scan.assert_not_called()
         compare.assert_called_once()
 

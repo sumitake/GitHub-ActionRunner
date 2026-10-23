@@ -60,7 +60,9 @@ def admission(source, event, environment, *, metadata_probe=False):
 
 
 def safe_environment(root, go_root):
-    value = {'PATH': str(go_root / 'bin') + ':/usr/local/bin:/usr/bin:/bin', 'GOROOT': str(go_root), 'HOME': str(root / 'home'), 'TMPDIR': str(root / 'tmp'), 'GOCACHE': str(root / 'go-build'), 'GOMODCACHE': str(root / 'go-mod'), 'GOTOOLCHAIN': 'local', 'GOTELEMETRY': 'off', 'GOMAXPROCS': '4', 'GOMEMLIMIT': '1GiB', 'GOFLAGS': '-p=1 -mod=readonly', 'LANG': 'C.UTF-8', 'PYTHONDONTWRITEBYTECODE': '1', 'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'}
+    value = {'PATH': (str(go_root / 'bin') + ':' if go_root is not None else '') + '/usr/local/bin:/usr/bin:/bin', 'HOME': str(root / 'home'), 'TMPDIR': str(root / 'tmp'), 'GOCACHE': str(root / 'go-build'), 'GOMODCACHE': str(root / 'go-mod'), 'GOTOOLCHAIN': 'local', 'GOTELEMETRY': 'off', 'GOMAXPROCS': '4', 'GOMEMLIMIT': '1GiB', 'GOFLAGS': '-p=1 -mod=readonly', 'LANG': 'C.UTF-8', 'PYTHONDONTWRITEBYTECODE': '1', 'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'}
+    if go_root is not None:
+        value['GOROOT'] = str(go_root)
     for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
         if key in os.environ:
             if key.lower() != 'no_proxy':
@@ -330,6 +332,13 @@ def child(root, go_root, *, reconstruction=False):
     control = pathlib.Path('/sys/fs/cgroup') / group.lstrip('/')
     q.write(root / 'scope.json', {'name': slice_name, 'cgroup': str(control)})
     wait_for_observer(root)
+    refresh_root = None
+    refresh_provenance = None
+    if reconstruction:
+        import _go_patch_refresh as refresh
+        refresh_root = pathlib.Path(inputs['accounting_source']) / 'go-patch-input'
+        go_root, refresh_provenance = refresh.acquire(refresh_root)
+        q.write(root / 'evidence/go-compiler.json', refresh_provenance)
     parent = slice_name if docker_json(['info', '--format', '{{json .CgroupDriver}}']) == 'systemd' else group
     label = 'pghar.qualification=' + inputs['run_id']
     environment = safe_environment(root, go_root)
@@ -376,6 +385,8 @@ def child(root, go_root, *, reconstruction=False):
             q.write(root / ('evidence/' + mode + '-terminal.json'), {'exit_code': 0, 'inspect': {k: docker_json(['inspect', '--size', worker])[0][k] for k in ('Id', 'State', 'SizeRw')}})
             subprocess.run(['docker', 'rm', worker], check=True, timeout=30)
             worker = None
+        if reconstruction and refresh.compiler_identity(go_root) != refresh_provenance['extracted_tree_sha256']:
+            raise q.Stop('fixed compiler changed during worker execution')
         lineage = root / 'evidence/actual-worker-lineage.jsonl'
         names = {row['executable'] for line in lineage.read_text().splitlines() for row in json.loads(line)} if lineage.exists() else set()
         if not probe and not {'dotnet', 'buildkit-runc'} <= names:
@@ -639,15 +650,19 @@ def host(source, root, event_path, go_root, *, metadata_probe=False, reconstruct
         import _payload_reconstruction as reconstruct
         tooling = pathlib.Path(__file__).resolve().parents[2]
         inputs = reconstruct.admission(source, tooling, event, os.environ, command)
+        inputs['go_patch_refresh'] = True
         accounting_source = source.parent
     else:
         inputs = admission(source, event, os.environ, metadata_probe=metadata_probe)
         accounting_source = source
     if root.exists() or root.parent.resolve(strict=True) != root.parent or not root.is_absolute():
         raise q.Stop('fresh canonical output directory required')
-    # The selected Go toolchain must already exist in the hosted image. It is
-    # immutable baseline OS tooling, not a cache downloaded outside accounting.
-    if go_root.resolve(strict=True) != go_root or command([str(go_root / 'bin/go'), 'version'], env={'PATH': '/usr/bin:/bin', 'GOTOOLCHAIN': 'local'}) != 'go version go1.26.9 linux/amd64':
+    # Existing qualification/probe modes retain their original baseline. The
+    # refresh controller needs only host Python/Git until guarded acquisition.
+    if reconstruction:
+        if go_root is not None:
+            raise q.Stop('refresh compiler must come from accounted pinned acquisition')
+    elif go_root is None or go_root.resolve(strict=True) != go_root or command([str(go_root / 'bin/go'), 'version'], env={'PATH': '/usr/bin:/bin', 'GOTOOLCHAIN': 'local'}) != 'go version go1.26.9 linux/amd64':
         raise q.Stop('preinstalled pinned Go toolchain unavailable')
     docker_root, excluded, baseline, initial = allocation_preflight(accounting_source, root.parent)
     if root == docker_root or root.is_relative_to(docker_root) or docker_root.is_relative_to(root) or root == accounting_source or root.is_relative_to(accounting_source) or accounting_source.is_relative_to(root):
@@ -675,7 +690,7 @@ def host(source, root, event_path, go_root, *, metadata_probe=False, reconstruct
         old_handlers[signum] = signal.signal(signum, cancelled)
     try:
         child_mode = '--reconstruction-scope-child' if reconstruction else '--scope-child'
-        args = ['systemd-run', '--scope', '--quiet', '--unit=' + scope_name, '--slice=' + scope_name + '.slice', '/usr/bin/python3', str(pathlib.Path(__file__).resolve()), child_mode, str(root), '--go-root', str(go_root)]
+        args = ['systemd-run', '--scope', '--quiet', '--unit=' + scope_name, '--slice=' + scope_name + '.slice', '/usr/bin/python3', str(pathlib.Path(__file__).resolve()), child_mode, str(root)] + ([] if go_root is None else ['--go-root', str(go_root)])
         # Only this control supervisor sees the dispatch metadata. Credentials
         # and Actions runtime tokens are excluded from every child environment.
         log = (root / 'evidence/supervisor.log').open('wb')
@@ -718,7 +733,8 @@ def host(source, root, event_path, go_root, *, metadata_probe=False, reconstruct
         q.write(root / 'evidence/terminal.json', {'workers_joined': workers_joined, 'scope_exit_code': None if process is None else process.returncode, 'budget_or_execution_error': error, 'live_operations': False, 'production_runners_touched': False})
     if reconstruction:
         final['qualification_executed'] = False
-        reconstruct.finalize(root, final)
+        import _go_patch_refresh as refresh
+        refresh.finalize(root, final)
         return
     if metadata_probe:
         if error:
@@ -798,15 +814,15 @@ def main():
     parser.add_argument('--go-root', type=pathlib.Path)
     args = parser.parse_args()
     if args.check_reconstruction_upload:
-        import _payload_reconstruction as reconstruct
-        reconstruct.check_upload(args.check_reconstruction_upload)
+        import _go_patch_refresh as refresh
+        refresh.check_upload(args.check_reconstruction_upload)
         print('ready=true')
     elif args.reconstruct_worker:
-        import _payload_reconstruction as reconstruct
+        import _go_patch_refresh as refresh
         instance = q.Qualification(args.reconstruct_worker)
         try:
-            instance.build(reconstruction=True)
-            reconstruct.compare(args.reconstruct_worker, instance, reconstruct.expected())
+            instance.build(go_patch_refresh=True)
+            refresh.compare(args.reconstruct_worker, instance)
         finally:
             if instance.daemon is not None:
                 instance.stop('terminal')
