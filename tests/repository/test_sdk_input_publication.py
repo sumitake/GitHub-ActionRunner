@@ -48,6 +48,8 @@ class API:
         self.corrupt_download = False
         self.mutable = False
         self.move_after_upload = False
+        self.omit_listing = False
+        self.direct_404s = 0
 
     def settings(self):
         self.calls.append(('SETTINGS', None))
@@ -69,7 +71,7 @@ class API:
             self.ref = dict(ref=request['ref'], object=dict(type='commit', sha=request['sha']))
             status, value = 201, self.ref
         elif path.startswith(prefix + '/releases?'):
-            value = [self.release] if self.release else []
+            value = [self.release] if self.release and not self.omit_listing else []
         elif path == prefix + '/releases' and method == 'POST':
             self.release = dict(json.loads(data), id=42, immutable=False)
             status, value = 201, self.release
@@ -78,6 +80,12 @@ class API:
             if self.missing_digest:
                 for row in value:
                     row['digest'] = None
+        elif path == prefix + '/releases/42' and method == 'GET':
+            if self.direct_404s:
+                self.direct_404s -= 1
+                status, value = 404, {}
+            else:
+                status, value = (200, copy.deepcopy(self.release)) if self.release else (404, {})
         elif path == prefix + '/releases/42' and method == 'PATCH':
             self.release.update(json.loads(data), immutable=not self.mutable)
             value = self.release
@@ -268,6 +276,130 @@ class SDKInputPublication(unittest.TestCase):
         with self.assertRaises(self.module.PublicationError):
             self.module.parse_arguments(args + ['--product-tag-object', 'b' * 40])
 
+    def test_created_id_is_authoritative_when_listing_omits_new_release(self):
+        self.api.omit_listing = True
+        self.publisher().run()
+        creates = [row for row in self.api.calls if row == ('POST', '/repos/' + REPOSITORY + '/releases')]
+        self.assertEqual(len(creates), 1)
+        self.assertTrue([row for row in self.api.calls if row == ('GET', '/repos/' + REPOSITORY + '/releases/42')])
+        self.assertIs(self.api.release['immutable'], True)
+
+    def test_created_id_has_bounded_404_reads_without_repeating_create(self):
+        self.api.direct_404s = 2
+        with mock.patch.object(self.module.time, 'sleep') as sleep:
+            self.publisher().run()
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(len([r for r in self.api.calls if r == ('POST', '/repos/' + REPOSITORY + '/releases')]), 1)
+
+    def test_created_id_missing_or_denied_stops_without_another_create(self):
+        for status in (403, 404):
+            self.api = API(self.module)
+            original = self.api.api
+            def api(method, path, **kwargs):
+                if path == '/repos/' + REPOSITORY + '/releases/42' and method == 'GET':
+                    self.api.calls.append((method, path))
+                    return status, b'{}'
+                return original(method, path, **kwargs)
+            with self.subTest(status=status), mock.patch.object(self.api, 'api', side_effect=api), \
+                 mock.patch.object(self.module.time, 'sleep') as sleep, \
+                 self.assertRaisesRegex(self.module.PublicationError, 'bound release read'):
+                self.publisher().run()
+            self.assertEqual(sleep.call_count, 2 if status == 404 else 0)
+            self.assertEqual(len([r for r in self.api.calls if r == ('POST', '/repos/' + REPOSITORY + '/releases')]), 1)
+            self.assertFalse([r for r in self.api.calls if r[0] in ('PATCH', 'UPLOAD', 'DELETE')])
+
+    def seed_draft(self):
+        publisher = self.producer_publisher()
+        self.api.ref = dict(ref='refs/tags/' + self.tag, object=dict(type='commit', sha=COMMIT))
+        self.api.release = dict(id=42, tag_name=self.tag, target_commitish=COMMIT,
+            name=publisher.title, body=publisher.body, prerelease=True, draft=True, immutable=False)
+
+    def existing_publisher(self):
+        assets, title, body = self.module.load_sdk_input(None, REPOSITORY, self.tag, COMMIT)
+        return self.module.Publisher(self.api, kind='sdk-input', repository=REPOSITORY,
+            tag=self.tag, target_commit=COMMIT, product_tag_object=None,
+            title=title, body=body, assets=assets, producer_upload=True, existing_release_id=42)
+
+    def test_explicit_existing_id_recovers_without_any_create_and_is_idempotent(self):
+        self.seed_draft()
+        self.api.assets = self.producer_rows()
+        self.api.omit_listing = True
+        with mock.patch.object(sys, 'stderr', io.StringIO()):
+            self.existing_publisher().run()
+        self.assertIs(self.api.release['immutable'], True)
+        self.assertEqual([r[0] for r in self.api.mutations()], ['PATCH'])
+        self.api.calls.clear()
+        self.existing_publisher().run()
+        self.assertFalse(self.api.mutations())
+        self.assertEqual(len([r for r in self.api.calls if r[0] == 'DOWNLOAD']), 2)
+
+    def test_existing_id_cli_preserves_target_and_emits_only_verified_locator(self):
+        self.seed_draft(); self.api.assets = self.producer_rows()
+        self.api.omit_listing = True
+        arguments = ['--release-kind', 'sdk-input', '--repository', REPOSITORY,
+            '--tag', self.tag, '--target-commit', COMMIT, '--producer-upload', 'true',
+            '--existing-release-id', '42']
+        class Output(io.StringIO):
+            def __init__(self): super().__init__(); self.buffer = io.BytesIO()
+        output = Output()
+        temporary = self.fixture.root / 'recovery-cli-temp'; temporary.mkdir()
+        with mock.patch.object(self.module, 'GitHub', return_value=self.api), \
+             mock.patch.object(self.module, 'require_tokens', return_value=('synthetic-write', 'synthetic-settings')), \
+             mock.patch.object(self.module.tempfile, 'mkdtemp', return_value=str(temporary)), \
+             mock.patch.object(sys, 'stdout', output), mock.patch.object(sys, 'stderr', io.StringIO()):
+            self.module.main(arguments)
+        self.assertEqual(json.loads(output.buffer.getvalue()), dict(schema_version=1,
+            role='unqualified-sdk-input', repository=REPOSITORY, tag=self.tag,
+            release_id=42, commit_sha=COMMIT))
+        self.assertFalse(temporary.exists())
+        self.assertEqual([r[0] for r in self.api.mutations()], ['PATCH'])
+
+    def test_existing_id_missing_moved_or_unsigned_ref_never_repaired(self):
+        for case in ('missing', 'moved', 'unsigned'):
+            self.api = API(self.module); self.seed_draft()
+            if case == 'missing': self.api.ref = None
+            if case == 'moved': self.api.ref['object']['sha'] = 'b' * 40
+            if case == 'unsigned': self.api.signed = False
+            with self.subTest(case=case), self.assertRaises(self.module.PublicationError):
+                self.existing_publisher().run()
+            self.assertFalse(self.api.mutations())
+
+    def test_existing_id_read_denial_missing_and_wrong_identity_never_create(self):
+        for case in ('403', '404', 'id', 'tag', 'body'):
+            self.api = API(self.module); self.seed_draft()
+            original = self.api.api
+            def api(method, path, **kwargs):
+                if path == '/repos/' + REPOSITORY + '/releases/42' and method == 'GET':
+                    self.api.calls.append((method, path))
+                    if case in ('403','404'): return int(case), b'{}'
+                    value = {**self.api.release, case: {'id':99,'tag':'other','body':'changed'}[case]}
+                    if case == 'tag': value['tag_name'] = value.pop('tag')
+                    return 200, self.module.canonical_json(value)
+                return original(method, path, **kwargs)
+            with self.subTest(case=case), mock.patch.object(self.api,'api',side_effect=api), \
+                 mock.patch.object(self.module.time,'sleep') as sleep, self.assertRaises(self.module.PublicationError):
+                self.existing_publisher().run()
+            self.assertFalse(self.api.mutations())
+            sleep.assert_not_called()
+
+    def test_direct_id_does_not_waive_listing_collision_or_stale_state_checks(self):
+        self.seed_draft(); self.api.assets = self.producer_rows()
+        original = self.api.api
+        def conflict(method,path,**kwargs):
+            if path.startswith('/repos/' + REPOSITORY + '/releases?'):
+                return 200,self.module.canonical_json([{**self.api.release,'id':99}])
+            return original(method,path,**kwargs)
+        with mock.patch.object(self.api,'api',side_effect=conflict), self.assertRaises(self.module.PublicationError):
+            self.existing_publisher().run()
+        self.assertFalse(self.api.mutations())
+        def stale(method,path,**kwargs):
+            if path.startswith('/repos/' + REPOSITORY + '/releases?'):
+                return 200,self.module.canonical_json([{**self.api.release,'draft':True,'immutable':False}])
+            return original(method,path,**kwargs)
+        with mock.patch.object(self.api,'api',side_effect=stale), mock.patch.object(sys,'stderr',io.StringIO()):
+            self.existing_publisher().run()
+        self.assertIs(self.api.release['immutable'],True)
+
     def producer_publisher(self):
         assets, title, body = self.module.load_sdk_input(None, REPOSITORY, self.tag, COMMIT)
         return self.module.Publisher(self.api, kind='sdk-input', repository=REPOSITORY,
@@ -363,9 +495,13 @@ class SDKInputPublication(unittest.TestCase):
         args = ['--release-kind', 'sdk-input', '--repository', REPOSITORY,
                 '--tag', self.tag, '--target-commit', COMMIT, '--producer-upload', 'true']
         self.module.parse_arguments(args)
+        self.module.parse_arguments(args + ['--existing-release-id', '42'])
         for bad in [args + ['--tree', str(self.fixture.input)],
                     [value if value != 'true' else 'false' for value in args],
-                    [value if value != 'sdk-input' else 'candidate' for value in args]]:
+                    [value if value != 'sdk-input' else 'candidate' for value in args],
+                    *[args + ['--existing-release-id', value]
+                      for value in ('0', '-1', '01', 'true', '42/other', '9' * 20)],
+                    args[:-2] + ['--tree', str(self.fixture.input), '--existing-release-id', '42']]:
             with self.subTest(bad=bad), self.assertRaises(self.module.PublicationError):
                 self.module.parse_arguments(bad)
 
@@ -399,6 +535,9 @@ class SDKPublicationWorkflow(unittest.TestCase):
             self.assertNotIn(forbidden, text)
         self.assertFalse([s for s in steps if 'upload-artifact@' in str(s.get('uses',''))])
         self.assertIn('--producer-upload true', steps[-1]['run'])
+        self.assertIn('--existing-release-id ', steps[-1]['run'])
+        self.assertIn('--target-commit "$sdk_target"', steps[-1]['run'])
+        self.assertNotIn('--target-commit "$GITHUB_SHA"', steps[-1]['run'])
         self.assertEqual(steps[-1]['env'], {
             'PGHAR_RELEASE_SETTINGS_TOKEN': '${{ steps.sdk-settings-token.outputs.token }}',
             'PGHAR_RELEASE_TOKEN': '${{ github.token }}'})

@@ -360,6 +360,9 @@ elif path.endswith("/releases") and method == "POST":
             }
         ).encode()
         status = 201
+elif path.endswith("/releases/42") and method == "GET":
+    status = 200 if (state / "release").exists() else 404
+    body = json.dumps(release_object()).encode() if status == 200 else b'{}'
 elif path.endswith("/releases/42/assets") and method == "GET":
     rows = []
     for row in load_assets():

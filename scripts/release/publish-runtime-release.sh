@@ -103,6 +103,7 @@ def parse_arguments(argv: list[str]) -> dict[str, str]:
         "--product-tag-object",
         "--tree",
         "--producer-upload",
+        "--existing-release-id",
     }
     if not argv or len(argv) % 2:
         reject("arguments")
@@ -130,6 +131,9 @@ def parse_arguments(argv: list[str]) -> dict[str, str]:
             reject("producer upload arguments")
     elif "--tree" not in result:
         reject("arguments")
+    if "--existing-release-id" in result:
+        if not producer_upload or re.fullmatch(r"[1-9][0-9]{0,18}", result["--existing-release-id"]) is None:
+            reject("existing release arguments")
     has_product_object = "--product-tag-object" in result
     if has_product_object != (kind == "product"):
         reject("product tag object")
@@ -637,6 +641,7 @@ class Publisher:
         body: str,
         assets: dict[str, dict],
         producer_upload: bool = False,
+        existing_release_id: int | None = None,
     ):
         self.github = github
         self.kind = kind
@@ -650,7 +655,12 @@ class Publisher:
         if producer_upload and kind != "sdk-input":
             reject("producer upload role")
         self.producer_upload = producer_upload
-        self.bound_release_id = None
+        if existing_release_id is not None and (
+            not producer_upload or not positive_integer(existing_release_id)
+        ):
+            reject("existing release role")
+        self.existing_release_id = existing_release_id
+        self.bound_release_id = existing_release_id
         self.create_attempted = False
         self.candidate_ref_create_attempted = False
 
@@ -829,14 +839,38 @@ class Publisher:
         state = "draft" if value["draft"] else "published"
         return self.validate_release(value, state), state
 
-    def prove_bound_release(self, state: str):
+    def read_bound_release(self, *, after_create: bool = False):
+        if not positive_integer(self.bound_release_id):
+            reject("bound release id")
         self.prove_ref()
-        value = self.scan_releases()
-        if value is None:
-            reject("bound release missing")
-        release_id = self.validate_release(value, state)
-        if self.bound_release_id is None or release_id != self.bound_release_id:
+        # The create response (or explicit recovery input) supplies the exact ID.
+        # Only a newly created ID gets two bounded read-after-write 404 retries.
+        for attempt in range(3 if after_create else 1):
+            status, body = self.github.api(
+                "GET", f"/repos/{self.repository}/releases/{self.bound_release_id}"
+            )
+            if status == 200:
+                break
+            if status != 404 or not after_create or attempt == 2:
+                reject(f"bound release read: release_id={self.bound_release_id} status={status}")
+            time.sleep(1)
+        value = parse_json(body)
+        release_id, state = self.validate_either_release(value)
+        if release_id != self.bound_release_id:
             reject("release id drift")
+        # Listing still rejects duplicates/case collisions and conflicting IDs.
+        # It may omit a new draft or lag its state; direct GET owns current state.
+        indexed = self.scan_releases()
+        if indexed is not None:
+            indexed_id, _ = self.validate_either_release(indexed)
+            if indexed_id != release_id:
+                reject("release id drift")
+        self.prove_ref()
+        return value, state
+
+    def prove_bound_release(self, state: str):
+        value, _ = self.read_bound_release()
+        self.validate_release(value, state)
         return value
 
     def create_release(self):
@@ -867,9 +901,9 @@ class Publisher:
             f"/repos/{self.repository}/releases",
             data=request,
         )
-        response_id = None
         if status == 201:
-            response_id = self.validate_release(parse_json(body), "draft")
+            self.bound_release_id = self.validate_release(parse_json(body), "draft")
+            return self.read_bound_release(after_create=True)
         elif status not in {409, 422}:
             reject("release create")
         self.prove_ref()
@@ -877,10 +911,8 @@ class Publisher:
         if value is None:
             reject("release create unresolved")
         release_id, state = self.validate_either_release(value)
-        if response_id is not None and response_id != release_id:
-            reject("release create id")
         self.bound_release_id = release_id
-        return value, state
+        return self.read_bound_release()
 
     def list_assets(self) -> list[dict]:
         rows = []
@@ -1107,7 +1139,10 @@ class Publisher:
     def run(self) -> None:
         if self.kind == "sdk-input":
             self.prove_sdk_commit()
-        if self.kind == "product":
+        if self.existing_release_id is not None:
+            # Recovery never creates a ref/release or uploads/deletes assets.
+            release, state = self.read_bound_release()
+        elif self.kind == "product":
             self.product_ref()
         else:
             candidate_exists = self.read_candidate_ref()
@@ -1116,13 +1151,15 @@ class Publisher:
                 if release_before_ref is not None:
                     reject("release without candidate ref")
                 self.create_candidate_ref()
-        self.prove_ref()
-        release = self.scan_releases()
-        if release is None:
-            release, state = self.create_release()
-        else:
-            release_id, state = self.validate_either_release(release)
-            self.bound_release_id = release_id
+        if self.existing_release_id is None:
+            self.prove_ref()
+            release = self.scan_releases()
+            if release is None:
+                release, state = self.create_release()
+            else:
+                release_id, state = self.validate_either_release(release)
+                self.bound_release_id = release_id
+                release, state = self.read_bound_release()
         if state == "published":
             self.verify_published()
             return
@@ -1199,6 +1236,7 @@ def main(argv: list[str]) -> None:
             body=body,
             assets=assets,
             producer_upload=producer_upload,
+            existing_release_id=int(arguments["--existing-release-id"]) if "--existing-release-id" in arguments else None,
         )
         publisher.run()
     except BaseException as error:

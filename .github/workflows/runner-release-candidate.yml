@@ -295,8 +295,8 @@ jobs:
           client-id: ${{ vars.PORTABLE_GHAR_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.PORTABLE_GHAR_RELEASE_APP_PRIVATE_KEY }}
           permission-administration: read
-      - name: Preflight draft wait for producer assets and publish exact immutable input
+      - name: Resume exact SDK draft wait and publish immutable input
         env:
           PGHAR_RELEASE_SETTINGS_TOKEN: ${{ steps.sdk-settings-token.outputs.token }}
           PGHAR_RELEASE_TOKEN: ${{ github.token }}
-        run: 'set -euo pipefail; tag="runner-sdk-input-8c6ad1f743c97ab650b5c149bda95386a2b6d290b90fa8e0ea732ae89b67eee9-$GITHUB_SHA"; scripts/release/publish-runtime-release.sh --release-kind sdk-input --repository "$GITHUB_REPOSITORY" --tag "$tag" --target-commit "$GITHUB_SHA" --producer-upload true >"$RUNNER_TEMP/sdk-input-locator.json"; cat "$RUNNER_TEMP/sdk-input-locator.json"; printf ''SDK input published; unqualified consumer locator:\n'' >>"$GITHUB_STEP_SUMMARY"; cat "$RUNNER_TEMP/sdk-input-locator.json" >>"$GITHUB_STEP_SUMMARY"'
+        run: 'set -euo pipefail; sdk_target=26b55c44467e8b23050fe42af17562abdaab6d84; tag="runner-sdk-input-8c6ad1f743c97ab650b5c149bda95386a2b6d290b90fa8e0ea732ae89b67eee9-$sdk_target"; scripts/release/publish-runtime-release.sh --release-kind sdk-input --repository "$GITHUB_REPOSITORY" --tag "$tag" --target-commit "$sdk_target" --producer-upload true --existing-release-id 423081851 >"$RUNNER_TEMP/sdk-input-locator.json"; cat "$RUNNER_TEMP/sdk-input-locator.json"; printf ''SDK input published; unqualified consumer locator:\n'' >>"$GITHUB_STEP_SUMMARY"; cat "$RUNNER_TEMP/sdk-input-locator.json" >>"$GITHUB_STEP_SUMMARY"'
