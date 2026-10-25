@@ -1,6 +1,19 @@
 name: Runner Release Candidate
 on:
   workflow_dispatch:
+    inputs:
+      sdk_input_publication:
+        description: Publish only the reviewed unqualified SDK input with producer upload
+        type: boolean
+        default: false
+      expected_commit:
+        description: Exact reviewed signed source commit required for SDK publication
+        type: string
+        default: ""
+      expected_tree:
+        description: Exact reviewed source tree required for SDK publication
+        type: string
+        default: ""
   repository_dispatch:
     types:
       - observe-runner-release
@@ -10,6 +23,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   runner-candidate-admission:
+    if: github.event_name != 'workflow_dispatch' || !inputs.sdk_input_publication
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -29,7 +43,7 @@ jobs:
         env:
           PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR: ${{ vars.PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR }}
           PORTABLE_GHAR_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: 'set -euo pipefail; test -n "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; test "$GITHUB_ACTOR" = "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; test -n "$PORTABLE_GHAR_DEFAULT_BRANCH"; test "$GITHUB_REF" = "refs/heads/$PORTABLE_GHAR_DEFAULT_BRANCH"; python3 -B -c ''import json,os,pathlib,stat; fail=lambda:(_ for _ in ()).throw(ValueError("event")); path=pathlib.Path(os.environ["GITHUB_EVENT_PATH"]); info=path.lstat(); raw=path.read_bytes(); (stat.S_ISREG(info.st_mode) and not path.is_symlink() and info.st_nlink == 1 and 0 < len(raw) <= 1048576) or fail(); hook=lambda pairs:dict(pairs) if len(pairs) == len({key for key,_value in pairs}) else fail(); event=json.loads(raw.decode("utf-8","strict"),object_pairs_hook=hook,parse_constant=lambda _value:fail()); type(event) is dict or fail(); name=os.environ["GITHUB_EVENT_NAME"]; repository_dispatch=name == "repository_dispatch" and event.get("action") == "observe-runner-release" and type(event.get("client_payload")) is dict and len(event["client_payload"]) == 0; workflow_dispatch=name == "workflow_dispatch" and "action" not in event and "client_payload" not in event and ("inputs" not in event or event["inputs"] is None or type(event["inputs"]) is dict and len(event["inputs"]) == 0); (repository_dispatch or workflow_dispatch) or fail()'''
+        run: 'set -euo pipefail; test -n "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; test "$GITHUB_ACTOR" = "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; test -n "$PORTABLE_GHAR_DEFAULT_BRANCH"; test "$GITHUB_REF" = "refs/heads/$PORTABLE_GHAR_DEFAULT_BRANCH"; python3 -B -c ''import json,os,pathlib,stat; fail=lambda:(_ for _ in ()).throw(ValueError("event")); path=pathlib.Path(os.environ["GITHUB_EVENT_PATH"]); info=path.lstat(); raw=path.read_bytes(); (stat.S_ISREG(info.st_mode) and not path.is_symlink() and info.st_nlink == 1 and 0 < len(raw) <= 1048576) or fail(); hook=lambda pairs:dict(pairs) if len(pairs) == len({key for key,_value in pairs}) else fail(); event=json.loads(raw.decode("utf-8","strict"),object_pairs_hook=hook,parse_constant=lambda _value:fail()); type(event) is dict or fail(); name=os.environ["GITHUB_EVENT_NAME"]; repository_dispatch=name == "repository_dispatch" and event.get("action") == "observe-runner-release" and type(event.get("client_payload")) is dict and len(event["client_payload"]) == 0; workflow_dispatch=name == "workflow_dispatch" and "action" not in event and "client_payload" not in event and ("inputs" not in event or event["inputs"] is None or type(event["inputs"]) is dict and (len(event["inputs"]) == 0 or event["inputs"] == {"sdk_input_publication":"false","expected_commit":"","expected_tree":""})); (repository_dispatch or workflow_dispatch) or fail()'''
       - name: Checkout exact default-branch source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -247,3 +261,42 @@ jobs:
           PGHAR_RELEASE_SETTINGS_TOKEN: ${{ steps.release-settings-token.outputs.token }}
           PGHAR_RELEASE_TOKEN: ${{ github.token }}
         run: 'set -euo pipefail; tag="runner-candidate-v${RUNNER_VERSION#v}-$EVIDENCE-$SOURCE_COMMIT"; scripts/release/publish-runtime-release.sh --release-kind candidate --repository "$GITHUB_REPOSITORY" --tag "$tag" --target-commit "$SOURCE_COMMIT" --tree "$RUNNER_TEMP/publication/tree"'
+
+  sdk-input-publication:
+    if: github.event_name == 'workflow_dispatch' && inputs.sdk_input_publication && github.repository == 'sumitake/GitHub-ActionRunner' && github.actor == vars.PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR && github.ref == 'refs/heads/codex/rr7-runner-version-refresh' && github.run_attempt == '1' && inputs.expected_commit == github.sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    concurrency:
+      group: ${{ github.workflow }}-sdk-input-publication-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+      EXPECTED_TREE: ${{ inputs.expected_tree }}
+    steps:
+      - name: Validate trusted SDK publication dispatch
+        env:
+          PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR: ${{ vars.PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR }}
+        run: 'set -euo pipefail; test "$GITHUB_EVENT_NAME" = workflow_dispatch; test "$GITHUB_REPOSITORY" = sumitake/GitHub-ActionRunner; test -n "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; test "$GITHUB_ACTOR" = "$PORTABLE_GHAR_RUNNER_OBSERVER_ACTOR"; test "$GITHUB_REF" = refs/heads/codex/rr7-runner-version-refresh; test "$GITHUB_RUN_ATTEMPT" = 1; test "$RUNNER_ENVIRONMENT" = github-hosted; test "$RUNNER_OS" = Linux; test "$RUNNER_ARCH" = X64; [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; [[ "$EXPECTED_TREE" =~ ^[0-9a-f]{40}$ ]]; test "$GITHUB_SHA" = "$EXPECTED_COMMIT"; python3 -B -c ''import json,os,pathlib,stat; fail=lambda:(_ for _ in ()).throw(ValueError("SDK dispatch")); path=pathlib.Path(os.environ["GITHUB_EVENT_PATH"]); info=path.lstat(); (stat.S_ISREG(info.st_mode) and not path.is_symlink() and info.st_nlink == 1 and 0 < info.st_size <= 1048576) or fail(); raw=path.read_bytes(); len(raw) == info.st_size or fail(); hook=lambda pairs:dict(pairs) if len(pairs) == len({key for key,_value in pairs}) else fail(); event=json.loads(raw.decode("utf-8","strict"),object_pairs_hook=hook,parse_constant=lambda _value:fail()); type(event) is dict and "action" not in event and "client_payload" not in event or fail(); inputs=event.get("inputs"); type(inputs) is dict and inputs == {"sdk_input_publication":"true","expected_commit":os.environ["EXPECTED_COMMIT"],"expected_tree":os.environ["EXPECTED_TREE"]} or fail()'''
+      - name: Checkout exact reviewed SDK publisher source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify signed source and pinned SDK metadata before App token mint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"; test "$(git rev-parse "HEAD^{tree}")" = "$EXPECTED_TREE"; gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq ''.sha == env.GITHUB_SHA and .verification.verified == true'' | grep -Fx true; python3 -B -c ''import sys;sys.path.insert(0,"scripts/release");import _retained_runner as r;r.authority(r.ROOT);r.public_receipt_bytes(r.ROOT)'''
+      - name: Mint existing repository-scoped settings read token
+        id: sdk-settings-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PORTABLE_GHAR_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PORTABLE_GHAR_RELEASE_APP_PRIVATE_KEY }}
+          permission-administration: read
+      - name: Preflight draft wait for producer assets and publish exact immutable input
+        env:
+          PGHAR_RELEASE_SETTINGS_TOKEN: ${{ steps.sdk-settings-token.outputs.token }}
+          PGHAR_RELEASE_TOKEN: ${{ github.token }}
+        run: 'set -euo pipefail; tag="runner-sdk-input-8c6ad1f743c97ab650b5c149bda95386a2b6d290b90fa8e0ea732ae89b67eee9-$GITHUB_SHA"; scripts/release/publish-runtime-release.sh --release-kind sdk-input --repository "$GITHUB_REPOSITORY" --tag "$tag" --target-commit "$GITHUB_SHA" --producer-upload true >"$RUNNER_TEMP/sdk-input-locator.json"; cat "$RUNNER_TEMP/sdk-input-locator.json"; printf ''SDK input published; unqualified consumer locator:\n'' >>"$GITHUB_STEP_SUMMARY"; cat "$RUNNER_TEMP/sdk-input-locator.json" >>"$GITHUB_STEP_SUMMARY"'

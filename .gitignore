@@ -47,3 +47,7 @@ private-overlay/
 # Python build artifacts
 __pycache__/
 *.pyc
+
+# Accounted retained SDK input; never tracked as source.
+/.retained-sdk-input/
+/.retained-sdk-transport-*/

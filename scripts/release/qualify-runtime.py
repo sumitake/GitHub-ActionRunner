@@ -26,6 +26,16 @@ def command(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=kwargs.pop('timeout', 60), **kwargs).strip()
 
 
+def legacy_event(event):
+    """A newly added false selector cannot authorize an older closed mode."""
+    values = event.get('inputs')
+    if isinstance(values, dict) and 'candidate_refresh' in values:
+        if values['candidate_refresh'] != 'false':
+            raise q.Stop('candidate selector cannot enter legacy mode')
+        return {**event, 'inputs': {k: v for k, v in values.items() if k != 'candidate_refresh'}}
+    return event
+
+
 def admission(source, event, environment, *, metadata_probe=False):
     if environment.get('GITHUB_EVENT_NAME') != 'workflow_dispatch' or environment.get('RUNNER_ENVIRONMENT') != 'github-hosted' or environment.get('RUNNER_OS') != 'Linux' or environment.get('RUNNER_ARCH') != 'X64':
         raise q.Stop('manual standard hosted Linux runner required')
@@ -36,6 +46,11 @@ def admission(source, event, environment, *, metadata_probe=False):
     if environment.get('GITHUB_REF') != 'refs/heads/codex/runner-dotnet-servicing' or environment.get('GITHUB_RUN_ATTEMPT') != '1':
         raise q.Stop('candidate branch required')
     values = event.get('inputs')
+    # The new CI selector must be explicitly false for existing modes.
+    if isinstance(values, dict) and 'payload_reconstruction' in values:
+        if values['payload_reconstruction'] != 'false':
+            raise q.Stop('reconstruction cannot enter qualification')
+        values = {key: value for key, value in values.items() if key != 'payload_reconstruction'}
     required = {'bounded_qualification', 'expected_commit', 'expected_tree', 'carry_in_bytes'}
     if not isinstance(values, dict) or set(values) not in (required, required | {'metadata_probe'}) or values.get('bounded_qualification') != ('false' if metadata_probe else 'true') or values.get('metadata_probe', 'false') != ('true' if metadata_probe else 'false'):
         raise q.Stop('closed bounded dispatch inputs required')
@@ -55,7 +70,9 @@ def admission(source, event, environment, *, metadata_probe=False):
 
 
 def safe_environment(root, go_root):
-    value = {'PATH': str(go_root / 'bin') + ':/usr/local/bin:/usr/bin:/bin', 'GOROOT': str(go_root), 'HOME': str(root / 'home'), 'TMPDIR': str(root / 'tmp'), 'GOCACHE': str(root / 'go-build'), 'GOMODCACHE': str(root / 'go-mod'), 'GOTOOLCHAIN': 'local', 'GOTELEMETRY': 'off', 'GOMAXPROCS': '4', 'GOMEMLIMIT': '1GiB', 'GOFLAGS': '-p=1 -mod=readonly', 'LANG': 'C.UTF-8', 'PYTHONDONTWRITEBYTECODE': '1', 'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'}
+    value = {'PATH': (str(go_root / 'bin') + ':' if go_root is not None else '') + '/usr/local/bin:/usr/bin:/bin', 'HOME': str(root / 'home'), 'TMPDIR': str(root / 'tmp'), 'GOCACHE': str(root / 'go-build'), 'GOMODCACHE': str(root / 'go-mod'), 'GOTOOLCHAIN': 'local', 'GOTELEMETRY': 'off', 'GOMAXPROCS': '4', 'GOMEMLIMIT': '1GiB', 'GOFLAGS': '-p=1 -mod=readonly', 'LANG': 'C.UTF-8', 'PYTHONDONTWRITEBYTECODE': '1', 'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'}
+    if go_root is not None:
+        value['GOROOT'] = str(go_root)
     for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
         if key in os.environ:
             if key.lower() != 'no_proxy':
@@ -258,45 +275,7 @@ def compose_worker(root, label):
 
 
 def sdk_rebuild(root, environment, parent, label):
-    source = root / 'source'
-    path = source / 'scripts/release/rebuild-runner.py'
-    spec = importlib.util.spec_from_file_location('bounded_selected_runner_rebuild', path)
-    value = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(value)
-    original = value.sdk_container_command
-    def sdk_command(work, descriptor, env):
-        args = original(work, descriptor, env)
-        return args[:2] + ['--cgroup-parent', parent, '--label', label] + args[2:]
-    value.sdk_container_command = sdk_command
-    verify = value.verify_startup_evidence
-    def startup(evidence, *args):
-        result = verify(evidence, *args)
-        shutil.copytree(evidence, root / 'evidence/sdk-startup')
-        return result
-    value.verify_startup_evidence = startup
-    destination = root / 'selected-runner'
-    destination.mkdir()
-    descriptor = json.loads((source / 'internal/buildinfo/runner_rebuild.json').read_text())
-    existed = subprocess.run(['docker', 'image', 'inspect', descriptor['sdk_container_image']], capture_output=True).returncode == 0
-    old_args, old_env = sys.argv, dict(os.environ)
-    try:
-        sys.argv = [str(path), '--output-directory', str(destination)]
-        os.environ.clear()
-        os.environ.update(environment)
-        value.main()
-    finally:
-        sys.argv = old_args
-        os.environ.clear()
-        os.environ.update(old_env)
-    files = list(destination.iterdir())
-    if len(files) != 1 or q.sha(files[0]) != descriptor['linux_x64_sha256'] or files[0].stat().st_size != descriptor['archive_bytes']:
-        raise q.Stop('rebuilt payload identity mismatch')
-    q.write(root / 'evidence/selected-payload.json', {'descriptor': descriptor, 'archive_sha256': q.sha(files[0]), 'archive_bytes': files[0].stat().st_size, 'all_entrypoints_verified': True})
-    if not existed:
-        subprocess.run(['docker', 'image', 'rm', descriptor['sdk_container_image']], check=True, timeout=60)
-    cache = root / 'go-build'
-    if cache.exists():
-        shutil.rmtree(cache)
+    raise q.Stop('retained SDK required; SDK rebuild is disabled in this execution tooling')
 
 
 def prepare_public_clone(root, inputs, environment):
@@ -315,7 +294,9 @@ def prepare_public_clone(root, inputs, environment):
     q.write(root / 'evidence/source-acquisition.json', {'method': 'local reviewed checkout clone with --no-local; detached admitted commit; no remote fetch', 'source_commit': inputs['commit'], 'source_tree': inputs['tree'], 'repository': repository, 'origin_matches_admitted_public_repository': True, 'checked_out_identity_verified': True, 'acquisition_location': 'reviewed hosted checkout'})
 
 
-def child(root, go_root):
+def child(root, go_root, *, reconstruction=False, candidate_refresh=False):
+    if reconstruction and candidate_refresh:
+        raise q.Stop('candidate and original reconstruction are exclusive')
     inputs = json.loads((root / 'inputs.json').read_text())
     slice_name = 'pghar-qualification-' + inputs['run_id'] + '.slice'
     subprocess.run(['systemctl', 'set-property', '--runtime', slice_name, 'CPUQuota=400%', 'CPUQuotaPeriodSec=100ms', 'MemoryMax=' + str(q.MEMORY), 'MemorySwapMax=0', 'TasksMax=1024'], check=True, timeout=20)
@@ -325,6 +306,13 @@ def child(root, go_root):
     control = pathlib.Path('/sys/fs/cgroup') / group.lstrip('/')
     q.write(root / 'scope.json', {'name': slice_name, 'cgroup': str(control)})
     wait_for_observer(root)
+    refresh_root = None
+    refresh_provenance = None
+    if reconstruction or candidate_refresh:
+        import _go_patch_refresh as refresh
+        refresh_root = (root if candidate_refresh else pathlib.Path(inputs['accounting_source'])) / 'go-patch-input'
+        go_root, refresh_provenance = refresh.acquire(refresh_root)
+        q.write(root / 'evidence/go-compiler.json', refresh_provenance)
     parent = slice_name if docker_json(['info', '--format', '{{json .CgroupDriver}}']) == 'systemd' else group
     label = 'pghar.qualification=' + inputs['run_id']
     environment = safe_environment(root, go_root)
@@ -338,21 +326,34 @@ def child(root, go_root):
     try:
         subprocess.run(['git', '-c', 'safe.directory=' + str(inputs['checkout']), 'clone', '--no-local', '--quiet', str(inputs['checkout']), str(root / 'source')], check=True, env=environment, timeout=90)
         subprocess.run(['git', 'checkout', '--quiet', '--detach', inputs['commit']], cwd=root / 'source', check=True, env=environment, timeout=30)
+        if reconstruction:
+            import _payload_reconstruction as reconstruct
+            reconstruct.verify_source(root / 'source', command)
+            tooling = pathlib.Path(inputs['tooling_checkout'])
+            reconstruct.stage_tooling(tooling, root / 'tooling', command)
         probe = inputs.get('metadata_probe') is True
         if not probe:
+            if not candidate_refresh:
+                raise q.Stop('retained candidate SDK is not admitted through legacy worker modes')
+            import _retained_runner as retained
+            incoming = pathlib.Path(inputs['checkout']) / retained.INPUT_NAME
+            archive, prior = retained.stage(root / 'source', incoming, root / 'selected-runner')
+            q.write(root / 'evidence/sdk-retained.json', prior)
+            descriptor = json.loads((root / 'source/internal/buildinfo/runner_rebuild.json').read_text())
+            q.write(root / 'evidence/selected-payload.json', {'descriptor': descriptor, 'archive_sha256': q.sha(archive), 'archive_bytes': archive.stat().st_size, 'all_entrypoints_verified': True, 'sdk_source': 'verified-retained-ab', 'sdk_build_executed_this_run': False})
             prepare_public_clone(root, inputs, environment)
-            q.write(root / 'phase.json', {'phase': 'selected-SDK-rebuild'})
-            sdk_rebuild(root, environment, parent, label)
+            q.write(root / 'phase.json', {'phase': 'verified-retained-SDK'})
         q.write(root / 'phase.json', {'phase': 'worker-bootstrap'})
         image = compose_worker(root, label)
         args = ['docker', 'create', '--pull=never', '--hostname=example', '--cpus=4', '--memory=' + str(q.MEMORY), '--memory-swap=' + str(q.MEMORY), '--pids-limit=1024', '--cgroup-parent', parent, '--label', label, '--restart=no', '--log-opt=max-size=5m', '--log-opt=max-file=2', '--mount', 'type=bind,src=' + str(root) + ',dst=/work', '--mount', 'type=bind,src=' + str(go_root) + ',dst=/toolchain/go,readonly']
         worker_env = worker_environment(environment)
         for key, entry in worker_env.items():
             args += ['--env', key + '=' + entry]
-        modes = (('metadata-buildkit', True), ('metadata-scan', False)) if probe else (('worker', True), ('scan', False))
+        modes = (('candidate-refresh-worker', True),) if candidate_refresh else (('reconstruct-worker', True),) if reconstruction else ((('metadata-buildkit', True), ('metadata-scan', False)) if probe else (('worker', True), ('scan', False)))
         for mode, privileged in modes:
             q.write(root / 'phase.json', {'phase': 'build-worker' if privileged else 'fresh-security-and-SBOM'})
-            worker = command(args[:2] + (['--privileged'] if privileged else []) + args[2:] + [image, 'python3', '/work/source/scripts/release/qualify-runtime.py', '--' + mode, '/work'])
+            entrypoint = '/work/tooling/qualify-runtime.py' if reconstruction else '/work/source/scripts/release/qualify-runtime.py'
+            worker = command(args[:2] + (['--privileged'] if privileged else []) + args[2:] + [image, 'python3', entrypoint, '--' + mode, '/work'])
             q.write(root / 'worker.json', {'container_id': worker, 'image_id': image, 'parent': parent, 'privileged': privileged})
             subprocess.run(['docker', 'start', worker], check=True, timeout=30)
             # Only BuildKit needs privilege. Scanners receive the same bounded
@@ -365,10 +366,16 @@ def child(root, go_root):
             q.write(root / ('evidence/' + mode + '-terminal.json'), {'exit_code': 0, 'inspect': {k: docker_json(['inspect', '--size', worker])[0][k] for k in ('Id', 'State', 'SizeRw')}})
             subprocess.run(['docker', 'rm', worker], check=True, timeout=30)
             worker = None
+        if (reconstruction or candidate_refresh) and refresh.compiler_identity(go_root) != refresh_provenance['extracted_tree_sha256']:
+            raise q.Stop('fixed compiler changed during worker execution')
         lineage = root / 'evidence/actual-worker-lineage.jsonl'
         names = {row['executable'] for line in lineage.read_text().splitlines() for row in json.loads(line)} if lineage.exists() else set()
         if not probe and not {'dotnet', 'buildkit-runc'} <= names:
             raise q.Stop('actual SDK/BuildKit descendant proof missing')
+        if candidate_refresh:
+            import _candidate_refresh as candidate
+            candidate.smoke_image(root, environment, parent, label, command)
+            candidate.export(root)
     except BaseException as failure:
         q.failure_receipt(root, 'scope', failure)
         raise
@@ -378,12 +385,18 @@ def child(root, go_root):
         if image is not None:
             subprocess.run(['docker', 'image', 'rm', image], timeout=60, check=False)
         try:
-            final = json.loads((root / 'evidence/scan-result.json').read_text()) if (root / 'evidence/scan-result.json').exists() else {}
+            result_name = 'candidate-result.json' if candidate_refresh else 'reconstruction-result.json' if reconstruction else 'scan-result.json'
+            result_path = root / 'evidence' / result_name
+            final = json.loads(result_path.read_text()) if result_path.exists() else {}
             final.update(status='pass' if sys.exc_info()[0] is None and final.get('status') == 'pass' else 'fail', resource_qualification='pending-final-observer', release_admitted=False, live_operations=False)
             q.write(root / 'evidence/RESULT.json', final)
             # Export remains inside the common cgroup while the host observer
             # enforces retained allocation, kernel limits and reserve floors.
-            if inputs.get('metadata_probe') is True:
+            if reconstruction or candidate_refresh:
+                # Identity-matched subjects were staged under the same guard.
+                # Never call qualification/publication admission for this mode.
+                pass
+            elif inputs.get('metadata_probe') is True:
                 import _metadata_probe
                 if sys.exc_info()[0] is None:
                     _metadata_probe.export(root)
@@ -404,7 +417,7 @@ def child(root, go_root):
 
 def sample(root, inputs, docker_root, excluded, baseline, initial_charge):
     deadline = time.monotonic() + 20
-    source = pathlib.Path(inputs['checkout'])
+    source = pathlib.Path(inputs.get('accounting_source', inputs['checkout']))
     scope = json.loads((root / 'scope.json').read_text())
     control = pathlib.Path(scope['cgroup'])
     kernel = {key: (control / key).read_text().strip() for key in ('cpu.max', 'memory.max', 'memory.swap.max', 'memory.events', 'memory.current', 'memory.peak', 'pids.max', 'pids.current', 'pids.peak')}
@@ -611,24 +624,46 @@ def retain_failure(root):
     (public / 'evidence-inventory.json').write_text(encoded)
 
 
-def host(source, root, event_path, go_root, *, metadata_probe=False):
+def host(source, root, event_path, go_root, *, metadata_probe=False, reconstruction=False, candidate_refresh=False):
+    if not metadata_probe and not candidate_refresh:
+        raise q.Stop('retained candidate SDK is not admitted through qualification or reconstruction hosts')
+    if reconstruction and candidate_refresh:
+        raise q.Stop('candidate and original reconstruction are exclusive')
     if os.geteuid() != 0:
         raise q.Stop('ephemeral hosted root supervisor required')
     info = event_path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not 0 < info.st_size <= 2**20 or event_path.resolve(strict=True) != event_path:
         raise q.Stop('unsafe dispatch event')
     event = json.loads(event_path.read_text(), object_pairs_hook=lambda pairs: dict(pairs) if len(dict(pairs)) == len(pairs) else (_ for _ in ()).throw(q.Stop('duplicate event key')))
-    inputs = admission(source, event, os.environ, metadata_probe=metadata_probe)
+    if candidate_refresh:
+        import _candidate_refresh as candidate
+        inputs = candidate.admission(source, event, os.environ, command)
+        import _retained_runner as retained
+        retained.verify_inputs(source, source / retained.INPUT_NAME)
+        accounting_source = source
+    elif reconstruction:
+        event = legacy_event(event)
+        import _payload_reconstruction as reconstruct
+        tooling = pathlib.Path(__file__).resolve().parents[2]
+        inputs = reconstruct.admission(source, tooling, event, os.environ, command)
+        inputs['go_patch_refresh'] = True
+        accounting_source = source.parent
+    else:
+        inputs = admission(source, legacy_event(event), os.environ, metadata_probe=metadata_probe)
+        accounting_source = source
     if root.exists() or root.parent.resolve(strict=True) != root.parent or not root.is_absolute():
         raise q.Stop('fresh canonical output directory required')
-    # The selected Go toolchain must already exist in the hosted image. It is
-    # immutable baseline OS tooling, not a cache downloaded outside accounting.
-    if go_root.resolve(strict=True) != go_root or command([str(go_root / 'bin/go'), 'version'], env={'PATH': '/usr/bin:/bin', 'GOTOOLCHAIN': 'local'}) != 'go version go1.26.9 linux/amd64':
+    # Existing qualification/probe modes retain their original baseline. The
+    # refresh controller needs only host Python/Git until guarded acquisition.
+    if reconstruction or candidate_refresh:
+        if go_root is not None:
+            raise q.Stop('refresh compiler must come from accounted pinned acquisition')
+    elif go_root is None or go_root.resolve(strict=True) != go_root or command([str(go_root / 'bin/go'), 'version'], env={'PATH': '/usr/bin:/bin', 'GOTOOLCHAIN': 'local'}) != 'go version go1.26.9 linux/amd64':
         raise q.Stop('preinstalled pinned Go toolchain unavailable')
-    docker_root, excluded, baseline, initial = allocation_preflight(source, root.parent)
-    if root == docker_root or root.is_relative_to(docker_root) or docker_root.is_relative_to(root) or root == source or root.is_relative_to(source) or source.is_relative_to(root):
+    docker_root, excluded, baseline, initial = allocation_preflight(accounting_source, root.parent)
+    if root == docker_root or root.is_relative_to(docker_root) or docker_root.is_relative_to(root) or root == accounting_source or root.is_relative_to(accounting_source) or accounting_source.is_relative_to(root):
         raise q.Stop('overlapping allocation roots')
-    if inputs['carry_in_bytes'] + sum(initial[str(path)] for path in (docker_root, source)) + 64 * 2**20 >= q.SOFT:
+    if inputs['carry_in_bytes'] + sum(initial[str(path)] for path in (docker_root, accounting_source)) + 64 * 2**20 >= q.SOFT:
         raise q.Stop('initial allocated storage exceeds admission envelope')
     memory = dict(line.split(':', 1) for line in pathlib.Path('/proc/meminfo').read_text().splitlines())
     if int(memory['MemAvailable'].split()[0]) * 1024 < 11 * q.GIB or min(value['free_inodes'] for value in baseline.values()) < 700000 or min(value['free_bytes'] for value in baseline.values()) < 13 * q.GIB + (q.SOFT - inputs['carry_in_bytes']):
@@ -636,9 +671,11 @@ def host(source, root, event_path, go_root, *, metadata_probe=False):
     root.mkdir(mode=0o700)
     (root / 'evidence').mkdir()
     inputs['checkout'] = str(source)
-    q.write(root / 'evidence/Docker-accounting.json', {'method': 'allocated blocks excluding only frozen immutable preinstalled image payloads; no baseline subtraction', 'excluded_payloads': [str(path) for path in excluded], 'filesystem_baseline': baseline, 'initial_allocated_bytes': public_initial_allocations(initial, docker_root, source)})
+    if reconstruction:
+        inputs['accounting_source'] = str(accounting_source)
+    q.write(root / 'evidence/Docker-accounting.json', {'method': 'allocated blocks excluding only frozen immutable preinstalled image payloads; no baseline subtraction', 'excluded_payloads': [str(path) for path in excluded], 'filesystem_baseline': baseline, 'initial_allocated_bytes': public_initial_allocations(initial, docker_root, accounting_source)})
     q.write(root / 'inputs.json', inputs)
-    q.write(root / 'evidence/source-inputs.json', {key: value for key, value in inputs.items() if key != 'checkout'})
+    q.write(root / 'evidence/source-inputs.json', {key: value for key, value in inputs.items() if key not in ('checkout', 'tooling_checkout', 'accounting_source')})
     scope_name = 'pghar-qualification-' + inputs['run_id']
     process = None
     error = None
@@ -648,7 +685,8 @@ def host(source, root, event_path, go_root, *, metadata_probe=False):
     for signum in (signal.SIGINT, signal.SIGTERM):
         old_handlers[signum] = signal.signal(signum, cancelled)
     try:
-        args = ['systemd-run', '--scope', '--quiet', '--unit=' + scope_name, '--slice=' + scope_name + '.slice', '/usr/bin/python3', str(pathlib.Path(__file__).resolve()), '--scope-child', str(root), '--go-root', str(go_root)]
+        child_mode = '--candidate-refresh-scope-child' if candidate_refresh else '--reconstruction-scope-child' if reconstruction else '--scope-child'
+        args = ['systemd-run', '--scope', '--quiet', '--unit=' + scope_name, '--slice=' + scope_name + '.slice', '/usr/bin/python3', str(pathlib.Path(__file__).resolve()), child_mode, str(root)] + ([] if go_root is None else ['--go-root', str(go_root)])
         # Only this control supervisor sees the dispatch metadata. Credentials
         # and Actions runtime tokens are excluded from every child environment.
         log = (root / 'evidence/supervisor.log').open('wb')
@@ -656,7 +694,7 @@ def host(source, root, event_path, go_root, *, metadata_probe=False):
         log.close()
         started = time.monotonic()
         while process.poll() is None:
-            if time.monotonic() - started >= (10 if metadata_probe else 85) * 60:
+            if time.monotonic() - started >= (110 if candidate_refresh else 10 if metadata_probe else 85) * 60:
                 raise q.Stop('bounded worker deadline')
             if (root / 'scope.json').exists():
                 sample(root, inputs, docker_root, excluded, baseline, sum(initial.values()))
@@ -683,11 +721,25 @@ def host(source, root, event_path, go_root, *, metadata_probe=False):
                 process.wait(timeout=5)
         for signum, handler in old_handlers.items():
             signal.signal(signum, handler)
-        final = json.loads((root / 'evidence/scan-result.json').read_text()) if (root / 'evidence/scan-result.json').exists() else {}
+        if candidate_refresh:
+            import _candidate_refresh as candidate
+            if not candidate.cleanup_image(root):
+                error = error or 'candidate image cleanup failed'
+        result_path = root / 'evidence' / ('candidate-result.json' if candidate_refresh else 'reconstruction-result.json' if reconstruction else 'scan-result.json')
+        final = json.loads(result_path.read_text()) if result_path.exists() else {}
         workers_joined = not own_containers('pghar.qualification=' + inputs['run_id'])
         final.update(status='pass' if error is None and workers_joined and final.get('status') == 'pass' else 'fail', resource_qualification='pass' if error is None and workers_joined else 'fail', workers_joined=workers_joined, scope_exit_code=None if process is None else process.returncode, release_admitted=False, live_operations=False)
         q.write(root / 'evidence/RESULT.json', final)
         q.write(root / 'evidence/terminal.json', {'workers_joined': workers_joined, 'scope_exit_code': None if process is None else process.returncode, 'budget_or_execution_error': error, 'live_operations': False, 'production_runners_touched': False})
+    if candidate_refresh:
+        import _candidate_refresh as candidate
+        candidate.finalize(root, final)
+        return
+    if reconstruction:
+        final['qualification_executed'] = False
+        import _go_patch_refresh as refresh
+        refresh.finalize(root, final)
+        return
     if metadata_probe:
         if error:
             raise q.Stop('metadata probe resource or execution failure')
@@ -742,10 +794,29 @@ def host(source, root, event_path, go_root, *, metadata_probe=False):
         raise q.Stop(error)
 
 
+def retained_bootstrap_checks(carry, initial_bytes, free_bytes, free_inodes, available_memory):
+    """Reserve both the bounded transport object and its exact decoded input."""
+    extra = 256 * 2**20 + 225823773
+    if type(carry) is not int or not q.RESERVE <= carry < q.SOFT:
+        raise q.Stop('retained bootstrap carry is outside the existing envelope')
+    if carry + initial_bytes + 64 * 2**20 + extra >= q.SOFT:
+        raise q.Stop('retained bootstrap would cross storage early stop')
+    if free_bytes < 13 * q.GIB + extra or free_inodes < 500000 + 64 or available_memory < 4 * q.GIB:
+        raise q.Stop('retained bootstrap would exhaust host reserves')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--candidate-refresh-host', type=pathlib.Path)
+    group.add_argument('--candidate-refresh-scope-child', type=pathlib.Path)
+    group.add_argument('--candidate-refresh-worker', type=pathlib.Path)
+    group.add_argument('--check-candidate-refresh-upload', type=pathlib.Path)
     group.add_argument('--host', type=pathlib.Path)
+    group.add_argument('--reconstruction-host', type=pathlib.Path)
+    group.add_argument('--reconstruction-scope-child', type=pathlib.Path)
+    group.add_argument('--reconstruct-worker', type=pathlib.Path)
+    group.add_argument('--check-reconstruction-upload', type=pathlib.Path)
     group.add_argument('--metadata-host', type=pathlib.Path)
     group.add_argument('--metadata-buildkit', type=pathlib.Path)
     group.add_argument('--metadata-scan', type=pathlib.Path)
@@ -760,8 +831,45 @@ def main():
     parser.add_argument('--source', type=pathlib.Path)
     parser.add_argument('--event', type=pathlib.Path)
     parser.add_argument('--go-root', type=pathlib.Path)
+    parser.add_argument('--retained-bootstrap-carry', type=int)
     args = parser.parse_args()
-    if args.metadata_buildkit or args.metadata_scan or args.check_metadata_upload:
+    if args.retained_bootstrap_carry is not None and not args.check_accounting:
+        raise q.Stop('retained bootstrap observation requires read-only accounting mode')
+    if args.check_candidate_refresh_upload:
+        import _candidate_refresh as candidate
+        candidate.check_upload(args.check_candidate_refresh_upload)
+        print('ready=true')
+    elif args.candidate_refresh_worker:
+        import _candidate_refresh as candidate
+        instance = q.Qualification(args.candidate_refresh_worker)
+        try:
+            instance.build(candidate_refresh=True)
+            candidate.compare(instance)
+        finally:
+            if instance.daemon is not None:
+                instance.stop('terminal')
+    elif args.candidate_refresh_scope_child:
+        child(args.candidate_refresh_scope_child, args.go_root, candidate_refresh=True)
+    elif args.candidate_refresh_host:
+        host(args.source, args.candidate_refresh_host, args.event, args.go_root, candidate_refresh=True)
+    elif args.check_reconstruction_upload:
+        import _go_patch_refresh as refresh
+        refresh.check_upload(args.check_reconstruction_upload)
+        print('ready=true')
+    elif args.reconstruct_worker:
+        import _go_patch_refresh as refresh
+        instance = q.Qualification(args.reconstruct_worker)
+        try:
+            instance.build(go_patch_refresh=True)
+            refresh.compare(args.reconstruct_worker, instance)
+        finally:
+            if instance.daemon is not None:
+                instance.stop('terminal')
+    elif args.reconstruction_scope_child:
+        child(args.reconstruction_scope_child, args.go_root, reconstruction=True)
+    elif args.reconstruction_host:
+        host(args.source, args.reconstruction_host, args.event, args.go_root, reconstruction=True)
+    elif args.metadata_buildkit or args.metadata_scan or args.check_metadata_upload:
         import _metadata_probe
         if args.metadata_buildkit:
             _metadata_probe.buildkit(args.metadata_buildkit)
@@ -774,7 +882,12 @@ def main():
         source = args.source.resolve(strict=True)
         started = time.monotonic()
         docker_root, excluded, baseline, initial = allocation_preflight(source, source.parent)
-        print(json.dumps({'read_only_accounting_preflight': 'pass', 'immutable_preinstalled_payloads': len(excluded), 'docker_allocated_bytes': initial[str(docker_root)], 'checkout_bytes': initial[str(source)], 'physical_filesystems': len(baseline), 'free_bytes': min(row['free_bytes'] for row in baseline.values()), 'seconds': time.monotonic() - started, 'qualification_executed': False, 'Docker_mutations': False}))
+        observation = {'read_only_accounting_preflight': 'pass', 'immutable_preinstalled_payloads': len(excluded), 'docker_allocated_bytes': initial[str(docker_root)], 'checkout_bytes': initial[str(source)], 'physical_filesystems': len(baseline), 'free_bytes': min(row['free_bytes'] for row in baseline.values()), 'seconds': time.monotonic() - started, 'qualification_executed': False, 'Docker_mutations': False}
+        if args.retained_bootstrap_carry is not None:
+            memory = dict(line.split(':', 1) for line in pathlib.Path('/proc/meminfo').read_text().splitlines())
+            retained_bootstrap_checks(args.retained_bootstrap_carry, sum(initial.values()), observation['free_bytes'], min(row['free_inodes'] for row in baseline.values()), int(memory['MemAvailable'].split()[0]) * 1024)
+            observation.update(retained_bootstrap_admitted=True, source=str(source), observed_at=time.time(), carry_in_bytes=args.retained_bootstrap_carry)
+        print(json.dumps(observation))
     elif args.check_control_upload:
         import _qualification_control
         _qualification_control.verify(args.check_control_upload)

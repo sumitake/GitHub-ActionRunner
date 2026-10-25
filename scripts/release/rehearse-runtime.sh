@@ -589,7 +589,7 @@ def run(command, *, cwd, env, log, timeout):
         reject("subprocess failure")
 
 
-def capture(command, *, cwd, env, log, timeout, maximum=MAX_JSON):
+def capture(command, *, cwd, env, log, timeout, maximum=MAX_JSON, clean_stderr=False):
     try:
         completed = subprocess.run(
             command,
@@ -608,9 +608,24 @@ def capture(command, *, cwd, env, log, timeout, maximum=MAX_JSON):
             stream.write(completed.stderr[:maximum])
     except OSError:
         reject("private log")
-    if completed.returncode != 0 or len(completed.stdout) > maximum:
+    if completed.returncode != 0 or len(completed.stdout) > maximum or (clean_stderr and completed.stderr):
         reject("subprocess failure")
     return completed.stdout
+
+
+def verify_final_runner_smoke(image, version, container, *, cwd, env, log):
+    output = capture(
+        [
+            "docker", "run", "--name", container,
+            "--network", "none", "--read-only", "--user", "65532:65532",
+            "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=16m,uid=65532,gid=65532,mode=0700",
+            "--entrypoint", "/opt/actions-runner/bin/Runner.Listener",
+            image, "--version",
+        ],
+        cwd=cwd, env=env, log=log, timeout=120, maximum=4096, clean_stderr=True,
+    )
+    if output != (version + "\n").encode("ascii"):
+        reject("final runner version smoke")
 
 
 def curl_download(
@@ -1954,7 +1969,7 @@ def main():
                 "GOCACHE": os.fspath(caches / "go-build"),
                 "GOMODCACHE": os.fspath(caches / "go-mod"),
                 "GOPATH": os.fspath(caches / "gopath"),
-                "GOTOOLCHAIN": "go1.26.9",
+                "GOTOOLCHAIN": "go1.26.10",
                 "SOURCE_DATE_EPOCH": str(source_epoch),
                 "TRIVY_CACHE_DIR": os.fspath(caches / "trivy"),
                 "SYFT_CHECK_FOR_APP_UPDATE": "false",
@@ -2286,6 +2301,14 @@ def main():
                 ]
                 run(load_command, cwd=clone, env=env, log=log, timeout=3600)
                 expected_version = runner["version"][1:]
+                verify_final_runner_smoke(
+                    loaded_image, expected_version, inspection_container,
+                    cwd=clone, env=env, log=log,
+                )
+                run(
+                    ["docker", "container", "rm", "-f", inspection_container],
+                    cwd=clone, env=env, log=log, timeout=120,
+                )
                 inspection = capture(
                     [
                         "docker",
@@ -2299,7 +2322,6 @@ def main():
                         loaded_image,
                         "-ceu",
                         (
-                            'test "$(/opt/actions-runner/bin/Runner.Listener --version)" = "$1"; '
                             'test "$(find /opt/actions-runner -type f -name Runner.Listener | wc -l)" = 1; '
                             "test ! -e /opt/actions-runner/_work; "
                             "test ! -e /opt/actions-runner/_update; "

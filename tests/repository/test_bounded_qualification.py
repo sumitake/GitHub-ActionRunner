@@ -136,7 +136,7 @@ class BoundedQualification(unittest.TestCase):
     def test_workflow_never_runs_qualification_on_push_or_pr(self):
         text = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.bounded_qualification", text)
-        self.assertEqual(text.count("if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe)"), 5)
+        self.assertEqual(text.count("if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe && !inputs.payload_reconstruction && !inputs.candidate_refresh)"), 5)
         self.assertIn('retention-days: 1', text)
         self.assertIn('timeout-minutes: 90', text)
         section = text.split('  bounded-qualification:', 1)[1]

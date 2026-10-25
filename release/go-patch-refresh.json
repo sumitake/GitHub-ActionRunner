@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "version": "go1.26.10",
+  "os": "linux",
+  "arch": "amd64",
+  "url": "https://go.dev/dl/go1.26.10.linux-amd64.tar.gz",
+  "archive_bytes": 66936659,
+  "archive_sha256": "ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5",
+  "metadata_url": "https://go.dev/dl/?mode=json&include=all",
+  "advisory": "GO-2026-6809",
+  "previous_toolchain": "go1.26.9",
+  "source_commit": "874fcc9557166d94a97026ae7c966c99fa598fa9",
+  "source_tree": "8fbc190401b664d434bb405303efd714e0fce1aa"
+}

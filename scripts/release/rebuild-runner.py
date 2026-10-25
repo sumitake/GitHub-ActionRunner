@@ -273,6 +273,8 @@ def main():
         if args.if_selected:
             return
         raise ValueError("the selected payload is official; use the official acquisition path")
+    if payload["sha256"] == "8c6ad1f743c97ab650b5c149bda95386a2b6d290b90fa8e0ea732ae89b67eee9":
+        raise ValueError("retained SDK required; no further SDK or Restore attempts are admitted")
     destination = output / payload["asset_name"]
     if destination.exists() or destination.is_symlink():
         raise ValueError("output already exists")

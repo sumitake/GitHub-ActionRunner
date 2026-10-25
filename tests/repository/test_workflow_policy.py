@@ -49,6 +49,7 @@ EXPECTED_RUNTIME_RELEASE_CONTEXTS = {
     "runner-candidate-build-b",
     "runner-candidate-compare-attest",
     "runner-candidate-publish",
+    "sdk-input-publication",
 }
 CREATE_APP_TOKEN_ACTION = (
     "actions/create-github-app-token@"
@@ -64,7 +65,7 @@ EXPECTED_SCHEDULED_WATCH_CONTEXTS = {
 }
 EXPECTED_ALL_CONTEXTS = (
     EXPECTED_STABLE_CONTEXTS
-    | {"codeql", "bounded-qualification", "metadata-probe"}
+    | {"codeql", "bounded-qualification", "metadata-probe", "payload-reconstruction", "candidate-refresh"}
     | EXPECTED_RUNTIME_RELEASE_CONTEXTS
     | EXPECTED_SCHEDULED_WATCH_CONTEXTS
 )
@@ -517,7 +518,13 @@ class RealCiWorkflowTest(unittest.TestCase):
             list(triggers["repository_dispatch"]["types"]),
             ["observe-runner-release"],
         )
-        self.assertIn(triggers["workflow_dispatch"], ({}, None))
+        inputs = triggers["workflow_dispatch"]["inputs"]
+        self.assertEqual(set(inputs), {"sdk_input_publication", "expected_commit", "expected_tree"})
+        self.assertEqual(inputs["sdk_input_publication"]["type"], "boolean")
+        self.assertEqual(inputs["sdk_input_publication"]["default"], "false")
+        for name in ("expected_commit", "expected_tree"):
+            self.assertEqual(inputs[name]["type"], "string")
+            self.assertEqual(inputs[name]["default"], "")
         self.assertEqual(
             set(root["jobs"]),
             {
@@ -526,11 +533,13 @@ class RealCiWorkflowTest(unittest.TestCase):
                 "runner-candidate-build-b",
                 "runner-candidate-compare-attest",
                 "runner-candidate-publish",
+                "sdk-input-publication",
             },
         )
         self.assertEqual(root["concurrency"]["cancel-in-progress"], "false")
 
         admission = root["jobs"]["runner-candidate-admission"]
+        self.assertIn("!inputs.sdk_input_publication", admission["if"])
         self.assertEqual(admission["steps"][0]["name"], "Validate trusted dispatch")
         self.assertNotIn("uses", admission["steps"][0])
         admission_text = self._run_text(admission)
@@ -560,6 +569,7 @@ class RealCiWorkflowTest(unittest.TestCase):
                     b'{"action":"observe-runner-release","client_payload":{}}\n',
                 ),
                 ("workflow_dispatch", b'{"inputs":{}}\n'),
+                ("workflow_dispatch", b'{"inputs":{"sdk_input_publication":"false","expected_commit":"","expected_tree":""}}\n'),
             )
             for event_name, raw in valid_cases:
                 with self.subTest(event_name=event_name, validity="valid"):
@@ -593,6 +603,8 @@ class RealCiWorkflowTest(unittest.TestCase):
                     b'"client_payload":{},"client_payload":{}}\n',
                 ),
                 ("workflow_dispatch", b'{"inputs":{"unexpected":"value"}}\n'),
+                ("workflow_dispatch", b'{"inputs":{"sdk_input_publication":"false","expected_commit":"unexpected","expected_tree":""}}\n'),
+                ("workflow_dispatch", b'{"inputs":{"sdk_input_publication":"true","expected_commit":"","expected_tree":""}}\n'),
                 ("workflow_dispatch", b'{"client_payload":{}}\n'),
             )
             for event_name, raw in invalid_cases:
@@ -688,7 +700,7 @@ class RealCiWorkflowTest(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, text)
         for job_id, job in root["jobs"].items():
-            if job_id != "runner-candidate-publish":
+            if job_id not in {"runner-candidate-publish", "sdk-input-publication"}:
                 self.assertNotIn("gh release create", self._run_text(job))
                 self.assertNotIn(
                     "actions/create-github-app-token@",

@@ -4,6 +4,14 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      candidate_refresh:
+        description: Build the reviewed runner version repair with new SDK identities
+        type: boolean
+        default: false
+      payload_reconstruction:
+        description: Rebuild pinned qualified source with fixed Go and A/B proof
+        type: boolean
+        default: false
       bounded_qualification:
         description: Run only bounded offline candidate qualification
         type: boolean
@@ -27,7 +35,7 @@ on:
 permissions: {}
 jobs:
   go:
-    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe && !inputs.payload_reconstruction && !inputs.candidate_refresh)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -36,7 +44,7 @@ jobs:
       group: ${{ github.workflow }}-go-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.9
+      GOTOOLCHAIN: go1.26.10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,7 +68,7 @@ jobs:
         run: go tool govulncheck ./...
 
   worker:
-    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe && !inputs.payload_reconstruction && !inputs.candidate_refresh)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -87,7 +95,7 @@ jobs:
         run: npm run worker:test
 
   shell:
-    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe && !inputs.payload_reconstruction && !inputs.candidate_refresh)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -96,7 +104,7 @@ jobs:
       group: ${{ github.workflow }}-shell-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.9
+      GOTOOLCHAIN: go1.26.10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -116,7 +124,7 @@ jobs:
         run: bats tests/shell/*.bats tests/shell/qts/*.bats
 
   repository-metadata:
-    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe && !inputs.payload_reconstruction && !inputs.candidate_refresh)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -125,7 +133,7 @@ jobs:
       group: ${{ github.workflow }}-repository-metadata-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.9
+      GOTOOLCHAIN: go1.26.10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -165,7 +173,7 @@ jobs:
         run: python3 scripts/sanitize_public.py --tracked
 
   container:
-    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.bounded_qualification && !inputs.metadata_probe && !inputs.payload_reconstruction && !inputs.candidate_refresh)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -174,14 +182,16 @@ jobs:
       group: ${{ github.workflow }}-container-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.9
+      GOTOOLCHAIN: go1.26.10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Check read-only hosted allocation accounting
-        run: sudo /usr/bin/python3 -B scripts/release/qualify-runtime.py --check-accounting --source "$GITHUB_WORKSPACE"
+        run: 'sudo /usr/bin/python3 -B scripts/release/qualify-runtime.py --check-accounting --source "$GITHUB_WORKSPACE" --retained-bootstrap-carry 3758096384 >"$RUNNER_TEMP/retained-bootstrap.json"'
+      - name: Acquire exact public SDK input and verification receipt
+        run: python3 -B scripts/release/fetch-retained-runner.py --accounting "$RUNNER_TEMP/retained-bootstrap.json"
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -190,13 +200,13 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Prepare Task 6 image contexts
         run: scripts/prepare-task6-images.sh
-      - name: Rebuild selected app-local runner archive
+      - name: Stage verified retained app-local runner archive
         id: runner-payload
-        run: 'set -euo pipefail; archive_directory="$RUNNER_TEMP/rebuilt-runner"; mkdir -m 700 "$archive_directory"; archive="$(python3 scripts/release/rebuild-runner.py --if-selected --output-directory "$archive_directory")"; printf "archive=%s\n" "$archive" >>"$GITHUB_OUTPUT"'
+        run: 'set -euo pipefail; archive="$(python3 scripts/release/_retained_runner.py --input-directory "$GITHUB_WORKSPACE/.retained-sdk-input" --output-directory "$RUNNER_TEMP/retained-selected-runner")"; test -n "$archive"; printf "archive=%s\n" "$archive" >>"$GITHUB_OUTPUT"'
       - name: Prepare Task 5 image contexts
         env:
           REBUILT_RUNNER_ARCHIVE: ${{ steps.runner-payload.outputs.archive }}
-        run: 'set -euo pipefail; repository="$(pwd -P)"; archive_args=(); if [ -n "$REBUILT_RUNNER_ARCHIVE" ]; then archive_args=(--runner-archive "$REBUILT_RUNNER_ARCHIVE"); fi; scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID" --ca-bundle "$repository/images/trust/build/ca-bundle.pem" "${archive_args[@]}"'
+        run: 'set -euo pipefail; test -n "$REBUILT_RUNNER_ARCHIVE"; repository="$(pwd -P)"; scripts/prepare-task5-images.sh --generation "$GITHUB_RUN_ID" --ca-bundle "$repository/images/trust/build/ca-bundle.pem" --runner-archive "$REBUILT_RUNNER_ARCHIVE"'
       - name: Prepare Task 11 image context
         run: scripts/prepare-task11-images.sh --generation "$GITHUB_RUN_ID"
       - name: Run Linux and Docker release gate
@@ -214,12 +224,17 @@ jobs:
           exit-code: 1
           format: json
           output: trivy-fs-results.json
+      - name: Admit complete Trivy report upload
+        id: trivy-report
+        run: python3 scripts/ci/check-report-upload.py trivy >>"$GITHUB_OUTPUT"
       - name: Upload Trivy results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: trivy-fs-results
-          path: trivy-fs-results.json
+          path: ${{ steps.trivy-report.outputs.path }}
+          if-no-files-found: error
           retention-days: 14
+          compression-level: 0
       - name: Trivy config scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -229,7 +244,7 @@ jobs:
           exit-code: 1
 
   bounded-qualification:
-    if: github.event_name == 'workflow_dispatch' && inputs.bounded_qualification && !inputs.metadata_probe
+    if: github.event_name == 'workflow_dispatch' && inputs.bounded_qualification && !inputs.metadata_probe && !inputs.payload_reconstruction && !inputs.candidate_refresh
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -276,7 +291,7 @@ jobs:
           overwrite: false
 
   metadata-probe:
-    if: github.event_name == 'workflow_dispatch' && inputs.metadata_probe && !inputs.bounded_qualification
+    if: github.event_name == 'workflow_dispatch' && inputs.metadata_probe && !inputs.bounded_qualification && !inputs.payload_reconstruction && !inputs.candidate_refresh
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -305,4 +320,82 @@ jobs:
           if-no-files-found: error
           compression-level: 6
           retention-days: 1
+          overwrite: false
+
+  payload-reconstruction:
+    if: github.event_name == 'workflow_dispatch' && inputs.payload_reconstruction && !inputs.bounded_qualification && !inputs.metadata_probe && !inputs.candidate_refresh
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-payload-reconstruction-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout reviewed tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: tooling
+      - name: Checkout unchanged qualified product
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: 874fcc9557166d94a97026ae7c966c99fa598fa9
+          path: product
+      - name: Verify reconstruction and unchanged qualification guards offline
+        working-directory: tooling
+        run: "python3 -B scripts/release/check-reconstruction-preparation.py"
+      - name: Refresh Go under existing aggregate guard and verify A/B identities
+        run: 'set -euo pipefail; sudo --preserve-env=GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_REPOSITORY,GITHUB_ACTOR,GITHUB_REF,GITHUB_SHA,GITHUB_WORKSPACE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,RUNNER_ENVIRONMENT,RUNNER_OS,RUNNER_ARCH,HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,http_proxy,https_proxy,all_proxy,no_proxy /usr/bin/python3 -B tooling/scripts/release/qualify-runtime.py --reconstruction-host "$RUNNER_TEMP/payload-reconstruction" --source "$GITHUB_WORKSPACE/product" --event "$GITHUB_EVENT_PATH"'
+      - name: Recheck complete payload before upload under bounded read-only scope
+        id: evidence
+        run: 'set -euo pipefail; sudo systemd-run --scope --quiet --unit="pghar-reconstruction-verify-$GITHUB_RUN_ID" --property=CPUQuota=400% --property=CPUQuotaPeriodSec=100ms --property=MemoryMax=6174015488 --property=MemorySwapMax=0 --property=TasksMax=1024 /usr/bin/timeout --signal=TERM --kill-after=10s 120 /usr/bin/python3 -B tooling/scripts/release/qualify-runtime.py --check-reconstruction-upload "$RUNNER_TEMP/payload-reconstruction/public" | tee -a "$GITHUB_OUTPUT"'
+      - name: Retain refreshed runtime subjects and provenance
+        if: steps.evidence.outputs.ready == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: go-patch-refresh-${{ github.run_id }}
+          path: ${{ runner.temp }}/payload-reconstruction/public
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 6
+          overwrite: false
+
+  candidate-refresh:
+    if: github.event_name == 'workflow_dispatch' && inputs.candidate_refresh && !inputs.payload_reconstruction && !inputs.bounded_qualification && !inputs.metadata_probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-candidate-refresh-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout exact reviewed candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Check retained input bootstrap allocation
+        env:
+          RETAINED_CARRY: ${{ inputs.carry_in_bytes }}
+        run: 'sudo /usr/bin/python3 -B scripts/release/qualify-runtime.py --check-accounting --source "$GITHUB_WORKSPACE" --retained-bootstrap-carry "$RETAINED_CARRY" >"$RUNNER_TEMP/retained-bootstrap.json"'
+      - name: Acquire exact public SDK input and verification receipt
+        run: python3 -B scripts/release/fetch-retained-runner.py --accounting "$RUNNER_TEMP/retained-bootstrap.json"
+      - name: Build candidate under aggregate guard and verify final image
+        run: 'set -euo pipefail; sudo --preserve-env=GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_REPOSITORY,GITHUB_ACTOR,GITHUB_REF,GITHUB_SHA,GITHUB_WORKSPACE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,RUNNER_ENVIRONMENT,RUNNER_OS,RUNNER_ARCH,HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,http_proxy,https_proxy,all_proxy,no_proxy /usr/bin/python3 -B scripts/release/qualify-runtime.py --candidate-refresh-host "$RUNNER_TEMP/candidate-refresh" --source "$GITHUB_WORKSPACE" --event "$GITHUB_EVENT_PATH"'
+      - name: Recheck complete candidate transfer under bounded read-only scope
+        id: evidence
+        run: 'set -euo pipefail; sudo systemd-run --scope --quiet --unit="pghar-candidate-verify-$GITHUB_RUN_ID" --property=CPUQuota=400% --property=CPUQuotaPeriodSec=100ms --property=MemoryMax=6174015488 --property=MemorySwapMax=0 --property=TasksMax=1024 /usr/bin/timeout --signal=TERM --kill-after=10s 120 /usr/bin/python3 -B scripts/release/qualify-runtime.py --check-candidate-refresh-upload "$RUNNER_TEMP/candidate-refresh/public" | tee -a "$GITHUB_OUTPUT"'
+      - name: Retain verified candidate subjects and provenance
+        if: steps.evidence.outputs.ready == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-version-refresh-${{ github.run_id }}
+          path: ${{ runner.temp }}/candidate-refresh/public
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 6
           overwrite: false

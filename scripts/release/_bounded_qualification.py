@@ -187,6 +187,34 @@ def module(source, name):
     return value
 
 
+def image_binary_binding(directory, value, name, stamp, expected):
+    observed = {}
+    config = json.loads((directory / 'blobs/sha256' / value['config_digest'][7:]).read_bytes())
+    if config['config']['User'] != '65532:65532':
+        raise Stop('runtime UID changed')
+    for digest in value['layer_digests']:
+        with tarfile.open(directory / 'blobs/sha256' / digest[7:], 'r|*') as layer:
+            for member in layer:
+                path = member.name.removeprefix('./').rstrip('/')
+                if path.startswith('/') or '..' in path.split('/'):
+                    raise Stop('unsafe runtime layer')
+                parent, leaf = posixpath.split(path)
+                if leaf.startswith('.wh.'):
+                    removed = parent + '/' if leaf == '.wh..wh..opq' else posixpath.join(parent, leaf[4:])
+                    observed = {k: v for k, v in observed.items() if not (k == removed or k.startswith(removed.rstrip('/') + '/'))}
+                elif path in expected:
+                    if not member.isfile() or not member.mode & 0o111:
+                        raise Stop('runtime binary type')
+                    observed[path] = hashlib.file_digest(layer.extractfile(member), 'sha256').hexdigest()
+                elif any(k.startswith(path + '/') for k in expected) and not member.isdir():
+                    raise Stop('runtime binary parent type')
+    if observed != expected:
+        raise Stop('source-to-image binary mismatch')
+    if name == 'runner' and (set(config['config']['Env']) != {'HOME=/runner', 'LANG=C.UTF-8', 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'XDG_RUNTIME_DIR=/tmp'} or len(config['config']['Env']) != 4):
+        raise Stop('private runtime environment changed')
+    return {'uid': '65532:65532', 'embedded_binaries': observed, 'stamp': stamp}
+
+
 class Qualification:
     def __init__(self, root):
         self.root = pathlib.Path(root)
@@ -376,59 +404,59 @@ class Qualification:
 
     def image_binaries(self, directory, value, name, stamp):
         expected = {'usr/local/bin/' + r['binary']: r['sha256'] for r in json.loads((self.output / 'image-binary-inputs.json').read_text()) if r['image'] == name}
-        observed = {}
-        config = json.loads((directory / 'blobs/sha256' / value['config_digest'][7:]).read_bytes())
-        if config['config']['User'] != '65532:65532':
-            raise Stop('runtime UID changed')
-        for digest in value['layer_digests']:
-            with tarfile.open(directory / 'blobs/sha256' / digest[7:], 'r|*') as layer:
-                for member in layer:
-                    path = member.name.removeprefix('./').rstrip('/')
-                    if path.startswith('/') or '..' in path.split('/'):
-                        raise Stop('unsafe runtime layer')
-                    parent, leaf = posixpath.split(path)
-                    if leaf.startswith('.wh.'):
-                        removed = parent + '/' if leaf == '.wh..wh..opq' else posixpath.join(parent, leaf[4:])
-                        observed = {k: v for k, v in observed.items() if not (k == removed or k.startswith(removed.rstrip('/') + '/'))}
-                    elif path in expected:
-                        if not member.isfile() or not member.mode & 0o111:
-                            raise Stop('runtime binary type')
-                        observed[path] = hashlib.file_digest(layer.extractfile(member), 'sha256').hexdigest()
-                    elif any(k.startswith(path + '/') for k in expected) and not member.isdir():
-                        raise Stop('runtime binary parent type')
-        if observed != expected:
-            raise Stop('source-to-image binary mismatch')
-        if name == 'runner' and (set(config['config']['Env']) != {'HOME=/runner', 'LANG=C.UTF-8', 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'XDG_RUNTIME_DIR=/tmp'} or len(config['config']['Env']) != 4):
-            raise Stop('private runtime environment changed')
-        return {'uid': '65532:65532', 'embedded_binaries': observed, 'stamp': stamp}
+        return image_binary_binding(directory, value, name, stamp, expected)
 
-    def build(self):
+    def build(self, *, reconstruction=False, go_patch_refresh=False, candidate_refresh=False):
+        if sum((reconstruction, go_patch_refresh, candidate_refresh)) > 1:
+            raise Stop('refresh cannot claim exact reconstruction')
+        fixed_go = go_patch_refresh or candidate_refresh
+        if fixed_go:
+            import _go_patch_refresh as refresh
+            self.env = refresh.constrain_compiler(self.root, self.env)
+            self.version += '-go1.26.10'
+            if self.run('fixed-go-version', ['go', 'version'])[1].read_text().strip() != 'go version go1.26.10 linux/amd64':
+                raise Stop('fixed Go compiler unavailable')
+        phases = ('A',) if reconstruction else ('A', 'B')
+        image_names = {'runner', 'network-adapter', 'network-broker-dialer', 'network-helper', 'network-verifier'}
         self.release['validate_release_manifest'](json.loads((self.source / 'release/manifest.json').read_text()))
         self.release['validate_dockerfiles'](self.source, self.runtime)
         if subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.source, env=self.env, text=True).strip() != self.commit or subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=self.source, env=self.env, text=True).strip() != self.inputs['tree']:
             raise Stop('candidate source changed')
         self.run('module-download', ['go', 'mod', 'download'], timeout=900)
         self.run('module-verify', ['go', 'mod', 'verify'])
+        if fixed_go:
+            self.run('fixed-go-tls-tests', ['go', 'test', '-count=1', '-run', '^TestDoHResolver(UsesOnePermittedLockedPersistentConnection|RejectsWrongTLSNameAndUntrustedRoot|RejectsExpiredCertificate)$', './internal/networkjail'])
+            self.run('fixed-go-govulncheck', ['go', 'tool', 'govulncheck', './...'])
         _, log = self.run('linked-identity', ['go', 'run', './internal/buildinfo/cmd/portable-ghar-build-identity', self.version, self.commit])
         stamp = log.read_text().strip()
         if stamp != 'portable-ghar-build-identity-v1|' + self.version + '|' + self.commit:
             raise Stop('build stamp changed')
         flags = '-s -w -buildid= -X github.com/sumitake/portable-ghar/internal/buildinfo.version=' + self.version + ' -X github.com/sumitake/portable-ghar/internal/buildinfo.commit=' + self.commit + ' -X github.com/sumitake/portable-ghar/internal/buildinfo.stamp=' + stamp
         self.run('linked-identity-test', ['go', 'test', '-run', '^TestLinkedIdentity$', '-count=1', '-ldflags=' + flags, './internal/buildinfo'], extra={'PGHAR_EXPECTED_BUILD_VERSION': self.version, 'PGHAR_EXPECTED_BUILD_COMMIT': self.commit})
+        if candidate_refresh:
+            import _candidate_refresh as candidate
+            candidate.retain_sdk_and_build_probe(self)
         binaries = []
-        for letter in ('A', 'B'):
+        for letter in phases:
             for row in self.runtime['binaries']:
                 path = self.artifacts / ('binaries-' + letter) / row['name']
                 path.parent.mkdir(exist_ok=True)
                 self.run('binary-' + letter + '-' + row['name'], ['go', 'build', '-trimpath', '-buildvcs=false', '-ldflags=' + flags, '-o', str(path), row['package']], extra={'GOOS': 'linux', 'GOARCH': 'amd64'})
+                if fixed_go:
+                    _, version_log = self.run('binary-toolchain-' + letter + '-' + row['name'], ['go', 'version', '-m', str(path)])
+                    if version_log.read_text().splitlines()[0] != str(path) + ': go1.26.10':
+                        raise Stop('binary built by wrong Go compiler')
                 data = path.read_bytes()
                 if data[:6] != b'\x7fELF\x02\x01' or int.from_bytes(data[18:20], 'little') != 62 or stamp.encode() not in data or str(self.source).encode() in data:
                     raise Stop('unstamped or wrong binary')
                 binaries.append({'phase': letter, 'name': row['name'], 'sha256': sha(path), 'bytes': len(data)})
             self.remove('go-build')
-        if any(a['sha256'] != b['sha256'] for a, b in zip(binaries[:11], binaries[11:])) or len(binaries) != 22:
+        if not reconstruction and (any(a['sha256'] != b['sha256'] for a, b in zip(binaries[:11], binaries[11:])) or len(binaries) != 22):
             raise Stop('binary A/B mismatch')
-        self.record('binary-comparison.json', {'source_commit': self.commit, 'stamp': stamp, 'binaries': binaries, 'all_eleven_identical': True})
+        binary_result = {'source_commit': self.commit, 'stamp': stamp, 'binaries': binaries, 'all_eleven_identical': not reconstruction}
+        if reconstruction:
+            binary_result['reconstruction_only'] = True
+        self.record('binary-comparison.json', binary_result)
         self.run('prepare-task6', ['scripts/prepare-task6-images.sh'])
         runner = self.runtime['runner_release']
         payload = self.release['select_runner_payload'](self.source, runner)
@@ -471,15 +499,17 @@ class Qualification:
                 path.unlink()
         self.record('retained-module-legal-inputs.json', retained)
         self.debian_cache()
-        for letter in ('A', 'B'):
+        for letter in phases:
             for image in sorted(self.runtime['images'], key=lambda r: (r['name'] != 'runner', r['name'])):
                 name = image['name']
+                if (reconstruction or fixed_go) and name not in image_names:
+                    continue
                 directory = self.artifacts / ('images-' + letter) / name
                 directory.parent.mkdir(exist_ok=True)
                 self.start(letter + '-' + name)
                 try:
                     extra = ['--local', 'debian-cache=' + str(self.root / 'debian-cache'), '--opt', 'context:debian-cache=local:debian-cache', '--opt', 'build-arg:DEBIAN_SNAPSHOT_SOURCE=offline'] if name == 'runner' else []
-                    self.buildctl('image-' + letter + '-' + name, self.source / image['context'], (self.source / image['dockerfile']).parent, 'type=oci,tar=false,dest=' + str(directory) + ',name=portable-ghar/' + name + ':' + self.commit + ',rewrite-timestamp=true', extra)
+                    self.buildctl('image-' + letter + '-' + name, self.source / image['context'], (self.source / image['dockerfile']).parent, 'type=oci,tar=false,dest=' + str(directory) + ',name=portable-ghar/' + name + ':' + (self.version if fixed_go else self.commit) + ',rewrite-timestamp=true', extra)
                     value = graph(directory, self.release)
                     identity = self.image_binaries(directory, value, name, stamp)
                     files = inventory(directory)
@@ -492,6 +522,10 @@ class Qualification:
                     self.record('image-results.json', self.images)
                 finally:
                     self.stop(letter + '-' + name)
+        if fixed_go:
+            # A/B receipts retain both independent identities. Transfer one generation.
+            self.remove('evidence/artifacts/binaries-B')
+            self.remove('evidence/artifacts/images-B')
         legal = []
         registry = json.loads((self.source / 'release/runner-licenses.json').read_text())
         for row in registry['licenses']:
@@ -516,7 +550,14 @@ class Qualification:
         for path in (self.root / 'debian-cache').rglob('*.deb'):
             path.unlink()
         self.buildkit_publication.finish()
-        self.record('build-result.json', {'status': 'pass', 'binaries': 22, 'images': 12, 'fresh_state_per_image': True, 'raw_format': 'OCI image-layout directories; both complete independent exports retained'})
+        build_result = {'status': 'pass', 'binaries': len(binaries), 'images': len(self.images), 'fresh_state_per_image': True, 'raw_format': 'OCI image-layout directories; both complete independent exports retained'}
+        if reconstruction:
+            build_result.update(raw_format='OCI image-layout directories; exact-subject reconstruction', reconstruction_only=True, qualification_executed=False)
+        if go_patch_refresh:
+            build_result.update(go_patch_refresh=True, qualification_executed=False, raw_format='OCI layouts; A retained after independent A/B equality')
+        if candidate_refresh:
+            build_result.update(candidate_refresh=True, qualification_executed=False, raw_format='Candidate OCI layouts; A retained after independent A/B equality')
+        self.record('build-result.json', build_result)
 
     def sanitize_release_outputs(self, rows, notices):
         # Syft's raw producer reports remain evidence, but the release-output

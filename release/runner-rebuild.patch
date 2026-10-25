@@ -37,3 +37,18 @@
      </ItemGroup>
  
      <ItemGroup>
+--- a/src/Runner.Listener/Program.cs
++++ b/src/Runner.Listener/Program.cs
+@@ -15,6 +15,12 @@
+     {
+         public static int Main(string[] args)
+         {
++            if (args.Length == 1 && args[0] == "--version")
++            {
++                Console.WriteLine(BuildConstants.RunnerPackage.Version);
++                return Constants.Runner.ReturnCode.Success;
++            }
++
+             // Add environment variables from .env file
+             LoadAndSetEnv();
+ 

@@ -8,8 +8,8 @@
   "dotnet_runtime_version": "8.0.32",
   "sdk_container_image": "mcr.microsoft.com/dotnet/sdk@sha256:8467fac908c4b0ac0496335989ca196721537277e42474a40f61e34fdc8ad772",
   "sdk_archive_sha512": "8141d01bdc53f604aed3bb661b604707a64209f8a947cd81bf95b4f518951593d77864069191f54ea5e84362a409da6b0f69074bf893b283d7e0cf93e2bf20a8",
-  "source_patch_sha256": "659e0c77601da2b2446e8118753d2058a51135626dcdbc954c8728e208f83606",
+  "source_patch_sha256": "835c6c6f0a1c3dffbe176c1a8acc2fa2ed782c7bfad2f6d2dc7919919c7ef078",
   "asset_name": "actions-runner-linux-x64-2.338.0-dotnet-8.0.32.tar.gz",
-  "linux_x64_sha256": "abd94fed68a6e31394b68103e1afa8b0eabe36b523cc781e00bf2b01f452ce29",
-  "archive_bytes": 220723260
+  "linux_x64_sha256": "8c6ad1f743c97ab650b5c149bda95386a2b6d290b90fa8e0ea732ae89b67eee9",
+  "archive_bytes": 220723614
 }

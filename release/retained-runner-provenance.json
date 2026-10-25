@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "archive": {
+    "asset_name": "actions-runner-linux-x64-2.338.0-dotnet-8.0.32.tar.gz",
+    "sha256": "8c6ad1f743c97ab650b5c149bda95386a2b6d290b90fa8e0ea732ae89b67eee9",
+    "bytes": 220723614,
+    "manifest_sha256": "687783bc82596352bb91ddea7103fa46ef8d47a917f650ccf1e13705f4cc8d27"
+  },
+  "producer_result": {
+    "status": "pass",
+    "archives": [
+      {
+        "sha256": "8c6ad1f743c97ab650b5c149bda95386a2b6d290b90fa8e0ea732ae89b67eee9",
+        "bytes": 220723614,
+        "manifest_sha256": "687783bc82596352bb91ddea7103fa46ef8d47a917f650ccf1e13705f4cc8d27"
+      },
+      {
+        "sha256": "8c6ad1f743c97ab650b5c149bda95386a2b6d290b90fa8e0ea732ae89b67eee9",
+        "bytes": 220723614,
+        "manifest_sha256": "687783bc82596352bb91ddea7103fa46ef8d47a917f650ccf1e13705f4cc8d27"
+      }
+    ],
+    "independent_AB_identical": true,
+    "source_commit": "197ca027b90de199464dee3bb9ff198a1db60967",
+    "source_tree": "fa981e41bede8a89c434d925b3f15ebc106aa79e",
+    "source_patch_sha256": "835c6c6f0a1c3dffbe176c1a8acc2fa2ed782c7bfad2f6d2dc7919919c7ef078",
+    "mode_patch_sha256": "37a60a820721a50937b09e69d05c5454b25b4edc97de53edd333dd5c3a24212f",
+    "sdk_archive_sha512": "8141d01bdc53f604aed3bb661b604707a64209f8a947cd81bf95b4f518951593d77864069191f54ea5e84362a409da6b0f69074bf893b283d7e0cf93e2bf20a8",
+    "reference_sdk_image": "mcr.microsoft.com/dotnet/sdk@sha256:8467fac908c4b0ac0496335989ca196721537277e42474a40f61e34fdc8ad772",
+    "reference_sdk_image_executed": false,
+    "compiler_source": "authenticated Microsoft SDK archive on recorded public OS-tool image",
+    "actual_app_local_startup": true,
+    "actual_normal_help_network_none": true,
+    "qualification_executed": false,
+    "release_admitted": false,
+    "target_conformance_executed": false,
+    "live_operations": false
+  },
+  "evidence": {
+    "PREPARED-CSHARP-SOURCE-MANIFEST.json": {
+      "bytes": 215760,
+      "sha256": "9a1554701a1128c81204678675fd2cbb9eb9e38e87fea29e2e4228530d939a7d"
+    },
+    "SDK-RESULT.json": {
+      "bytes": 1447,
+      "sha256": "b77d844d614080858ee23cdc472fa740546e413bd2e57e6aa85c6e442a2e8b1a"
+    },
+    "execution-plan.json": {
+      "bytes": 745,
+      "sha256": "872135d58a93924e47740ba11c3080fb8154acb393e99c929eb73579b36ef27e"
+    },
+    "manifest-A.json": {
+      "bytes": 1563284,
+      "sha256": "687783bc82596352bb91ddea7103fa46ef8d47a917f650ccf1e13705f4cc8d27"
+    },
+    "manifest-B.json": {
+      "bytes": 1563284,
+      "sha256": "687783bc82596352bb91ddea7103fa46ef8d47a917f650ccf1e13705f4cc8d27"
+    },
+    "producer-terminal.json": {
+      "bytes": 1598,
+      "sha256": "fff704b9f50457df86ffb51e5b92fcfa7c47a7c3eee2193b9b0f01fd890f75db"
+    },
+    "sdk-batch-worker-v2.py": {
+      "bytes": 77675,
+      "sha256": "078409285e5507e3f47bfec7dff900c729c59ad0bd0e1d0b5ae9d504c9fea6d5"
+    },
+    "startup-A/Runner.Listener.exit": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "startup-A/Runner.Listener.log": {
+      "bytes": 8,
+      "sha256": "83b99ba4761f0063ace888bea4b25754ed6656c90cf54eb26e0394c8ec299880"
+    },
+    "startup-A/Runner.Listener.trace": {
+      "bytes": 204340,
+      "sha256": "c27201c430614f41272a486fa204b6d9e7a155aeb57cedf7c31cb268cc72ae28"
+    },
+    "startup-A/Runner.PluginHost.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "startup-A/Runner.PluginHost.log": {
+      "bytes": 402,
+      "sha256": "eadc7b5442ca17f09ba7255f57cdee2fe5885937ae716930087ab7df19523482"
+    },
+    "startup-A/Runner.PluginHost.trace": {
+      "bytes": 201267,
+      "sha256": "63cff446b92b71061773f9885727598180eaa9a052adaca24f2fb39d0afbe6ec"
+    },
+    "startup-A/Runner.Worker.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "startup-A/Runner.Worker.log": {
+      "bytes": 421,
+      "sha256": "1edbe242f84e4d4c53df34f52421bd1eb1b7f2dcaea1f46f02eaaf60f4bb47ec"
+    },
+    "startup-A/Runner.Worker.trace": {
+      "bytes": 224209,
+      "sha256": "2313bdf72481d141916c1500ec1bb336a132686ff98027f7ae6f66577ebbb3d8"
+    },
+    "startup-A/help.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "startup-A/help.stdout": {
+      "bytes": 2238,
+      "sha256": "73f521bc52a0713e4ff59093326c3855718ce616d11f98fad8c6a5e24cff4178"
+    },
+    "startup-A/help.trace": {
+      "bytes": 204331,
+      "sha256": "26d5e994737f15506e628d5bfcf2dbfa40ab972360d9ba3682cad61f7454704a"
+    },
+    "startup-A/summary.json": {
+      "bytes": 961,
+      "sha256": "1c33a29ffdf46df6f5833b91c2d850a3d71050fe3aea6e4d0d66f5713d029465"
+    },
+    "startup-B/Runner.Listener.exit": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "startup-B/Runner.Listener.log": {
+      "bytes": 8,
+      "sha256": "83b99ba4761f0063ace888bea4b25754ed6656c90cf54eb26e0394c8ec299880"
+    },
+    "startup-B/Runner.Listener.trace": {
+      "bytes": 204340,
+      "sha256": "970518c79a8dd38072831204f596d9fb9242bbbaba8debccb7608036273a8802"
+    },
+    "startup-B/Runner.PluginHost.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "startup-B/Runner.PluginHost.log": {
+      "bytes": 402,
+      "sha256": "eadc7b5442ca17f09ba7255f57cdee2fe5885937ae716930087ab7df19523482"
+    },
+    "startup-B/Runner.PluginHost.trace": {
+      "bytes": 201267,
+      "sha256": "de0b49d546594e209080b9a29dbcd7788b2c757dafde48b458ed0204e9daefcd"
+    },
+    "startup-B/Runner.Worker.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "startup-B/Runner.Worker.log": {
+      "bytes": 421,
+      "sha256": "1edbe242f84e4d4c53df34f52421bd1eb1b7f2dcaea1f46f02eaaf60f4bb47ec"
+    },
+    "startup-B/Runner.Worker.trace": {
+      "bytes": 224209,
+      "sha256": "95253ead149e891ba7454aabb4c8cbef5fd81753e527570bdc5b7af5c64cff4a"
+    },
+    "startup-B/help.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "startup-B/help.stdout": {
+      "bytes": 2238,
+      "sha256": "ac02260f14b539ef5902cf2e0d05cb2d008eca9ffb5112f651d2438156da5628"
+    },
+    "startup-B/help.trace": {
+      "bytes": 204331,
+      "sha256": "3f268757454d247a4f223f4de039ea30391fe965a606cc65324c41d8d264d8eb"
+    },
+    "startup-B/summary.json": {
+      "bytes": 961,
+      "sha256": "51a9db551f31b289720356c6edfde9d742258035df23e86d83c05c40bbe30f40"
+    }
+  }
+}

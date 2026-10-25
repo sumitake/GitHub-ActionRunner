@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 set -euo pipefail
 
-python3 -B - "$@" <<'PY'
+python3 -B - "$0" "$@" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 
 
@@ -26,6 +27,7 @@ MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_ASSET_BYTES = 2 * 1024 * 1024 * 1024
 RELEASE_PAGE_LIMIT = 100
 PER_PAGE = 100
+SDK_UPLOAD_WAIT_SECONDS = 30 * 60
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SEMVER_TAG = re.compile(
@@ -36,6 +38,7 @@ REPOSITORY = re.compile(
     r"[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})$"
 )
 SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,126}$")
+SOURCE = pathlib.Path(sys.argv[1]).resolve(strict=True).parents[2]
 
 
 class PublicationError(Exception):
@@ -99,6 +102,7 @@ def parse_arguments(argv: list[str]) -> dict[str, str]:
         "--target-commit",
         "--product-tag-object",
         "--tree",
+        "--producer-upload",
     }
     if not argv or len(argv) % 2:
         reject("arguments")
@@ -114,13 +118,18 @@ def parse_arguments(argv: list[str]) -> dict[str, str]:
         "--repository",
         "--tag",
         "--target-commit",
-        "--tree",
     }
     if not required.issubset(result):
         reject("arguments")
     kind = result["--release-kind"]
-    if kind not in {"product", "candidate"}:
+    if kind not in {"product", "candidate", "sdk-input"}:
         reject("release kind")
+    producer_upload = "--producer-upload" in result
+    if producer_upload:
+        if kind != "sdk-input" or result["--producer-upload"] != "true" or "--tree" in result:
+            reject("producer upload arguments")
+    elif "--tree" not in result:
+        reject("arguments")
     has_product_object = "--product-tag-object" in result
     if has_product_object != (kind == "product"):
         reject("product tag object")
@@ -305,6 +314,35 @@ def load_release_identity(
         f"portable-ghar runner candidate {version}",
         f"Qualified immutable runner candidate {version} bound to observation "
         f"{evidence}.",
+    )
+
+
+def load_sdk_input(root, repository, tag, target_commit):
+    """The reviewed retained input has two assets, never runtime provenance."""
+    if repository != "sumitake/GitHub-ActionRunner":
+        reject("SDK input repository")
+    sys.path.insert(0, os.fspath(SOURCE / "scripts/release"))
+    import _retained_runner as retained
+
+    if root is not None:
+        retained.verify_inputs(SOURCE, root)
+    pin, payload, _ = retained.authority(SOURCE)
+    receipt = retained.public_receipt_bytes(SOURCE)
+    if tag != f"runner-sdk-input-{pin['archive']['sha256']}-{target_commit}":
+        reject("SDK input tag")
+    expected = {
+        payload["asset_name"]: (payload["archive_bytes"], payload["sha256"]),
+        retained.RECEIPT_NAME: (len(receipt), hashlib.sha256(receipt).hexdigest()),
+    }
+    assets = {}
+    for name, (size, digest) in sorted(expected.items()):
+        path = safe_regular_file(root, pathlib.PurePosixPath(name)) if root is not None else None
+        assets[name] = dict(path=path, relative=name, size=size, digest=digest)
+    return assets, "portable-ghar unqualified runner SDK input", (
+        f"Unqualified retained SDK input sha256:{pin['archive']['sha256']}. "
+        "The public verification receipt describes prior matching A/B builds. "
+        "This input publication performs no SDK build, qualification, "
+        "candidate admission, target validation or runner handover."
     )
 
 
@@ -598,6 +636,7 @@ class Publisher:
         title: str,
         body: str,
         assets: dict[str, dict],
+        producer_upload: bool = False,
     ):
         self.github = github
         self.kind = kind
@@ -608,9 +647,30 @@ class Publisher:
         self.title = title
         self.body = body
         self.assets = assets
+        if producer_upload and kind != "sdk-input":
+            reject("producer upload role")
+        self.producer_upload = producer_upload
         self.bound_release_id = None
         self.create_attempted = False
         self.candidate_ref_create_attempted = False
+
+    @property
+    def prerelease(self) -> bool:
+        return self.kind == "sdk-input"
+
+    def prove_sdk_commit(self) -> None:
+        status, body = self.github.api(
+            "GET", f"/repos/{self.repository}/git/commits/{self.target_commit}"
+        )
+        value = parse_json(body)
+        if (
+            status != 200
+            or not isinstance(value, dict)
+            or value.get("sha") != self.target_commit
+            or not isinstance(value.get("verification"), dict)
+            or value["verification"].get("verified") is not True
+        ):
+            reject("SDK input signed commit")
 
     @property
     def encoded_tag(self) -> str:
@@ -666,6 +726,8 @@ class Publisher:
         return True
 
     def prove_ref(self) -> None:
+        if self.kind == "sdk-input":
+            self.prove_sdk_commit()
         if self.kind == "product":
             self.product_ref()
         elif not self.read_candidate_ref():
@@ -746,7 +808,7 @@ class Publisher:
             or not isinstance(value.get("target_commitish"), str)
             or value.get("name") != self.title
             or value.get("body") != self.body
-            or value.get("prerelease") is not False
+            or value.get("prerelease") is not self.prerelease
             or not exact_bool(value.get("draft"))
             or not exact_bool(value.get("immutable"))
         ):
@@ -795,7 +857,7 @@ class Publisher:
                 "draft": True,
                 "make_latest": "false",
                 "name": self.title,
-                "prerelease": False,
+                "prerelease": self.prerelease,
                 "tag_name": self.tag,
                 "target_commitish": self.target_commit,
             }
@@ -873,6 +935,8 @@ class Publisher:
         digest = row.get("digest")
         if not positive_integer(size) or size != expected["size"]:
             reject("asset size")
+        if self.kind == "sdk-input" and digest is None:
+            reject("SDK input server digest required")
         if digest is not None:
             if (
                 not isinstance(digest, str)
@@ -940,6 +1004,8 @@ class Publisher:
             reject("starter delete")
 
     def upload_missing(self, name: str) -> None:
+        if self.producer_upload:
+            reject("producer uploads only")
         self.prove_bound_release("draft")
         missing, starter = self.assess_assets()
         if starter is not None or name not in missing:
@@ -950,6 +1016,10 @@ class Publisher:
         if starter is not None or name not in missing:
             reject("upload precondition")
         self.prove_ref()
+        if self.kind == "sdk-input":
+            import _retained_runner as retained
+            expected = self.assets[name]
+            retained.checked_file(expected["path"], expected["size"], expected["digest"])
         status, body = self.github.upload(
             self.bound_release_id,
             name,
@@ -1002,7 +1072,41 @@ class Publisher:
         self.prove_ref()
         self.verify_published()
 
+    def await_sdk_uploads(self) -> None:
+        """Only the existing external producer uploads; never export job tokens."""
+        self.github.settings()
+        print(
+            f"SDK input draft ready: release_id={self.bound_release_id} "
+            f"https://github.com/{self.repository}/releases/tag/{self.tag}",
+            file=sys.stderr, flush=True,
+        )
+        deadline = time.monotonic() + SDK_UPLOAD_WAIT_SECONDS
+        while True:
+            if time.monotonic() >= deadline:
+                reject("SDK producer upload deadline")
+            self.github.settings()
+            self.prove_bound_release("draft")
+            complete = set()
+            for row in self.list_assets():
+                name = row["name"]
+                if name not in self.assets:
+                    reject("extra asset")
+                if row["state"] == "starter":
+                    continue
+                expected = self.assets[name]
+                if (row["state"] != "uploaded"
+                    or not positive_integer(row.get("size"))
+                    or row["size"] != expected["size"]
+                    or row.get("digest") != "sha256:" + expected["digest"]):
+                    reject("SDK producer asset metadata")
+                complete.add(name)
+            if complete == set(self.assets):
+                return
+            time.sleep(15)
+
     def run(self) -> None:
+        if self.kind == "sdk-input":
+            self.prove_sdk_commit()
         if self.kind == "product":
             self.product_ref()
         else:
@@ -1023,6 +1127,11 @@ class Publisher:
             self.verify_published()
             return
         self.validate_release(release, "draft")
+        if self.producer_upload:
+            self.await_sdk_uploads()
+            # Existing finalization downloads/verifies both assets before publish.
+            self.publish_draft()
+            return
         missing, starter = self.assess_assets()
         if starter is not None:
             self.delete_starter(starter)
@@ -1045,22 +1154,28 @@ def main(argv: list[str]) -> None:
     product_tag_object = arguments.get("--product-tag-object")
     if product_tag_object is not None and SHA40.fullmatch(product_tag_object) is None:
         reject("product tag object")
-    tree = pathlib.Path(arguments["--tree"])
-    if not tree.is_absolute():
-        reject("tree")
-    try:
-        resolved_tree = tree.resolve(strict=True)
-    except OSError:
-        reject("tree")
-    if resolved_tree != tree or not tree.is_dir() or tree.is_symlink():
-        reject("tree")
-    assets = load_assets(tree)
-    title, body = load_release_identity(
-        tree,
-        arguments["--release-kind"],
-        tag,
-        target_commit,
-    )
+    producer_upload = "--producer-upload" in arguments
+    tree = None
+    if not producer_upload:
+        tree = pathlib.Path(arguments["--tree"])
+        if not tree.is_absolute():
+            reject("tree")
+        try:
+            resolved_tree = tree.resolve(strict=True)
+        except OSError:
+            reject("tree")
+        if resolved_tree != tree or not tree.is_dir() or tree.is_symlink():
+            reject("tree")
+    if arguments["--release-kind"] == "sdk-input":
+        assets, title, body = load_sdk_input(tree, repository, tag, target_commit)
+    else:
+        assets = load_assets(tree)
+        title, body = load_release_identity(
+            tree,
+            arguments["--release-kind"],
+            tag,
+            target_commit,
+        )
     temporary = pathlib.Path(
         tempfile.mkdtemp(prefix=".portable-ghar-publication.")
     )
@@ -1073,7 +1188,7 @@ def main(argv: list[str]) -> None:
             settings_token,
             temporary,
         )
-        Publisher(
+        publisher = Publisher(
             github,
             kind=arguments["--release-kind"],
             repository=repository,
@@ -1083,7 +1198,9 @@ def main(argv: list[str]) -> None:
             title=title,
             body=body,
             assets=assets,
-        ).run()
+            producer_upload=producer_upload,
+        )
+        publisher.run()
     except BaseException as error:
         caught = error
     cleanup_error = None
@@ -1095,10 +1212,16 @@ def main(argv: list[str]) -> None:
         reject("local cleanup")
     if caught is not None:
         raise caught
+    if arguments["--release-kind"] == "sdk-input":
+        # Only after terminal immutable/asset readback and credential cleanup.
+        sys.stdout.buffer.write(canonical_json(dict(
+            schema_version=1, role="unqualified-sdk-input", repository=repository,
+            tag=tag, release_id=publisher.bound_release_id, commit_sha=target_commit,
+        )))
 
 
 try:
-    main(sys.argv[1:])
+    main(sys.argv[2:])
 except PublicationError as error:
     print(f"publication failed: {error}", file=sys.stderr)
     raise SystemExit(1)
