@@ -17596,5 +17596,12 @@
     "rule": "IP001",
     "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",
     "reason": "Immutable public-history instance of an inspected synthetic RFC 3849 URL-normalization fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "<commit 25d00c43>#body",
+    "line": 2,
+    "rule": "HISTORY_META",
+    "sha256": "6dd9da2c27e9c3dbb42820f33c79bba65d8016758d3f964c329ac5add734a593",
+    "reason": "Immutable public commit-body quote of the already reviewed synthetic RFC 3849 URL-normalization fixture; exact scanner commit label, body field, line, rule, and canonical line hash only; no other metadata or future content is covered."
   }
 ]
