@@ -146,15 +146,31 @@
       },
       {
         "path": "internal/buildinfo/runner_rebuild.json",
-        "identity_inventory_sha256": "2cf6f16f294e4f78af718d17b52c39fe70bc5ebc2a8115ac3a9850a13220d6ca"
+        "identity_inventory_sha256": "c54306ef694bf130b771f88a622b0aeb62609a2fa66f138ff10dee3eb161233a"
       },
       {
         "path": "internal/runtimelock/lock_test.go",
         "identity_inventory_sha256": "3e120eae69da9743b84639c379ca5171e05daf648942c13dedf07dff10dd704e"
       },
       {
+        "path": "release/retained-runner-provenance.json",
+        "identity_inventory_sha256": "aef84dcba22f9a9991721ec536c2dca54bdf4c2348c8ead362e4f7d4308c6e89"
+      },
+      {
+        "path": "release/retained-sdk-producer-handoff.txt",
+        "identity_inventory_sha256": "76687b55916b41ab5d36a58627caa39f2c44d0cadb0332ad3a61282396d0e428"
+      },
+      {
+        "path": "release/retained-sdk-verification.json",
+        "identity_inventory_sha256": "bc11dc302fb9eee4b3b3f681be171350c7826c5b83255de58bb05b480d4c09ab"
+      },
+      {
         "path": "release/runner-licenses.json",
-        "identity_inventory_sha256": "7506e648061e88d1533ab2dff443c8c0e328068fa8e4476f5e52cec1fd741b8e"
+        "identity_inventory_sha256": "6fedc301d3ccca4f2ce0539770fec6d908566b7000131a3fb245c314bf3d8342"
+      },
+      {
+        "path": "scripts/release/_candidate_refresh.py",
+        "identity_inventory_sha256": "6553909da18c4a780d8a4933b9d3d9bc10685c6a6d6b3baceb7c8ac5b6ab3095"
       },
       {
         "path": "tests/boundaries/runtime_boundary_test.go",
@@ -167,6 +183,10 @@
       {
         "path": "tests/integration/testenv/closed_runtime_scanner_test.go",
         "identity_inventory_sha256": "7c8b0eebc0054b51b5fc50ed55abce53caf311f0cba985bb5bde50bee3f66abd"
+      },
+      {
+        "path": "tests/repository/test_candidate_refresh.py",
+        "identity_inventory_sha256": "00ec819191cc6f275039bd971a3a0cc9bbbec705046e3afe3b44fbafb8bad4a8"
       },
       {
         "path": "tests/shell/runtime-release.bats",
@@ -289,6 +309,36 @@
         "replace": true
       },
       {
+        "path": "release/retained-runner-provenance.json",
+        "token": "version_bare",
+        "count": 1,
+        "replace": false
+      },
+      {
+        "path": "release/retained-runner-provenance.json",
+        "token": "source_commit",
+        "count": 1,
+        "replace": false
+      },
+      {
+        "path": "release/retained-sdk-producer-handoff.txt",
+        "token": "version_bare",
+        "count": 1,
+        "replace": false
+      },
+      {
+        "path": "release/retained-sdk-verification.json",
+        "token": "version_bare",
+        "count": 1,
+        "replace": false
+      },
+      {
+        "path": "release/retained-sdk-verification.json",
+        "token": "source_commit",
+        "count": 1,
+        "replace": false
+      },
+      {
         "path": "release/runner-licenses.json",
         "token": "version_bare",
         "count": 14,
@@ -298,6 +348,24 @@
         "path": "release/runner-licenses.json",
         "token": "source_commit",
         "count": 7,
+        "replace": false
+      },
+      {
+        "path": "scripts/release/_candidate_refresh.py",
+        "token": "version_bare",
+        "count": 2,
+        "replace": false
+      },
+      {
+        "path": "scripts/release/_candidate_refresh.py",
+        "token": "linux_x64_sha256",
+        "count": 1,
+        "replace": false
+      },
+      {
+        "path": "scripts/release/_candidate_refresh.py",
+        "token": "source_commit",
+        "count": 1,
         "replace": false
       },
       {
@@ -328,6 +396,12 @@
         "path": "tests/integration/testenv/closed_runtime_scanner_test.go",
         "token": "version_bare",
         "count": 2,
+        "replace": false
+      },
+      {
+        "path": "tests/repository/test_candidate_refresh.py",
+        "token": "version_bare",
+        "count": 10,
         "replace": false
       },
       {

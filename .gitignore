@@ -8,6 +8,7 @@ worker/worker-configuration.d.ts
 # Local Go build/test cache artifacts
 /tmp/
 *.out
+/.liveprobe-helper-*/
 images/runner/build/
 images/runner/.build.*
 images/network-adapter/build/

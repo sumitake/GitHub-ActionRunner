@@ -2158,7 +2158,11 @@ func TestProbeCompatibleWithPinnedLiveBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MkdirTemp live probe helper: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(helperDir) })
+	t.Cleanup(func() {
+		if err := os.RemoveAll(helperDir); err != nil {
+			t.Errorf("RemoveAll(%s) error = %v", helperDir, err)
+		}
+	})
 
 	helperSrc := `package main
 

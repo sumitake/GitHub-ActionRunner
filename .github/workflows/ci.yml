@@ -189,7 +189,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Check read-only hosted allocation accounting
-        run: 'sudo /usr/bin/python3 -B scripts/release/qualify-runtime.py --check-accounting --source "$GITHUB_WORKSPACE" --retained-bootstrap-carry 3758096384 >"$RUNNER_TEMP/retained-bootstrap.json"'
+        run: 'set -o pipefail; sudo /usr/bin/python3 -B scripts/release/qualify-runtime.py --check-accounting --source "$GITHUB_WORKSPACE" --retained-bootstrap-carry 3758096384 | tee "$RUNNER_TEMP/retained-bootstrap.json" >/dev/null'
       - name: Acquire exact public SDK input and verification receipt
         run: python3 -B scripts/release/fetch-retained-runner.py --accounting "$RUNNER_TEMP/retained-bootstrap.json"
       - name: Set up Go
@@ -381,7 +381,7 @@ jobs:
       - name: Check retained input bootstrap allocation
         env:
           RETAINED_CARRY: ${{ inputs.carry_in_bytes }}
-        run: 'sudo /usr/bin/python3 -B scripts/release/qualify-runtime.py --check-accounting --source "$GITHUB_WORKSPACE" --retained-bootstrap-carry "$RETAINED_CARRY" >"$RUNNER_TEMP/retained-bootstrap.json"'
+        run: 'set -o pipefail; sudo /usr/bin/python3 -B scripts/release/qualify-runtime.py --check-accounting --source "$GITHUB_WORKSPACE" --retained-bootstrap-carry "$RETAINED_CARRY" | tee "$RUNNER_TEMP/retained-bootstrap.json" >/dev/null'
       - name: Acquire exact public SDK input and verification receipt
         run: python3 -B scripts/release/fetch-retained-runner.py --accounting "$RUNNER_TEMP/retained-bootstrap.json"
       - name: Build candidate under aggregate guard and verify final image
