@@ -54,11 +54,15 @@ account or hosted bootstrap job is needed. Redirect authority is checked before
 following a single official asset-host redirect. Transport and output are bounded;
 partial failures stay visible and cannot trigger a retry or fallback.
 
-`retained-runner-input.json` deliberately has null release bindings. It fails
-before network or output until a real approved publication has been read back.
-No asset ID, publication, permission, pricing or archive-publication approval is
-implied by these source changes. The prior403 immutability-settings read remains
-unresolved; this reader does not call that endpoint or bypass that denial.
+`retained-runner-input.json` binds published immutable SDK-input release
+`423081851`. Its original tag targets signed commit
+`26b55c44467e8b23050fe42af17562abdaab6d84`; archive and receipt hashes remain
+source-pinned. Publication completed in run `40256706920`.
+This enables retrieval of the unqualified input; it grants no candidate
+qualification, release admission, target conformance or live-operation authority.
+The reader does not call the immutable-settings endpoint. The earlier broad
+connector 403 is not bypassed; publication used the separate repository-scoped
+Release App settings-read credential.
 
 ## Publication sequencing: two separate releases
 
