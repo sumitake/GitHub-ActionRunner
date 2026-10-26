@@ -2152,9 +2152,11 @@ func TestRunnerLookupIdentityMismatchesRejected(t *testing.T) {
 // will see.
 func TestProbeCompatibleWithPinnedLiveBuild(t *testing.T) {
 	moduleRoot := findModuleRoot(t)
-	helperDir := filepath.Join(moduleRoot, "internal", "githubscale", "testdata", "zz_liveprobe_helper")
-	if err := os.MkdirAll(helperDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll(%q): %v", helperDir, err)
+	// Keep generated source inside the module's internal-import boundary but
+	// outside cmd/internal/tests, which runtime boundary tests scan concurrently.
+	helperDir, err := os.MkdirTemp(moduleRoot, ".liveprobe-helper-")
+	if err != nil {
+		t.Fatalf("MkdirTemp live probe helper: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(helperDir) })
 
@@ -2184,7 +2186,7 @@ func main() {
 	}
 
 	binPath := filepath.Join(t.TempDir(), "zz_liveprobe_helper")
-	buildCmd := exec.Command("go", "build", "-o", binPath, "./internal/githubscale/testdata/zz_liveprobe_helper")
+	buildCmd := exec.Command("go", "build", "-o", binPath, "./"+filepath.Base(helperDir))
 	buildCmd.Dir = moduleRoot
 	buildCmd.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.10")
 	if out, err := buildCmd.CombinedOutput(); err != nil {

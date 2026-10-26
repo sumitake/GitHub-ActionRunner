@@ -104,6 +104,52 @@ capture_failure_diagnostic() {
   local reason=$3
   local test_name=
   [ -z "$failure_diagnostic" ] || return 0
+  # This fixed child exit protocol carries only trusted wrapper control flow.
+  # Never derive image diagnostics from arbitrary Docker/build output.
+  if [ "$identifier" = image-reproducibility ] && [ "$reason" = command-failed ]; then
+    case "${4:-}" in
+    40)
+      failure_diagnostic="image-reproducibility:first-build"
+      return 0
+      ;;
+    41)
+      failure_diagnostic="image-reproducibility:first-id-inspect"
+      return 0
+      ;;
+    42)
+      failure_diagnostic="image-reproducibility:first-created-inspect"
+      return 0
+      ;;
+    43)
+      failure_diagnostic="image-reproducibility:first-created-time"
+      return 0
+      ;;
+    44)
+      failure_diagnostic="image-reproducibility:second-build"
+      return 0
+      ;;
+    45)
+      failure_diagnostic="image-reproducibility:second-id-inspect"
+      return 0
+      ;;
+    46)
+      failure_diagnostic="image-reproducibility:second-created-inspect"
+      return 0
+      ;;
+    47)
+      failure_diagnostic="image-reproducibility:second-created-time"
+      return 0
+      ;;
+    48)
+      failure_diagnostic="image-reproducibility:image-id-mismatch"
+      return 0
+      ;;
+    *)
+      failure_diagnostic="image-reproducibility:command-failed"
+      return 0
+      ;;
+    esac
+  fi
   if [ "$reason" = command-failed ]; then
     test_name="$(
       awk '/^--- FAIL: Test[A-Za-z0-9_]+([[:space:]]|$)/ {
@@ -124,11 +170,14 @@ run_stage() {
   local identifier=$1
   shift
   local log_path="$log_directory/${identifier}.log"
+  local command_status
   if "$@" >"$log_path" 2>&1; then
     append_stage "$identifier" pass
     return 0
+  else
+    command_status=$?
   fi
-  capture_failure_diagnostic "$identifier" "$log_path" command-failed
+  capture_failure_diagnostic "$identifier" "$log_path" command-failed "$command_status"
   append_stage "$identifier" fail
   record_failure "$identifier"
   return 1

@@ -165,45 +165,59 @@ while [ "$i" -lt "$image_count" ]; do
   tag_a="portable-ghar-check-images:${name}-a"
   tag_b="portable-ghar-check-images:${name}-b"
 
-  SOURCE_DATE_EPOCH="$source_epoch" docker buildx build \
+  # Exit codes 40..48 are a closed phase protocol for the runtime gate.
+  # Docker output remains private and is never parsed for diagnostic authority.
+  if ! SOURCE_DATE_EPOCH="$source_epoch" docker buildx build \
     --platform linux/amd64 \
     --no-cache \
     --provenance=false \
     --sbom=false \
     --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
     --output "type=docker,name=$tag_a,rewrite-timestamp=true" \
-    -f "$dockerfile" "$context" >/dev/null
-  id_a="$(docker image inspect --format '{{.Id}}' "$tag_a")"
-  created_a="$(docker image inspect --format '{{.Created}}' "$tag_a")"
+    -f "$dockerfile" "$context" >/dev/null; then
+    exit 40
+  fi
+  if ! id_a="$(docker image inspect --format '{{.Id}}' "$tag_a")"; then
+    exit 41
+  fi
+  if ! created_a="$(docker image inspect --format '{{.Created}}' "$tag_a")"; then
+    exit 42
+  fi
   if ! created_epoch_a="$(created_epoch "$created_a")" ||
     [ "$created_epoch_a" != "$source_epoch" ]; then
     docker image rm -f "$tag_a" >/dev/null 2>&1 || true
     printf 'check-images: %s first export has noncanonical creation time\n' "$name" >&2
-    exit 1
+    exit 43
   fi
 
-  SOURCE_DATE_EPOCH="$source_epoch" docker buildx build \
+  if ! SOURCE_DATE_EPOCH="$source_epoch" docker buildx build \
     --platform linux/amd64 \
     --no-cache \
     --provenance=false \
     --sbom=false \
     --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
     --output "type=docker,name=$tag_b,rewrite-timestamp=true" \
-    -f "$dockerfile" "$context" >/dev/null
-  id_b="$(docker image inspect --format '{{.Id}}' "$tag_b")"
-  created_b="$(docker image inspect --format '{{.Created}}' "$tag_b")"
+    -f "$dockerfile" "$context" >/dev/null; then
+    exit 44
+  fi
+  if ! id_b="$(docker image inspect --format '{{.Id}}' "$tag_b")"; then
+    exit 45
+  fi
+  if ! created_b="$(docker image inspect --format '{{.Created}}' "$tag_b")"; then
+    exit 46
+  fi
   if ! created_epoch_b="$(created_epoch "$created_b")" ||
     [ "$created_epoch_b" != "$source_epoch" ]; then
     docker image rm -f "$tag_a" "$tag_b" >/dev/null 2>&1 || true
     printf 'check-images: %s second export has noncanonical creation time\n' "$name" >&2
-    exit 1
+    exit 47
   fi
 
   docker image rm -f "$tag_a" "$tag_b" >/dev/null 2>&1 || true
 
   if [ "$id_a" != "$id_b" ]; then
     printf 'check-images: %s is not reproducible: %s != %s\n' "$name" "$id_a" "$id_b" >&2
-    exit 1
+    exit 48
   fi
 
   printf 'check-images: %s builds reproducibly (%s)\n' "$name" "$id_a"
