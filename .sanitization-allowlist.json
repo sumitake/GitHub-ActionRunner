@@ -105,13 +105,6 @@
     "reason": "Load-bearing deny-class CIDR literal in the shared normalizer's DENY_CLASSES policy table; needed at runtime by ipaddress.ip_network for both the scanner and the Phase-2 broker. Legitimate, not a leak; allowlisted by exact content hash (secret/IP rules are never path-exempt)."
   },
   {
-    "path": "internal/githubscale/adapter_contract_test.go",
-    "line": 886,
-    "rule": "IP001",
-    "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",
-    "reason": "Synthetic RFC 3849 documentation address in a canonical URL normalization assertion; the exact expected line is required to prove bracketed IPv6 and default-port handling and contains no deployment data."
-  },
-  {
     "path": "cmd/portable-ghar-network-adapter/main.go",
     "line": 40,
     "rule": "IP001",
@@ -17592,6 +17585,13 @@
   },
   {
     "path": "internal/githubscale/adapter_contract_test.go@3a4f0b9899fbc2bbad84d273461aa47ff12d0ac1",
+    "line": 886,
+    "rule": "IP001",
+    "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",
+    "reason": "Immutable public-history instance of an inspected synthetic RFC 3849 URL-normalization fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/githubscale/adapter_contract_test.go@46e042a0793eaee8db58c82becdef3a9f535ea77",
     "line": 886,
     "rule": "IP001",
     "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",

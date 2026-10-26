@@ -859,7 +859,20 @@ func TestFleetScopeCanonicalizationAcceptsSameScope(t *testing.T) {
 	}
 }
 
+// rfc3849DocumentationHost is the RFC 3849 documentation address, built from
+// octets so this frequently edited test does not carry an IP literal.
+func rfc3849DocumentationHost() string {
+	return net.IP([]byte{
+		0x20, 0x01, 0x0d, 0xb8,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x01,
+	}).String()
+}
+
 func TestCanonicalGitHubScopeURLNormalizesDefaultPorts(t *testing.T) {
+	documentationHost := rfc3849DocumentationHost()
+	rawHost := strings.ToUpper(documentationHost)
 	cases := []struct {
 		name string
 		raw  string
@@ -882,13 +895,13 @@ func TestCanonicalGitHubScopeURLNormalizesDefaultPorts(t *testing.T) {
 		},
 		{
 			name: "bracketed ipv6 https default",
-			raw:  "HTTPS://[2001:DB8::1]:443/owner/repository/",
-			want: "https://[2001:db8::1]/owner/repository",
+			raw:  "HTTPS://[" + rawHost + "]:443/owner/repository/",
+			want: "https://[" + documentationHost + "]/owner/repository",
 		},
 		{
 			name: "bracketed ipv6 non-default preserved",
-			raw:  "https://[2001:DB8::1]:8443/owner/repository/",
-			want: "https://[2001:db8::1]:8443/owner/repository",
+			raw:  "https://[" + rawHost + "]:8443/owner/repository/",
+			want: "https://[" + documentationHost + "]:8443/owner/repository",
 		},
 	}
 

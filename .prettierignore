@@ -12,3 +12,10 @@ docs/superpowers/
 
 # Test files (synthetic secrets / intentional content):
 tests/
+
+# Byte-exact receipts. Prettier must not reformat these: each file is
+# verified by its exact bytes (canonical compact JSON, or a pinned
+# whole-file digest).
+release/reconstruction-identities.json
+release/retained-runner-provenance.json
+release/retained-sdk-verification.json
