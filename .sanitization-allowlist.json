@@ -17589,5 +17589,12 @@
     "rule": "IP001",
     "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",
     "reason": "Immutable public-history instance of an inspected synthetic RFC 3849 URL-normalization fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
+  },
+  {
+    "path": "internal/githubscale/adapter_contract_test.go@3a4f0b9899fbc2bbad84d273461aa47ff12d0ac1",
+    "line": 886,
+    "rule": "IP001",
+    "sha256": "6bb16590d8bca489e40c10517d9509ab5482409115241edc0a024f53520008ec",
+    "reason": "Immutable public-history instance of an inspected synthetic RFC 3849 URL-normalization fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
   }
 ]
