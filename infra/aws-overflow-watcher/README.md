@@ -146,20 +146,20 @@ Unset or invalid spend knobs and required inputs do not launch. An empty
 `BUDGET_STOP_EXCLUSIONS` does not launch. The shipped default excludes
 deploy and migration workflow and job names.
 
-| Variable                                                    | Meaning                                                                                                                                |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `ALL_IN_HOURLY_PRICE`                                       | Fetched all-in hourly price in dollars (instance + IPv4 + EBS).                                                                        |
-| `AMI_ID`, `SUBNET_ID`, `SECURITY_GROUP_ID`, `INSTANCE_TYPE` | Launch placement. The template also requires a VPC id and an EBS size.                                                                 |
-| `INSTANCE_PROFILE_NAME`                                     | Runner instance profile. The template names it `overflow-runner`.                                                                      |
-| `GITHUB_APP_IDENTIFIER`, `GITHUB_APP_PEM`                   | GitHub App identity and private key. Not stored in this repo.                                                                          |
-| `WATCHED_REPOS`                                             | JSON list of `{id, owner, name, installation}` for the three repos.                                                                    |
-| `MONTHLY_SOFT_CAP_CENTS`                                    | `3000`. Stop-new threshold.                                                                                                            |
-| `GRACE_PCT` or `GRACE_CENTS`                                | `10` or `300`. Must agree with the grace below.                                                                                        |
-| `CONTINUE_ACTIVE_UNTIL_CENTS`                               | `3300`. Enforced estimate, not an invoice cap.                                                                                         |
-| `BUDGET_CANCEL_WAIT_SECONDS`                                | Wait after cancel before a terminate. No default.                                                                                      |
-| `BUDGET_STOP_EXCLUSIONS`                                    | JSON list of `{kind, pattern}`. Empty fails closed. Default excludes `deploy-*` and `migrate*` / `*migration*`.                          |
-| `TABLE_NAME`                                                | DynamoDB table.                                                                                                                        |
-| `CodeS3Bucket`, `CodeS3Key`                                 | Template only. Zip of this package. No default.                                                                                        |
+| Variable                                                    | Meaning                                                                                                         |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `ALL_IN_HOURLY_PRICE`                                       | Fetched all-in hourly price in dollars (instance + IPv4 + EBS).                                                 |
+| `AMI_ID`, `SUBNET_ID`, `SECURITY_GROUP_ID`, `INSTANCE_TYPE` | Launch placement. The template also requires a VPC id and an EBS size.                                          |
+| `INSTANCE_PROFILE_NAME`                                     | Runner instance profile. The template names it `overflow-runner`.                                               |
+| `GITHUB_APP_IDENTIFIER`, `GITHUB_APP_PEM`                   | GitHub App identity and private key. Not stored in this repo.                                                   |
+| `WATCHED_REPOS`                                             | JSON list of `{id, owner, name, installation}` for the three repos.                                             |
+| `MONTHLY_SOFT_CAP_CENTS`                                    | `3000`. Stop-new threshold.                                                                                     |
+| `GRACE_PCT` or `GRACE_CENTS`                                | `10` or `300`. Must agree with the grace below.                                                                 |
+| `CONTINUE_ACTIVE_UNTIL_CENTS`                               | `3300`. Enforced estimate, not an invoice cap.                                                                  |
+| `BUDGET_CANCEL_WAIT_SECONDS`                                | Wait after cancel before a terminate. No default.                                                               |
+| `BUDGET_STOP_EXCLUSIONS`                                    | JSON list of `{kind, pattern}`. Empty fails closed. Default excludes `deploy-*` and `migrate*` / `*migration*`. |
+| `TABLE_NAME`                                                | DynamoDB table.                                                                                                 |
+| `CodeS3Bucket`, `CodeS3Key`                                 | Template only. Zip of this package. No default.                                                                 |
 
 GitHub App permissions this poll needs, which the operator must grant:
 
