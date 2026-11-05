@@ -13,7 +13,7 @@ import sys
 import time
 import unittest
 
-from repository import test_image_phase_diagnostics as fixture
+from . import test_image_phase_diagnostics as fixture
 
 
 NORMAL = (*fixture.PHASES[:8], "cleanup", "image-id-compare")
