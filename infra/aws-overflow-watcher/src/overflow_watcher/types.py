@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-TAG_KEY = "overflow-watcher"
+WATCHER_TAG_NAME = "overflow-watcher"
 TAG_VALUE = "owned"
 ALLOWANCE_SECONDS = 6 * 3600
 QUEUE_SECONDS = 300

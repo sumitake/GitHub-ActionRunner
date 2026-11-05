@@ -14,8 +14,8 @@ from overflow_watcher.store import Store
 from overflow_watcher.types import (
     CAPACITY_COOLDOWN_SECONDS,
     RETRY_WINDOW_SECONDS,
-    TAG_KEY,
     TAG_VALUE,
+    WATCHER_TAG_NAME,
     AmbiguousLaunch,
     CapacityRefused,
 )
@@ -52,7 +52,7 @@ def ec2_params(cfg: Any) -> dict[str, Any]:
             {
                 "ResourceType": "instance",
                 "Tags": [
-                    {"Key": TAG_KEY, "Value": TAG_VALUE},
+                    {"Key": WATCHER_TAG_NAME, "Value": TAG_VALUE},
                 ],
             }
         ],

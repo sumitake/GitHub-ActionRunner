@@ -8,7 +8,7 @@ from typing import Any
 from botocore.exceptions import ClientError
 
 from overflow_watcher.types import (
-    TAG_KEY,
+    WATCHER_TAG_NAME,
     TAG_VALUE,
     AmbiguousLaunch,
     CapacityRefused,
@@ -49,7 +49,7 @@ class Ec2Views:
                 found[inst["InstanceId"]] = InstanceView(
                     instance_id=inst["InstanceId"],
                     state=(inst.get("State") or {}).get("Name"),
-                    has_tag=tags.get(TAG_KEY) == TAG_VALUE,
+                    has_tag=tags.get(WATCHER_TAG_NAME) == TAG_VALUE,
                     uncertain=False,
                 )
         return {
@@ -63,7 +63,7 @@ class Ec2Views:
         try:
             response = self._client.describe_instances(
                 Filters=[
-                    {"Name": f"tag:{TAG_KEY}", "Values": [TAG_VALUE]},
+                    {"Name": f"tag:{WATCHER_TAG_NAME}", "Values": [TAG_VALUE]},
                     {"Name": "instance-state-name", "Values": ["pending", "running"]},
                 ]
             )
