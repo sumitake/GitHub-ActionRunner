@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -46,6 +49,47 @@ GITLEAKS_FINGERPRINTS = (
 
 
 class HostedCIPortabilityContractTest(unittest.TestCase):
+    def test_active_image_phase_imports_in_ci_and_discovery_namespaces(self) -> None:
+        method = "test_complete_gate_has_closed_last_started_sequence"
+        environment = os.environ.copy()
+        environment.pop("PYTHONPATH", None)
+        # Run one existing synthetic test, not a recursive full-suite discovery.
+        cases = (
+            (
+                "tests.repository",
+                [
+                    "-v",
+                    "tests.repository.test_active_image_phase."
+                    f"ActiveImagePhaseTest.{method}",
+                ],
+            ),
+            (
+                "repository",
+                [
+                    "discover", "-v", "-s", "tests",
+                    "-p", "test_active_image_phase.py", "-k", method,
+                ],
+            ),
+        )
+        for namespace, arguments in cases:
+            with self.subTest(namespace=namespace):
+                result = subprocess.run(
+                    [sys.executable, "-m", "unittest", *arguments],
+                    cwd=REPO_ROOT,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 0, output)
+                self.assertIn("Ran 1 test in", output)
+                self.assertIn(
+                    f"({namespace}.test_active_image_phase.ActiveImagePhaseTest.{method})",
+                    output,
+                )
+
     def test_authority_chown_uses_native_int_parse_without_narrowing(self) -> None:
         source = (
             REPO_ROOT / "internal/networkjail/authority_manager_unix.go"

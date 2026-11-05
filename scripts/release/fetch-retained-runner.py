@@ -7,6 +7,7 @@ candidate publication is separate. Null bindings fail before network or output.
 """
 import argparse
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -65,7 +66,18 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def transfer(url, output, limit, *, binary=False):
+def request_diagnostic(phase, stage, status=None):
+    # Never render remote text or caller-controlled values into diagnostics.
+    if type(phase) is not str or phase not in ('release-metadata', 'tag-reference',
+            'annotated-tag', 'signed-commit', 'release-assets', 'binary-asset'):
+        phase = 'unattributed'
+    if type(stage) is not str or stage not in ('api', 'cdn'):
+        stage = 'unattributed'
+    status = str(status) if type(status) is int and 100 <= status <= 599 else 'unknown'
+    return f'(phase={phase}; stage={stage}; status={status})'
+
+
+def transfer(url, output, limit, *, binary=False, phase='unattributed'):
     """Bound bytes/deadline; allow one official binary redirect without auth."""
     if not url.startswith(API + '/repos/' + REPOSITORY + '/'):
         raise q.Stop('unexpected retained release API origin')
@@ -73,29 +85,41 @@ def transfer(url, output, limit, *, binary=False):
     headers = {'Accept': 'application/octet-stream' if binary else 'application/vnd.github+json',
                'User-Agent': 'portable-ghar-retained-input', 'X-GitHub-Api-Version': '2026-03-10'}
     started = time.monotonic()
+    stage = 'api'
     try:
         response = opener.open(urllib.request.Request(url, headers=headers), timeout=30)
     except urllib.error.HTTPError as error:
         location = error.headers.get('Location', '')
         error.close()
-        parsed = urllib.parse.urlsplit(location)
-        if not binary or error.code != 302 or parsed.scheme != 'https' or parsed.netloc != 'release-assets.githubusercontent.com' or parsed.username or parsed.password or parsed.fragment:
-            raise q.Stop('retained release response or redirect refused') from None
+        parsed = None
+        if binary and error.code == 302:
+            try:
+                parsed = urllib.parse.urlsplit(location)
+            except ValueError:
+                pass
+        if parsed is None or parsed.scheme != 'https' or parsed.netloc != 'release-assets.githubusercontent.com' or parsed.username or parsed.password or parsed.fragment:
+            raise q.Stop('retained release response or redirect refused ' + request_diagnostic(phase, stage, error.code)) from None
         # Recheck derived authority at use; no API headers or token follow.
+        stage = 'cdn'
         try:
             response = opener.open(urllib.request.Request(location, headers={'User-Agent': headers['User-Agent']}), timeout=30)
-        except (urllib.error.URLError, OSError):
-            raise q.Stop('retained binary transport failed') from None
-    except (urllib.error.URLError, OSError):
-        raise q.Stop('retained release transport failed') from None
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
+            status = error.code if isinstance(error, urllib.error.HTTPError) else None
+            raise q.Stop('retained binary transport failed ' + request_diagnostic(phase, stage, status)) from None
+    except (urllib.error.URLError, OSError, http.client.HTTPException):
+        raise q.Stop('retained release transport failed ' + request_diagnostic(phase, stage)) from None
     with response:
         if response.status != 200:
-            raise q.Stop('retained release response refused')
+            raise q.Stop('retained release response refused ' + request_diagnostic(phase, stage, response.status))
         remaining = limit
         while True:
             if time.monotonic() - started > 120:
                 raise q.Stop('retained release transfer deadline exceeded')
-            data = response.read(min(remaining + 1, 1024 * 1024))
+            try:
+                data = response.read(min(remaining + 1, 1024 * 1024))
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
+                status = error.code if isinstance(error, urllib.error.HTTPError) else None
+                raise q.Stop('retained release read failed ' + request_diagnostic(phase, stage, status)) from None
             if len(data) > remaining:
                 raise q.Stop('retained release bytes exceed bound')
             if not data:
@@ -103,9 +127,9 @@ def transfer(url, output, limit, *, binary=False):
             output.write(data); remaining -= len(data)
 
 
-def api(path):
+def api(path, *, phase='unattributed'):
     output = io.BytesIO()
-    transfer(API + '/repos/' + REPOSITORY + '/' + path, output, MAX_JSON)
+    transfer(API + '/repos/' + REPOSITORY + '/' + path, output, MAX_JSON, phase=phase)
     return parse_json(output.getvalue())
 
 
@@ -153,19 +177,19 @@ def main(accounting=None):
     # Keep the prior conservative reserve even though ZIPs are no longer used.
     if available.f_bavail * available.f_frsize < 13 * 2**30 + MAX_ARCHIVE + 225823773 or available.f_favail < 500000:
         raise q.Stop('retained input reserve unavailable')
-    release = api('releases/' + str(value['release_id']))
-    reference = api('git/ref/tags/' + value['tag'])
+    release = api('releases/' + str(value['release_id']), phase='release-metadata')
+    reference = api('git/ref/tags/' + value['tag'], phase='tag-reference')
     target = reference.get('object', {})
-    annotated = api('git/tags/' + target['sha']) if target.get('type') == 'tag' and re.fullmatch('[0-9a-f]{40}', str(target.get('sha'))) else None
-    commit = api('git/commits/' + value['commit_sha'])
+    annotated = api('git/tags/' + target['sha'], phase='annotated-tag') if target.get('type') == 'tag' and re.fullmatch('[0-9a-f]{40}', str(target.get('sha'))) else None
+    commit = api('git/commits/' + value['commit_sha'], phase='signed-commit')
     release_identity(value, release, reference, commit, annotated)
-    rows = api('releases/' + str(value['release_id']) + '/assets?per_page=3')
+    rows = api('releases/' + str(value['release_id']) + '/assets?per_page=3', phase='release-assets')
     expected = release_assets(ROOT, rows)
     destination.mkdir(mode=0o700)
     for row in rows:
         path = destination / row['name']; pin = expected[row['name']]
         with path.open('xb') as output:
-            transfer(API + '/repos/' + REPOSITORY + '/releases/assets/' + str(row['id']), output, pin['bytes'], binary=True)
+            transfer(API + '/repos/' + REPOSITORY + '/releases/assets/' + str(row['id']), output, pin['bytes'], binary=True, phase='binary-asset')
         retained.checked_file(path, pin['bytes'], pin['sha256'])
     retained.verify_inputs(ROOT, destination)
     # No retries/fallback. Partial staging stays visible and accounted.

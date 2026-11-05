@@ -272,7 +272,7 @@ class RetainedRunner(unittest.TestCase):
         def transfer(url,output,limit,**kwargs):
             raw=data[int(url.rsplit('/',1)[1])];self.assertEqual(limit,len(raw));output.write(raw)
         space=mock.Mock(f_bavail=40*2**30,f_frsize=1,f_favail=1000000)
-        with mock.patch.object(module,'ROOT',self.source),mock.patch.object(module,'api',side_effect=lambda path:answers[path]) as api,mock.patch.object(module,'transfer',side_effect=transfer) as download,mock.patch.object(module.os,'statvfs',return_value=space):
+        with mock.patch.object(module,'ROOT',self.source),mock.patch.object(module,'api',side_effect=lambda path, **kwargs:answers[path]) as api,mock.patch.object(module,'transfer',side_effect=transfer) as download,mock.patch.object(module.os,'statvfs',return_value=space):
             module.main(observation)
             self.assertEqual(download.call_count,2)
             self.assertEqual(api.call_count,4)

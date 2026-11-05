@@ -3,8 +3,10 @@
 #
 # Non-mutating controller-runtime release gate. Subordinate output stays in a
 # private temporary directory. Callers receive one closed JSON summary on
-# stdout and, only on failure, a closed diagnostic for the first failed stage
-# on stderr. Raw subordinate output never crosses the gate boundary.
+# stdout, bounded stage timing records on stderr, and, only on failure, a
+# closed diagnostic for the first failed stage. Image builds also emit bounded
+# last-started image/phase records. Raw subordinate output never
+# crosses the gate boundary.
 # Stage functions are invoked through the fixed identifier/function table.
 # The release modes are self-contained and never claim operator-gated target
 # conformance, which remains a separate prerequisite for nonzero acquisition.
@@ -49,6 +51,8 @@ docker_containers_fingerprint=
 docker_networks_fingerprint=
 docker_volumes_fingerprint=
 failure_diagnostic=
+stage_timing_records=0
+SECONDS=0
 
 private_mode() {
   local path=$1
@@ -78,10 +82,49 @@ hash_stream() {
   fi
 }
 
+# Only the parent writes control records, outside subordinate redirection. No
+# descriptor is handed to children that could bypass their private log files.
+# Elapsed seconds are relative to gate startup, saturated at one day; this is
+# diagnostic evidence only, never an input to gate checks or timeout policy.
+emit_stage_timing() {
+  local identifier=$1
+  local state=$2
+  local elapsed=$SECONDS
+  case "$identifier" in
+  source-integrity-entry | gofmt | vet | unit | race | network-authority | \
+    acquisition-authority | routing-authority | boundary | staticcheck | \
+    module | shellcheck | shfmt | bats | python-contract | workflow-policy | \
+    repository-metadata | public-sanitizer | chaos-source | source-integrity-exit | \
+    linux-docker-preflight | image-reproducibility | integration-authority | chaos | \
+    docker-state-exit | source-integrity-docker-exit | cleanup) ;;
+  *) return 0 ;;
+  esac
+  case "$state" in
+  start | pass | fail) ;;
+  *) return 0 ;;
+  esac
+  # The complete release path has 27 stages, including private-state cleanup.
+  [ "$stage_timing_records" -lt 54 ] || return 0
+  stage_timing_records=$((stage_timing_records + 1))
+  if [[ ! "$elapsed" =~ ^(0|[1-9][0-9]{0,8})$ ]]; then
+    elapsed=0
+  elif [ "$elapsed" -gt 86400 ]; then
+    elapsed=86400
+  fi
+  # Isolate SIGPIPE as well as ordinary write errors without changing the
+  # parent signal policy or giving subordinate commands a logging descriptor.
+  (
+    trap '' PIPE
+    printf '{"schema_version":1,"event":"runtime-gate-stage","stage":"%s","state":"%s","elapsed_seconds":%s}\n' \
+      "$identifier" "$state" "$elapsed" >&2 2>/dev/null
+  ) || true
+}
+
 append_stage() {
   local identifier=$1
   local stage_status=$2
   local record
+  emit_stage_timing "$identifier" "$stage_status"
   record="{\"id\":\"${identifier}\",\"status\":\"${stage_status}\"}"
   if [ -z "$stages_json" ]; then
     stages_json=$record
@@ -103,45 +146,84 @@ capture_failure_diagnostic() {
   local log_path=$2
   local reason=$3
   local test_name=
+  local image_code=${4:-}
+  local image_prefix=image-reproducibility
   [ -z "$failure_diagnostic" ] || return 0
   # This fixed child exit protocol carries only trusted wrapper control flow.
   # Never derive image diagnostics from arbitrary Docker/build output.
   if [ "$identifier" = image-reproducibility ] && [ "$reason" = command-failed ]; then
-    case "${4:-}" in
+    # Normalize only explicitly listed codes. Both label components come
+    # from fixed literals, never child output, arbitrary names, or raw status.
+    case "$image_code" in
+    40 | 41 | 42 | 43 | 44 | 45 | 46 | 47 | 48) ;;
+    50 | 51 | 52 | 53 | 54 | 55 | 56 | 57 | 58)
+      image_prefix=image-reproducibility:network-adapter
+      image_code=$((image_code - 10))
+      ;;
+    60 | 61 | 62 | 63 | 64 | 65 | 66 | 67 | 68)
+      image_prefix=image-reproducibility:network-broker-dialer
+      image_code=$((image_code - 20))
+      ;;
+    70 | 71 | 72 | 73 | 74 | 75 | 76 | 77 | 78)
+      image_prefix=image-reproducibility:network-broker-parser
+      image_code=$((image_code - 30))
+      ;;
+    80 | 81 | 82 | 83 | 84 | 85 | 86 | 87 | 88)
+      image_prefix=image-reproducibility:network-helper
+      image_code=$((image_code - 40))
+      ;;
+    90 | 91 | 92 | 93 | 94 | 95 | 96 | 97 | 98)
+      image_prefix=image-reproducibility:network-verifier
+      image_code=$((image_code - 50))
+      ;;
+    100 | 101 | 102 | 103 | 104 | 105 | 106 | 107 | 108)
+      image_prefix=image-reproducibility:runner
+      image_code=$((image_code - 60))
+      ;;
+    110 | 111 | 112 | 113 | 114 | 115 | 116 | 117 | 118)
+      image_prefix=image-reproducibility:synthetic-listener
+      image_code=$((image_code - 70))
+      ;;
+    *)
+      failure_diagnostic="image-reproducibility:command-failed"
+      return 0
+      ;;
+    esac
+    case "$image_code" in
     40)
-      failure_diagnostic="image-reproducibility:first-build"
+      failure_diagnostic="${image_prefix}:first-build"
       return 0
       ;;
     41)
-      failure_diagnostic="image-reproducibility:first-id-inspect"
+      failure_diagnostic="${image_prefix}:first-id-inspect"
       return 0
       ;;
     42)
-      failure_diagnostic="image-reproducibility:first-created-inspect"
+      failure_diagnostic="${image_prefix}:first-created-inspect"
       return 0
       ;;
     43)
-      failure_diagnostic="image-reproducibility:first-created-time"
+      failure_diagnostic="${image_prefix}:first-created-time"
       return 0
       ;;
     44)
-      failure_diagnostic="image-reproducibility:second-build"
+      failure_diagnostic="${image_prefix}:second-build"
       return 0
       ;;
     45)
-      failure_diagnostic="image-reproducibility:second-id-inspect"
+      failure_diagnostic="${image_prefix}:second-id-inspect"
       return 0
       ;;
     46)
-      failure_diagnostic="image-reproducibility:second-created-inspect"
+      failure_diagnostic="${image_prefix}:second-created-inspect"
       return 0
       ;;
     47)
-      failure_diagnostic="image-reproducibility:second-created-time"
+      failure_diagnostic="${image_prefix}:second-created-time"
       return 0
       ;;
     48)
-      failure_diagnostic="image-reproducibility:image-id-mismatch"
+      failure_diagnostic="${image_prefix}:image-id-mismatch"
       return 0
       ;;
     *)
@@ -171,6 +253,7 @@ run_stage() {
   shift
   local log_path="$log_directory/${identifier}.log"
   local command_status
+  emit_stage_timing "$identifier" start
   if "$@" >"$log_path" 2>&1; then
     append_stage "$identifier" pass
     return 0
@@ -192,6 +275,7 @@ run_verified_go_test_stage() {
   local log_path="$log_directory/${identifier}.log"
   local package_count
   local pass_count
+  emit_stage_timing "$identifier" start
   if ! "$@" >"$log_path" 2>&1; then
     capture_failure_diagnostic "$identifier" "$log_path" command-failed
     append_stage "$identifier" fail
@@ -481,8 +565,73 @@ stage_linux_docker_preflight() {
   linux_docker=ready
 }
 
+# Separate diagnostic budget from the 54 stage timing records. These fixed
+# records mean last started, not current process, completion or root cause.
+# Count and size are bounded; a stalled stderr sink can still block a write.
+emit_image_phase() {
+  local ci_images_image ci_images_phase=$2 ci_images_state=last-started
+  case "$1" in
+  40) ci_images_image=unattributed ;;
+  50) ci_images_image=network-adapter ;;
+  60) ci_images_image=network-broker-dialer ;;
+  70) ci_images_image=network-broker-parser ;;
+  80) ci_images_image=network-helper ;;
+  90) ci_images_image=network-verifier ;;
+  100) ci_images_image=runner ;;
+  110) ci_images_image=synthetic-listener ;;
+  *) return 0 ;;
+  esac
+  case "$ci_images_phase" in
+  manifest-validation | entry-prepare | first-build | first-id-inspect | \
+    first-created-inspect | first-created-time | second-build | second-id-inspect | \
+    second-created-inspect | second-created-time | cleanup | image-id-compare) ;;
+  *) return 0 ;;
+  esac
+  [ "$ci_images_records" -lt 128 ] || return 0
+  if [ "$ci_images_records" -eq 127 ]; then
+    ci_images_image=unattributed
+    ci_images_phase='record-limit'
+    ci_images_state=unavailable
+  fi
+  ci_images_records=$((ci_images_records + 1))
+  # A joined writer isolates SIGPIPE without changing parent signal policy.
+  # No public descriptor is passed to any image helper or its descendants.
+  (
+    trap '' PIPE
+    printf '{"schema_version":1,"event":"image-phase","state":"%s","image":"%s","phase":"%s"}\n' \
+      "$ci_images_state" "$ci_images_image" "$ci_images_phase" >&2 2>/dev/null
+  ) || true
+}
+
 stage_image_reproducibility() {
-  bash scripts/ci/check-images.sh
+  # Source and every entire helper invocation (including shell setup, captures
+  # and raw reporting) stay private. Suppress redirection-open errors before
+  # opening the owned log, so an open failure cannot expose its path.
+  { source scripts/ci/check-images.sh >>"$ci_images_log_path" 2>&1; } 2>/dev/null || return 1
+  ci_images_private() {
+    { "$@" >>"$ci_images_log_path" 2>&1; } 2>/dev/null
+  }
+  ci_images_progress() { emit_image_phase "$@"; }
+  ci_images_run
+}
+
+run_image_stage() {
+  local ci_images_log_path="$log_directory/image-reproducibility.log"
+  local ci_images_records=0 ci_images_command_status
+  emit_stage_timing image-reproducibility start
+  # Parent progress stays outside whole-stage redirection. Only this fixed
+  # trusted driver uses that boundary; other stages retain run_stage.
+  if stage_image_reproducibility; then
+    append_stage image-reproducibility pass
+    return 0
+  else
+    ci_images_command_status=$?
+  fi
+  capture_failure_diagnostic image-reproducibility "$ci_images_log_path" \
+    command-failed "$ci_images_command_status"
+  append_stage image-reproducibility fail
+  record_failure image-reproducibility
+  return 1
 }
 
 stage_integration_authority() {
@@ -569,6 +718,7 @@ EOF
 
 cleanup_private_state() {
   local cleanup_ok=1
+  emit_stage_timing cleanup start
   if [ "$docker_ready" -eq 1 ]; then
     cleanup_fixed_images || cleanup_ok=0
   fi
@@ -580,6 +730,7 @@ cleanup_private_state() {
     record_failure cleanup
     return 1
   fi
+  emit_stage_timing cleanup pass
   return 0
 }
 
@@ -661,7 +812,7 @@ if [ "$unit_failed" -eq 0 ] &&
   if ! run_stage linux-docker-preflight stage_linux_docker_preflight; then
     docker_failed=1
   else
-    if ! run_stage image-reproducibility stage_image_reproducibility; then
+    if ! run_image_stage; then
       docker_failed=1
     fi
     if [ "$docker_failed" -eq 0 ] &&

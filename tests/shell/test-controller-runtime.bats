@@ -5,6 +5,7 @@
 # interactive confirmation when invoked by CI or an agent.
 
 setup() {
+  bats_require_minimum_version 1.5.0
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
   SCRIPT="$REPO_ROOT/scripts/test-controller-runtime.sh"
   TMP_DIR="$(mktemp -d)"
@@ -36,6 +37,42 @@ teardown() {
   ' bash "$fifo" "$SCRIPT"
   [ "$status" -ne 0 ]
   [ "$status" -ne 124 ]
+}
+
+assert_stage_timing() {
+  local diagnostics=${1:-}
+  local timing
+  [ "$(printf '%s\n' "$stderr" | grep -v '^{' || true)" = "$diagnostics" ]
+  timing="$(printf '%s\n' "$stderr" | grep '^{')"
+  run jq -se --argjson summary "$summary" '
+    ([.[] | select(.event == "image-phase")] | length <= 128) and
+    ([.[] | select(.event == "image-phase")] | to_entries | all(.[];
+      .key as $index | .value |
+      keys == ["event", "image", "phase", "schema_version", "state"] and
+      .schema_version == 1 and
+      (.image | IN("unattributed", "network-adapter", "network-broker-dialer",
+        "network-broker-parser", "network-helper", "network-verifier", "runner", "synthetic-listener")) and
+      (if .state == "unavailable" then
+        $index == 127 and .image == "unattributed" and .phase == "record-limit"
+      else
+        $index < 127 and .state == "last-started" and
+        (.phase | IN("manifest-validation", "entry-prepare", "first-build", "first-id-inspect",
+          "first-created-inspect", "first-created-time", "second-build", "second-id-inspect",
+          "second-created-inspect", "second-created-time", "cleanup", "image-id-compare"))
+      end)
+    )) and
+    ([.[] | select(.event != "image-phase")] |
+    length <= 54 and
+    all(.[];
+      keys == ["elapsed_seconds", "event", "schema_version", "stage", "state"] and
+      .schema_version == 1 and .event == "runtime-gate-stage" and
+      (.elapsed_seconds | type == "number" and floor == . and . >= 0 and . <= 86400)
+    ) and
+    ([.[] | {id: .stage, status: .state}] ==
+      ([$summary.stages[] | {id: .id, status: "start"}, .] +
+        [{id: "cleanup", status: "start"}, {id: "cleanup", status: "pass"}])))
+  ' <<<"$timing"
+  [ "$status" -eq 0 ]
 }
 
 make_failing_gofmt() {
@@ -205,11 +242,13 @@ EOF
 @test "release mode is accepted and remains fail closed when its unit gate fails" {
   make_failing_gofmt
 
-  run env PATH="$FAKE_BIN:$PATH" bash "$SCRIPT" --release
+  run --separate-stderr env PATH="$FAKE_BIN:$PATH" bash "$SCRIPT" --release
 
   [ "$status" -eq 1 ]
-  gate_output=$output
-  summary=${lines[0]}
+  gate_output="$output$stderr"
+  [ "${#lines[@]}" -eq 1 ]
+  summary=$output
+  assert_stage_timing $'gofmt:command-failed\ngofmt'
   run jq -e '
     .mode == "release" and
     .status == "fail" and
@@ -225,23 +264,26 @@ EOF
 @test "the ambiguous full mode is rejected before any gate stage" {
   make_failing_gofmt
 
-  run env PATH="$FAKE_BIN:$PATH" bash "$SCRIPT" --full
+  run --separate-stderr env PATH="$FAKE_BIN:$PATH" bash "$SCRIPT" --full
 
   [ "$status" -eq 2 ]
-  [ "$output" = arguments ]
+  [ -z "$output" ]
+  [ "$stderr" = arguments ]
 }
 
 @test "release mode composes the unit and docker gates" {
   make_docker_gate_fakes
 
-  run env \
+  run --separate-stderr env \
     PATH="$FAKE_BIN:$PATH" \
     PGHAR_INTEGRATION_DOCKER=1 \
     PGHAR_CHAOS_DOCKER=1 \
     bash "$SCRIPT" --release
 
   [ "$status" -eq 0 ]
-  summary=${lines[0]}
+  [ "${#lines[@]}" -eq 1 ]
+  summary=$output
+  assert_stage_timing
   run jq -e '
     .mode == "release" and
     .status == "pass" and
@@ -260,14 +302,16 @@ EOF
 @test "docker mode is self contained and leaves target conformance operator gated" {
   make_docker_gate_fakes
 
-  run env \
+  run --separate-stderr env \
     PATH="$FAKE_BIN:$PATH" \
     PGHAR_INTEGRATION_DOCKER=1 \
     PGHAR_CHAOS_DOCKER=1 \
     bash "$SCRIPT" --docker
 
   [ "$status" -eq 0 ]
-  summary=${lines[0]}
+  [ "${#lines[@]}" -eq 1 ]
+  summary=$output
+  assert_stage_timing
   run jq -e '
     .mode == "docker" and
     .status == "pass" and
@@ -291,7 +335,7 @@ EOF
 @test "docker mode removes its temporary runner image when chaos fails" {
   make_docker_gate_fakes
 
-  run env \
+  run --separate-stderr env \
     PATH="$FAKE_BIN:$PATH" \
     PGHAR_INTEGRATION_DOCKER=1 \
     PGHAR_CHAOS_DOCKER=1 \
@@ -299,8 +343,10 @@ EOF
     bash "$SCRIPT" --docker
 
   [ "$status" -eq 1 ]
-  gate_output=$output
-  summary=${lines[0]}
+  gate_output="$output$stderr"
+  [ "${#lines[@]}" -eq 1 ]
+  summary=$output
+  assert_stage_timing $'chaos:test-failed:TestFleetFenceRaceAndObserverRecovery\nchaos'
   run jq -e '
     .mode == "docker" and
     .status == "fail" and
