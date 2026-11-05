@@ -194,7 +194,7 @@ def finalize(root, final):
     original.finalize(root, final)
 
 
-def check_upload(public):
+def check_upload(public, *, source=None):
     files = q.inventory(public); identities = read(public / 'candidate-identities.json'); proof = identities.get('proof', {})
     if set(identities) != {'proof', 'binaries', 'images'} or set(proof) != PROOF_FIELDS or any(proof.get(k) is not v for k, v in FALSE_AUTHORITY.items()) or type(proof.get('schema_version')) is not int or proof.get('schema_version') != 1 or type(proof.get('binary_count')) is not int or type(proof.get('runtime_image_count')) is not int or proof.get('status') != 'pass' or proof.get('candidate_refresh') is not True or (proof.get('sdk_source') != 'verified-retained-ab' or proof.get('sdk_build_executed_this_run') is not False) or proof.get('independent_AB_identical') is not True or (proof.get('binary_count'), proof.get('runtime_image_count')) != (11, 5):
         raise q.Stop('candidate proof authority differs')
@@ -204,7 +204,7 @@ def check_upload(public):
     for key in ('source_commit', 'source_tree'):
         if not isinstance(proof[key], str) or re.fullmatch('[0-9a-f]{40}', proof[key]) is None:
             raise q.Stop('candidate source identity invalid')
-    source = pathlib.Path(__file__).resolve().parents[2]
+    source = pathlib.Path(__file__).resolve().parents[2] if source is None else pathlib.Path(source)
     actual = subprocess.check_output(['git', '-c', 'safe.directory=' + str(source), 'rev-parse', 'HEAD', 'HEAD^{tree}'], cwd=source, text=True, timeout=20).splitlines()
     if actual != [proof['source_commit'], proof['source_tree']]:
         raise q.Stop('candidate upload source binding differs')
@@ -217,11 +217,11 @@ def check_upload(public):
     descriptor = proof['sdk_descriptor']; name = descriptor['asset_name']
     if proof['sdk_retained']['archive_sha256'] != descriptor['linux_x64_sha256'] or proof['sdk_retained']['archive_bytes'] != descriptor['archive_bytes']:
         raise q.Stop('retained receipt and transferred SDK differ')
-    if descriptor != sdk_authority(pathlib.Path(__file__).resolve().parents[2]) or descriptor['linux_x64_sha256'] != q.sha(public / name) or descriptor['archive_bytes'] != (public / name).stat().st_size:
+    if descriptor != sdk_authority(source) or descriptor['linux_x64_sha256'] != q.sha(public / name) or descriptor['archive_bytes'] != (public / name).stat().st_size:
         raise q.Stop('candidate SDK transfer differs')
     if sum(r['bytes'] for r in files) > q.ARTIFACT_LIMIT or {r['path'] for r in files if not r['path'].startswith('artifacts/')} != PUBLIC_METADATA | {name} or read(public / 'payload-inventory.json') != {'files': [r for r in files if r['path'].startswith('artifacts/') or r['path'] == name]}:
         raise q.Stop('candidate transfer exceeds closed envelope')
-    functions = q.release_functions(pathlib.Path(__file__).resolve().parents[2])
+    functions = q.release_functions(source)
     validate_subjects(public / 'artifacts', {k: identities[k] for k in ('binaries', 'images')}, functions, proof['source_commit'])
     runner = next(r for r in identities['images'] if r['image'] == 'runner')
     validate_smoke(proof['final_image_smoke'], runner['oci_graph'], descriptor['upstream_version'][1:])

@@ -28,6 +28,17 @@ RESERVE = 3758096384
 BUILDKit = 'moby/buildkit:v0.32.0@sha256:1f8167fcb0eca5b7126353d35299386945cbb8949cc516c592a49f80cfce4fa2'
 FRONTEND = 'docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e'
 ARTIFACT_LIMIT = GIB
+RETAINED_SOURCE = 'df760529f7635b7fc2d4982f72a50b53d0363de3'
+RETAINED_TREE = 'ea097a04a995899a0b586b70c14a310c54a55a0f'
+RETAINED_VERSION = 'candidate-df760529f763-go1.26.10'
+RETAINED_SDK_SHA256 = '8c6ad1f743c97ab650b5c149bda95386a2b6d290b90fa8e0ea732ae89b67eee9'
+RETAINED_SDK_BYTES = 220723614
+RETAINED_BINARIES = frozenset('portable-ghar' + suffix for suffix in (
+    '', '-controller', '-fleet-fence', '-network-adapter', '-network-broker-dialer',
+    '-network-broker-parser', '-network-helper', '-network-verifier', '-runner-gate',
+    '-runtime-lock', '-watchdog'))
+RETAINED_IMAGES = frozenset(('runner', 'network-adapter', 'network-broker-dialer',
+                             'network-broker-parser', 'network-helper', 'network-verifier'))
 
 
 class Stop(ValueError):
@@ -406,14 +417,41 @@ class Qualification:
         expected = {'usr/local/bin/' + r['binary']: r['sha256'] for r in json.loads((self.output / 'image-binary-inputs.json').read_text()) if r['image'] == name}
         return image_binary_binding(directory, value, name, stamp, expected)
 
-    def build(self, *, reconstruction=False, go_patch_refresh=False, candidate_refresh=False):
-        if sum((reconstruction, go_patch_refresh, candidate_refresh)) > 1:
+    def retained_qualification_identity(self):
+        """Source-only worker contract; not host admission or execution authority.
+
+        The importing entrypoint and its dependencies belong to separately
+        admitted tooling T. Product manifests, helpers and build contexts remain
+        in the independent source C checkout, never overlaid with T.
+        """
+        if self.commit != RETAINED_SOURCE or self.inputs['tree'] != RETAINED_TREE:
+            raise Stop('retained qualification source identity differs')
+        if pathlib.Path(__file__).resolve().is_relative_to(self.source.resolve()):
+            raise Stop('retained qualification requires separate tooling')
+        for kind, expected in (('binaries', RETAINED_BINARIES), ('images', RETAINED_IMAGES)):
+            names = [row['name'] for row in self.runtime[kind]]
+            if len(names) != len(expected) or set(names) != expected:
+                raise Stop('retained qualification subject membership differs')
+        import _candidate_refresh as candidate
+        descriptor = candidate.sdk_authority(self.source)
+        if descriptor['linux_x64_sha256'] != RETAINED_SDK_SHA256 or descriptor['archive_bytes'] != RETAINED_SDK_BYTES:
+            raise Stop('retained qualification SDK identity differs')
+        self.version = RETAINED_VERSION
+
+    def build(self, *, reconstruction=False, go_patch_refresh=False, candidate_refresh=False, retained_sdk_qualification=False):
+        if sum((reconstruction, go_patch_refresh, candidate_refresh, retained_sdk_qualification)) > 1:
             raise Stop('refresh cannot claim exact reconstruction')
         fixed_go = go_patch_refresh or candidate_refresh
-        if fixed_go:
+        pinned_compiler = fixed_go or retained_sdk_qualification
+        if retained_sdk_qualification:
+            self.retained_qualification_identity()
+            if any(self.artifacts.iterdir()):
+                raise Stop('retained qualification requires fresh output generations')
+        if pinned_compiler:
             import _go_patch_refresh as refresh
             self.env = refresh.constrain_compiler(self.root, self.env)
-            self.version += '-go1.26.10'
+            if not retained_sdk_qualification:
+                self.version += '-go1.26.10'
             if self.run('fixed-go-version', ['go', 'version'])[1].read_text().strip() != 'go version go1.26.10 linux/amd64':
                 raise Stop('fixed Go compiler unavailable')
         phases = ('A',) if reconstruction else ('A', 'B')
@@ -422,9 +460,11 @@ class Qualification:
         self.release['validate_dockerfiles'](self.source, self.runtime)
         if subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.source, env=self.env, text=True).strip() != self.commit or subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=self.source, env=self.env, text=True).strip() != self.inputs['tree']:
             raise Stop('candidate source changed')
+        if retained_sdk_qualification and subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=all'], cwd=self.source, env=self.env, text=True).strip():
+            raise Stop('retained qualification source is dirty')
         self.run('module-download', ['go', 'mod', 'download'], timeout=900)
         self.run('module-verify', ['go', 'mod', 'verify'])
-        if fixed_go:
+        if pinned_compiler:
             self.run('fixed-go-tls-tests', ['go', 'test', '-count=1', '-run', '^TestDoHResolver(UsesOnePermittedLockedPersistentConnection|RejectsWrongTLSNameAndUntrustedRoot|RejectsExpiredCertificate)$', './internal/networkjail'])
             self.run('fixed-go-govulncheck', ['go', 'tool', 'govulncheck', './...'])
         _, log = self.run('linked-identity', ['go', 'run', './internal/buildinfo/cmd/portable-ghar-build-identity', self.version, self.commit])
@@ -433,7 +473,7 @@ class Qualification:
             raise Stop('build stamp changed')
         flags = '-s -w -buildid= -X github.com/sumitake/portable-ghar/internal/buildinfo.version=' + self.version + ' -X github.com/sumitake/portable-ghar/internal/buildinfo.commit=' + self.commit + ' -X github.com/sumitake/portable-ghar/internal/buildinfo.stamp=' + stamp
         self.run('linked-identity-test', ['go', 'test', '-run', '^TestLinkedIdentity$', '-count=1', '-ldflags=' + flags, './internal/buildinfo'], extra={'PGHAR_EXPECTED_BUILD_VERSION': self.version, 'PGHAR_EXPECTED_BUILD_COMMIT': self.commit})
-        if candidate_refresh:
+        if candidate_refresh or retained_sdk_qualification:
             import _candidate_refresh as candidate
             candidate.retain_sdk_and_build_probe(self)
         binaries = []
@@ -442,7 +482,7 @@ class Qualification:
                 path = self.artifacts / ('binaries-' + letter) / row['name']
                 path.parent.mkdir(exist_ok=True)
                 self.run('binary-' + letter + '-' + row['name'], ['go', 'build', '-trimpath', '-buildvcs=false', '-ldflags=' + flags, '-o', str(path), row['package']], extra={'GOOS': 'linux', 'GOARCH': 'amd64'})
-                if fixed_go:
+                if pinned_compiler:
                     _, version_log = self.run('binary-toolchain-' + letter + '-' + row['name'], ['go', 'version', '-m', str(path)])
                     if version_log.read_text().splitlines()[0] != str(path) + ': go1.26.10':
                         raise Stop('binary built by wrong Go compiler')
@@ -509,7 +549,7 @@ class Qualification:
                 self.start(letter + '-' + name)
                 try:
                     extra = ['--local', 'debian-cache=' + str(self.root / 'debian-cache'), '--opt', 'context:debian-cache=local:debian-cache', '--opt', 'build-arg:DEBIAN_SNAPSHOT_SOURCE=offline'] if name == 'runner' else []
-                    self.buildctl('image-' + letter + '-' + name, self.source / image['context'], (self.source / image['dockerfile']).parent, 'type=oci,tar=false,dest=' + str(directory) + ',name=portable-ghar/' + name + ':' + (self.version if fixed_go else self.commit) + ',rewrite-timestamp=true', extra)
+                    self.buildctl('image-' + letter + '-' + name, self.source / image['context'], (self.source / image['dockerfile']).parent, 'type=oci,tar=false,dest=' + str(directory) + ',name=portable-ghar/' + name + ':' + (self.version if fixed_go or retained_sdk_qualification else self.commit) + ',rewrite-timestamp=true', extra)
                     value = graph(directory, self.release)
                     identity = self.image_binaries(directory, value, name, stamp)
                     files = inventory(directory)
@@ -557,6 +597,8 @@ class Qualification:
             build_result.update(go_patch_refresh=True, qualification_executed=False, raw_format='OCI layouts; A retained after independent A/B equality')
         if candidate_refresh:
             build_result.update(candidate_refresh=True, qualification_executed=False, raw_format='Candidate OCI layouts; A retained after independent A/B equality')
+        if retained_sdk_qualification:
+            build_result.update(retained_sdk_qualification=True, source_commit=self.commit, source_tree=self.inputs['tree'], version=self.version, sdk_build_executed_this_run=False, qualification_executed=False, release_admitted=False)
         self.record('build-result.json', build_result)
 
     def sanitize_release_outputs(self, rows, notices):
@@ -587,10 +629,31 @@ class Qualification:
         self.publication.add(destination, raw, self.publication.trivy_view(raw, self.trivy_database, self.git_public_identity, receipt))
         return code
 
-    def scan(self):
-        if json.loads((self.output / 'build-result.json').read_text())['status'] != 'pass':
+    def scan(self, *, retained_sdk_qualification=False):
+        build_result = json.loads((self.output / 'build-result.json').read_text())
+        if retained_sdk_qualification:
+            self.retained_qualification_identity()
+            expected = dict(retained_sdk_qualification=True, source_commit=self.commit,
+                            source_tree=self.inputs['tree'], version=self.version,
+                            sdk_build_executed_this_run=False, qualification_executed=False,
+                            release_admitted=False, binaries=22, images=12)
+            if any(type(build_result.get(key)) is not type(value) or build_result[key] != value for key, value in expected.items()):
+                raise Stop('retained qualification build contract differs')
+        elif build_result.get('retained_sdk_qualification') is True:
+            raise Stop('retained qualification requires explicit scan mode')
+        if build_result['status'] != 'pass':
             raise Stop('build phase incomplete')
         images = json.loads((self.output / 'image-results.json').read_text())
+        if retained_sdk_qualification:
+            expected_pairs = {(phase, name) for phase in ('A', 'B') for name in RETAINED_IMAGES}
+            if len(images) != 12 or {(row['phase'], row['image']) for row in images} != expected_pairs:
+                raise Stop('retained qualification image generations incomplete')
+            if {path.name for path in self.artifacts.iterdir()} != {'binaries-A', 'binaries-B', 'images-A', 'images-B'}:
+                raise Stop('retained qualification raw generations differ')
+            inventory(self.artifacts)  # Reject links and indirect/aliased raw members.
+            for phase in ('A', 'B'):
+                if {path.name for path in (self.artifacts / ('binaries-' + phase)).iterdir()} != RETAINED_BINARIES or {path.name for path in (self.artifacts / ('images-' + phase)).iterdir()} != RETAINED_IMAGES:
+                    raise Stop('retained qualification raw subject membership differs')
         producer = module(self.source, 'public_dependency_metadata.py')
         public_metadata = producer.load(self.source, debian_cache=self.root / 'debian-cache', go_module_cache=self.root / 'go-mod')
         scanner = module(self.source, 'sanitize_public.py')
