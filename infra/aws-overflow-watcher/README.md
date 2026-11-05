@@ -175,5 +175,6 @@ no GitHub calls.
 sh infra/aws-overflow-watcher/scripts/run-tests.sh
 ```
 
-GitHub Actions workflow `aws-overflow-watcher.yml` runs that script on
-`ubuntu-24.04`, the same hosted runner label this repo already uses.
+The repository-metadata job in CI runs that script on `ubuntu-24.04`, the
+hosted runner label this repo already uses. It is not a separate status
+check.
