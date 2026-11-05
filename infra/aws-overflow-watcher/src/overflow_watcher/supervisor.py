@@ -15,7 +15,7 @@ from overflow_watcher.types import REPORT_AFTER_SECONDS
 @dataclass(frozen=True)
 class Proof:
     listener_alive: bool
-    worker_alive: bool
+    worker_alive: bool | None
     listener_exit_code: int | None
     natural_exit: bool
     restarted: bool
@@ -34,7 +34,7 @@ def normal_completion(proof: Proof) -> bool:
         return False
     if proof.listener_alive:
         return False
-    if proof.worker_alive:
+    if proof.worker_alive is None or proof.worker_alive:
         return False
     if proof.restarted:
         return False
@@ -76,12 +76,13 @@ def apply_decision(action: str, shutdown: list[str], reports: list[str]) -> str:
     return action
 
 
-def _workers_alive(listener_pid: int) -> bool:
+def _workers_alive(listener_pid: int) -> bool | None:
+    """True/False when /proc can be read. None means the read failed closed."""
     proc_root = "/proc"
     try:
         entries = os.listdir(proc_root)
     except OSError:
-        return False
+        return None
     for entry in entries:
         if not entry.isdigit() or entry == str(listener_pid):
             continue
@@ -89,7 +90,7 @@ def _workers_alive(listener_pid: int) -> bool:
             with open(os.path.join(proc_root, entry, "status"), encoding="utf-8") as handle:
                 status = handle.read()
         except OSError:
-            continue
+            return None
         for line in status.splitlines():
             if line.startswith("PPid:") and line.split()[-1] == str(listener_pid):
                 return True
@@ -142,6 +143,9 @@ def main() -> None:
     while True:
         exit_code = proc.poll()
         worker_alive = _workers_alive(proc.pid)
+        if worker_alive is None:
+            time.sleep(5)
+            continue
         if worker_alive:
             saw_worker = True
         proof = Proof(

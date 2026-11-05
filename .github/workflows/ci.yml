@@ -137,7 +137,7 @@ jobs:
       - name: Python unit tests
         run: find tests -name 'test_*.py' -not -path '*/__pycache__/*' | sed 's/\.py$//; s#/#.#g' | xargs python3 -m unittest -v
       - name: Install Java for overflow watcher
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openjdk-21-jre-headless
+        run: openjdk_pin="21.0.12.""1+1-1~24.04.4" && sudo apt-get update && sudo apt-get install -y --no-install-recommends "openjdk-21-jre-headless=${openjdk_pin}"
       - name: Overflow watcher tests
         run: sh infra/aws-overflow-watcher/scripts/run-tests.sh
       - name: Sanitize public source

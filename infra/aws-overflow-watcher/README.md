@@ -69,39 +69,53 @@ includes open reservation debits) plus the new allowance would exceed
 C3. The first time the estimate passes 3000 cents in a month bucket, John
 gets one alert with the estimated overage and the cause.
 
-C2 / C4b. `CONTINUE_ACTIVE_UNTIL_CENTS` (3300) is enforced. It is an
-estimate of committed cost plus running accrual, not a guaranteed invoice
-limit. Billing lag and cleanup can land higher. When the estimate reaches
-it, the controller stops only enough verified overflow work to bring the
-projection back under 3300:
+C2 / C4b. `CONTINUE_ACTIVE_UNTIL_CENTS` (3300) is the ceiling. It is an
+estimate, not a guaranteed invoice limit. Every poll recomputes the
+projection: the month ledger (admission debits and accruals, which are not
+reduced) plus remaining future burn of excluded work plus unresolved
+exposure plus remaining future burn of eligible instances. There is no
+survivor watermark. A prior evaluation does not suppress a later stop.
+Month, instance, and action claims only dedupe a cancel or an alert and
+let a cancel wait finish.
+
+The controller intervenes only when that projection is above 3300. At or
+below 3300 nothing is stopped. Above it, only instances with positive
+future burn are stopped, smallest set first (highest remaining future
+burn, then newest launch, then instance id). If the ledger plus excluded
+and unresolved future is already at or above 3300, every eligible instance
+with positive future burn is stopped. An instance whose avoidable future
+burn is zero is left running. Spend that is already on the ledger and
+cannot be avoided raises the grace alert and does not terminate anything.
 
 1. A target must have both a DynamoDB instance record written by this
-   watcher and the `overflow-watcher=owned` tag. A tag without a record, or
-   a record without the tag, is unknown: it is not touched, and Ops is
-   alerted. Tagged-instance reads can raise committed cost (an unknown
-   tagged instance is held once) and never lower it (F3, F7f).
+   watcher and the `overflow-watcher=owned` tag. Unknown state or
+   ownership fails closed: that instance is not stopped, its remaining
+   burn stays in the projection, new launches are refused, and Ops is
+   alerted. Ownership, tag, and state are read again immediately before
+   each cancel and each terminate. Tagged-instance reads can raise
+   committed cost (an unknown tagged instance is held once) and never
+   lower it (F3, F7f).
 2. The assigned workflow, job, and labels are matched against
    `BUDGET_STOP_EXCLUSIONS`. Excluded deploy or migration work is never
-   stopped. If that work keeps the estimate over the grace, John and Ops
-   are alerted and nothing broader is stopped.
+   stopped. Its future burn stays in the projection. Empty exclusions
+   fail closed and do not launch.
 3. The controller cancels the assigned workflow run
    (`POST /repos/{owner}/{repo}/actions/runs/{run_id}/cancel`), then waits
    `BUDGET_CANCEL_WAIT_SECONDS`. The wait is stored in DynamoDB and finished
    on a later poll, so it does not sleep inside the Lambda. Terminate runs
-   only if the instance is still `pending` or `running` after the bound, the
-   workflow has not completed, and DescribeInstances is unambiguous. A
-   failed or unavailable cancel still falls through to that single terminate
-   after the bound. It is not retried in a loop.
-4. The minimum set is the shortest prefix of this order: highest open-month
-   debit, then newest launch time, then instance id. Stopping every instance
-   happens only when that is the smallest set that covers the overage. If no
-   subset can cover it, nobody is stopped.
-5. Records and debits stay until DescribeInstances shows that exact instance
+   only if the projection is still above the ceiling, the instance still
+   has positive future burn, it is still `pending` or `running` after the
+   bound, the workflow has not completed, and DescribeInstances is
+   unambiguous. A failed or unavailable cancel still falls through to that
+   single terminate after the bound. It is not retried in a loop.
+4. Records and debits stay until DescribeInstances shows that exact instance
    id `terminated` (F3, R1). Accrual continues until then. The stop marker
-   is once per LA month and per instance. A second poll at the same time is
-   a no-op.
-6. John and Ops get the estimated overage, the cause, and the instance ids
-   that were cancelled or terminated.
+   dedupes the action for that instance. It does not forgive a later poll.
+5. John and Ops get one grace alert for the month, with the estimated
+   overage, the cause, and the instance ids selected for stop. The alert
+   claim is written only after the log line is emitted. A failed emit
+   leaves a retry record and the next poll tries again. The soft-cap alert
+   uses the same rule.
 
 This stop can fail an in-progress overflow job. It does not touch untagged
 instances, local runners, or unrelated jobs. There is no idle sweep and no
@@ -128,8 +142,9 @@ are not called.
 
 ## Required inputs
 
-Unset or invalid spend knobs and required inputs do not launch. Empty
-`BUDGET_STOP_EXCLUSIONS` is valid and means nothing is excluded.
+Unset or invalid spend knobs and required inputs do not launch. An empty
+`BUDGET_STOP_EXCLUSIONS` does not launch. The shipped default excludes
+deploy and migration workflow and job names.
 
 | Variable                                                    | Meaning                                                                                                                                |
 | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -142,7 +157,7 @@ Unset or invalid spend knobs and required inputs do not launch. Empty
 | `GRACE_PCT` or `GRACE_CENTS`                                | `10` or `300`. Must agree with the grace below.                                                                                        |
 | `CONTINUE_ACTIVE_UNTIL_CENTS`                               | `3300`. Enforced estimate, not an invoice cap.                                                                                         |
 | `BUDGET_CANCEL_WAIT_SECONDS`                                | Wait after cancel before a terminate. No default.                                                                                      |
-| `BUDGET_STOP_EXCLUSIONS`                                    | JSON list of `{kind, pattern}`. `kind` is `workflow`, `job`, or `label`. Patterns are case-sensitive globs. Empty means no exclusions. |
+| `BUDGET_STOP_EXCLUSIONS`                                    | JSON list of `{kind, pattern}`. Empty fails closed. Default excludes `deploy-*` and `migrate*` / `*migration*`.                          |
 | `TABLE_NAME`                                                | DynamoDB table.                                                                                                                        |
 | `CodeS3Bucket`, `CodeS3Key`                                 | Template only. Zip of this package. No default.                                                                                        |
 

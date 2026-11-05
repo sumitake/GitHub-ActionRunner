@@ -56,25 +56,25 @@ class BudgetTests(unittest.TestCase):
         config = cfg()
         first = run_poll(store, ec2, ec2, github, config, NOW)
         second = run_poll(store, ec2, ec2, github, config, NOW)
-        alerts = [item for item in first.alerts.items if item.kind == "soft-cap"]
+        alerts = [item for item in first.alerts.items if item.kind == "budget"]
         self.assertEqual(len(alerts), 1)
         self.assertEqual(alerts[0].audience, "john")
         self.assertEqual(alerts[0].overage_cents, 1)
         self.assertEqual(alerts[0].estimated_cents, 3001)
         self.assertIn("soft cap", alerts[0].cause)
-        self.assertEqual([item for item in second.alerts.items if item.kind == "soft-cap"], [])
+        self.assertEqual([item for item in second.alerts.items if item.kind == "budget"], [])
 
     def test_c_budget_stop_does_not_fire_at_3299(self) -> None:
         store = fresh_store()
         ec2 = FakeEc2()
         github = FakeGitHub()
         month = month_key(NOW)
-        seed_instance(store, ec2, instance_id="i-under", debit=100, month=month, launch_epoch=NOW - 10, run_id="9")
+        seed_instance(store, ec2, instance_id="i-under", debit=100, month=month, launch_epoch=NOW, run_id="9")
         _over(store, month, 3299)
         result = run_poll(store, ec2, ec2, github, cfg(), NOW)
         self.assertEqual(github.cancel_calls, [])
         self.assertEqual(ec2.terminate_calls, [])
-        self.assertEqual([item for item in result.alerts.items if item.kind == "budget-stop"], [])
+        self.assertEqual([item for item in result.alerts.items if item.kind == "grace"], [])
         self.assertEqual(store.get_instance("i-under")["state"], "OPEN")
 
     def test_c_budget_stop_fires_at_threshold(self) -> None:
@@ -87,7 +87,7 @@ class BudgetTests(unittest.TestCase):
         result = run_poll(store, ec2, ec2, github, cfg(), NOW)
         self.assertEqual(github.cancel_calls, [("example", "keicrew", "9")])
         self.assertEqual(ec2.terminate_calls, [])
-        stop = [item for item in result.alerts.items if item.kind == "budget-stop"]
+        stop = [item for item in result.alerts.items if item.kind == "grace"]
         self.assertEqual(len(stop), 1)
         self.assertIn("john", stop[0].audience)
         self.assertIn("ops", stop[0].audience)
@@ -148,7 +148,7 @@ class BudgetTests(unittest.TestCase):
         result = run_poll(store, ec2, ec2, github, config, NOW)
         self.assertEqual([call[2] for call in github.cancel_calls], ["4"])
         self.assertEqual(ec2.terminate_calls, [])
-        self.assertTrue(all("i-deploy" not in item.instance_ids or item.kind != "budget-stop" for item in result.alerts.items))
+        self.assertTrue(all("i-deploy" not in item.instance_ids or item.kind != "grace" for item in result.alerts.items))
 
     def test_c_budget_stop_cancels_before_terminate(self) -> None:
         store = fresh_store()
@@ -180,15 +180,25 @@ class BudgetTests(unittest.TestCase):
         ec2 = FakeEc2()
         github = FakeGitHub()
         month = month_key(NOW)
-        seed_instance(store, ec2, instance_id="i-big", debit=500, month=month, launch_epoch=NOW - 30, run_id="1")
-        seed_instance(store, ec2, instance_id="i-mid", debit=200, month=month, launch_epoch=NOW - 20, run_id="2")
-        seed_instance(store, ec2, instance_id="i-small", debit=200, month=month, launch_epoch=NOW - 10, run_id="3")
-        _over(store, month, 3600)
+        seed_instance(
+            store, ec2, instance_id="i-soon", debit=600, month=month,
+            launch_epoch=NOW - 5 * 3600, run_id="1", price_numer=1, price_denom=1,
+        )
+        seed_instance(
+            store, ec2, instance_id="i-spent", debit=600, month=month,
+            launch_epoch=NOW - 3600, run_id="2", price_numer=1, price_denom=1,
+        )
+        seed_instance(
+            store, ec2, instance_id="i-other", debit=600, month=month,
+            launch_epoch=NOW - 1800, run_id="3", price_numer=1, price_denom=1,
+        )
+        _over(store, month, 3000)
+        before = store.get_accrued(month)
         run_poll(store, ec2, ec2, github, cfg(), NOW)
         self.assertEqual([call[2] for call in github.cancel_calls], ["1"])
-        self.assertEqual(ec2.terminate_calls, [])
-        self.assertEqual(store.get_instance("i-mid")["state"], "OPEN")
-        self.assertEqual(store.get_instance("i-small")["state"], "OPEN")
+        self.assertEqual(store.get_accrued(month), before)
+        self.assertEqual(store.get_instance("i-spent")["state"], "OPEN")
+        self.assertEqual(store.get_instance("i-other")["state"], "OPEN")
 
     def test_c_budget_stop_accounting_persists(self) -> None:
         store = fresh_store()

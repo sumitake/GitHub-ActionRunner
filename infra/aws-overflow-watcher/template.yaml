@@ -53,8 +53,8 @@ Parameters:
     Description: REQUIRED_INPUT seconds to wait after workflow cancellation before terminate.
   BudgetStopExclusions:
     Type: String
-    Default: ""
-    Description: REQUIRED_INPUT JSON exclusion list. Empty means no workflow, job, or label is excluded.
+    Default: '[{"kind":"workflow","pattern":"deploy-*"},{"kind":"workflow","pattern":"*migration*"},{"kind":"job","pattern":"deploy-*"},{"kind":"job","pattern":"migrate*"}]'
+    Description: Deploy and migration exclusion patterns. An empty value fails closed.
 Resources:
   StateTable:
     Type: AWS::DynamoDB::Table
@@ -108,8 +108,15 @@ Resources:
                 Action:
                   - ec2:RunInstances
                   - ec2:DescribeInstances
-                  - ec2:CreateTags
                 Resource: "*"
+              - Effect: Allow
+                Action: ec2:CreateTags
+                Resource:
+                  - arn:aws:ec2:*:*:instance/*
+                  - arn:aws:ec2:*:*:volume/*
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction: RunInstances
               - Sid: BudgetStopTerminateTagged
                 Effect: Allow
                 Action: ec2:TerminateInstances
@@ -172,6 +179,8 @@ Resources:
               - RunnerSecurityGroup
               - GroupId
         InstanceInitiatedShutdownBehavior: terminate
+        UserData:
+          Fn::Base64: "#!/bin/sh\nexec python3 -m overflow_watcher.supervisor\n"
         MetadataOptions:
           HttpTokens: required
           HttpEndpoint: enabled
@@ -238,6 +247,8 @@ Resources:
           INSTANCE_TYPE:
             Ref: InstanceType
           INSTANCE_PROFILE_NAME: overflow-runner
+          LAUNCH_TEMPLATE_ID:
+            Ref: RunnerLaunchTemplate
           GITHUB_APP_IDENTIFIER:
             Ref: GithubAppIdentifier
           GITHUB_APP_PEM:

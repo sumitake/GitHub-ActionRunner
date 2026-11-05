@@ -3,17 +3,47 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Any
 
 import boto3
 
+from overflow_watcher.budget import Alert
 from overflow_watcher.config import load_config
-from overflow_watcher.controller import run_poll
+from overflow_watcher.controller import PollResult, run_poll
 from overflow_watcher.ec2view import Ec2Views
 from overflow_watcher.github_api import LiveGitHub
 from overflow_watcher.store import Store
+
+
+def alert_payload(alert: Alert) -> dict[str, Any]:
+    return {
+        "audience": alert.audience,
+        "kind": alert.kind,
+        "month": alert.month,
+        "estimatedCents": alert.estimated_cents,
+        "overageCents": alert.overage_cents,
+        "cause": alert.cause,
+        "instanceIds": list(alert.instance_ids),
+    }
+
+
+def response_from_poll(result: PollResult) -> dict[str, Any]:
+    """Return every alert and write one JSON log line per alert."""
+    rendered = []
+    for alert in result.alerts.items:
+        payload = alert_payload(alert)
+        print(json.dumps(payload, sort_keys=True), flush=True)
+        rendered.append(payload)
+    return {
+        "ok": True,
+        "launched": result.launched,
+        "blocked": result.blocked_reason,
+        "quotaFailures": result.quota_failures,
+        "alerts": rendered,
+    }
 
 
 def handler(event: dict[str, Any], context: object) -> dict[str, Any]:
@@ -32,9 +62,4 @@ def handler(event: dict[str, Any], context: object) -> dict[str, Any]:
         cfg,
         int(time.time()),
     )
-    return {
-        "ok": True,
-        "launched": result.launched,
-        "blocked": result.blocked_reason,
-        "quotaFailures": result.quota_failures,
-    }
+    return response_from_poll(result)

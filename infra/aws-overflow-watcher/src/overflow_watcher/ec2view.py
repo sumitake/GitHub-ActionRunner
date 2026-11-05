@@ -60,20 +60,27 @@ class Ec2Views:
         }
 
     def list_tagged_ids(self) -> list[str] | None:
-        try:
-            response = self._client.describe_instances(
-                Filters=[
+        ids: list[str] = []
+        token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {
+                "Filters": [
                     {"Name": f"tag:{WATCHER_TAG_NAME}", "Values": [TAG_VALUE]},
                     {"Name": "instance-state-name", "Values": ["pending", "running"]},
                 ]
-            )
-        except ClientError:
-            return None
-        ids: list[str] = []
-        for reservation in response.get("Reservations", []):
-            for inst in reservation.get("Instances", []):
-                ids.append(inst["InstanceId"])
-        return ids
+            }
+            if token:
+                kwargs["NextToken"] = token
+            try:
+                response = self._client.describe_instances(**kwargs)
+            except ClientError:
+                return None
+            for reservation in response.get("Reservations", []):
+                for inst in reservation.get("Instances", []):
+                    ids.append(inst["InstanceId"])
+            token = response.get("NextToken")
+            if not token:
+                return ids
 
     def index_count(self) -> int | None:
         return None

@@ -10,6 +10,13 @@ from overflow_watcher.labels import ALLOW
 from overflow_watcher.money import PriceError, allowance_cents, parse_price
 from overflow_watcher.types import RepoSpec
 
+DEFAULT_BUDGET_STOP_EXCLUSIONS = (
+    '[{"kind":"workflow","pattern":"deploy-*"},'
+    '{"kind":"workflow","pattern":"*migration*"},'
+    '{"kind":"job","pattern":"deploy-*"},'
+    '{"kind":"job","pattern":"migrate*"}]'
+)
+
 ALLOWED_REPO_NAMES = frozenset(
     {
         "Contextual-Conversation-Gateway",
@@ -54,6 +61,7 @@ class Config:
     security_group_id: str
     instance_type: str
     instance_profile_name: str
+    launch_template_id: str
     app_identifier: str
     app_pem: str
     table_name: str
@@ -105,14 +113,15 @@ def _required_text(env: dict[str, str], name: str, errors: list[str]) -> str:
 
 def _parse_exclusions(raw: str, errors: list[str]) -> tuple[Exclusion, ...]:
     if raw.strip() == "":
+        errors.append("BUDGET_STOP_EXCLUSIONS empty")
         return ()
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
         errors.append("BUDGET_STOP_EXCLUSIONS invalid")
         return ()
-    if not isinstance(parsed, list):
-        errors.append("BUDGET_STOP_EXCLUSIONS invalid")
+    if not isinstance(parsed, list) or not parsed:
+        errors.append("BUDGET_STOP_EXCLUSIONS empty")
         return ()
     rules: list[Exclusion] = []
     for entry in parsed:
@@ -227,6 +236,7 @@ def load_config(env: dict[str, str]) -> Config:
     security_group = _required_text(env, "SECURITY_GROUP_ID", errors)
     instance_type = _required_text(env, "INSTANCE_TYPE", errors)
     profile = _required_text(env, "INSTANCE_PROFILE_NAME", errors)
+    launch_template_id = _required_text(env, "LAUNCH_TEMPLATE_ID", errors)
     app_identifier = _required_text(env, "GITHUB_APP_IDENTIFIER", errors)
     app_pem = _required_text(env, "GITHUB_APP_PEM", errors)
     table_name = _required_text(env, "TABLE_NAME", errors)
@@ -250,6 +260,7 @@ def load_config(env: dict[str, str]) -> Config:
         security_group_id=security_group,
         instance_type=instance_type,
         instance_profile_name=profile,
+        launch_template_id=launch_template_id,
         app_identifier=app_identifier,
         app_pem=app_pem,
         table_name=table_name,

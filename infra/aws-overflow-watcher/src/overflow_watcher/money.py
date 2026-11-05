@@ -154,31 +154,49 @@ def plan_accrual(
     )
 
 
-def select_minimum(
-    candidates: list[StopCandidate], accrued: int, grace: int
-) -> list[StopCandidate]:
-    """Fewest instances whose open-month debits bring the projection under grace.
+def remaining_future_cents(launch_epoch: int, now: int, numer: int, denom: int) -> int:
+    """Ledger cents still to be added if the instance runs one allowance further.
 
-    Order is deterministic: highest open-month debit, then newest launch,
-    then instance id. The projection subtracts those debits from the estimate
-    for selection only. The ledger itself is not reduced.
+    This is future burn. It does not read the sunk debit.
     """
-    if accrued < grace:
+    elapsed = max(0, now - launch_epoch)
+    now_owed = owed_cents(elapsed, numer, denom)
+    later_owed = owed_cents(elapsed + ALLOWANCE_SECONDS, numer, denom)
+    return max(0, later_owed - now_owed)
+
+
+def select_minimum(
+    candidates: list[StopCandidate],
+    sunk: int,
+    excluded_future: int,
+    grace: int,
+) -> list[StopCandidate]:
+    """Smallest set of positive future burn that brings the projection to the ceiling.
+
+    Projection is sunk spend plus excluded future burn plus avoidable future
+    burn. Jobs are kept when that total is at or below grace. Above it, stop
+    only positive avoidable burn. Zero avoidable burn is never a stop. The
+    ledger is not reduced. Order: highest remaining future burn, then newest
+    launch, then instance id.
+    """
+    avoidable = [item for item in candidates if item.remaining_future > 0]
+    avoidable_future = sum(item.remaining_future for item in avoidable)
+    projected = sunk + excluded_future + avoidable_future
+    if projected <= grace:
         return []
-    need = accrued - (grace - 1)
+    floor = sunk + excluded_future
+    if floor >= grace:
+        return avoidable
+    need = projected - grace
     ordered = sorted(
-        candidates,
-        key=lambda item: (-item.month_debit, -item.launch_epoch, item.instance_id),
+        avoidable,
+        key=lambda item: (-item.remaining_future, -item.launch_epoch, item.instance_id),
     )
     chosen: list[StopCandidate] = []
     covered = 0
     for candidate in ordered:
         if covered >= need:
             break
-        if candidate.month_debit <= 0:
-            continue
         chosen.append(candidate)
-        covered += candidate.month_debit
-    if covered < need:
-        return []
+        covered += candidate.remaining_future
     return chosen

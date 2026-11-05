@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import base64
 import secrets
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
-from overflow_watcher.budget import Alert, AlertLog, BudgetResult, enforce_budget_stop
+from overflow_watcher.budget import Alert, AlertLog, BudgetResult, deliver_month_alert, enforce_budget_stop
 from overflow_watcher.inventory import reservations_released_by_ec2
 from overflow_watcher.money import month_key, plan_accrual
 from overflow_watcher.store import Store
@@ -33,8 +35,19 @@ def admission_allows(accrued: int, allowance: int, cap: int) -> bool:
     return accrued + allowance <= cap
 
 
+def supervisor_user_data() -> str:
+    """Base64 of the boot wrapper so RunInstances actually starts the supervisor."""
+    script = Path(__file__).resolve().parents[2] / "boot" / "supervisor.sh"
+    return base64.b64encode(script.read_bytes()).decode("ascii")
+
+
 def ec2_params(cfg: Any) -> dict[str, Any]:
     return {
+        "LaunchTemplate": {
+            "LaunchTemplateId": cfg.launch_template_id,
+            "Version": "$Latest",
+        },
+        "UserData": supervisor_user_data(),
         "ImageId": cfg.ami_id,
         "InstanceType": cfg.instance_type,
         "SubnetId": cfg.subnet_id,
@@ -136,9 +149,10 @@ def resolve_reservations(store: Store, ec2: Any, alerts: AlertLog, now: int) -> 
         try:
             instance_id = ec2.run_instances(token, reservation["params"])
         except CapacityRefused as exc:
-            _record_capacity_failure(store, stored, exc.code, now)
+            _capacity_after_attempt(store, stored, exc.code, now)
             continue
         except AmbiguousLaunch:
+            store.mark_reservation_ambiguous(stored)
             continue
         store.convert_reservation(stored, instance_id, now)
 
@@ -147,6 +161,15 @@ def _record_capacity_failure(store: Store, token: str, code: str, now: int) -> N
     store.record_failure(token, code, now)
     store.release_reservation(token)
     store.set_cooldown(now + CAPACITY_COOLDOWN_SECONDS)
+
+
+def _capacity_after_attempt(store: Store, token: str, code: str, now: int) -> None:
+    """A quota error after an ambiguous attempt must keep the reservation."""
+    reservation = store.get_reservation(token)
+    if reservation and reservation.get("ambiguousAttempt"):
+        store.record_failure(token, code, now)
+        return
+    _record_capacity_failure(store, token, code, now)
 
 
 def accrue(store: Store, alerts: AlertLog, now: int) -> None:
@@ -164,18 +187,24 @@ def accrue(store: Store, alerts: AlertLog, now: int) -> None:
             continue
         applied = store.apply_accrual(inst["instanceId"], plan)
         if applied and plan.crossed_allowance:
-            if store.claim(f"INST#{inst['instanceId']}", "ALERT#ALLOWANCE", {"kind": "past-allowance"}):
-                alerts.emit(
-                    Alert(
-                        audience="ops",
-                        kind="past-allowance",
-                        month=month_key(now),
-                        estimated_cents=store.get_accrued(month_key(now)),
-                        overage_cents=0,
-                        cause="instance runtime passed the 6 hour allowance",
-                        instance_ids=(inst["instanceId"],),
-                    )
-                )
+            pk = f"INST#{inst['instanceId']}"
+            if store.get_marker(pk, "ALERT#ALLOWANCE"):
+                continue
+            alert = Alert(
+                audience="ops",
+                kind="past-allowance",
+                month=month_key(now),
+                estimated_cents=store.get_accrued(month_key(now)),
+                overage_cents=0,
+                cause="instance runtime passed the 6 hour allowance",
+                instance_ids=(inst["instanceId"],),
+            )
+            try:
+                alerts.emit(alert)
+            except Exception:
+                store.claim(pk, "ALERT#ALLOWANCE#RETRY", {"kind": "past-allowance"})
+                continue
+            store.claim(pk, "ALERT#ALLOWANCE", {"kind": "past-allowance"})
 
 
 def maybe_soft_alert(store: Store, alerts: AlertLog, cfg: Any, now: int) -> None:
@@ -183,17 +212,19 @@ def maybe_soft_alert(store: Store, alerts: AlertLog, cfg: Any, now: int) -> None
     accrued = store.get_accrued(month)
     if accrued <= cfg.soft_cap:
         return
-    if not store.claim(f"MONTH#{month}", "ALERT#SOFT", {"kind": "soft-cap"}):
-        return
-    alerts.emit(
+    deliver_month_alert(
+        store,
+        month,
+        "BUDGET",
         Alert(
             audience="john",
-            kind="soft-cap",
+            kind="budget",
             month=month,
             estimated_cents=accrued,
             overage_cents=accrued - cfg.soft_cap,
             cause="estimated accrued cost passed the monthly soft cap",
-        )
+        ),
+        alerts,
     )
 
 
@@ -217,9 +248,12 @@ def launch_one(store: Store, ec2: Any, cfg: Any, job: Any, now: int) -> str:
     try:
         instance_id = ec2.run_instances(token, record["params"])
     except CapacityRefused as exc:
-        _record_capacity_failure(store, token, exc.code, now)
+        _capacity_after_attempt(store, token, exc.code, now)
+        if store.get_reservation(token):
+            return "quota-held"
         return "quota"
     except AmbiguousLaunch:
+        store.mark_reservation_ambiguous(token)
         return "ambiguous"
     store.convert_reservation(token, instance_id, now)
     return "launched"
@@ -248,8 +282,8 @@ def run_poll(store: Store, ec2: Any, ec2_api: Any, github: Any, cfg: Any, now: i
         allowance=cfg.allowance,
     )
     maybe_soft_alert(store, result.alerts, cfg, now)
-    if result.budget.uncertain:
-        result.blocked_reason = "ec2-uncertain"
+    if result.budget.uncertain or result.budget.block_launch:
+        result.blocked_reason = "unknown-inventory"
         return result
     for repo in cfg.repos:
         decision = github.assess(repo, now)

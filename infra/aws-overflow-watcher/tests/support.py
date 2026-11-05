@@ -13,7 +13,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from overflow_watcher.config import load_config  # noqa: E402
+from overflow_watcher.config import DEFAULT_BUDGET_STOP_EXCLUSIONS, load_config  # noqa: E402
 from overflow_watcher.store import Store  # noqa: E402
 from overflow_watcher.types import InstanceView, Job  # noqa: E402
 
@@ -37,7 +37,8 @@ def watcher_env(**overrides: str) -> dict[str, str]:
         "GRACE_CENTS": "300",
         "CONTINUE_ACTIVE_UNTIL_CENTS": "3300",
         "BUDGET_CANCEL_WAIT_SECONDS": "120",
-        "BUDGET_STOP_EXCLUSIONS": "",
+        "BUDGET_STOP_EXCLUSIONS": DEFAULT_BUDGET_STOP_EXCLUSIONS,
+        "LAUNCH_TEMPLATE_ID": "lt-placeholder",
         "WATCHED_REPOS": json.dumps(
             [
                 {

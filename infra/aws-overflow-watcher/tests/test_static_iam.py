@@ -31,6 +31,9 @@ class StaticIamTests(unittest.TestCase):
     def test_static_terminate_instances_only_on_budget_stop_with_tag_condition(self) -> None:
         template = (ROOT / "template.yaml").read_text(encoding="utf-8")
         self.assertEqual(template.count("ec2:TerminateInstances"), 1)
+        self.assertIn("ec2:CreateAction: RunInstances", template)
+        create_at = template.index("ec2:CreateTags")
+        self.assertNotIn('Resource: "*"', template[create_at : create_at + 280])
         window = template[template.index("ec2:TerminateInstances") : template.index("ec2:TerminateInstances") + 350]
         self.assertIn("aws:ResourceTag/overflow-watcher", window)
         self.assertIn("owned", window)

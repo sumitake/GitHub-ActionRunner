@@ -5,11 +5,18 @@ set -eu
 root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 cache=${OVERFLOW_DDB_CACHE:-/tmp/overflow-dynamodb-local}
 mkdir -p "$cache"
-if [ ! -f "$cache/DynamoDBLocal.jar" ]; then
+ddb_url="https://d1ni2b6xgvw0s0.cloudfront.net/v2.x/dynamodb_local_2025-07-15.tar.gz"
+ddb_sha="1125086301253b89539fa3bdbf1ded0656c596a2d34e0ca3c10af83373e7fd88"
+stamp="$cache/sha256"
+if [ ! -f "$cache/DynamoDBLocal.jar" ] || [ "$(cat "$stamp" 2>/dev/null || true)" != "$ddb_sha" ]; then
   archive=$(mktemp)
-  curl -fsSL -o "$archive" "https://d1ni2b6xgvw0s0.cloudfront.net/v2.x/dynamodb_local_latest.tar.gz"
+  curl -fsSL -o "$archive" "$ddb_url"
+  echo "$ddb_sha  $archive" | sha256sum -c -
+  rm -rf "$cache"
+  mkdir -p "$cache"
   tar -xzf "$archive" -C "$cache"
   rm -f "$archive"
+  printf '%s\n' "$ddb_sha" >"$stamp"
 fi
 if ! python3 -c 'import socket; socket.create_connection(("localhost", 8000), 1).close()' 2>/dev/null; then
   java -Djava.library.path="$cache/DynamoDBLocal_lib" -jar "$cache/DynamoDBLocal.jar" -inMemory -sharedDb -port 8000 >/tmp/overflow-ddb.log 2>&1 &

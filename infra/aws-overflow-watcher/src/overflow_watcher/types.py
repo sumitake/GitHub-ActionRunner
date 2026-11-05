@@ -73,6 +73,7 @@ class Decision:
 class StopCandidate:
     instance_id: str
     month_debit: int
+    remaining_future: int
     launch_epoch: int
     workflow_name: str
     job_name: str

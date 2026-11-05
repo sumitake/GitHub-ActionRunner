@@ -128,14 +128,14 @@ class NegativeTests(unittest.TestCase):
             store,
             ec2,
             instance_id="i-long",
-            debit=600,
+            debit=6,
             month=month,
             launch_epoch=launch,
             price_numer=1,
-            price_denom=1,
+            price_denom=100,
         )
-        add_cents(store, month, 2301)
-        self.assertEqual(store.get_accrued(month), 2901)
+        add_cents(store, month, 2994)
+        self.assertEqual(store.get_accrued(month), 3000)
         alerts = AlertLog()
         accrue(store, alerts, NOW)
         self.assertEqual(store.get_accrued(month), 3001)
@@ -148,7 +148,7 @@ class NegativeTests(unittest.TestCase):
         result = run_poll(store, ec2, ec2, github, cfg(), NOW)
         self.assertEqual(ec2.terminate_calls, [])
         self.assertEqual(result.launched, 0)
-        self.assertTrue(any(item.kind == "soft-cap" for item in result.alerts.items))
+        self.assertTrue(any(item.kind == "budget" for item in result.alerts.items))
 
 
 if __name__ == "__main__":

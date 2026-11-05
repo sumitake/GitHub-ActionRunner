@@ -219,6 +219,20 @@ class Store:
             ]
         )
 
+    def mark_reservation_ambiguous(self, token: str) -> None:
+        item = self._get(f"RES#{token}", "META")
+        if item is None:
+            return
+        record = json.loads(item["record"]["S"])
+        record["ambiguousAttempt"] = True
+        self.client.update_item(
+            TableName=self.table,
+            Key=_key(f"RES#{token}", "META"),
+            UpdateExpression="SET #record = :record",
+            ExpressionAttributeNames={"#record": "record"},
+            ExpressionAttributeValues={":record": _s(json.dumps(record, sort_keys=True))},
+        )
+
     def release_all_open_reservations(self) -> None:
         for reservation in self.list_open_reservations():
             self.release_reservation(reservation["clientToken"])
