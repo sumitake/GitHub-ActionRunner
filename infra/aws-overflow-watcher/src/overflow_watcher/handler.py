@@ -3,14 +3,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from typing import Any
 
 import boto3
 
-from overflow_watcher.budget import Alert
+from overflow_watcher.budget import Alert, alert_dict, write_alert_line
 from overflow_watcher.config import load_config
 from overflow_watcher.controller import PollResult, run_poll
 from overflow_watcher.ec2view import Ec2Views
@@ -19,24 +18,16 @@ from overflow_watcher.store import Store
 
 
 def alert_payload(alert: Alert) -> dict[str, Any]:
-    return {
-        "audience": alert.audience,
-        "kind": alert.kind,
-        "month": alert.month,
-        "estimatedCents": alert.estimated_cents,
-        "overageCents": alert.overage_cents,
-        "cause": alert.cause,
-        "instanceIds": list(alert.instance_ids),
-    }
+    return alert_dict(alert)
 
 
 def response_from_poll(result: PollResult) -> dict[str, Any]:
-    """Return every alert and write one JSON log line per alert."""
+    """Return every alert. A line is printed here only if the poll did not already log it."""
     rendered = []
     for alert in result.alerts.items:
-        payload = alert_payload(alert)
-        print(json.dumps(payload, sort_keys=True), flush=True)
-        rendered.append(payload)
+        if not alert.logged:
+            write_alert_line(alert)
+        rendered.append(alert_payload(alert))
     return {
         "ok": True,
         "launched": result.launched,

@@ -255,6 +255,7 @@ Resources:
             Ref: GithubAppPem
           TABLE_NAME:
             Ref: StateTable
+          PYTHONPATH: /var/task/src
   MinuteRule:
     Type: AWS::Events::Rule
     Properties:

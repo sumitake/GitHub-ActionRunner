@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,6 +22,25 @@ class Alert:
     overage_cents: int
     cause: str
     instance_ids: tuple[str, ...] = ()
+    logged: bool = False
+
+
+def alert_dict(alert: Alert) -> dict[str, Any]:
+    return {
+        "audience": alert.audience,
+        "kind": alert.kind,
+        "month": alert.month,
+        "estimatedCents": alert.estimated_cents,
+        "overageCents": alert.overage_cents,
+        "cause": alert.cause,
+        "instanceIds": list(alert.instance_ids),
+    }
+
+
+def write_alert_line(alert: Alert) -> None:
+    """One JSON log line. Callers claim delivery only after this returns."""
+    print(json.dumps(alert_dict(alert), sort_keys=True), flush=True)
+    alert.logged = True
 
 
 @dataclass
@@ -85,6 +105,7 @@ def deliver_month_alert(store: Store, month: str, name: str, alert: Alert, alert
     if store.get_marker(f"MONTH#{month}", confirmed):
         return
     try:
+        write_alert_line(alert)
         alerts.emit(alert)
     except Exception:
         store.claim(f"MONTH#{month}", retry, {"kind": name})
@@ -375,45 +396,12 @@ def _advance_candidate(
     pk = f"STOP#{month}"
     sk = f"INST#{candidate.instance_id}"
     marker = store.get_marker(pk, sk)
-    if marker is None:
-        gate, _view = _revalidate(ec2, candidate, exclusions)
-        if gate == "blocked":
-            _unknown_alert(
-                store,
-                month,
-                candidate.instance_id,
-                accrued,
-                soft_cap,
-                alerts,
-                "ownership, tag, or state failed revalidation; the instance was not stopped",
-            )
-            return "blocked"
-        if gate != "stop":
-            return "spared"
-        claimed = store.claim(
-            pk,
-            sk,
-            {
-                "phase": "cancel_wait",
-                "deadline": now + cancel_wait,
-                "cancelStatus": "pending",
-                "unknownAlerted": 0,
-            },
-        )
-        if not claimed:
-            return "noop"
-        status = "requested"
-        try:
-            github.cancel_workflow_run(candidate.owner, candidate.repo_name, candidate.workflow_run_id)
-        except Exception:
-            status = "unavailable"
-        store.update_marker(pk, sk, {"cancelStatus": status})
-        return "cancelled"
-    if marker.get("phase") != "cancel_wait":
+    phase = str(marker.get("phase")) if marker else ""
+    # A claim is kept only while this poll still selects an in-flight cancel.
+    if phase == "cancel_wait" and now < int(marker.get("deadline", 0)):
         return "noop"
-    deadline = int(marker.get("deadline", 0))
-    if now < deadline:
-        return "noop"
+    if candidate.remaining_future <= 0:
+        return "spared"
     gate, view = _revalidate(ec2, candidate, exclusions)
     if gate == "blocked":
         _unknown_alert(
@@ -423,20 +411,68 @@ def _advance_candidate(
             accrued,
             soft_cap,
             alerts,
-            "DescribeInstances state was unknown; instance was not terminated",
+            "ownership, tag, or state failed revalidation; the instance was not stopped",
         )
         return "blocked"
     if gate != "stop":
         if view is not None and view.state == "terminated":
             store.close_instance(candidate.instance_id)
-            store.update_marker(pk, sk, {"phase": "observed_terminated"})
-        else:
-            store.update_marker(pk, sk, {"phase": "finished_during_wait"})
         return "spared"
-    completed = github.workflow_completed(candidate.owner, candidate.repo_name, candidate.workflow_run_id)
-    if completed is True:
-        store.update_marker(pk, sk, {"phase": "finished_during_wait"})
-        return "spared"
+    if phase == "cancel_wait":
+        completed = github.workflow_completed(
+            candidate.owner, candidate.repo_name, candidate.workflow_run_id
+        )
+        if completed is None:
+            deliver_month_alert(
+                store,
+                month,
+                f"WORKFLOW-{candidate.instance_id}",
+                Alert(
+                    audience="ops",
+                    kind="ambiguous-workflow",
+                    month=month,
+                    estimated_cents=accrued,
+                    overage_cents=max(0, accrued - soft_cap),
+                    cause="workflow completion read was ambiguous; the cancel wait was left in place and the instance was not terminated",
+                    instance_ids=(candidate.instance_id,),
+                ),
+                alerts,
+            )
+            return "noop"
+        return _terminate_selected(store, ec2_api, candidate, pk, sk)
+    if phase in {"api_terminated", "finished_during_wait", "observed_terminated"}:
+        return _terminate_selected(store, ec2_api, candidate, pk, sk)
+    if marker is None:
+        claimed = store.claim(
+            pk,
+            sk,
+            {
+                "phase": "cancel_wait",
+                "deadline": now + cancel_wait,
+                "cancelStatus": "pending",
+            },
+        )
+        if not claimed:
+            return "noop"
+    else:
+        store.update_marker(
+            pk,
+            sk,
+            {"phase": "cancel_wait", "deadline": now + cancel_wait, "cancelStatus": "pending"},
+        )
+    status = "requested"
+    try:
+        github.cancel_workflow_run(candidate.owner, candidate.repo_name, candidate.workflow_run_id)
+    except Exception:
+        status = "unavailable"
+    store.update_marker(pk, sk, {"cancelStatus": status})
+    return "cancelled"
+
+
+def _terminate_selected(store: Store, ec2_api: Any, candidate: StopCandidate, pk: str, sk: str) -> str:
     advance_owned_stop(ec2_api, candidate.instance_id)
-    store.update_marker(pk, sk, {"phase": "api_terminated"})
+    if store.get_marker(pk, sk) is None:
+        store.claim(pk, sk, {"phase": "api_terminated"})
+    else:
+        store.update_marker(pk, sk, {"phase": "api_terminated"})
     return "terminated"

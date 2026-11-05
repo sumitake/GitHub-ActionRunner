@@ -9,7 +9,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from overflow_watcher.budget import Alert, AlertLog, BudgetResult, deliver_month_alert, enforce_budget_stop
+from overflow_watcher.budget import (
+    Alert,
+    AlertLog,
+    BudgetResult,
+    deliver_month_alert,
+    enforce_budget_stop,
+    write_alert_line,
+)
 from overflow_watcher.inventory import reservations_released_by_ec2
 from overflow_watcher.money import month_key, plan_accrual
 from overflow_watcher.store import Store
@@ -67,12 +74,6 @@ def ec2_params(cfg: Any) -> dict[str, Any]:
                 "Tags": [
                     {"Key": WATCHER_TAG_NAME, "Value": TAG_VALUE},
                 ],
-            }
-        ],
-        "BlockDeviceMappings": [
-            {
-                "DeviceName": "/dev/xvda",
-                "Ebs": {"DeleteOnTermination": True},
             }
         ],
     }
@@ -133,18 +134,24 @@ def resolve_reservations(store: Store, ec2: Any, alerts: AlertLog, now: int) -> 
         stored = str(reservation["clientToken"])
         token = retry_token(reservation)
         if age > RETRY_WINDOW_SECONDS:
-            if store.claim(f"RES#{stored}", "ALERT#RETRY", {"kind": "retry-held"}):
-                alerts.emit(
-                    Alert(
-                        audience="ops",
-                        kind="retry-held",
-                        month=reservation["month"],
-                        estimated_cents=store.get_accrued(reservation["month"]),
-                        overage_cents=0,
-                        cause="unresolved launch stayed reserved past the retry window",
-                        instance_ids=(),
-                    )
-                )
+            if store.get_marker(f"RES#{stored}", "ALERT#RETRY"):
+                continue
+            alert = Alert(
+                audience="ops",
+                kind="retry-held",
+                month=reservation["month"],
+                estimated_cents=store.get_accrued(reservation["month"]),
+                overage_cents=0,
+                cause="unresolved launch stayed reserved past the retry window",
+                instance_ids=(),
+            )
+            try:
+                write_alert_line(alert)
+                alerts.emit(alert)
+            except Exception:
+                store.claim(f"RES#{stored}", "ALERT#RETRY#RETRY", {"kind": "retry-held"})
+                continue
+            store.claim(f"RES#{stored}", "ALERT#RETRY", {"kind": "retry-held"})
             continue
         try:
             instance_id = ec2.run_instances(token, reservation["params"])

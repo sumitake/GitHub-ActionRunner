@@ -235,8 +235,8 @@ class BudgetTests(unittest.TestCase):
         run_poll(store, ec2, ec2, github, config, NOW)
         github.completed.add("11")
         done = run_poll(store, ec2, ec2, github, config, NOW + 120)
-        self.assertEqual(ec2.terminate_calls, [])
-        self.assertEqual(done.budget.spared, ("i-done",))
+        self.assertEqual(ec2.terminate_calls, [["i-done"]])
+        self.assertEqual(done.budget.terminated, ("i-done",))
         self.assertEqual(store.get_instance("i-done")["state"], "OPEN")
 
     def test_c_budget_stop_ambiguous_describe_does_not_terminate(self) -> None:
@@ -289,9 +289,10 @@ class BudgetTests(unittest.TestCase):
         github.decision = Decision(False, "no-matching-capacity", (sample_job(),))
         config = cfg()
         first = run_poll(store, ec2, ec2, github, config, NOW)
-        second = run_poll(store, ec2, ec2, github, config, NOW + 1)
-        self.assertEqual(ec2.calls, [ec2.calls[0]])
         self.assertEqual(len(ec2.calls), 1)
+        token = ec2.calls[0]
+        second = run_poll(store, ec2, ec2, github, config, NOW + 1)
+        self.assertEqual(ec2.calls, [token])
         self.assertEqual(first.quota_failures, 1)
         self.assertEqual(second.quota_failures, 0)
         self.assertEqual(store.failure_count(), 1)

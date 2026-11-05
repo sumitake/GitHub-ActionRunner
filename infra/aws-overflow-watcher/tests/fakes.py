@@ -72,6 +72,7 @@ class FakeGitHub:
         self.cancel_calls: list[tuple[str, str, str]] = []
         self.cancel_error: str | None = None
         self.completed: set[str] = set()
+        self.ambiguous_completion = False
 
     def assess(self, repo, now: int) -> Decision:
         del repo, now
@@ -83,6 +84,8 @@ class FakeGitHub:
             raise CancelUnavailable(self.cancel_error)
         return "requested"
 
-    def workflow_completed(self, owner: str, repo: str, run_id: str) -> bool:
+    def workflow_completed(self, owner: str, repo: str, run_id: str) -> bool | None:
         del owner, repo
+        if self.ambiguous_completion:
+            return None
         return run_id in self.completed

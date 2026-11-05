@@ -66,7 +66,10 @@ class Ec2Views:
             kwargs: dict[str, Any] = {
                 "Filters": [
                     {"Name": f"tag:{WATCHER_TAG_NAME}", "Values": [TAG_VALUE]},
-                    {"Name": "instance-state-name", "Values": ["pending", "running"]},
+                    {
+                        "Name": "instance-state-name",
+                        "Values": ["pending", "running", "stopping", "shutting-down"],
+                    },
                 ]
             }
             if token:

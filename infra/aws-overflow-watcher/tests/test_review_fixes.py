@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
+import tempfile
 import unittest
+import zipfile
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -69,7 +72,10 @@ class ReviewFixTests(unittest.TestCase):
         second = run_poll(store, ec2, ec2, github, config, NOW + 5)
         self.assertEqual([call[2] for call in github.cancel_calls], ["2"])
         self.assertEqual(second.budget.cancelled, ("i-live",))
-        self.assertIsNone(store.get_marker(f"MONTH#{month}", "C4B#EPISODE"))
+        marker = store.get_marker(f"STOP#{month}", "INST#i-live")
+        self.assertIsNotNone(marker)
+        assert marker is not None
+        self.assertEqual(marker.get("phase"), "cancel_wait")
 
     def test_h2_empty_exclusions_fail_closed(self) -> None:
         for raw in ("", "[]"):
@@ -107,11 +113,11 @@ class ReviewFixTests(unittest.TestCase):
         seed_instance(store, ec2, instance_id="i-hit", debit=100, month=month, launch_epoch=NOW - 10, run_id="9")
         add_cents(store, month, 3400 - store.get_accrued(month))
         config = cfg()
-        first = run_poll(store, ec2, ec2, github, config, NOW)
-        second = run_poll(store, ec2, ec2, github, config, NOW)
         buffer = StringIO()
         with patch("sys.stdout", buffer):
-            payload = response_from_poll(first)
+            first = run_poll(store, ec2, ec2, github, config, NOW)
+        second = run_poll(store, ec2, ec2, github, config, NOW)
+        payload = response_from_poll(first)
         lines = [json.loads(line) for line in buffer.getvalue().splitlines() if line.strip()]
         kinds = [line["kind"] for line in lines]
         self.assertEqual(kinds.count("budget"), 1)
@@ -124,6 +130,7 @@ class ReviewFixTests(unittest.TestCase):
     def test_m1_run_instances_uses_launch_template_and_user_data(self) -> None:
         params = ec2_params(cfg())
         self.assertEqual(params["LaunchTemplate"]["LaunchTemplateId"], "lt-placeholder")
+        self.assertNotIn("BlockDeviceMappings", params)
         script = base64.b64decode(params["UserData"])
         self.assertIn(b"overflow_watcher.supervisor", script)
 
@@ -150,6 +157,7 @@ class ReviewFixTests(unittest.TestCase):
             def describe_instances(self, **kwargs):
                 token = kwargs.get("NextToken")
                 self.tokens.append(token)
+                self.filters = kwargs.get("Filters")
                 if token is None:
                     return {
                         "Reservations": [{"Instances": [{"InstanceId": "i-a"}]}],
@@ -160,6 +168,8 @@ class ReviewFixTests(unittest.TestCase):
         client = Pages()
         self.assertEqual(Ec2Views(client).list_tagged_ids(), ["i-a", "i-b"])
         self.assertEqual(client.tokens, [None, "page-2"])
+        states = next(item["Values"] for item in client.filters if item["Name"] == "instance-state-name")
+        self.assertEqual(states, ["pending", "running", "stopping", "shutting-down"])
 
     def test_l2_proc_read_error_is_not_no_worker(self) -> None:
         with patch("overflow_watcher.supervisor.os.listdir", side_effect=OSError("unread")):
@@ -186,10 +196,11 @@ class ReviewFixTests(unittest.TestCase):
         self.assertLess(url_at, check_at)
         self.assertLess(sha_at, check_at)
         workflow = (ROOT.parents[1] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        self.assertIn('openjdk_pin="21.0.12.""1+1-1~24.04.4"', workflow)
-        self.assertIn('openjdk-21-jre-headless=${openjdk_pin}', workflow)
-        pinned = "21.0.12." + "1+1-1~24.04.4"
-        self.assertEqual(pinned, "21.0.12.""1+1-1~24.04.4")
+        expected = (ROOT / "tests" / "fixtures" / "openjdk-pin.txt").read_text(encoding="utf-8").strip()
+        plus = expected.index("+")
+        prefix, suffix = expected[: plus - 1], expected[plus - 1 :]
+        self.assertIn(f'openjdk_pin="{prefix}""{suffix}"', workflow)
+        self.assertIn("openjdk-21-jre-headless=${openjdk_pin}", workflow)
 
     def test_c4b_threshold_boundaries(self) -> None:
         self.assertTrue(admission_allows(2999, 1, 3000))
@@ -346,6 +357,91 @@ class ReviewFixTests(unittest.TestCase):
         self.assertEqual(len(grace), 1)
         self.assertEqual(grace[0].instance_ids, ())
         self.assertGreaterEqual(store.get_accrued(month), 3400)
+
+    def test_finished_during_wait_does_not_spare_a_running_instance(self) -> None:
+        store = fresh_store()
+        ec2 = FakeEc2()
+        github = FakeGitHub()
+        month = month_key(NOW)
+        seed_instance(
+            store, ec2, instance_id="i-live", debit=600, month=month,
+            launch_epoch=NOW - 3600, run_id="2", price_numer=1, price_denom=1,
+        )
+        add_cents(store, month, 3400 - store.get_accrued(month))
+        self.assertTrue(store.claim(f"STOP#{month}", "INST#i-live", {"phase": "finished_during_wait"}))
+        result = run_poll(store, ec2, ec2, github, cfg(), NOW)
+        self.assertEqual(ec2.terminate_calls, [["i-live"]])
+        self.assertEqual(result.budget.terminated, ("i-live",))
+        self.assertEqual(result.budget.spared, ())
+
+    def test_ambiguous_workflow_read_alerts_and_does_not_terminate(self) -> None:
+        store = fresh_store()
+        ec2 = FakeEc2()
+        github = FakeGitHub()
+        month = month_key(NOW)
+        seed_instance(store, ec2, instance_id="i-wait", debit=400, month=month, launch_epoch=NOW - 15, run_id="8")
+        add_cents(store, month, 3400 - store.get_accrued(month))
+        config = cfg()
+        run_poll(store, ec2, ec2, github, config, NOW)
+        github.ambiguous_completion = True
+        result = run_poll(store, ec2, ec2, github, config, NOW + 120)
+        self.assertEqual(ec2.terminate_calls, [])
+        self.assertEqual(len(result.alerts.items), 1)
+        self.assertEqual(result.alerts.items[0].kind, "ambiguous-workflow")
+        marker = store.get_marker(f"STOP#{month}", "INST#i-wait")
+        self.assertIsNotNone(marker)
+        assert marker is not None
+        self.assertEqual(marker.get("phase"), "cancel_wait")
+
+    def test_excluded_runners_over_projection_alert_once_and_do_not_stop(self) -> None:
+        store = fresh_store()
+        ec2 = FakeEc2()
+        github = FakeGitHub()
+        month = month_key(NOW)
+        seed_instance(
+            store, ec2, instance_id="i-deploy", debit=600, month=month,
+            launch_epoch=NOW - 3600, workflow="deploy-site", job_name="ship", run_id="3",
+            price_numer=1, price_denom=1,
+        )
+        seed_instance(
+            store, ec2, instance_id="i-move", debit=600, month=month,
+            launch_epoch=NOW - 1800, workflow="CI", job_name="migrate-db", run_id="4",
+            price_numer=1, price_denom=1,
+        )
+        add_cents(store, month, 3200 - store.get_accrued(month))
+        result = run_poll(store, ec2, ec2, github, cfg(), NOW)
+        self.assertEqual(github.cancel_calls, [])
+        self.assertEqual(ec2.terminate_calls, [])
+        self.assertEqual(result.budget.cancelled, ())
+        self.assertEqual(result.budget.terminated, ())
+        grace = [item for item in result.alerts.items if item.kind == "grace"]
+        self.assertEqual(len(grace), 1)
+
+    def test_alert_line_is_printed_before_the_claim(self) -> None:
+        store = fresh_store()
+        month = month_key(NOW)
+        add_cents(store, month, 3001)
+        with patch("overflow_watcher.budget.write_alert_line", side_effect=RuntimeError("log down")):
+            run_poll(store, FakeEc2(), FakeEc2(), FakeGitHub(), cfg(), NOW)
+        self.assertIsNone(store.get_marker(f"MONTH#{month}", "ALERT#BUDGET"))
+        self.assertIsNotNone(store.get_marker(f"MONTH#{month}", "ALERT#BUDGET#RETRY"))
+
+    def test_lambda_package_has_supervisor_at_the_userdata_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "pkg.zip"
+            subprocess.run(
+                ["sh", str(ROOT / "scripts" / "package-lambda.sh"), str(archive)],
+                check=True,
+            )
+            extracted = Path(tmp) / "out"
+            with zipfile.ZipFile(archive) as packed:
+                packed.extractall(extracted)
+            controller = extracted / "src" / "overflow_watcher" / "controller.py"
+            script = controller.resolve().parents[2] / "boot" / "supervisor.sh"
+            self.assertTrue(script.is_file())
+            self.assertIn("overflow_watcher.supervisor", script.read_text(encoding="utf-8"))
+        template = (ROOT / "template.yaml").read_text(encoding="utf-8")
+        self.assertIn("PYTHONPATH: /var/task/src", template)
 
 
 if __name__ == "__main__":
