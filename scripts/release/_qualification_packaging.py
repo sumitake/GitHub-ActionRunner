@@ -212,8 +212,10 @@ def _exact_payloads(root):
 def _assemble(source, root, stage, phase, identity, release, runtime, public_evidence,
               dependency_debian_cache, dependency_go_module_cache):
     stage.mkdir(mode=0o755)
+    stage.chmod(0o755)
     for directory in ('bin', 'images', 'sbom', 'notices'):
         (stage / directory).mkdir(mode=0o755)
+        (stage / directory).chmod(0o755)
     subjects, mappings, rows, digests = [], [], [], {}
     for name in BINARIES:
         _copy(root / 'artifacts' / ('binaries-' + phase) / name, stage / 'bin' / name, 0o555)
@@ -317,6 +319,7 @@ def assemble_release_pair(source, tooling, qualification_root, output, *, source
     public_evidence = _dependency_evidence(source, public_evidence, dependency_debian_cache, dependency_go_module_cache)
     output.mkdir(mode=0o755)
     try:
+        output.chmod(0o755)
         mappings = [_assemble(source, qualification_root, output / phase, phase, source_identity,
                               release, runtime, public_evidence, dependency_debian_cache, dependency_go_module_cache) for phase in ('A', 'B')]
         if mappings[0] != mappings[1]:

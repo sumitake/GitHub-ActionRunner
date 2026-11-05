@@ -109,7 +109,7 @@ a real hosted qualification attempt.
 
 ## Still required before execution
 
-1. Resolve retained runner 2.338.0 eligibility using current official release,
+1. Resolve the retained runner version's eligibility using current official release,
    security and target minimum/offered-version evidence. If ineligible, stop
    and replan. Neither a version upgrade nor an SDK rebuild is implied.
 2. Establish the signed T/PR packet, exact workflow blob and dependency hashes,

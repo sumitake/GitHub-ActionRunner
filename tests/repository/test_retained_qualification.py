@@ -41,9 +41,12 @@ class RetainedQualification(unittest.TestCase):
         self.root = pathlib.Path(self.temporary.name)
         self.bundle = self.root / 'bundle'
         self.bundle.mkdir(mode=0o755)
+        self.bundle.chmod(0o755)
 
     def put(self, path, value):
         path.parent.mkdir(parents=True, exist_ok=True)
+        for directory in path.relative_to(self.bundle).parents:
+            (self.bundle / directory).chmod(0o755)
         path.write_bytes(value if isinstance(value, bytes) else (json.dumps(value, indent=2) + '\n').encode())
         path.chmod(0o644)
 
@@ -187,6 +190,7 @@ class RetainedQualification(unittest.TestCase):
                 git('init', '-q')
                 helper = source / 'helper.py'
                 helper.write_text('original = True\n')
+                helper.chmod(0o644)
                 git('add', 'helper.py')
                 git('-c', 'user.name=Synthetic', '-c', 'user.email=operator@example.invalid',
                     '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Synthetic fixture')

@@ -126,7 +126,11 @@ class QualificationPackaging(unittest.TestCase):
                      'relationships': [{'spdxElementId': 'SPDXRef-DOCUMENT', 'relationshipType': 'DESCRIBES', 'relatedSpdxElement': 'SPDXRef-root'}]}
             (sbom / (name + '.raw.spdx.json')).write_bytes(canonical(value))
             (sbom / (name + '.spdx.json')).write_bytes(canonical({**value, 'name': 'original-qualification'}))
+        bundle.chmod(0o755)
+        for path in bundle.rglob('*'):
+            path.chmod(0o755 if path.is_dir() else 0o644)
         (bundle / 'qualification-bundle-inventory.json').write_bytes(self.release['canonical_json'](packaging.inventory(bundle)))
+        (bundle / 'qualification-bundle-inventory.json').chmod(0o644)
         return bundle
 
     def test_full_membership_normalization_mapping_and_unchanged_comparator(self):
@@ -328,6 +332,41 @@ class QualificationPackaging(unittest.TestCase):
         with self.assertRaises(q.Stop):
             packaging.seal_publication_bundle(prepared, self.root / 'changed.tar')
         self.assertFalse((self.root / 'changed.tar').exists())
+
+    def test_release_pair_modes_and_archive_are_independent_of_caller_umask(self):
+        bundle = self.fixture_bundle()
+        expected = packaging.inventory(bundle)
+        release = {**self.release, 'apply_baseline_runner_licenses': lambda *args, **kwargs: []}
+        metadata = types.SimpleNamespace(complete_go_license_records=lambda *args: None,
+                                        MetadataError=ValueError, load=lambda *args, **kwargs: {})
+        actual_run = subprocess.run
+        def commands(args, **kwargs):
+            return actual_run(args, **kwargs) if args[0] == 'bash' else subprocess.CompletedProcess(args, 0)
+        archives = []
+        for mask in (0o022, 0o077):
+            with self.subTest(umask=oct(mask)):
+                previous = os.umask(mask)
+                try:
+                    with mock.patch.object(packaging, '_checkout'), mock.patch.object(q, 'module', return_value=metadata), mock.patch.object(q, 'release_functions', return_value=release), mock.patch.object(packaging.subprocess, 'run', side_effect=commands):
+                        prepared = packaging.assemble_release_pair(ROOT, ROOT, bundle, self.root / ('output-' + str(mask)),
+                            source_identity={'commit': packaging.SOURCE_COMMIT, 'tree': packaging.SOURCE_TREE, 'epoch': 123},
+                            tooling_identity={'commit': 'a' * 40, 'tree': 'b' * 40}, public_evidence=(metadata, {}),
+                            expected_inventory=expected, dependency_debian_cache=self.debian_cache,
+                            dependency_go_module_cache=self.go_cache)
+                    self.assertIs(packaging.revalidate_prepared_assets(prepared), prepared)
+                    for directory in (prepared.output, *(p for p in prepared.output.rglob('*') if p.is_dir())):
+                        self.assertEqual(directory.stat().st_mode & 0o7777, 0o755)
+                    for row in prepared['assets']:
+                        self.assertEqual(row['mode'], '0555' if row['path'].startswith('bin/') else '0444')
+                    target = self.root / ('bundle-' + str(mask) + '.tar')
+                    packaging.seal_publication_bundle(prepared, target)
+                    archives.append(target.read_bytes())
+                    self.assertEqual(packaging.inventory(bundle), expected)
+                    self.assertEqual(os.umask(mask), mask)
+                finally:
+                    os.umask(previous)
+        self.assertEqual(len(archives), 2)
+        self.assertEqual(archives[0], archives[1])
 
     def test_source_identity_cannot_be_tooling_identity(self):
         with self.assertRaisesRegex(q.Stop, 'product source'):
