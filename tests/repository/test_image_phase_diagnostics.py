@@ -218,6 +218,22 @@ class ImagePhaseDiagnosticsTest(unittest.TestCase):
         diagnostics = [line for line in result.stderr.splitlines() if not line.startswith("{")]
         self.assertEqual(diagnostics, [expected, "image-reproducibility"] if expected else [])
         records = [json.loads(line) for line in result.stderr.splitlines() if line.startswith("{")]
+        image_records = [r for r in records if r.get("event") == "image-phase"]
+        self.assertLessEqual(len(image_records), 128)
+        for index, record in enumerate(image_records):
+            self.assertEqual(set(record), {"schema_version", "event", "state", "image", "phase"})
+            self.assertEqual(record["schema_version"], 1)
+            self.assertIn(record["image"], (*IMAGES, "unattributed"))
+            if record["state"] == "unavailable":
+                self.assertEqual(index, 127)
+                self.assertEqual(record["image"], "unattributed")
+                self.assertEqual(record["phase"], "record-limit")
+            else:
+                self.assertLess(index, 127)
+                self.assertEqual(record["state"], "last-started")
+                self.assertIn(record["phase"], (*PHASES[:8], "cleanup", "image-id-compare",
+                                               "manifest-validation", "entry-prepare"))
+        records = [r for r in records if r.get("event") != "image-phase"]
         self.assertLessEqual(len(records), 54)
         for record in records:
             self.assertEqual(set(record), {"schema_version", "event", "stage", "state",

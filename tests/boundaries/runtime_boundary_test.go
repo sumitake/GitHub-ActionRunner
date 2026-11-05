@@ -1835,8 +1835,14 @@ func checkGateSource(t *testing.T, root string) {
 			t.Errorf("runtime gate contains prohibited command %q", prohibited)
 		}
 	}
-	if regexp.MustCompile(`(?m)^[ \t]*(source|\.)[ \t]+`).MatchString(source) {
-		t.Error("runtime gate sources an external shell document")
+	// Only the fixed definition-only image library may be sourced, privately.
+	imageSource := `{ source scripts/ci/check-images.sh >>"$ci_images_log_path" 2>&1; } 2>/dev/null || return 1`
+	if strings.Count(source, imageSource) != 1 {
+		t.Error("runtime gate must source the fixed image library inside its private boundary")
+	}
+	withoutImageSource := strings.ReplaceAll(source, imageSource, "")
+	if regexp.MustCompile(`(?m)(^|[;{])[ \t]*(source|\.)[ \t]+`).MatchString(withoutImageSource) {
+		t.Error("runtime gate sources an unexpected shell document")
 	}
 	if strings.Count(source, "emit_summary") != 2 {
 		t.Errorf("runtime gate must define and invoke one summary emitter, references=%d", strings.Count(source, "emit_summary"))
@@ -1856,9 +1862,23 @@ func gateDiagnostics(t *testing.T, summary gateSummary, stderr string) string {
 	}
 	lines := strings.SplitAfter(stderr, "\n")
 	pattern := regexp.MustCompile(`^\{"schema_version":1,"event":"runtime-gate-stage","stage":"([a-z-]+)","state":"(start|pass|fail)","elapsed_seconds":([0-9]{1,5})\}\n$`)
+	phasePattern := regexp.MustCompile(`^\{"schema_version":1,"event":"image-phase","state":"last-started","image":"(unattributed|network-adapter|network-broker-dialer|network-broker-parser|network-helper|network-verifier|runner|synthetic-listener)","phase":"(manifest-validation|entry-prepare|first-build|first-id-inspect|first-created-inspect|first-created-time|second-build|second-id-inspect|second-created-inspect|second-created-time|cleanup|image-id-compare)"\}\n$`)
+	limitRecord := "{\"schema_version\":1,\"event\":\"image-phase\",\"state\":\"unavailable\",\"image\":\"unattributed\",\"phase\":\"record-limit\"}\n"
+	phaseCount := 0
 	i := 0
 	for _, stage := range stages {
 		for _, state := range []string{"start", stage.Status} {
+			if stage.ID == "image-reproducibility" && state != "start" {
+				for i < len(lines) && strings.Contains(lines[i], `"event":"image-phase"`) {
+					if phaseCount >= 128 ||
+						(phaseCount == 127 && lines[i] != limitRecord) ||
+						(phaseCount < 127 && !phasePattern.MatchString(lines[i])) {
+						t.Fatalf("invalid image phase record: %q", lines[i])
+					}
+					phaseCount++
+					i++
+				}
+			}
 			if i >= len(lines) {
 				t.Fatal("missing stage timing record")
 			}

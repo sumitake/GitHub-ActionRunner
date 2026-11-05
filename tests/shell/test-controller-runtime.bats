@@ -45,6 +45,23 @@ assert_stage_timing() {
   [ "$(printf '%s\n' "$stderr" | grep -v '^{' || true)" = "$diagnostics" ]
   timing="$(printf '%s\n' "$stderr" | grep '^{')"
   run jq -se --argjson summary "$summary" '
+    ([.[] | select(.event == "image-phase")] | length <= 128) and
+    ([.[] | select(.event == "image-phase")] | to_entries | all(.[];
+      .key as $index | .value |
+      keys == ["event", "image", "phase", "schema_version", "state"] and
+      .schema_version == 1 and
+      (.image | IN("unattributed", "network-adapter", "network-broker-dialer",
+        "network-broker-parser", "network-helper", "network-verifier", "runner", "synthetic-listener")) and
+      (if .state == "unavailable" then
+        $index == 127 and .image == "unattributed" and .phase == "record-limit"
+      else
+        $index < 127 and .state == "last-started" and
+        (.phase | IN("manifest-validation", "entry-prepare", "first-build", "first-id-inspect",
+          "first-created-inspect", "first-created-time", "second-build", "second-id-inspect",
+          "second-created-inspect", "second-created-time", "cleanup", "image-id-compare"))
+      end)
+    )) and
+    ([.[] | select(.event != "image-phase")] |
     length <= 54 and
     all(.[];
       keys == ["elapsed_seconds", "event", "schema_version", "stage", "state"] and
@@ -53,7 +70,7 @@ assert_stage_timing() {
     ) and
     ([.[] | {id: .stage, status: .state}] ==
       ([$summary.stages[] | {id: .id, status: "start"}, .] +
-        [{id: "cleanup", status: "start"}, {id: "cleanup", status: "pass"}]))
+        [{id: "cleanup", status: "start"}, {id: "cleanup", status: "pass"}])))
   ' <<<"$timing"
   [ "$status" -eq 0 ]
 }

@@ -4,7 +4,8 @@
 # Non-mutating controller-runtime release gate. Subordinate output stays in a
 # private temporary directory. Callers receive one closed JSON summary on
 # stdout, bounded stage timing records on stderr, and, only on failure, a
-# closed diagnostic for the first failed stage. Raw subordinate output never
+# closed diagnostic for the first failed stage. Image builds also emit bounded
+# last-started image/phase records. Raw subordinate output never
 # crosses the gate boundary.
 # Stage functions are invoked through the fixed identifier/function table.
 # The release modes are self-contained and never claim operator-gated target
@@ -564,8 +565,73 @@ stage_linux_docker_preflight() {
   linux_docker=ready
 }
 
+# Separate diagnostic budget from the 54 stage timing records. These fixed
+# records mean last started, not current process, completion or root cause.
+# Count and size are bounded; a stalled stderr sink can still block a write.
+emit_image_phase() {
+  local ci_images_image ci_images_phase=$2 ci_images_state=last-started
+  case "$1" in
+  40) ci_images_image=unattributed ;;
+  50) ci_images_image=network-adapter ;;
+  60) ci_images_image=network-broker-dialer ;;
+  70) ci_images_image=network-broker-parser ;;
+  80) ci_images_image=network-helper ;;
+  90) ci_images_image=network-verifier ;;
+  100) ci_images_image=runner ;;
+  110) ci_images_image=synthetic-listener ;;
+  *) return 0 ;;
+  esac
+  case "$ci_images_phase" in
+  manifest-validation | entry-prepare | first-build | first-id-inspect | \
+    first-created-inspect | first-created-time | second-build | second-id-inspect | \
+    second-created-inspect | second-created-time | cleanup | image-id-compare) ;;
+  *) return 0 ;;
+  esac
+  [ "$ci_images_records" -lt 128 ] || return 0
+  if [ "$ci_images_records" -eq 127 ]; then
+    ci_images_image=unattributed
+    ci_images_phase='record-limit'
+    ci_images_state=unavailable
+  fi
+  ci_images_records=$((ci_images_records + 1))
+  # A joined writer isolates SIGPIPE without changing parent signal policy.
+  # No public descriptor is passed to any image helper or its descendants.
+  (
+    trap '' PIPE
+    printf '{"schema_version":1,"event":"image-phase","state":"%s","image":"%s","phase":"%s"}\n' \
+      "$ci_images_state" "$ci_images_image" "$ci_images_phase" >&2 2>/dev/null
+  ) || true
+}
+
 stage_image_reproducibility() {
-  bash scripts/ci/check-images.sh
+  # Source and every entire helper invocation (including shell setup, captures
+  # and raw reporting) stay private. Suppress redirection-open errors before
+  # opening the owned log, so an open failure cannot expose its path.
+  { source scripts/ci/check-images.sh >>"$ci_images_log_path" 2>&1; } 2>/dev/null || return 1
+  ci_images_private() {
+    { "$@" >>"$ci_images_log_path" 2>&1; } 2>/dev/null
+  }
+  ci_images_progress() { emit_image_phase "$@"; }
+  ci_images_run
+}
+
+run_image_stage() {
+  local ci_images_log_path="$log_directory/image-reproducibility.log"
+  local ci_images_records=0 ci_images_command_status
+  emit_stage_timing image-reproducibility start
+  # Parent progress stays outside whole-stage redirection. Only this fixed
+  # trusted driver uses that boundary; other stages retain run_stage.
+  if stage_image_reproducibility; then
+    append_stage image-reproducibility pass
+    return 0
+  else
+    ci_images_command_status=$?
+  fi
+  capture_failure_diagnostic image-reproducibility "$ci_images_log_path" \
+    command-failed "$ci_images_command_status"
+  append_stage image-reproducibility fail
+  record_failure image-reproducibility
+  return 1
 }
 
 stage_integration_authority() {
@@ -746,7 +812,7 @@ if [ "$unit_failed" -eq 0 ] &&
   if ! run_stage linux-docker-preflight stage_linux_docker_preflight; then
     docker_failed=1
   else
-    if ! run_stage image-reproducibility stage_image_reproducibility; then
+    if ! run_image_stage; then
       docker_failed=1
     fi
     if [ "$docker_failed" -eq 0 ] &&
