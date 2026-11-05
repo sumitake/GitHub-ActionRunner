@@ -1,0 +1,279 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Overflow watcher. One poll Lambda, one table, controller and runner roles.
+Parameters:
+  AmiId:
+    Type: String
+    Description: REQUIRED_INPUT AMI id. No default.
+  SubnetId:
+    Type: String
+    Description: REQUIRED_INPUT subnet id. No default.
+  VpcId:
+    Type: String
+    Description: REQUIRED_INPUT VPC id. No default.
+  InstanceType:
+    Type: String
+    Description: REQUIRED_INPUT instance type. No default.
+  VolumeSizeGiB:
+    Type: Number
+    Description: REQUIRED_INPUT EBS volume size in GiB. No default.
+  CodeS3Bucket:
+    Type: String
+    Description: REQUIRED_INPUT bucket for the Lambda zip. No default.
+  CodeS3Key:
+    Type: String
+    Description: REQUIRED_INPUT object key for the Lambda zip. No default.
+  GithubAppIdentifier:
+    Type: String
+    Description: REQUIRED_INPUT GitHub App identifier. No default.
+  GithubAppPem:
+    Type: String
+    NoEcho: true
+    Description: REQUIRED_INPUT GitHub App PEM. Do not commit a value.
+  WatchedRepos:
+    Type: String
+    Description: REQUIRED_INPUT JSON list of repo id, owner, name, and installation.
+  AllInHourlyPrice:
+    Type: String
+    Description: REQUIRED_INPUT all-in hourly price in dollars, including instance, IPv4, and EBS.
+  MonthlySoftCapCents:
+    Type: String
+    Default: "3000"
+  GracePct:
+    Type: String
+    Default: "10"
+  GraceCents:
+    Type: String
+    Default: "300"
+  ContinueActiveUntilCents:
+    Type: String
+    Default: "3300"
+    Description: Enforced grace estimate in cents. Not an invoice guarantee.
+  BudgetCancelWaitSeconds:
+    Type: String
+    Description: REQUIRED_INPUT seconds to wait after workflow cancellation before terminate.
+  BudgetStopExclusions:
+    Type: String
+    Default: '[{"kind":"workflow","pattern":"deploy-*"},{"kind":"workflow","pattern":"*migration*"},{"kind":"job","pattern":"deploy-*"},{"kind":"job","pattern":"migrate*"}]'
+    Description: Deploy and migration exclusion patterns. An empty value fails closed.
+Resources:
+  StateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+  ControllerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: controller
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:TransactWriteItems
+                  - dynamodb:ConditionCheckItem
+                Resource:
+                  - Fn::GetAtt:
+                      - StateTable
+                      - Arn
+              - Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                  - ec2:DescribeInstances
+                Resource: "*"
+              - Effect: Allow
+                Action: ec2:CreateTags
+                Resource:
+                  - arn:aws:ec2:*:*:instance/*
+                  - arn:aws:ec2:*:*:volume/*
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction: RunInstances
+              - Sid: BudgetStopTerminateTagged
+                Effect: Allow
+                Action: ec2:TerminateInstances
+                Resource: arn:aws:ec2:*:*:instance/*
+                Condition:
+                  StringEquals:
+                    "aws:ResourceTag/overflow-watcher": owned
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - Fn::GetAtt:
+                      - RunnerRole
+                      - Arn
+                Condition:
+                  StringEquals:
+                    "iam:PassedToService": ec2.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - Fn::GetAtt:
+                      - ControllerLogGroup
+                      - Arn
+  RunnerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+  RunnerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: RunnerRole
+      InstanceProfileName: overflow-runner
+  RunnerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Overflow runners with no inbound rules
+      VpcId:
+        Ref: VpcId
+      SecurityGroupIngress: []
+  RunnerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId:
+          Ref: AmiId
+        InstanceType:
+          Ref: InstanceType
+        IamInstanceProfile:
+          Name: overflow-runner
+        SecurityGroupIds:
+          - Fn::GetAtt:
+              - RunnerSecurityGroup
+              - GroupId
+        InstanceInitiatedShutdownBehavior: terminate
+        UserData:
+          Fn::Base64: "#!/bin/sh\nexec python3 -m overflow_watcher.supervisor\n"
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 1
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize:
+                Ref: VolumeSizeGiB
+              VolumeType: gp3
+              DeleteOnTermination: true
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: overflow-watcher
+                Value: owned
+  ControllerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 14
+  ControllerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: overflow_watcher.handler.handler
+      Timeout: 45
+      MemorySize: 256
+      ReservedConcurrentExecutions: 1
+      Role:
+        Fn::GetAtt:
+          - ControllerRole
+          - Arn
+      Code:
+        S3Bucket:
+          Ref: CodeS3Bucket
+        S3Key:
+          Ref: CodeS3Key
+      Environment:
+        Variables:
+          ALL_IN_HOURLY_PRICE:
+            Ref: AllInHourlyPrice
+          MONTHLY_SOFT_CAP_CENTS:
+            Ref: MonthlySoftCapCents
+          GRACE_PCT:
+            Ref: GracePct
+          GRACE_CENTS:
+            Ref: GraceCents
+          CONTINUE_ACTIVE_UNTIL_CENTS:
+            Ref: ContinueActiveUntilCents
+          BUDGET_CANCEL_WAIT_SECONDS:
+            Ref: BudgetCancelWaitSeconds
+          BUDGET_STOP_EXCLUSIONS:
+            Ref: BudgetStopExclusions
+          WATCHED_REPOS:
+            Ref: WatchedRepos
+          AMI_ID:
+            Ref: AmiId
+          SUBNET_ID:
+            Ref: SubnetId
+          SECURITY_GROUP_ID:
+            Fn::GetAtt:
+              - RunnerSecurityGroup
+              - GroupId
+          INSTANCE_TYPE:
+            Ref: InstanceType
+          INSTANCE_PROFILE_NAME: overflow-runner
+          LAUNCH_TEMPLATE_ID:
+            Ref: RunnerLaunchTemplate
+          GITHUB_APP_IDENTIFIER:
+            Ref: GithubAppIdentifier
+          GITHUB_APP_PEM:
+            Ref: GithubAppPem
+          TABLE_NAME:
+            Ref: StateTable
+  MinuteRule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: "rate(1 minute)"
+      State: ENABLED
+      Targets:
+        - Arn:
+            Fn::GetAtt:
+              - ControllerFunction
+              - Arn
+          Id: controller
+  ControllerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Ref: ControllerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn:
+        Fn::GetAtt:
+          - MinuteRule
+          - Arn
