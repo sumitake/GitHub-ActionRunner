@@ -343,7 +343,7 @@ func TestRuntimeGateContainsToolFailureAndCleansPrivateLogs(t *testing.T) {
 		summary.LinuxDocker != "not_run" {
 		t.Fatalf("unexpected failure summary: %#v", summary)
 	}
-	if stderr.String() != "gofmt:command-failed\ngofmt\n" {
+	if gateDiagnostics(t, summary, stderr.String()) != "gofmt:command-failed\ngofmt\n" {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	entries, err := os.ReadDir(tmpRoot)
@@ -785,7 +785,7 @@ exit 0
 	if len(entries) != 0 {
 		t.Fatalf("gate log directory leaked: %v", entries)
 	}
-	return summary, stderr.String(), err
+	return summary, gateDiagnostics(t, summary, stderr.String()), err
 }
 
 func repositoryRoot(t *testing.T) string {
@@ -1841,6 +1841,39 @@ func checkGateSource(t *testing.T, root string) {
 	if strings.Count(source, "emit_summary") != 2 {
 		t.Errorf("runtime gate must define and invoke one summary emitter, references=%d", strings.Count(source, "emit_summary"))
 	}
+}
+
+// Timing records are a separate, closed stderr protocol. Validate every record
+// against the completed summary before returning the unchanged failure tail.
+func gateDiagnostics(t *testing.T, summary gateSummary, stderr string) string {
+	t.Helper()
+	stages := append([]gateStage(nil), summary.Stages...)
+	if len(stages) == 0 || stages[len(stages)-1].ID != "cleanup" {
+		stages = append(stages, gateStage{ID: "cleanup", Status: "pass"})
+	}
+	if len(stages) > 27 {
+		t.Fatalf("too many timed stages: %d", len(stages))
+	}
+	lines := strings.SplitAfter(stderr, "\n")
+	pattern := regexp.MustCompile(`^\{"schema_version":1,"event":"runtime-gate-stage","stage":"([a-z-]+)","state":"(start|pass|fail)","elapsed_seconds":([0-9]{1,5})\}\n$`)
+	i := 0
+	for _, stage := range stages {
+		for _, state := range []string{"start", stage.Status} {
+			if i >= len(lines) {
+				t.Fatal("missing stage timing record")
+			}
+			match := pattern.FindStringSubmatch(lines[i])
+			if match == nil || match[1] != stage.ID || match[2] != state {
+				t.Fatalf("invalid stage timing record: %q", lines[i])
+			}
+			elapsed, err := strconv.Atoi(match[3])
+			if err != nil || elapsed > 86400 {
+				t.Fatalf("invalid elapsed seconds: %q", match[3])
+			}
+			i++
+		}
+	}
+	return strings.Join(lines[i:], "")
 }
 
 func decodeSummary(t *testing.T, raw []byte) gateSummary {

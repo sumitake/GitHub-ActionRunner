@@ -3,8 +3,9 @@
 #
 # Non-mutating controller-runtime release gate. Subordinate output stays in a
 # private temporary directory. Callers receive one closed JSON summary on
-# stdout and, only on failure, a closed diagnostic for the first failed stage
-# on stderr. Raw subordinate output never crosses the gate boundary.
+# stdout, bounded stage timing records on stderr, and, only on failure, a
+# closed diagnostic for the first failed stage. Raw subordinate output never
+# crosses the gate boundary.
 # Stage functions are invoked through the fixed identifier/function table.
 # The release modes are self-contained and never claim operator-gated target
 # conformance, which remains a separate prerequisite for nonzero acquisition.
@@ -49,6 +50,8 @@ docker_containers_fingerprint=
 docker_networks_fingerprint=
 docker_volumes_fingerprint=
 failure_diagnostic=
+stage_timing_records=0
+SECONDS=0
 
 private_mode() {
   local path=$1
@@ -78,10 +81,49 @@ hash_stream() {
   fi
 }
 
+# Only the parent writes control records, outside subordinate redirection. No
+# descriptor is handed to children that could bypass their private log files.
+# Elapsed seconds are relative to gate startup, saturated at one day; this is
+# diagnostic evidence only, never an input to gate checks or timeout policy.
+emit_stage_timing() {
+  local identifier=$1
+  local state=$2
+  local elapsed=$SECONDS
+  case "$identifier" in
+  source-integrity-entry | gofmt | vet | unit | race | network-authority | \
+    acquisition-authority | routing-authority | boundary | staticcheck | \
+    module | shellcheck | shfmt | bats | python-contract | workflow-policy | \
+    repository-metadata | public-sanitizer | chaos-source | source-integrity-exit | \
+    linux-docker-preflight | image-reproducibility | integration-authority | chaos | \
+    docker-state-exit | source-integrity-docker-exit | cleanup) ;;
+  *) return 0 ;;
+  esac
+  case "$state" in
+  start | pass | fail) ;;
+  *) return 0 ;;
+  esac
+  # The complete release path has 27 stages, including private-state cleanup.
+  [ "$stage_timing_records" -lt 54 ] || return 0
+  stage_timing_records=$((stage_timing_records + 1))
+  if [[ ! "$elapsed" =~ ^(0|[1-9][0-9]{0,8})$ ]]; then
+    elapsed=0
+  elif [ "$elapsed" -gt 86400 ]; then
+    elapsed=86400
+  fi
+  # Isolate SIGPIPE as well as ordinary write errors without changing the
+  # parent signal policy or giving subordinate commands a logging descriptor.
+  (
+    trap '' PIPE
+    printf '{"schema_version":1,"event":"runtime-gate-stage","stage":"%s","state":"%s","elapsed_seconds":%s}\n' \
+      "$identifier" "$state" "$elapsed" >&2 2>/dev/null
+  ) || true
+}
+
 append_stage() {
   local identifier=$1
   local stage_status=$2
   local record
+  emit_stage_timing "$identifier" "$stage_status"
   record="{\"id\":\"${identifier}\",\"status\":\"${stage_status}\"}"
   if [ -z "$stages_json" ]; then
     stages_json=$record
@@ -171,6 +213,7 @@ run_stage() {
   shift
   local log_path="$log_directory/${identifier}.log"
   local command_status
+  emit_stage_timing "$identifier" start
   if "$@" >"$log_path" 2>&1; then
     append_stage "$identifier" pass
     return 0
@@ -192,6 +235,7 @@ run_verified_go_test_stage() {
   local log_path="$log_directory/${identifier}.log"
   local package_count
   local pass_count
+  emit_stage_timing "$identifier" start
   if ! "$@" >"$log_path" 2>&1; then
     capture_failure_diagnostic "$identifier" "$log_path" command-failed
     append_stage "$identifier" fail
@@ -569,6 +613,7 @@ EOF
 
 cleanup_private_state() {
   local cleanup_ok=1
+  emit_stage_timing cleanup start
   if [ "$docker_ready" -eq 1 ]; then
     cleanup_fixed_images || cleanup_ok=0
   fi
@@ -580,6 +625,7 @@ cleanup_private_state() {
     record_failure cleanup
     return 1
   fi
+  emit_stage_timing cleanup pass
   return 0
 }
 
