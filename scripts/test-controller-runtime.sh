@@ -145,45 +145,84 @@ capture_failure_diagnostic() {
   local log_path=$2
   local reason=$3
   local test_name=
+  local image_code=${4:-}
+  local image_prefix=image-reproducibility
   [ -z "$failure_diagnostic" ] || return 0
   # This fixed child exit protocol carries only trusted wrapper control flow.
   # Never derive image diagnostics from arbitrary Docker/build output.
   if [ "$identifier" = image-reproducibility ] && [ "$reason" = command-failed ]; then
-    case "${4:-}" in
+    # Normalize only explicitly listed codes. Both label components come
+    # from fixed literals, never child output, arbitrary names, or raw status.
+    case "$image_code" in
+    40 | 41 | 42 | 43 | 44 | 45 | 46 | 47 | 48) ;;
+    50 | 51 | 52 | 53 | 54 | 55 | 56 | 57 | 58)
+      image_prefix=image-reproducibility:network-adapter
+      image_code=$((image_code - 10))
+      ;;
+    60 | 61 | 62 | 63 | 64 | 65 | 66 | 67 | 68)
+      image_prefix=image-reproducibility:network-broker-dialer
+      image_code=$((image_code - 20))
+      ;;
+    70 | 71 | 72 | 73 | 74 | 75 | 76 | 77 | 78)
+      image_prefix=image-reproducibility:network-broker-parser
+      image_code=$((image_code - 30))
+      ;;
+    80 | 81 | 82 | 83 | 84 | 85 | 86 | 87 | 88)
+      image_prefix=image-reproducibility:network-helper
+      image_code=$((image_code - 40))
+      ;;
+    90 | 91 | 92 | 93 | 94 | 95 | 96 | 97 | 98)
+      image_prefix=image-reproducibility:network-verifier
+      image_code=$((image_code - 50))
+      ;;
+    100 | 101 | 102 | 103 | 104 | 105 | 106 | 107 | 108)
+      image_prefix=image-reproducibility:runner
+      image_code=$((image_code - 60))
+      ;;
+    110 | 111 | 112 | 113 | 114 | 115 | 116 | 117 | 118)
+      image_prefix=image-reproducibility:synthetic-listener
+      image_code=$((image_code - 70))
+      ;;
+    *)
+      failure_diagnostic="image-reproducibility:command-failed"
+      return 0
+      ;;
+    esac
+    case "$image_code" in
     40)
-      failure_diagnostic="image-reproducibility:first-build"
+      failure_diagnostic="${image_prefix}:first-build"
       return 0
       ;;
     41)
-      failure_diagnostic="image-reproducibility:first-id-inspect"
+      failure_diagnostic="${image_prefix}:first-id-inspect"
       return 0
       ;;
     42)
-      failure_diagnostic="image-reproducibility:first-created-inspect"
+      failure_diagnostic="${image_prefix}:first-created-inspect"
       return 0
       ;;
     43)
-      failure_diagnostic="image-reproducibility:first-created-time"
+      failure_diagnostic="${image_prefix}:first-created-time"
       return 0
       ;;
     44)
-      failure_diagnostic="image-reproducibility:second-build"
+      failure_diagnostic="${image_prefix}:second-build"
       return 0
       ;;
     45)
-      failure_diagnostic="image-reproducibility:second-id-inspect"
+      failure_diagnostic="${image_prefix}:second-id-inspect"
       return 0
       ;;
     46)
-      failure_diagnostic="image-reproducibility:second-created-inspect"
+      failure_diagnostic="${image_prefix}:second-created-inspect"
       return 0
       ;;
     47)
-      failure_diagnostic="image-reproducibility:second-created-time"
+      failure_diagnostic="${image_prefix}:second-created-time"
       return 0
       ;;
     48)
-      failure_diagnostic="image-reproducibility:image-id-mismatch"
+      failure_diagnostic="${image_prefix}:image-id-mismatch"
       return 0
       ;;
     *)

@@ -42,19 +42,19 @@ if ! jq empty "$manifest" >/dev/null 2>&1; then
   exit 1
 fi
 
-version="$(jq -r 'if has("version") then (.version | tostring) else "<missing>" end' "$manifest")"
+version="$(jq -r 'if has("version") then (.version | tostring) else "<missing>" end' "$manifest")" || exit 1
 if [ "$version" != "1" ]; then
   printf 'check-images: %s: unsupported or missing "version" (expected 1, got %s)\n' "$manifest" "$version" >&2
   exit 1
 fi
 
-images_type="$(jq -r '.images | type' "$manifest")"
+images_type="$(jq -r '.images | type' "$manifest")" || exit 1
 if [ "$images_type" != "array" ]; then
   printf 'check-images: %s: "images" must be an array (got %s)\n' "$manifest" "$images_type" >&2
   exit 1
 fi
 
-image_count="$(jq -r '.images | length' "$manifest")"
+image_count="$(jq -r '.images | length' "$manifest")" || exit 1
 
 if [ "$image_count" -eq 0 ]; then
   printf 'check-images: %s registers no images; nothing to build\n' "$manifest"
@@ -68,17 +68,17 @@ fi
 names_seen=""
 i=0
 while [ "$i" -lt "$image_count" ]; do
-  entry="$(jq -c ".images[$i]" "$manifest")"
+  entry="$(jq -c ".images[$i]" "$manifest")" || exit 1
 
-  entry_type="$(printf '%s' "$entry" | jq -r 'type')"
+  entry_type="$(printf '%s' "$entry" | jq -r 'type')" || exit 1
   if [ "$entry_type" != "object" ]; then
     printf 'check-images: %s: images[%d] must be an object\n' "$manifest" "$i" >&2
     exit 1
   fi
 
-  name="$(printf '%s' "$entry" | jq -r 'if has("name") then .name else "" end')"
-  context="$(printf '%s' "$entry" | jq -r 'if has("context") then .context else "" end')"
-  dockerfile="$(printf '%s' "$entry" | jq -r 'if has("dockerfile") then .dockerfile else "" end')"
+  name="$(printf '%s' "$entry" | jq -r 'if has("name") then .name else "" end')" || exit 1
+  context="$(printf '%s' "$entry" | jq -r 'if has("context") then .context else "" end')" || exit 1
+  dockerfile="$(printf '%s' "$entry" | jq -r 'if has("dockerfile") then .dockerfile else "" end')" || exit 1
 
   if [ -z "$name" ] || [ -z "$context" ] || [ -z "$dockerfile" ]; then
     printf 'check-images: %s: images[%d] must set non-empty "name", "context", and "dockerfile"\n' \
@@ -126,7 +126,7 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-source_epoch="$(git show -s --format=%ct HEAD)"
+source_epoch="$(git show -s --format=%ct HEAD)" || exit 1
 case "$source_epoch" in
 "" | *[!0-9]* | 0)
   printf 'check-images: exact HEAD has no valid positive source epoch\n' >&2
@@ -157,15 +157,50 @@ PY
 
 i=0
 while [ "$i" -lt "$image_count" ]; do
-  entry="$(jq -c ".images[$i]" "$manifest")"
-  name="$(printf '%s' "$entry" | jq -r '.name')"
-  context="$(printf '%s' "$entry" | jq -r '.context')"
-  dockerfile="$(printf '%s' "$entry" | jq -r '.dockerfile')"
+  entry="$(jq -c ".images[$i]" "$manifest")" || exit 1
+  name="$(printf '%s' "$entry" | jq -r '.name')" || exit 1
+  context="$(printf '%s' "$entry" | jq -r '.context')" || exit 1
+  dockerfile="$(printf '%s' "$entry" | jq -r '.dockerfile')" || exit 1
+
+  # Compare the original JSON fields: shell command substitution can lose
+  # trailing newlines and NULs. Only exact fixed triples gain image attribution;
+  # unknown or changed triples retain the legacy phase-only codes 40..48.
+  failure_base="$(
+    printf '%s' "$entry" | jq -r '
+      if [.name, .context, .dockerfile] == [
+        "network-adapter", "images/network-adapter", "images/network-adapter/Dockerfile"
+      ] then 50
+      elif [.name, .context, .dockerfile] == [
+        "network-broker-dialer", "images/network-broker-dialer", "images/network-broker-dialer/Dockerfile"
+      ] then 60
+      elif [.name, .context, .dockerfile] == [
+        "network-broker-parser", "images/network-broker-parser", "images/network-broker-parser/Dockerfile"
+      ] then 70
+      elif [.name, .context, .dockerfile] == [
+        "network-helper", "images/network-helper", "images/network-helper/Dockerfile"
+      ] then 80
+      elif [.name, .context, .dockerfile] == [
+        "network-verifier", "images/network-verifier", "images/network-verifier/Dockerfile"
+      ] then 90
+      elif [.name, .context, .dockerfile] == [
+        "runner", "images/runner", "images/runner/Dockerfile"
+      ] then 100
+      elif [.name, .context, .dockerfile] == [
+        "synthetic-listener", "images/synthetic-listener", "images/synthetic-listener/Dockerfile"
+      ] then 110
+      else 40
+      end
+    '
+  )" || exit 1
+  case "$failure_base" in
+  40 | 50 | 60 | 70 | 80 | 90 | 100 | 110) ;;
+  *) exit 1 ;;
+  esac
 
   tag_a="portable-ghar-check-images:${name}-a"
   tag_b="portable-ghar-check-images:${name}-b"
 
-  # Exit codes 40..48 are a closed phase protocol for the runtime gate.
+  # Fixed bases plus offsets 0..8 form the closed image/phase protocol.
   # Docker output remains private and is never parsed for diagnostic authority.
   if ! SOURCE_DATE_EPOCH="$source_epoch" docker buildx build \
     --platform linux/amd64 \
@@ -175,19 +210,19 @@ while [ "$i" -lt "$image_count" ]; do
     --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
     --output "type=docker,name=$tag_a,rewrite-timestamp=true" \
     -f "$dockerfile" "$context" >/dev/null; then
-    exit 40
+    exit "$((failure_base + 0))"
   fi
   if ! id_a="$(docker image inspect --format '{{.Id}}' "$tag_a")"; then
-    exit 41
+    exit "$((failure_base + 1))"
   fi
   if ! created_a="$(docker image inspect --format '{{.Created}}' "$tag_a")"; then
-    exit 42
+    exit "$((failure_base + 2))"
   fi
   if ! created_epoch_a="$(created_epoch "$created_a")" ||
     [ "$created_epoch_a" != "$source_epoch" ]; then
     docker image rm -f "$tag_a" >/dev/null 2>&1 || true
     printf 'check-images: %s first export has noncanonical creation time\n' "$name" >&2
-    exit 43
+    exit "$((failure_base + 3))"
   fi
 
   if ! SOURCE_DATE_EPOCH="$source_epoch" docker buildx build \
@@ -198,26 +233,26 @@ while [ "$i" -lt "$image_count" ]; do
     --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
     --output "type=docker,name=$tag_b,rewrite-timestamp=true" \
     -f "$dockerfile" "$context" >/dev/null; then
-    exit 44
+    exit "$((failure_base + 4))"
   fi
   if ! id_b="$(docker image inspect --format '{{.Id}}' "$tag_b")"; then
-    exit 45
+    exit "$((failure_base + 5))"
   fi
   if ! created_b="$(docker image inspect --format '{{.Created}}' "$tag_b")"; then
-    exit 46
+    exit "$((failure_base + 6))"
   fi
   if ! created_epoch_b="$(created_epoch "$created_b")" ||
     [ "$created_epoch_b" != "$source_epoch" ]; then
     docker image rm -f "$tag_a" "$tag_b" >/dev/null 2>&1 || true
     printf 'check-images: %s second export has noncanonical creation time\n' "$name" >&2
-    exit 47
+    exit "$((failure_base + 7))"
   fi
 
   docker image rm -f "$tag_a" "$tag_b" >/dev/null 2>&1 || true
 
   if [ "$id_a" != "$id_b" ]; then
     printf 'check-images: %s is not reproducible: %s != %s\n' "$name" "$id_a" "$id_b" >&2
-    exit 48
+    exit "$((failure_base + 8))"
   fi
 
   printf 'check-images: %s builds reproducibly (%s)\n' "$name" "$id_a"
