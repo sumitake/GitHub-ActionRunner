@@ -172,7 +172,7 @@ deploy and migration workflow and job names.
 | `BUDGET_CANCEL_WAIT_SECONDS`                                | Wait after cancel before a terminate. No default.                                                               |
 | `BUDGET_STOP_EXCLUSIONS`                                    | JSON list of `{kind, pattern}`. Empty fails closed. Default excludes `deploy-*` and `migrate*` / `*migration*`. |
 | `TABLE_NAME`                                                | DynamoDB table.                                                                                                 |
-| `CodeS3Bucket`, `CodeS3Key`                                 | Template only. Zip of this package. No default.                                                                 |
+| `CodeS3Bucket`, `CodeS3Key`, `CodeS3ObjectVersion`          | Template inputs for the Lambda zip. No defaults. Not an S3 object check.                                        |
 
 GitHub App permissions this poll needs, which the operator must grant:
 
@@ -192,9 +192,12 @@ and instance profile, a security group with an empty ingress list, and a
 launch template with IMDSv2 required (`HttpTokens: required`),
 `InstanceInitiatedShutdownBehavior: terminate`, and `DeleteOnTermination`
 on the volume. Open reservations do not get a TTL timestamp.
-`CodeS3Bucket` and `CodeS3Key` are required inputs with no default. The zip
-built by `scripts/package-lambda.sh` is not bound to those parameters.
-That deployment linkage is unproven from this repository.
+`scripts/package-lambda.sh` writes the Lambda zip and a sibling binding
+whose sha256 is that zip. The checker accepts the binding only when
+`template.yaml` still passes `CodeS3Bucket`, `CodeS3Key`, and
+`CodeS3ObjectVersion` into the function `Code` property, with no defaults.
+That is an offline identity check. It does not read or attest an S3 object,
+so the live object linkage stays unproven.
 
 ## Tests
 

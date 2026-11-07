@@ -469,6 +469,68 @@ class ReviewFixTests(unittest.TestCase):
         self.assertNotIn("Default:", window)
         self.assertNotIn(digest, template)
 
+    def _package(self, tmp: str) -> tuple[Path, Path]:
+        archive = Path(tmp) / "pkg.zip"
+        subprocess.run(["sh", str(ROOT / "scripts" / "package-lambda.sh"), str(archive)], check=True)
+        return archive, Path(str(archive) + ".binding.json")
+
+    def _check_binding(self, archive: Path, binding: Path, template: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["sh", str(ROOT / "scripts" / "package-lambda.sh"), "--check", str(archive), str(binding), str(template)],
+            capture_output=True,
+            text=True,
+        )
+
+    def test_package_binding_matches_zip_and_template_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive, binding = self._package(tmp)
+            record = json.loads(binding.read_text(encoding="utf-8"))
+            self.assertEqual(record["artifact_sha256"], hashlib.sha256(archive.read_bytes()).hexdigest())
+            self.assertFalse(record["s3_object_attested"])
+            self.assertEqual(record["parameters"], ["CodeS3Bucket", "CodeS3Key", "CodeS3ObjectVersion"])
+            checked = self._check_binding(archive, binding, ROOT / "template.yaml")
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+
+    def test_package_binding_rejects_missing_mismatch_and_stale_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive, binding = self._package(tmp)
+            template = ROOT / "template.yaml"
+            absent = self._check_binding(archive, Path(tmp) / "missing.json", template)
+            self.assertNotEqual(absent.returncode, 0)
+            self.assertIn("absent linkage", absent.stderr)
+            missing_zip = Path(tmp) / "gone.zip"
+            gone = self._check_binding(missing_zip, binding, template)
+            self.assertNotEqual(gone.returncode, 0)
+            self.assertIn("missing artifact", gone.stderr)
+            archive.write_bytes(archive.read_bytes() + b"x")
+            substituted = self._check_binding(archive, binding, template)
+            self.assertNotEqual(substituted.returncode, 0)
+            self.assertIn("mismatched artifact", substituted.stderr)
+            archive, binding = self._package(tmp)
+            record = json.loads(binding.read_text(encoding="utf-8"))
+            record["artifact_sha256"] = "0" * 64
+            binding.write_text(json.dumps(record), encoding="utf-8")
+            stale_digest = self._check_binding(archive, binding, template)
+            self.assertNotEqual(stale_digest.returncode, 0)
+            self.assertIn("mismatched artifact", stale_digest.stderr)
+            archive, binding = self._package(tmp)
+            stale_template = Path(tmp) / "template.yaml"
+            stale_template.write_text(
+                template.read_text(encoding="utf-8").replace("Ref: CodeS3ObjectVersion", "Ref: CodeS3KeyOld"),
+                encoding="utf-8",
+            )
+            stale = self._check_binding(archive, binding, stale_template)
+            self.assertNotEqual(stale.returncode, 0)
+            self.assertIn("stale template input", stale.stderr)
+            literal = Path(tmp) / "literal.yaml"
+            literal.write_text(
+                template.read_text(encoding="utf-8").replace("Ref: CodeS3Key", "S3Key: other.zip"),
+                encoding="utf-8",
+            )
+            replaced = self._check_binding(archive, binding, literal)
+            self.assertNotEqual(replaced.returncode, 0)
+            self.assertIn("substituted or stale template input", replaced.stderr)
+
     def test_readme_states_none_does_not_terminate(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("A read of `None` is", readme)

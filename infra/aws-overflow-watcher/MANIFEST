@@ -1,15 +1,16 @@
-packet: overflow-watcher fix above 744365ded61f765c0c882a00fbf08100f98068d7
+packet: overflow-watcher offline zip binding above a0c3b681cd939817e282a0ab4117cb75610bd940
 hash: sha256 of file bytes. This manifest does not name its own hash.
-hold: zip-to-CodeS3Key linkage is UNPROVEN. No upload.
+offline: generated zip sha256 is bound to CodeS3Bucket, CodeS3Key, and CodeS3ObjectVersion names.
+hold: live S3 object bytes and version id are UNPROVEN. No upload and no object attestation.
 
-8611aaa98044c5d8e0f40f05625ada2ce81e5b010be11b27d418e561fc950c43  infra/aws-overflow-watcher/CHECKLIST.md
-e10337b602c1a50cc921c31ef0560a7c4cf2ddaba20279f987dfcd520d3f8458  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
-d79b1be79c4d952cd7bae678800f9e047c80f645c953f192dea416a2ca96717a  infra/aws-overflow-watcher/README.md
-e4f5ebea0dced2b46964e10b711e674011d59d44fe9cfd76ecf35b1cab264033  infra/aws-overflow-watcher/template.yaml
+e9fbba6799b1b7ed7e06610d6e69d3e7e9868dc62b6bcb958d11851158716558  infra/aws-overflow-watcher/CHECKLIST.md
+8e8d792fa935c47179bc469313be507aa2dc80ad3fc3a4379579976602b4e324  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
+7ccde5ef6254c42a06956bf41a8c165a2ba35000aedffe5be76c90d660ceb5b6  infra/aws-overflow-watcher/README.md
+28602b84a16bae8d075754c5b34d8069bab820e4ada8cbe916144209e83a1e0c  infra/aws-overflow-watcher/template.yaml
 4d460c8449813c1bd29b8574511ae85732bc5e2d368200401dcd6350b53b2758  infra/aws-overflow-watcher/boot/supervisor.sh
-89c3a92b83ccfbfd957dc5dc7f4780d625abe7b912d4b7e48a46f9e0bff6fe12  infra/aws-overflow-watcher/scripts/package-lambda.sh
+2a0c3848481e8685e46563fd734410076a035298ab1361b8500ce4694d5c5c53  infra/aws-overflow-watcher/scripts/package-lambda.sh
 29e27908f3acbf5994526440608cbd39bae41fdcea7f1ab64fc90c62d8b8adc6  infra/aws-overflow-watcher/src/overflow_watcher/guest_bootstrap.py
 64dd8ab1f92ee14bdb3dd53338051c7724a1d81a93588c368535900455fe621f  infra/aws-overflow-watcher/src/overflow_watcher/budget.py
 2dafff039113b0159b841d65977720ac1e1f8c1de883480aad6244994135b23e  infra/aws-overflow-watcher/src/overflow_watcher/controller.py
 d3d6b31ed6e98efe91991f478ed0e22668066da51f7cb91a9da248f7c2ac73f5  infra/aws-overflow-watcher/src/overflow_watcher/store.py
-cbcfaf238f84d4e14ae4880cfeefc0e80599046a1021b6543ea070a4643cc741  infra/aws-overflow-watcher/tests/test_review_fixes.py
+b7085deace3746579435a537f3d5a5172955d05d3ba80fe16955f296146262fb  infra/aws-overflow-watcher/tests/test_review_fixes.py

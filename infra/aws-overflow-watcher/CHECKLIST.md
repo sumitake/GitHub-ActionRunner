@@ -46,6 +46,15 @@ These rows were executed on the dirty tree above `744365ded61f765c0c882a00fbf081
 | retry-held line before the claim                                            | `test_retry_held_alert_is_not_claimed_when_emit_fails`                    | claim `ALERT#RETRY` before `write_alert_line`     | Killed: `{'pk': 'RES#tok-old', 'sk': 'ALERT#RETRY'}` was not `None` |
 | zip is not a deployment key                                                 | `test_built_zip_is_not_bound_to_a_deployment_key`                         | give `CodeS3Key` a `Default`                      | Killed: `Default:` was present                                      |
 
+## #151 offline zip binding
+
+Executed on `a0c3b681cd939817e282a0ab4117cb75610bd940` and restored. Earlier rows were not re-run.
+
+| Finding                                                  | Negative test                                                   | Mutation                         | Result                                                  |
+| -------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------- |
+| Generated zip sha256 must match the binding              | `test_package_binding_rejects_missing_mismatch_and_stale_input` | skip the digest and size compare | Killed: checker returned 0 (`0 == 0`)                   |
+| Template must still pass bucket, key, and object version | `test_package_binding_matches_zip_and_template_parameters`      | remove `S3ObjectVersion`         | Killed: `1 != 0`, `substituted or stale template input` |
+
 ## UNPROVEN/HOLD
 
-`scripts/package-lambda.sh` builds a local zip. `CodeS3Bucket` and `CodeS3Key` are required template inputs with no default, and the zip sha256 is not in `template.yaml`. No S3 object was read or written. The zip-to-deployed-key linkage is UNPROVEN/HOLD. This packet is not READY.
+Offline, `package-lambda.sh` binds the generated zip sha256 to the parameter names `CodeS3Bucket`, `CodeS3Key`, and `CodeS3ObjectVersion`. Those parameters have no defaults. This is not an S3 object attestation: no bucket, key, or version id was read or written. The live object linkage remains UNPROVEN/HOLD. This packet is not READY.
