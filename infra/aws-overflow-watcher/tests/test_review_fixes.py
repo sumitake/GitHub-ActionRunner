@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -18,12 +21,21 @@ from support import NOW, add_cents, cfg, fresh_store, sample_job, seed_instance,
 
 from overflow_watcher.budget import AlertLog
 from overflow_watcher.config import load_config
-from overflow_watcher.controller import admission_allows, ec2_params, launch_one, resolve_reservations, run_poll
+from overflow_watcher.controller import (
+    _record_for,
+    admission_allows,
+    accrue,
+    ec2_params,
+    launch_one,
+    resolve_reservations,
+    run_poll,
+)
 from overflow_watcher.ec2view import Ec2Views
+from overflow_watcher.guest_bootstrap import render_user_data
 from overflow_watcher.handler import response_from_poll
 from overflow_watcher.money import month_key
 from overflow_watcher.supervisor import KEEP, Proof, _workers_alive, decide
-from overflow_watcher.types import Decision, InstanceView
+from overflow_watcher.types import RETRY_WINDOW_SECONDS, Decision, InstanceView
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -442,6 +454,170 @@ class ReviewFixTests(unittest.TestCase):
             self.assertIn("overflow_watcher.supervisor", script.read_text(encoding="utf-8"))
         template = (ROOT / "template.yaml").read_text(encoding="utf-8")
         self.assertIn("PYTHONPATH: /var/task/src", template)
+
+    def test_built_zip_is_not_bound_to_a_deployment_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "pkg.zip"
+            subprocess.run(
+                ["sh", str(ROOT / "scripts" / "package-lambda.sh"), str(archive)],
+                check=True,
+            )
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        template = (ROOT / "template.yaml").read_text(encoding="utf-8")
+        key_at = template.index("CodeS3Key:")
+        window = template[key_at : key_at + 180]
+        self.assertNotIn("Default:", window)
+        self.assertNotIn(digest, template)
+
+    def test_readme_states_none_does_not_terminate(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("A read of `None` is", readme)
+        self.assertIn("the claim stays `cancel_wait`", readme)
+        self.assertIn("instance is not terminated", readme)
+        self.assertIn("`True` (completed) or", readme)
+        self.assertIn("`False` (not completed) terminates", readme)
+
+    def test_unselected_cancel_wait_does_not_terminate_and_reselection_is_fresh(self) -> None:
+        store = fresh_store()
+        ec2 = FakeEc2()
+        github = FakeGitHub()
+        month = month_key(NOW)
+        seed_instance(
+            store, ec2, instance_id="i-a", debit=600, month=month,
+            launch_epoch=NOW - 5 * 3600, run_id="1", price_numer=1, price_denom=1,
+        )
+        add_cents(store, month, 3000 - store.get_accrued(month))
+        config = cfg()
+        run_poll(store, ec2, ec2, github, config, NOW)
+        self.assertEqual([call[2] for call in github.cancel_calls], ["1"])
+        first_deadline = int(store.get_marker(f"STOP#{month}", "INST#i-a")["deadline"])
+        self.assertEqual(first_deadline, NOW + config.cancel_wait)
+        _set_price(store, "i-a", 1, 100)
+        seed_instance(
+            store, ec2, instance_id="i-b", debit=600, month=month,
+            launch_epoch=NOW - 5 * 3600, run_id="2", price_numer=1, price_denom=1,
+        )
+        add_cents(store, month, -600)
+        second = run_poll(store, ec2, ec2, github, config, NOW + config.cancel_wait + 30)
+        self.assertEqual(ec2.terminate_calls, [])
+        self.assertEqual([call[2] for call in github.cancel_calls], ["1", "2"])
+        self.assertIsNone(store.get_marker(f"STOP#{month}", "INST#i-a"))
+        self.assertEqual(second.budget.terminated, ())
+        ec2.views["i-b"] = InstanceView("i-b", "terminated", True, False)
+        _set_price(store, "i-a", 1, 1)
+        later = NOW + config.cancel_wait + 400
+        third = run_poll(store, ec2, ec2, github, config, later)
+        self.assertEqual(ec2.terminate_calls, [])
+        self.assertEqual(third.budget.cancelled, ("i-a",))
+        refreshed = store.get_marker(f"STOP#{month}", "INST#i-a")
+        self.assertIsNotNone(refreshed)
+        assert refreshed is not None
+        self.assertEqual(int(refreshed["deadline"]), later + config.cancel_wait)
+        self.assertNotEqual(int(refreshed["deadline"]), first_deadline)
+
+    def test_guest_bootstrap_imports_without_the_source_tree(self) -> None:
+        script = render_user_data()
+        self.assertNotIn("../src", script)
+        with tempfile.TemporaryDirectory() as tmp:
+            guest = Path(tmp) / "opt" / "overflow-watcher"
+            path = Path(tmp) / "user-data.sh"
+            path.write_text(script, encoding="utf-8")
+            path.chmod(0o755)
+            install_env = os.environ.copy()
+            install_env.pop("PYTHONPATH", None)
+            install_env["OVERFLOW_INSTALL_ROOT"] = str(guest)
+            install_env["OVERFLOW_BOOTSTRAP"] = "install"
+            subprocess.run(["sh", str(path)], cwd=tmp, env=install_env, check=True)
+            probe = "import overflow_watcher.supervisor as supervisor; print(supervisor.__file__)"
+            proc = subprocess.run(
+                [sys.executable, "-c", probe],
+                cwd=tmp,
+                env={"PATH": os.environ["PATH"], "PYTHONPATH": str(guest), "HOME": tmp},
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            loaded = Path(proc.stdout.strip())
+            self.assertEqual(loaded, guest / "overflow_watcher" / "supervisor.py")
+            self.assertFalse(str(ROOT / "src") in str(loaded))
+
+    def test_past_allowance_alert_is_not_claimed_when_emit_fails(self) -> None:
+        store = fresh_store()
+        ec2 = FakeEc2()
+        month = month_key(NOW)
+        seed_instance(
+            store, ec2, instance_id="i-long", debit=6, month=month,
+            launch_epoch=NOW - 7 * 3600, price_numer=1, price_denom=100,
+        )
+        with patch("overflow_watcher.controller.write_alert_line", side_effect=RuntimeError("log down")):
+            accrue(store, AlertLog(), NOW)
+        self.assertIsNone(store.get_marker("INST#i-long", "ALERT#ALLOWANCE"))
+        self.assertIsNotNone(store.get_marker("INST#i-long", "ALERT#ALLOWANCE#RETRY"))
+
+    def test_retry_held_alert_is_not_claimed_when_emit_fails(self) -> None:
+        store = fresh_store()
+        config = cfg()
+        month = month_key(NOW)
+        record = _record_for(sample_job(), config, "tok-old", NOW - RETRY_WINDOW_SECONDS - 5, month)
+        self.assertTrue(
+            store.reserve(token="tok-old", allowance=config.allowance, month=month, cap=3000, record=record)
+        )
+        with patch("overflow_watcher.controller.write_alert_line", side_effect=RuntimeError("log down")):
+            resolve_reservations(store, FakeEc2(), AlertLog(), NOW)
+        self.assertIsNone(store.get_marker("RES#tok-old", "ALERT#RETRY"))
+        self.assertIsNotNone(store.get_marker("RES#tok-old", "ALERT#RETRY#RETRY"))
+
+    def test_owned_stopping_is_exposure_not_an_unknown(self) -> None:
+        for state in ("stopping", "shutting-down"):
+            with self.subTest(state=state):
+                store = fresh_store()
+                ec2 = FakeEc2()
+                github = FakeGitHub()
+                month = month_key(NOW)
+                seed_instance(
+                    store, ec2, instance_id="i-stop", debit=600, month=month,
+                    launch_epoch=NOW - 3600, run_id="7", price_numer=1, price_denom=1,
+                )
+                ec2.views["i-stop"] = InstanceView("i-stop", state, True, False)
+                add_cents(store, month, 3250 - store.get_accrued(month))
+                result = run_poll(store, ec2, ec2, github, cfg(), NOW)
+                self.assertEqual(github.cancel_calls, [])
+                self.assertEqual(ec2.terminate_calls, [])
+                self.assertFalse(result.budget.block_launch)
+                self.assertEqual(result.blocked_reason, "")
+                self.assertEqual(
+                    [item.kind for item in result.alerts.items if item.kind == "unknown-ownership"],
+                    [],
+                )
+                self.assertEqual(len([item for item in result.alerts.items if item.kind == "grace"]), 1)
+
+    def test_uncertain_owned_instance_still_blocks_launch(self) -> None:
+        store = fresh_store()
+        ec2 = FakeEc2()
+        github = FakeGitHub()
+        month = month_key(NOW)
+        seed_instance(store, ec2, instance_id="i-fuzzy", debit=6, month=month, launch_epoch=NOW, run_id="1")
+        ec2.views["i-fuzzy"] = InstanceView("i-fuzzy", "running", True, True)
+        github.decision = Decision(False, "queued", (sample_job(),))
+        result = run_poll(store, ec2, ec2, github, cfg(), NOW)
+        self.assertEqual(result.launched, 0)
+        self.assertEqual(result.blocked_reason, "unknown-inventory")
+        self.assertTrue(any(item.kind == "unknown-ownership" for item in result.alerts.items))
+
+
+def _set_price(store, instance_id: str, numer: int, denom: int) -> None:
+    item = store._get(f"INST#{instance_id}", "META")
+    assert item is not None
+    record = json.loads(item["record"]["S"])
+    record["priceNumer"] = numer
+    record["priceDenom"] = denom
+    store.client.update_item(
+        TableName=store.table,
+        Key={"pk": {"S": f"INST#{instance_id}"}, "sk": {"S": "META"}},
+        UpdateExpression="SET #record = :record",
+        ExpressionAttributeNames={"#record": "record"},
+        ExpressionAttributeValues={":record": {"S": json.dumps(record, sort_keys=True)}},
+    )
 
 
 if __name__ == "__main__":

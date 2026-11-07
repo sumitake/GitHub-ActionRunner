@@ -6,7 +6,6 @@ from __future__ import annotations
 import base64
 import secrets
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from overflow_watcher.budget import (
@@ -17,6 +16,7 @@ from overflow_watcher.budget import (
     enforce_budget_stop,
     write_alert_line,
 )
+from overflow_watcher.guest_bootstrap import render_user_data
 from overflow_watcher.inventory import reservations_released_by_ec2
 from overflow_watcher.money import month_key, plan_accrual
 from overflow_watcher.store import Store
@@ -43,9 +43,8 @@ def admission_allows(accrued: int, allowance: int, cap: int) -> bool:
 
 
 def supervisor_user_data() -> str:
-    """Base64 of the boot wrapper so RunInstances actually starts the supervisor."""
-    script = Path(__file__).resolve().parents[2] / "boot" / "supervisor.sh"
-    return base64.b64encode(script.read_bytes()).decode("ascii")
+    """Base64 of the self-contained guest bootstrap sent as RunInstances user data."""
+    return base64.b64encode(render_user_data().encode("utf-8")).decode("ascii")
 
 
 def ec2_params(cfg: Any) -> dict[str, Any]:
@@ -207,6 +206,7 @@ def accrue(store: Store, alerts: AlertLog, now: int) -> None:
                 instance_ids=(inst["instanceId"],),
             )
             try:
+                write_alert_line(alert)
                 alerts.emit(alert)
             except Exception:
                 store.claim(pk, "ALERT#ALLOWANCE#RETRY", {"kind": "past-allowance"})

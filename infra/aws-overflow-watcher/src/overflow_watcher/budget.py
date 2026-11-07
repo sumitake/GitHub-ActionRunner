@@ -228,6 +228,7 @@ def enforce_budget_stop(
     eligible: list[StopCandidate] = []
     excluded_over: list[str] = []
     unresolved_future = 0
+    transitional_future = 0
     open_instances = store.list_open_instances()
     for inst in open_instances:
         instance_id = inst["instanceId"]
@@ -241,6 +242,14 @@ def enforce_budget_stop(
             int(inst["priceNumer"]),
             int(inst["priceDenom"]),
         )
+        if (
+            view is not None
+            and not view.uncertain
+            and view.has_tag
+            and view.state in {"stopping", "shutting-down"}
+        ):
+            transitional_future += future
+            continue
         if view is None or view.uncertain or not view.has_tag or view.state not in {"pending", "running"}:
             block_launch = True
             uncertain = True
@@ -302,7 +311,7 @@ def enforce_budget_stop(
             int(inst["priceNumer"]),
             int(inst["priceDenom"]),
         )
-    held_future = excluded_future + unresolved_future
+    held_future = excluded_future + unresolved_future + transitional_future
     chosen = select_minimum(eligible, accrued, held_future, grace)
     projected = accrued + held_future + sum(item.remaining_future for item in eligible)
     if projected > grace:
@@ -325,25 +334,20 @@ def enforce_budget_stop(
             ),
             alerts,
         )
-    inflight = []
-    if projected > grace:
-        for item in eligible:
-            if item.remaining_future <= 0:
-                continue
-            marker = store.get_marker(f"STOP#{month}", f"INST#{item.instance_id}")
-            if marker and marker.get("phase") == "cancel_wait":
-                inflight.append(item)
-    ordered: list[StopCandidate] = []
-    seen: set[str] = set()
-    for item in inflight + chosen:
-        if item.instance_id in seen:
+    chosen_ids = {item.instance_id for item in chosen}
+    for inst in open_instances:
+        instance_id = str(inst["instanceId"])
+        if instance_id in chosen_ids:
             continue
-        seen.add(item.instance_id)
-        ordered.append(item)
+        stop_pk = f"STOP#{month}"
+        stop_sk = f"INST#{instance_id}"
+        marker = store.get_marker(stop_pk, stop_sk)
+        if marker and marker.get("phase") == "cancel_wait":
+            store.delete_marker(stop_pk, stop_sk)
     cancelled: list[str] = []
     terminated: list[str] = []
     spared: list[str] = []
-    for candidate in ordered:
+    for candidate in chosen:
         outcome = _advance_candidate(
             store=store,
             ec2=ec2,

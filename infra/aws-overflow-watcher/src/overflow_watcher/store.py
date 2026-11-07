@@ -372,6 +372,9 @@ class Store:
             raise
         return True
 
+    def delete_marker(self, pk: str, sk: str) -> None:
+        self.client.delete_item(TableName=self.table, Key=_key(pk, sk))
+
     def get_marker(self, pk: str, sk: str) -> dict[str, Any] | None:
         item = self._get(pk, sk)
         if item is None:

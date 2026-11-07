@@ -1,0 +1,8 @@
+command: sh infra/aws-overflow-watcher/scripts/run-tests.sh
+interpreter: /tmp/overflow-watcher-venv/bin/python
+boto3: 1.35.99
+dynamodb-local: localhost:8000 already listening
+result: Ran 67 tests in 2.899s
+status: OK
+exit: 0
+limitation: this file records that run. It is not a live AWS or GitHub call.

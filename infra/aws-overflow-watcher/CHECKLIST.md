@@ -30,3 +30,22 @@ Each row names the fail-closed test and the mutation that was applied, run, and 
 | M2 supervisor is in the Lambda zip                  | `test_lambda_package_has_supervisor_at_the_userdata_path`          | omit `boot/supervisor.sh` from the package       | Killed: script `is_file()` is false           |
 | M3 only excluded runners over the projection        | `test_excluded_runners_over_projection_alert_once_and_do_not_stop` | ignore workflow exclusion rules                  | Killed: cancel list is not empty              |
 | L1 tag scan includes `stopping` and `shutting-down` | `test_l1_list_tagged_ids_follows_next_token`                       | filter only `pending` and `running`              | Killed: state list missing the two states     |
+
+## #151 continued
+
+These rows were executed on the dirty tree above `744365ded61f765c0c882a00fbf08100f98068d7` and then restored. The nineteen rows above were not re-run.
+
+| Finding                                                                     | Negative test                                                             | Mutation                                          | Result                                                              |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
+| H1 advance only the current minimum set and reset an unselected cancel-wait | `test_unselected_cancel_wait_does_not_terminate_and_reselection_is_fresh` | no-op `delete_marker` for an unselected claim     | Killed: `INST#i-a` `cancel_wait` marker was not `None`              |
+| M1 guest package import with no source checkout on `PYTHONPATH`             | `test_guest_bootstrap_imports_without_the_source_tree`                    | skip extracting the payload into the guest root   | Killed: `import overflow_watcher.supervisor` exited 1               |
+| L1 past-allowance line before the claim                                     | `test_past_allowance_alert_is_not_claimed_when_emit_fails`                | claim `ALERT#ALLOWANCE` before `write_alert_line` | Killed: confirmed marker was not `None`                             |
+| L2 decisive `True`/`False` versus ambiguous `None`                          | `test_readme_states_none_does_not_terminate`                              | remove the `None` sentence                        | Killed: the sentence was absent                                     |
+| L3 owned `stopping` and `shutting-down` stay exposure                       | `test_owned_stopping_is_exposure_not_an_unknown`                          | drop the transitional branch                      | Killed: `block_launch` became true                                  |
+| L3 uncertain describe still fails closed                                    | `test_uncertain_owned_instance_still_blocks_launch`                       | ignore `view.uncertain`                           | Killed: a launch was admitted (`1 != 0`)                            |
+| retry-held line before the claim                                            | `test_retry_held_alert_is_not_claimed_when_emit_fails`                    | claim `ALERT#RETRY` before `write_alert_line`     | Killed: `{'pk': 'RES#tok-old', 'sk': 'ALERT#RETRY'}` was not `None` |
+| zip is not a deployment key                                                 | `test_built_zip_is_not_bound_to_a_deployment_key`                         | give `CodeS3Key` a `Default`                      | Killed: `Default:` was present                                      |
+
+## UNPROVEN/HOLD
+
+`scripts/package-lambda.sh` builds a local zip. `CodeS3Bucket` and `CodeS3Key` are required template inputs with no default, and the zip sha256 is not in `template.yaml`. No S3 object was read or written. The zip-to-deployed-key linkage is UNPROVEN/HOLD. This packet is not READY.

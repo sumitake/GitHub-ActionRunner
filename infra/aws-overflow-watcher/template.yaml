@@ -180,7 +180,15 @@ Resources:
               - GroupId
         InstanceInitiatedShutdownBehavior: terminate
         UserData:
-          Fn::Base64: "#!/bin/sh\nexec python3 -m overflow_watcher.supervisor\n"
+          Fn::Base64: |
+            #!/bin/sh
+            root=/opt/overflow-watcher
+            if [ ! -d "$root/overflow_watcher" ]; then
+              echo overflow_watcher missing >&2
+              exit 1
+            fi
+            export PYTHONPATH="$root"
+            exec python3 -m overflow_watcher.supervisor
         MetadataOptions:
           HttpTokens: required
           HttpEndpoint: enabled

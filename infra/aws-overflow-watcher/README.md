@@ -75,8 +75,10 @@ projection: the month ledger (admission debits and accruals, which are not
 reduced) plus remaining future burn of excluded work plus unresolved
 exposure plus remaining future burn of eligible instances. There is no
 survivor watermark. A prior evaluation does not suppress a later stop.
-Month, instance, and action claims only dedupe a cancel or an alert and
-let a cancel wait finish.
+Month, instance, and action claims only dedupe a cancel or an alert.
+This poll advances only the minimum set it just chose. A cancel-wait claim
+for an instance left out of that set is deleted, so a later reselection
+starts a new wait instead of reusing an expired one.
 
 The controller intervenes only when that projection is above 3300. At or
 below 3300 nothing is stopped. Above it, only instances with positive
@@ -102,15 +104,22 @@ cannot be avoided raises the grace alert and does not terminate anything.
 3. The controller cancels the assigned workflow run
    (`POST /repos/{owner}/{repo}/actions/runs/{run_id}/cancel`), then waits
    `BUDGET_CANCEL_WAIT_SECONDS`. The wait is stored in DynamoDB and finished
-   on a later poll, so it does not sleep inside the Lambda. Terminate runs
-   only if the projection is still above the ceiling, the instance still
-   has positive future burn, it is still `pending` or `running` after the
-   bound, the workflow has not completed, and DescribeInstances is
-   unambiguous. A failed or unavailable cancel still falls through to that
-   single terminate after the bound. It is not retried in a loop.
+   on a later poll, so it does not sleep inside the Lambda. A stop runs only
+   for an instance in this poll's minimum set that is still owned (record
+   and tag), still `pending` or `running`, and still has positive future
+   burn. After the wait, a decisive workflow read of `True` (completed) or
+   `False` (not completed) terminates that instance. A read of `None` is
+   ambiguous: Ops is alerted, the claim stays `cancel_wait`, and the
+   instance is not terminated. A failed or unavailable cancel still falls
+   through to that single terminate after the bound when the read is
+   decisive. It is not retried in a loop. An owned instance that is already
+   `stopping` or `shutting-down` is transitional exposure: its future burn
+   stays in the projection, and it is not reported as unknown. A missing
+   tag, an uncertain describe, or any other state still fails closed.
 4. Records and debits stay until DescribeInstances shows that exact instance
    id `terminated` (F3, R1). Accrual continues until then. The stop marker
-   dedupes the action for that instance. It does not forgive a later poll.
+   records the in-flight cancel for an instance this poll selected. It does
+   not keep a runner in the stop set after a later poll leaves it out.
 5. John and Ops get one grace alert for the month, with the estimated
    overage, the cause, and the instance ids selected for stop. The alert
    claim is written only after the log line is emitted. A failed emit
@@ -131,7 +140,11 @@ have that action. The only call site is the budget-stop function
 
 ## Supervisor (F6, R3)
 
-`boot/supervisor.sh` starts `overflow_watcher.supervisor`. The runner command
+RunInstances user data is a self-contained bootstrap. It installs
+`overflow_watcher` under `/opt/overflow-watcher` and sets `PYTHONPATH` to
+that directory. It does not look for a source checkout. The launch template
+user data only starts the supervisor when that install is already present.
+`boot/supervisor.sh` is the same launcher. The runner command
 must include `--ephemeral` (one job). The supervisor shuts the guest down
 only when the listener and worker process tree have exited naturally, the
 supervisor did not restart them, a job was actually assigned, and no worker
@@ -179,6 +192,9 @@ and instance profile, a security group with an empty ingress list, and a
 launch template with IMDSv2 required (`HttpTokens: required`),
 `InstanceInitiatedShutdownBehavior: terminate`, and `DeleteOnTermination`
 on the volume. Open reservations do not get a TTL timestamp.
+`CodeS3Bucket` and `CodeS3Key` are required inputs with no default. The zip
+built by `scripts/package-lambda.sh` is not bound to those parameters.
+That deployment linkage is unproven from this repository.
 
 ## Tests
 

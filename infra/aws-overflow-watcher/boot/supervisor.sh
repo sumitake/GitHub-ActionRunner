@@ -1,7 +1,12 @@
 #!/bin/sh
 # SPDX-License-Identifier: MPL-2.0
-# Boot wrapper. Completion rules live in overflow_watcher.supervisor.
+# Guest launcher. The package is installed at $OVERFLOW_INSTALL_ROOT
+# (default /opt/overflow-watcher), not in a source checkout.
 set -eu
-here=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
-export PYTHONPATH="${here}/src${PYTHONPATH:+:$PYTHONPATH}"
+root=${OVERFLOW_INSTALL_ROOT:-/opt/overflow-watcher}
+if [ ! -d "$root/overflow_watcher" ]; then
+  echo "overflow_watcher is not installed under $root" >&2
+  exit 1
+fi
+export PYTHONPATH="$root"
 exec python3 -m overflow_watcher.supervisor
