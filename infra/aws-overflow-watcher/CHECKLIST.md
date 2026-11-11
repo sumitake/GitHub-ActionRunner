@@ -2,6 +2,8 @@
 
 Each row names the fail-closed test and the mutation that was applied, run, and restored. Every mutation killed its test (non-zero exit).
 
+Clean re-run on `7ae0727d7fbfb260425da8f494814d306b2bb2f5` (main, base of this closeout), 2026-11-10 PT. Every section below was applied on that clean tree and restored with `git checkout`. `git status` was clean after every row.
+
 ## #150
 
 | Finding                                              | Negative test                                                          | Mutation                                      | Result                                        |
@@ -33,7 +35,7 @@ Each row names the fail-closed test and the mutation that was applied, run, and 
 
 ## #151 continued
 
-These rows were executed on the dirty tree above `744365ded61f765c0c882a00fbf08100f98068d7` and then restored. The nineteen rows above were not re-run.
+Same clean tree `7ae0727d7fbfb260425da8f494814d306b2bb2f5`. On that tree the small id is not terminated when this poll's minimum set is only the larger runner. Reintroducing the unselected `cancel_wait` union makes `test_unselected_cancel_wait_does_not_terminate_and_reselection_is_fresh` fail with `terminate_calls` `[['i-a']] != []`.
 
 | Finding                                                                     | Negative test                                                             | Mutation                                          | Result                                                              |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
@@ -48,7 +50,7 @@ These rows were executed on the dirty tree above `744365ded61f765c0c882a00fbf081
 
 ## #151 offline zip binding
 
-Executed on `a0c3b681cd939817e282a0ab4117cb75610bd940` and restored. Earlier rows were not re-run.
+Same clean tree `7ae0727d7fbfb260425da8f494814d306b2bb2f5`.
 
 | Finding                                                  | Negative test                                                   | Mutation                         | Result                                                  |
 | -------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------- |
@@ -57,4 +59,8 @@ Executed on `a0c3b681cd939817e282a0ab4117cb75610bd940` and restored. Earlier row
 
 ## UNPROVEN/HOLD
 
-Offline, `package-lambda.sh` binds the generated zip sha256 to the parameter names `CodeS3Bucket`, `CodeS3Key`, and `CodeS3ObjectVersion`. Those parameters have no defaults. This is not an S3 object attestation: no bucket, key, or version id was read or written. The live object linkage remains UNPROVEN/HOLD. This packet is not READY.
+Offline, `package-lambda.sh` binds the generated zip sha256 to the parameter names `CodeS3Bucket`, `CodeS3Key`, and `CodeS3ObjectVersion`. Those parameters have no defaults. This is not an S3 object attestation: no bucket, key, or version id was read or written. The live object linkage remains UNPROVEN/HOLD. README documents a read-only `aws s3api head-object` pre-deploy check that Nova approves and Ops runs (bucket, key, version, then compare `ContentLength` and `ChecksumSHA256` to the recorded size and sha256). That command was not run. This packet is not READY.
+
+## Spend rulings
+
+No runner-count cap of any kind (C5): `test_c_no_runner_count_limit` launches 25 runners and asserts no `MAX_RUNNERS` in `src/`. Budget `MonthlySoftCapCents` 3000 ($30), 10% grace, `ContinueActiveUntilCents` 3300 ($33). `TerminateInstances` takes one id per call and IAM allows it only with `aws:ResourceTag/overflow-watcher` = `owned` (`test_static_terminate_instances_only_on_budget_stop_with_tag_condition`). `ReservedConcurrentExecutions: 1` limits the controller Lambda, not runners.
