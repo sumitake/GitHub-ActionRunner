@@ -122,47 +122,51 @@
     "candidate_protected_files": [
       {
         "path": "CHANGELOG.md",
-        "identity_inventory_sha256": "aa5a4d9c1d519f1a6ad03e48dd1d602497dfd4d765793ebdcba647b5f7dc884e"
+        "identity_inventory_sha256": "b78fb14f8965c0b70a20fa0bee1f4391694884f7374d6f1486b1d048c7db5b8c"
       },
       {
         "path": "cmd/portable-ghar-runner-gate/main_test.go",
-        "identity_inventory_sha256": "7c8b0eebc0054b51b5fc50ed55abce53caf311f0cba985bb5bde50bee3f66abd"
+        "identity_inventory_sha256": "6be7bba69a78b2116640241ae961fece0fcee59a3e8c6dd56c7d3b808fe3f0ae"
       },
       {
         "path": "cmd/portable-ghar-runtime-lock/main_test.go",
-        "identity_inventory_sha256": "14f549370533f590973c0e24d7e14a55915b743e4a7de389621807b5d5d2fe23"
+        "identity_inventory_sha256": "30266a59b485efbf61bbd67369581cb8640f2317b8f8070a069dcaa58722929d"
+      },
+      {
+        "path": "infra/aws-overflow-watcher/src/overflow_watcher/guest_runner.py",
+        "identity_inventory_sha256": "6223655ee1c622cb9e5d1cc8caa31438e43b3cb263dca7e5527cc41c965145f2"
       },
       {
         "path": "internal/archive/runner_archive_test.go",
-        "identity_inventory_sha256": "da9a7c2c587cfba70fc8c9f16c539829dd57f59d24f98222eafbc6f6b392faa3"
+        "identity_inventory_sha256": "529c6495de1d610efcc272f6b3f4c87fdcb56bc3e43f42ec53d28d069c4b4d44"
       },
       {
         "path": "internal/buildinfo/pins.go",
-        "identity_inventory_sha256": "60c80a624442da02c6aac5d214524081f64dbe9268acab90350a0bb803b9c2ff"
+        "identity_inventory_sha256": "7c85a16d85237a35f3cdbd49982319f653418aca5a42dd16a489ff737bc771e5"
       },
       {
         "path": "internal/buildinfo/pins_test.go",
-        "identity_inventory_sha256": "ec1dc4b6f14d8adde96a069f7cd45fb01a93a31555be51bc6c9bcf5cbec9ae2b"
+        "identity_inventory_sha256": "7dd24530cd48ce4db73806f9a18e0063036a699e34c2a9a9d621df6b6e9aa810"
       },
       {
         "path": "internal/runtimelock/lock_test.go",
-        "identity_inventory_sha256": "3e120eae69da9743b84639c379ca5171e05daf648942c13dedf07dff10dd704e"
+        "identity_inventory_sha256": "310bbbeb7d7bf3b766af6e8a17e589ea767cbebeaae8f3290209ad60625a10c9"
       },
       {
         "path": "tests/boundaries/runtime_boundary_test.go",
-        "identity_inventory_sha256": "8281615cc0fdfe1f680494639b54987a88d01de6f0bb906a6d09b40021a51eeb"
+        "identity_inventory_sha256": "a3a82e0ccaca93c27f02413b3761b59873904fe087c4c110c2ce18baa007891c"
       },
       {
         "path": "tests/integration/testenv/closed_command_test.go",
-        "identity_inventory_sha256": "881eb02861fd87d46c30b0e04de4136988aa6c8e8019a9f24de50b61772e5437"
+        "identity_inventory_sha256": "66b50785ad20f41b44ddf6b56796fb1e9740609fc79c66060c05b5d39d3ce80d"
       },
       {
         "path": "tests/integration/testenv/closed_runtime_scanner_test.go",
-        "identity_inventory_sha256": "7c8b0eebc0054b51b5fc50ed55abce53caf311f0cba985bb5bde50bee3f66abd"
+        "identity_inventory_sha256": "6be7bba69a78b2116640241ae961fece0fcee59a3e8c6dd56c7d3b808fe3f0ae"
       },
       {
         "path": "tests/shell/runtime-release.bats",
-        "identity_inventory_sha256": "e90954e7e0bd2dfaf9ae4f988a2292610ca72c82d19421c787f2af1ceb3d1bd7"
+        "identity_inventory_sha256": "1686dbf59505d7d4568b3252e2a0f85bd1cd1d8d69ba3ade54cabcf362e58ec5"
       }
     ],
     "candidate_substitutions": [
@@ -199,6 +203,18 @@
       {
         "path": "cmd/portable-ghar-runtime-lock/main_test.go",
         "token": "command_settings_sha256",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "infra/aws-overflow-watcher/src/overflow_watcher/guest_runner.py",
+        "token": "version_bare",
+        "count": 1,
+        "replace": true
+      },
+      {
+        "path": "infra/aws-overflow-watcher/src/overflow_watcher/guest_runner.py",
+        "token": "linux_x64_sha256",
         "count": 1,
         "replace": true
       },
