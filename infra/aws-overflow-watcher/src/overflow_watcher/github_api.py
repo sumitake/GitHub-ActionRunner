@@ -46,6 +46,41 @@ class LiveGitHub:
             raise CancelUnavailable("network") from exc
         return "requested"
 
+    def mint_jitconfig(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        installation: str,
+        runner_name: str,
+        labels: tuple[str, ...] | list[str],
+        runner_group_id: int,
+        now: int,
+    ) -> dict[str, object] | None:
+        """POST generate-jitconfig. None means the mint did not yield a secret."""
+        token = self._token_for(installation, now)
+        if not token:
+            return None
+        payload = {
+            "name": runner_name,
+            "runner_group_id": runner_group_id,
+            "labels": list(labels),
+            "work_folder": "_work",
+        }
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/runners/generate-jitconfig"
+        request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
+        request.add_header("Authorization", f"Bearer {token}")
+        request.add_header("Accept", "application/vnd.github+json")
+        request.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                if response.status not in (200, 201):
+                    return None
+                body = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, OSError):
+            return None
+        return _jit_secret(body)
+
     def workflow_completed(self, owner: str, repo: str, run_id: str) -> bool | None:
         token = self._token_for(self._installation(owner, repo), now=0)
         if not token:
@@ -79,6 +114,19 @@ class LiveGitHub:
             return None
         stamp = now if now else int(time.time())
         return installation_token(self._cfg, installation, stamp)
+
+
+def _jit_secret(body: object) -> dict[str, object] | None:
+    if not isinstance(body, dict):
+        return None
+    secret = body.get("encoded_jit_config")
+    if not isinstance(secret, str) or secret == "":
+        return None
+    parsed: dict[str, object] = {"encoded_jit_config": secret}
+    runner = body.get("runner")
+    if isinstance(runner, dict) and type(runner.get("id")) is int:
+        parsed["github_runner_id"] = runner["id"]
+    return parsed
 
 
 class _UrllibTransport:

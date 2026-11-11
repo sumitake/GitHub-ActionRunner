@@ -95,14 +95,28 @@ def _runner_label_names(runner: dict) -> set[str]:
     return names
 
 
-def matching_online(runners: list[dict], job_labels: tuple[str, ...]) -> bool:
+def matching_available(runners: list[dict], job_labels: tuple[str, ...]) -> str:
+    """Return available, none, or malformed.
+
+    Offline runners and runners whose labels do not contain the job are not
+    inspected for `busy`. An online label match with a missing or non-boolean
+    `busy` fails closed.
+    """
+    available = False
     for runner in runners:
         if runner.get("status") != "online":
             continue
         names = _runner_label_names(runner)
-        if all(label in names for label in job_labels):
-            return True
-    return False
+        if not all(label in names for label in job_labels):
+            continue
+        busy = runner.get("busy", None)
+        if "busy" not in runner or type(busy) is not bool:
+            return "malformed"
+        if busy is False:
+            available = True
+    if available:
+        return "available"
+    return "none"
 
 
 def fetch_collection(
@@ -153,6 +167,11 @@ def judge_jobs(
         return Decision(True, runner_error or "unknown-runners", ())
     eligible: list[Job] = []
     assert runners is not None
+    seen: list[str] = []
+    for job in jobs:
+        raw_id = job.get("id")
+        if type(raw_id) is int and raw_id > 0:
+            seen.append(str(raw_id))
     for job in jobs:
         if job.get("status") != "queued":
             continue
@@ -165,7 +184,13 @@ def judge_jobs(
         queued = parse_epoch(job.get("created_at") if isinstance(job.get("created_at"), str) else None)
         if queued is None or now - queued < QUEUE_SECONDS:
             continue
-        if matching_online(runners, labels):
+        raw_id = job.get("id")
+        if type(raw_id) is not int or raw_id <= 0:
+            continue
+        capacity = matching_available(runners, labels)
+        if capacity == "malformed":
+            return Decision(True, "malformed", (), tuple(seen))
+        if capacity == "available":
             continue
         name = job.get("name")
         job_name = name if isinstance(name, str) and name else ""
@@ -179,9 +204,16 @@ def judge_jobs(
                 workflow_run_id=workflow_run_id,
                 labels=labels,
                 queued_epoch=queued,
+                repo_id=repo.repo_id,
+                job_id=str(raw_id),
             )
         )
-    return Decision(False, "no-matching-capacity" if not runners else "assessed", tuple(eligible))
+    return Decision(
+        False,
+        "no-matching-capacity" if not runners else "assessed",
+        tuple(eligible),
+        tuple(seen),
+    )
 
 
 def assess_repo(transport: Transport, repo: RepoSpec, now: int) -> Decision:
@@ -202,6 +234,7 @@ def assess_repo(transport: Transport, repo: RepoSpec, now: int) -> Decision:
         return Decision(True, run_error or "unknown-runs", ())
     runs = runs or []
     collected: list[Job] = []
+    seen: list[str] = []
     for run in runs:
         if run.get("status") not in (None, "queued", "pending", "waiting"):
             continue
@@ -226,8 +259,9 @@ def assess_repo(transport: Transport, repo: RepoSpec, now: int) -> Decision:
             workflow_name=workflow_name,
             workflow_run_id=str(run_id),
         )
+        seen.extend(decision.seen_job_ids)
         if decision.uncertain:
-            return decision
+            return Decision(True, decision.reason, (), tuple(seen))
         collected.extend(decision.jobs)
     reason = "no-matching-capacity" if not runners else "assessed"
-    return Decision(False, reason, tuple(collected))
+    return Decision(False, reason, tuple(collected), tuple(seen))

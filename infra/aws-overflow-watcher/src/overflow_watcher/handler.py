@@ -45,6 +45,8 @@ def handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     endpoint = os.environ.get("DDB_ENDPOINT") or None
     store = Store.connect(table=cfg.table_name, endpoint_url=endpoint)
     raw = boto3.client("ec2")
+    region = os.environ.get("AWS_REGION") or "us-west-2"
+    ssm = boto3.client("ssm", region_name=region)
     result = run_poll(
         store,
         Ec2Views(raw),
@@ -52,5 +54,6 @@ def handler(event: dict[str, Any], context: object) -> dict[str, Any]:
         LiveGitHub(cfg),
         cfg,
         int(time.time()),
+        ssm=ssm,
     )
     return response_from_poll(result)

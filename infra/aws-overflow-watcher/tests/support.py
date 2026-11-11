@@ -79,6 +79,8 @@ def sample_job(**overrides) -> Job:
         "workflow_run_id": "77",
         "labels": ("self-hosted", "Linux"),
         "queued_epoch": NOW - 600,
+        "repo_id": "101",
+        "job_id": "9001",
     }
     data.update(overrides)
     return Job(**data)

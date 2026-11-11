@@ -12,6 +12,7 @@ QUEUE_SECONDS = 300
 RETRY_WINDOW_SECONDS = 900
 CAPACITY_COOLDOWN_SECONDS = 900
 REPORT_AFTER_SECONDS = 1800
+JOB_HOLD_TTL_SECONDS = 7 * 24 * 3600
 
 
 class CapacityRefused(Exception):
@@ -48,6 +49,7 @@ class RepoSpec:
     owner: str
     name: str
     installation: str
+    runner_group_id: int = 1
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,8 @@ class Job:
     workflow_run_id: str
     labels: tuple[str, ...]
     queued_epoch: int
+    repo_id: str
+    job_id: str
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,7 @@ class Decision:
     uncertain: bool
     reason: str
     jobs: tuple[Job, ...]
+    seen_job_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
