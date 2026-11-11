@@ -7,15 +7,15 @@
     "debian_snapshot": "20261010T000000Z",
     "runner_release": {
       "schema_version": 1,
-      "version": "v2.338.0",
-      "tag_ref_sha": "197ca027b90de199464dee3bb9ff198a1db60967",
-      "source_commit_sha": "197ca027b90de199464dee3bb9ff198a1db60967",
-      "linux_x64_asset_name": "actions-runner-linux-x64-2.338.0.tar.gz",
-      "linux_x64_asset_size": 227660598,
-      "linux_x64_asset_digest": "sha256:af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32",
-      "published_at": "2026-10-06T13:55:11Z",
+      "version": "v2.338.2",
+      "tag_ref_sha": "d1eb12d4b115c301201de27d667284e1a80f2ab5",
+      "source_commit_sha": "d1eb12d4b115c301201de27d667284e1a80f2ab5",
+      "linux_x64_asset_name": "actions-runner-linux-x64-2.338.2.tar.gz",
+      "linux_x64_asset_size": 228071396,
+      "linux_x64_asset_digest": "sha256:baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40",
+      "published_at": "2026-10-26T14:45:12Z",
       "command_settings_sha256": "937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08",
-      "observation_evidence": "3cf25e318a5c9127cc4f524a8fee5d661c6faf111019a659c38a3572c3fa3de1"
+      "observation_evidence": "139bbbd894b14cf6d7a918bfabeaabb31c91506b47fc99f2434d0112c40ab6c9"
     },
     "tools": {
       "buildx": {

@@ -2,8 +2,8 @@ packet: overflow-watcher clean closeout above 7ae0727d7fbfb260425da8f494814d306b
 hash: sha256 of file bytes. This manifest does not name its own hash.
 offline: generated zip sha256 is bound to CodeS3Bucket, CodeS3Key, and CodeS3ObjectVersion names.
 hold: live S3 object bytes and version id are UNPROVEN. No upload and no object attestation.
-fc8bc3ece72b37b8ff126f85b8fa8724e0e547fbe1e8c893b76f7be7a6f12c5e  infra/aws-overflow-watcher/CHECKLIST.md
-6417f4955fe8e73c473a45d530047b4cd4df9d57a7e616f7ab93944e2fff6e61  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
+64a0a24814f6a56424eb4b60b89de5da8c3c7087a3573a6c809d5d3ab0da3ea1  infra/aws-overflow-watcher/CHECKLIST.md
+5a8c653416a4f43f80396febe3df1ee1ff356947c5cd2f47d22be4bd1d7fad02  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
 d75ba03c205ce94caad5ad6f16caf643122d012874393f2ba5dc4c190fb6e346  infra/aws-overflow-watcher/README.md
 8807a4f5fa4b0188f2dc4b2698d6de84fe40991e83e0bc8a30b6b6a37e20766d  infra/aws-overflow-watcher/template.yaml
 4d460c8449813c1bd29b8574511ae85732bc5e2d368200401dcd6350b53b2758  infra/aws-overflow-watcher/boot/supervisor.sh
@@ -21,7 +21,7 @@ a677f5120156a8ae9ba8961fa110f020bd9b1cc4fb48b3d91efa6527bf8ff935  infra/aws-over
 9c38f7ab8f862b3d81665f15043c4bf3acf0c41b03465309abb22635da015006  infra/aws-overflow-watcher/tests/test_review_fixes.py
 a17970eaab6be423c207e0fcce825789d70cee75a406f563f9223ee7e8c4063c  .github/workflows/ci.yml
 c647010c87707b8e532bc6218f6f42734d6fcde291d68f962097ff07f1bff008  infra/aws-overflow-watcher/tests/fixtures/openjdk-pin.txt
-d4f69ac511515425880b7074cf1bae2a216ad6e1d652877555137f380fad533c  infra/aws-overflow-watcher/src/overflow_watcher/guest_runner.py
+5715d7da6897271af6508b04b5cc84d688547e11f3c1380aed63817efaed09b6  infra/aws-overflow-watcher/src/overflow_watcher/guest_runner.py
 d91c665d90a90fd04df8526ed0895b6db913c649a9dd792f9c04f028cc948edd  infra/aws-overflow-watcher/src/overflow_watcher/guest_ssm.py
 4e640e5e1b8703f18a1b074c780bbe2724bbe36f5d635f9e527389fdc085f2fe  infra/aws-overflow-watcher/src/overflow_watcher/supervisor.py
 b744dbb61c8b4300def723e80f39e4bcba9e6b2fbfc0ad24373f73427ff28fcf  infra/aws-overflow-watcher/tests/test_stack_inputs.py

@@ -14,8 +14,8 @@ from pathlib import Path
 
 # Mirror of release/manifest.json runtime.runner_release. A unit test fails
 # when the two differ, so a runner bump there moves this value too.
-RUNNER_VERSION = "2.338.0"
-RUNNER_SHA256 = "af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32"
+RUNNER_VERSION = "2.338.2"
+RUNNER_SHA256 = "baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40"
 RUNNER_URL = (
     "https://github.com/actions/runner/releases/download/"
     f"v{RUNNER_VERSION}/actions-runner-linux-x64-{RUNNER_VERSION}.tar.gz"
