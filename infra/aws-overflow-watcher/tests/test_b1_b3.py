@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import unittest
+import urllib.request
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
@@ -13,6 +14,8 @@ from unittest.mock import patch
 
 from fakes import FakeEc2, FakeGitHub, FakeSsm
 from support import NOW, add_cents, cfg, fresh_store, sample_job
+
+from overflow_watcher.github_api import LiveGitHub
 
 from overflow_watcher.budget import Alert, AlertLog, write_alert_line
 from overflow_watcher.controller import client_token, launch_one, resolve_reservations, run_poll
@@ -531,7 +534,51 @@ class JitAndLockTests(unittest.TestCase):
             self.assertFalse(_kind_match(grace_pattern, line))
             self.assertEqual(json.loads(line)["kind"], "past-allowance")
 
+    def test_b1_mint_request_content_type_is_json(self) -> None:
+        captured: list[urllib.request.Request] = []
+
+        class _Response:
+            status = 201
+
+            def read(self) -> bytes:
+                return json.dumps({"encoded_jit_config": "abc"}).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+        def _urlopen(request: urllib.request.Request, timeout=None):
+            captured.append(request)
+            return _Response()
+
+        github = LiveGitHub(cfg(), token="test-token")
+        with patch("overflow_watcher.github_api.urllib.request.urlopen", _urlopen):
+            minted = github.mint_jitconfig(
+                owner="example",
+                repo="keicrew",
+                installation="201",
+                runner_name="overflow-101-9001-1",
+                labels=("self-hosted", "Linux"),
+                runner_group_id=1,
+                now=NOW,
+            )
+        self.assertEqual(minted, {"encoded_jit_config": "abc"})
+        self.assertEqual(len(captured), 1)
+        request = captured[0]
+        opener = urllib.request.build_opener()
+        handler = next(h for h in opener.handlers if type(h) is urllib.request.HTTPSHandler)
+        prepared = handler.do_request_(request)
+        self.assertEqual(prepared.get_header("Content-type"), "application/json")
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["name"], "overflow-101-9001-1")
+        self.assertEqual(body["runner_group_id"], 1)
+        self.assertEqual(body["labels"], ["self-hosted", "Linux"])
+        self.assertEqual(body["work_folder"], "_work")
+
     def test_static_jit_parameter_iam_is_path_scoped(self) -> None:
+
         template = (ROOT / "template.yaml").read_text(encoding="utf-8")
         controller, runner_rest = template.split("RunnerRole:", 1)
         runner = runner_rest.split("RunnerInstanceProfile:", 1)[0]

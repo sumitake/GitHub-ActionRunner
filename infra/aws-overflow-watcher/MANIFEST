@@ -2,8 +2,8 @@ packet: overflow-watcher clean closeout above 7ae0727d7fbfb260425da8f494814d306b
 hash: sha256 of file bytes. This manifest does not name its own hash.
 offline: generated zip sha256 is bound to CodeS3Bucket, CodeS3Key, and CodeS3ObjectVersion names.
 hold: live S3 object bytes and version id are UNPROVEN. No upload and no object attestation.
-511a9f7d43d20947004e0c6324b9d6bcb96f9db9d32db5d95ba2782d61b1e1bc  infra/aws-overflow-watcher/CHECKLIST.md
-fa91b7375367414568f120079f8e64dc242ba74ca45e3ace689b92dbfdd819ae  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
+a4861e6818416e5f78c51d8fafd08ba9f382aafcba21d6261faa0734cd33d2e7  infra/aws-overflow-watcher/CHECKLIST.md
+834886932f807a67b616f00e2be9018125f937311a646dacdf591f5c9aa069dd  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
 22e24ef729421f3c83115622de6c0f998efb079cc60cf5c938781102d2aedfeb  infra/aws-overflow-watcher/README.md
 ac04eaa7f50c5aaadfef7dfd19f1f035ef668bf3cd996ea90037065d28a1919d  infra/aws-overflow-watcher/template.yaml
 4d460c8449813c1bd29b8574511ae85732bc5e2d368200401dcd6350b53b2758  infra/aws-overflow-watcher/boot/supervisor.sh
@@ -13,7 +13,7 @@ ac04eaa7f50c5aaadfef7dfd19f1f035ef668bf3cd996ea90037065d28a1919d  infra/aws-over
 fb223569f77d89a6ca0112980c8bc5a77498dee5011d6b6b2ce33832b8a16b9a  infra/aws-overflow-watcher/src/overflow_watcher/controller.py
 fd11f2993b5b1ffb3cf7a0d4304d25db334e01aab7e85fa90200d8a0974ee4d4  infra/aws-overflow-watcher/src/overflow_watcher/store.py
 737c43b550f3326fdbb42ae21c14dde07d07273458953de4f6e6fec955513621  infra/aws-overflow-watcher/src/overflow_watcher/config.py
-0d4ac19e49d43da9a8631e5f1a1a0ffd72bb1aac488cd7ec46166c261da39777  infra/aws-overflow-watcher/src/overflow_watcher/github_api.py
+789623b0f6cba5c88e92e20bdc3ff81ac553dd6616f36ec6bca8277a512a4581  infra/aws-overflow-watcher/src/overflow_watcher/github_api.py
 751ba4a1149fc5cec9e2f4e31439a04c11c0ea7783814ec45c62e3a687d4ed00  infra/aws-overflow-watcher/src/overflow_watcher/handler.py
 a677f5120156a8ae9ba8961fa110f020bd9b1cc4fb48b3d91efa6527bf8ff935  infra/aws-overflow-watcher/src/overflow_watcher/inventory.py
 4bee6084ccb7cff967ce9389f3e6846e07ca48c9052a172f80c99d6e11e9f4bf  infra/aws-overflow-watcher/src/overflow_watcher/jit_handoff.py

@@ -71,6 +71,7 @@ class LiveGitHub:
         request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
         request.add_header("Authorization", f"Bearer {token}")
         request.add_header("Accept", "application/vnd.github+json")
+        request.add_header("Content-Type", "application/json")
         try:
             with urllib.request.urlopen(request, timeout=10) as response:
                 if response.status not in (200, 201):
