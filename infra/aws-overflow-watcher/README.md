@@ -212,8 +212,12 @@ aws s3api head-object \
 ```
 
 `ContentLength` must equal `artifact_bytes` in the sibling
-`.binding.json`. `ChecksumSHA256` must equal the base64 encoding of the
-recorded `artifact_sha256`.
+`.binding.json`. `ChecksumSHA256` is the base64 encoding of the raw 32-byte digest.
+The binding stores `artifact_sha256` as hex. Compare with:
+
+```sh
+python3 -c 'import base64,sys;print(base64.b64encode(bytes.fromhex(sys.argv[1])).decode())' <artifact_sha256>
+```
 
 ## Tests
 

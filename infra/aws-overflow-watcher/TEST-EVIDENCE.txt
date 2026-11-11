@@ -2,7 +2,7 @@ command: sh infra/aws-overflow-watcher/scripts/run-tests.sh
 interpreter: /tmp/overflow-watcher-venv/bin/python
 boto3: 1.35.99
 dynamodb-local: localhost:8000 already listening
-result: Ran 69 tests in 3.829s
+result: Ran 70 tests in 3.359s
 status: OK
 exit: 0
 limitation: local zip binding only. No S3 object was read or written.

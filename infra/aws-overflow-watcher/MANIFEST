@@ -2,15 +2,16 @@ packet: overflow-watcher clean closeout above 7ae0727d7fbfb260425da8f494814d306b
 hash: sha256 of file bytes. This manifest does not name its own hash.
 offline: generated zip sha256 is bound to CodeS3Bucket, CodeS3Key, and CodeS3ObjectVersion names.
 hold: live S3 object bytes and version id are UNPROVEN. No upload and no object attestation.
-
-2d34244176fe924c9e34f9c959c67d6cb99b80bae48a5ee704f7d3026869c04b  infra/aws-overflow-watcher/CHECKLIST.md
-cdbb516b3569f5bca9753a05ec54994dde26b02cfb5d571428436d93cc57f967  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
-a7ba4bb95bab7f39890166a06a130b5f7c318038dc88de4b3f98e3bda0cb3d7f  infra/aws-overflow-watcher/README.md
+86b2df412f30a3511e5943cadcb84aecdb10d8a09a26e6f6741537befe418b7d  infra/aws-overflow-watcher/CHECKLIST.md
+8a2ebc16c7aafd8fc233733b851c9108b311903d06f405c6918adf6630c9e026  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
+f965ccb376ccaaa557cdc95b030283bd8a497c7c85998e938b449867bcff8029  infra/aws-overflow-watcher/README.md
 28602b84a16bae8d075754c5b34d8069bab820e4ada8cbe916144209e83a1e0c  infra/aws-overflow-watcher/template.yaml
 4d460c8449813c1bd29b8574511ae85732bc5e2d368200401dcd6350b53b2758  infra/aws-overflow-watcher/boot/supervisor.sh
 2a0c3848481e8685e46563fd734410076a035298ab1361b8500ce4694d5c5c53  infra/aws-overflow-watcher/scripts/package-lambda.sh
-29e27908f3acbf5994526440608cbd39bae41fdcea7f1ab64fc90c62d8b8adc6  infra/aws-overflow-watcher/src/overflow_watcher/guest_bootstrap.py
+7d2bfa9b9bfc01bcd3a21281b5c49a56db1e6cea9f52730d5bab0e4fc7ca2550  infra/aws-overflow-watcher/src/overflow_watcher/guest_bootstrap.py
 64dd8ab1f92ee14bdb3dd53338051c7724a1d81a93588c368535900455fe621f  infra/aws-overflow-watcher/src/overflow_watcher/budget.py
-2dafff039113b0159b841d65977720ac1e1f8c1de883480aad6244994135b23e  infra/aws-overflow-watcher/src/overflow_watcher/controller.py
+478f4c8d45ba98c622dd1bc354723a86284679f8dc917cfe22ffbbe8d8bb3034  infra/aws-overflow-watcher/src/overflow_watcher/controller.py
 d3d6b31ed6e98efe91991f478ed0e22668066da51f7cb91a9da248f7c2ac73f5  infra/aws-overflow-watcher/src/overflow_watcher/store.py
-b7085deace3746579435a537f3d5a5172955d05d3ba80fe16955f296146262fb  infra/aws-overflow-watcher/tests/test_review_fixes.py
+12f46380eb60b3cf101c65f14b275e187a4a57b54151251390942beb154a5b12  infra/aws-overflow-watcher/tests/test_review_fixes.py
+413feb1855a2f5974b8285cbbcbd1180281e952da608813015c84f26db723f62  .github/workflows/ci.yml
+c647010c87707b8e532bc6218f6f42734d6fcde291d68f962097ff07f1bff008  infra/aws-overflow-watcher/tests/fixtures/openjdk-pin.txt

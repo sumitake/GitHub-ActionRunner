@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Self-contained guest user data. The package travels inside the script."""
+"""Self-contained guest user data. The supervisor closure travels inside the script."""
 
 from __future__ import annotations
 
@@ -27,15 +27,18 @@ exec python3 -m overflow_watcher.supervisor
 PAYLOAD_LINE
 """
 
+# Import closure of `python -m overflow_watcher.supervisor`: package init,
+# supervisor.py, and types.py. EC2 rejects RunInstances user data above
+# 16384 raw bytes, so the guest tarball is only these modules.
+_SUPERVISOR_CLOSURE = ("__init__.py", "supervisor.py", "types.py")
+
 
 def render_user_data() -> str:
-    """Shell script that installs this package and execs the supervisor."""
+    """Shell script that installs the supervisor closure and execs it."""
     package = Path(__file__).resolve().parent
     blob = io.BytesIO()
     with tarfile.open(fileobj=blob, mode="w:gz") as archive:
-        for path in sorted(package.rglob("*")):
-            if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
-                continue
-            archive.add(path, arcname=str(Path("overflow_watcher") / path.relative_to(package)))
+        for name in _SUPERVISOR_CLOSURE:
+            archive.add(package / name, arcname=str(Path("overflow_watcher") / name))
     payload = base64.b64encode(blob.getvalue()).decode("ascii")
     return _SCRIPT.replace("PAYLOAD_LINE", payload)

@@ -143,8 +143,16 @@ class ReviewFixTests(unittest.TestCase):
         params = ec2_params(cfg())
         self.assertEqual(params["LaunchTemplate"]["LaunchTemplateId"], "lt-placeholder")
         self.assertNotIn("BlockDeviceMappings", params)
-        script = base64.b64decode(params["UserData"])
-        self.assertIn(b"overflow_watcher.supervisor", script)
+        # Botocore base64-encodes RunInstances UserData once. The value we pass
+        # is the raw script, and that raw form must fit in 16384 bytes.
+        raw = params["UserData"]
+        encoded = raw.encode("utf-8")
+        with self.subTest("raw limit"):
+            self.assertLessEqual(len(encoded), 16384, f"raw UserData is {len(encoded)} bytes")
+        with self.subTest("single encode"):
+            body = base64.b64decode(base64.b64encode(encoded))
+            self.assertTrue(body.startswith(b"#!"), body[:12])
+            self.assertIn(b"overflow_watcher.supervisor", body)
 
     def test_m2_capacity_refusal_after_ambiguous_keeps_reservation(self) -> None:
         store = fresh_store()
@@ -208,11 +216,12 @@ class ReviewFixTests(unittest.TestCase):
         self.assertLess(url_at, check_at)
         self.assertLess(sha_at, check_at)
         workflow = (ROOT.parents[1] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        expected = (ROOT / "tests" / "fixtures" / "openjdk-pin.txt").read_text(encoding="utf-8").strip()
-        plus = expected.index("+")
-        prefix, suffix = expected[: plus - 1], expected[plus - 1 :]
-        self.assertIn(f'openjdk_pin="{prefix}""{suffix}"', workflow)
-        self.assertIn("openjdk-21-jre-headless=${openjdk_pin}", workflow)
+        package, major = (ROOT / "tests" / "fixtures" / "openjdk-pin.txt").read_text(encoding="utf-8").split()
+        self.assertEqual(package, f"openjdk-{major}-jre-headless")
+        step = workflow.index("Install Java for overflow watcher")
+        window = workflow[step:step + 500]
+        self.assertIn(f"apt-get install -y --no-install-recommends {package}", window)
+        self.assertNotIn(f"{package}=", window)
 
     def test_c4b_threshold_boundaries(self) -> None:
         self.assertTrue(admission_allows(2999, 1, 3000))
@@ -531,6 +540,15 @@ class ReviewFixTests(unittest.TestCase):
             self.assertNotEqual(replaced.returncode, 0)
             self.assertIn("substituted or stale template input", replaced.stderr)
 
+    def test_readme_checksum_is_base64_of_raw_digest(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("base64 encoding of the raw 32-byte digest", readme)
+        self.assertIn(
+            "python3 -c 'import base64,sys;print(base64.b64encode(bytes.fromhex(sys.argv[1])).decode())' <artifact_sha256>",
+            readme,
+        )
+        self.assertNotIn("the base64 encoding of the recorded `artifact_sha256`", readme)
+
     def test_readme_states_none_does_not_terminate(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("A read of `None` is", readme)
@@ -602,6 +620,8 @@ class ReviewFixTests(unittest.TestCase):
             loaded = Path(proc.stdout.strip())
             self.assertEqual(loaded, guest / "overflow_watcher" / "supervisor.py")
             self.assertFalse(str(ROOT / "src") in str(loaded))
+            names = sorted(path.name for path in (guest / "overflow_watcher").glob("*.py"))
+            self.assertEqual(names, ["__init__.py", "supervisor.py", "types.py"])
 
     def test_past_allowance_alert_is_not_claimed_when_emit_fails(self) -> None:
         store = fresh_store()
