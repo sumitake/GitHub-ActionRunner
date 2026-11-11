@@ -1,11 +1,11 @@
-packet: overflow-watcher offline zip binding above a0c3b681cd939817e282a0ab4117cb75610bd940
+packet: overflow-watcher clean closeout above 7ae0727d7fbfb260425da8f494814d306b2bb2f5
 hash: sha256 of file bytes. This manifest does not name its own hash.
 offline: generated zip sha256 is bound to CodeS3Bucket, CodeS3Key, and CodeS3ObjectVersion names.
 hold: live S3 object bytes and version id are UNPROVEN. No upload and no object attestation.
 
-e9fbba6799b1b7ed7e06610d6e69d3e7e9868dc62b6bcb958d11851158716558  infra/aws-overflow-watcher/CHECKLIST.md
-8e8d792fa935c47179bc469313be507aa2dc80ad3fc3a4379579976602b4e324  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
-7ccde5ef6254c42a06956bf41a8c165a2ba35000aedffe5be76c90d660ceb5b6  infra/aws-overflow-watcher/README.md
+95296456786d3226086c7aa1009493fbec0d21733347eb0cda817262387890c6  infra/aws-overflow-watcher/CHECKLIST.md
+cdbb516b3569f5bca9753a05ec54994dde26b02cfb5d571428436d93cc57f967  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
+0f7eb090e01cdb22526f84ca7f996ce0374e216575899b720df338e96dacaa25  infra/aws-overflow-watcher/README.md
 28602b84a16bae8d075754c5b34d8069bab820e4ada8cbe916144209e83a1e0c  infra/aws-overflow-watcher/template.yaml
 4d460c8449813c1bd29b8574511ae85732bc5e2d368200401dcd6350b53b2758  infra/aws-overflow-watcher/boot/supervisor.sh
 2a0c3848481e8685e46563fd734410076a035298ab1361b8500ce4694d5c5c53  infra/aws-overflow-watcher/scripts/package-lambda.sh

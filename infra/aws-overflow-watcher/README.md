@@ -197,7 +197,22 @@ whose sha256 is that zip. The checker accepts the binding only when
 `template.yaml` still passes `CodeS3Bucket`, `CodeS3Key`, and
 `CodeS3ObjectVersion` into the function `Code` property, with no defaults.
 That is an offline identity check. It does not read or attest an S3 object,
-so the live object linkage stays unproven.
+so the live object linkage stays unproven. Before deploy, Ops can compare
+the recorded zip to the object those parameters name. The command is
+read-only. It was not run for this packet, so the live object linkage stays
+UNPROVEN/HOLD:
+
+```sh
+aws s3api head-object \
+  --bucket "$CodeS3Bucket" \
+  --key "$CodeS3Key" \
+  --version-id "$CodeS3ObjectVersion" \
+  --checksum-mode ENABLED
+```
+
+`ContentLength` must equal `artifact_bytes` in the sibling
+`.binding.json`. `ChecksumSHA256` must equal the base64 encoding of the
+recorded `artifact_sha256`.
 
 ## Tests
 
