@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
 
 from overflow_watcher.money import AccrualPlan
+
+_DIGITS = re.compile(r"[0-9]+\Z")
 
 
 class StoreError(RuntimeError):
@@ -79,8 +82,13 @@ class Store:
         month: str,
         cap: int,
         record: dict[str, Any],
-    ) -> bool:
-        """Debit the allowance and write the reservation, or write neither."""
+        job_lock: dict[str, Any] | None = None,
+    ) -> bool | str:
+        """Debit the allowance and write the reservation, or write neither.
+
+        Without a job lock the return is a bool, for callers that never launch.
+        With a job lock the return is ``ok``, ``duplicate``, or ``cap``.
+        """
         if allowance <= 0 or allowance > cap:
             return False
         item = {
@@ -92,37 +100,75 @@ class Store:
             "month": _s(month),
             "record": _s(json.dumps(record, sort_keys=True)),
         }
+        reservation_put = {
+            "Put": {
+                "TableName": self.table,
+                "Item": item,
+                "ConditionExpression": "attribute_not_exists(pk)",
+            }
+        }
+        ledger_update = {
+            "Update": {
+                "TableName": self.table,
+                "Key": _key(f"MONTH#{month}", "LEDGER"),
+                "UpdateExpression": "ADD accruedCents :allowance",
+                "ConditionExpression": (
+                    "attribute_not_exists(accruedCents) OR accruedCents <= :max_before"
+                ),
+                "ExpressionAttributeValues": {
+                    ":allowance": _n(allowance),
+                    ":max_before": _n(cap - allowance),
+                },
+            }
+        }
+        items = [reservation_put, ledger_update]
+        repo_id = ""
+        job_id = ""
+        if job_lock is not None:
+            repo_id = str(job_lock["repo_id"])
+            job_id = str(job_lock["job_id"])
+            items = [
+                {
+                    "Put": {
+                        "TableName": self.table,
+                        "Item": {
+                            "pk": _s(f"JOB#{repo_id}#{job_id}"),
+                            "sk": _s("META"),
+                            "state": _s("HELD"),
+                            "clientToken": _s(token),
+                            "month": _s(month),
+                            "allowanceCents": _n(allowance),
+                            "repoId": _s(repo_id),
+                            "jobId": _s(job_id),
+                            "createdEpoch": _n(int(job_lock["created_epoch"])),
+                            "instanceId": _s(""),
+                            "expiresAt": _n(int(job_lock["expires_at"])),
+                        },
+                        "ConditionExpression": "attribute_not_exists(pk)",
+                    }
+                },
+                reservation_put,
+                ledger_update,
+            ]
         try:
-            self.client.transact_write_items(
-                TransactItems=[
-                    {
-                        "Put": {
-                            "TableName": self.table,
-                            "Item": item,
-                            "ConditionExpression": "attribute_not_exists(pk)",
-                        }
-                    },
-                    {
-                        "Update": {
-                            "TableName": self.table,
-                            "Key": _key(f"MONTH#{month}", "LEDGER"),
-                            "UpdateExpression": "ADD accruedCents :allowance",
-                            "ConditionExpression": (
-                                "attribute_not_exists(accruedCents) OR accruedCents <= :max_before"
-                            ),
-                            "ExpressionAttributeValues": {
-                                ":allowance": _n(allowance),
-                                ":max_before": _n(cap - allowance),
-                            },
-                        }
-                    },
-                ]
-            )
+            self.client.transact_write_items(TransactItems=items)
         except ClientError as exc:
-            if exc.response["Error"]["Code"] == "TransactionCanceledException":
+            if exc.response["Error"]["Code"] != "TransactionCanceledException":
+                raise
+            if job_lock is None:
                 return False
-            raise
-        return True
+            return self._classify_reserve_cancel(
+                exc,
+                token=token,
+                allowance=allowance,
+                month=month,
+                cap=cap,
+                repo_id=repo_id,
+                job_id=job_id,
+            )
+        if job_lock is None:
+            return True
+        return "ok"
 
     def get_reservation(self, token: str) -> dict[str, Any] | None:
         item = self._get(f"RES#{token}", "META")
@@ -148,6 +194,11 @@ class Store:
         record = dict(reservation["record"])
         month = reservation["month"]
         allowance = reservation["allowanceCents"]
+        repo_id = str(record.get("repoId") or "")
+        job_id = str(record.get("jobId") or "")
+        job_item = None
+        if _DIGITS.fullmatch(repo_id) and _DIGITS.fullmatch(job_id):
+            job_item = self._get(f"JOB#{repo_id}#{job_id}", "META")
         record.update(
             {
                 "instanceId": instance_id,
@@ -159,27 +210,43 @@ class Store:
                 "state": "OPEN",
             }
         )
-        try:
-            self.client.transact_write_items(
-                TransactItems=[
-                    {
-                        "Delete": {
-                            "TableName": self.table,
-                            "Key": _key(f"RES#{token}", "META"),
-                            "ConditionExpression": "attribute_exists(pk) AND #state = :open",
-                            "ExpressionAttributeNames": {"#state": "state"},
-                            "ExpressionAttributeValues": {":open": _s("OPEN")},
-                        }
-                    },
-                    {
-                        "Put": {
-                            "TableName": self.table,
-                            "Item": self._instance_item(record),
-                            "ConditionExpression": "attribute_not_exists(pk)",
-                        }
-                    },
-                ]
+        transact = [
+            {
+                "Delete": {
+                    "TableName": self.table,
+                    "Key": _key(f"RES#{token}", "META"),
+                    "ConditionExpression": "attribute_exists(pk) AND #state = :open",
+                    "ExpressionAttributeNames": {"#state": "state"},
+                    "ExpressionAttributeValues": {":open": _s("OPEN")},
+                }
+            },
+            {
+                "Put": {
+                    "TableName": self.table,
+                    "Item": self._instance_item(record),
+                    "ConditionExpression": "attribute_not_exists(pk)",
+                }
+            },
+        ]
+        if job_item is not None:
+            transact.append(
+                {
+                    "Update": {
+                        "TableName": self.table,
+                        "Key": _key(f"JOB#{repo_id}#{job_id}", "META"),
+                        "UpdateExpression": "SET instanceId = :id",
+                        "ConditionExpression": "clientToken = :token AND #state = :held",
+                        "ExpressionAttributeNames": {"#state": "state"},
+                        "ExpressionAttributeValues": {
+                            ":id": _s(instance_id),
+                            ":token": _s(token),
+                            ":held": _s("HELD"),
+                        },
+                    }
+                }
             )
+        try:
+            self.client.transact_write_items(TransactItems=transact)
         except ClientError as exc:
             if exc.response["Error"]["Code"] != "TransactionCanceledException":
                 raise
@@ -193,38 +260,56 @@ class Store:
         reservation = self.get_reservation(token)
         if reservation is None:
             return
+        record = reservation["record"]
+        repo_id = str(record.get("repoId") or "")
+        job_id = str(record.get("jobId") or "")
+        digits_ok = bool(_DIGITS.fullmatch(repo_id) and _DIGITS.fullmatch(job_id))
+        if "jitParameter" in record and not digits_ok:
+            return
         allowance = reservation["allowanceCents"]
         month = reservation["month"]
-        self.client.transact_write_items(
-            TransactItems=[
-                {
-                    "Delete": {
-                        "TableName": self.table,
-                        "Key": _key(f"RES#{token}", "META"),
-                        "ConditionExpression": "attribute_exists(pk)",
+        items: list[dict[str, Any]] = [
+            {
+                "Delete": {
+                    "TableName": self.table,
+                    "Key": _key(f"RES#{token}", "META"),
+                    "ConditionExpression": "attribute_exists(pk)",
+                }
+            },
+            {
+                "Update": {
+                    "TableName": self.table,
+                    "Key": _key(f"MONTH#{month}", "LEDGER"),
+                    "UpdateExpression": "ADD accruedCents :refund",
+                    "ConditionExpression": "accruedCents >= :allowance",
+                    "ExpressionAttributeValues": {
+                        ":refund": _n(-allowance),
+                        ":allowance": _n(allowance),
+                    },
+                }
+            },
+        ]
+        if digits_ok:
+            job_item = self._get(f"JOB#{repo_id}#{job_id}", "META")
+            if job_item is not None and job_item.get("clientToken", {}).get("S") == token:
+                items.append(
+                    {
+                        "Delete": {
+                            "TableName": self.table,
+                            "Key": _key(f"JOB#{repo_id}#{job_id}", "META"),
+                            "ConditionExpression": "clientToken = :token",
+                            "ExpressionAttributeValues": {":token": _s(token)},
+                        }
                     }
-                },
-                {
-                    "Update": {
-                        "TableName": self.table,
-                        "Key": _key(f"MONTH#{month}", "LEDGER"),
-                        "UpdateExpression": "ADD accruedCents :refund",
-                        "ConditionExpression": "accruedCents >= :allowance",
-                        "ExpressionAttributeValues": {
-                            ":refund": _n(-allowance),
-                            ":allowance": _n(allowance),
-                        },
-                    }
-                },
-            ]
-        )
+                )
+        self.client.transact_write_items(TransactItems=items)
 
-    def mark_reservation_ambiguous(self, token: str) -> None:
+    def update_reservation_fields(self, token: str, fields: dict[str, Any]) -> None:
         item = self._get(f"RES#{token}", "META")
         if item is None:
             return
         record = json.loads(item["record"]["S"])
-        record["ambiguousAttempt"] = True
+        record.update(fields)
         self.client.update_item(
             TableName=self.table,
             Key=_key(f"RES#{token}", "META"),
@@ -232,6 +317,63 @@ class Store:
             ExpressionAttributeNames={"#record": "record"},
             ExpressionAttributeValues={":record": _s(json.dumps(record, sort_keys=True))},
         )
+
+    def mark_reservation_ambiguous(self, token: str) -> None:
+        self.update_reservation_fields(token, {"ambiguousAttempt": True})
+
+    def instances_returned(self, repo_id: str, job_id: str) -> int:
+        """How many instance ids have been stored for this job, open or closed."""
+        count = 0
+        for item in self._scan_prefix("INST#", "META"):
+            raw = item.get("record", {}).get("S")
+            if not raw:
+                continue
+            record = json.loads(raw)
+            if str(record.get("repoId", "")) == repo_id and str(record.get("jobId", "")) == job_id:
+                count += 1
+        return count
+
+    def list_job_locks(self, repo_id: str) -> list[dict[str, Any]]:
+        return [_plain(item) for item in self._scan_prefix(f"JOB#{repo_id}#", "META")]
+
+    def touch_job_lock(self, repo_id: str, job_id: str, expires_at: int) -> None:
+        self.client.update_item(
+            TableName=self.table,
+            Key=_key(f"JOB#{repo_id}#{job_id}", "META"),
+            UpdateExpression="SET expiresAt = :expires",
+            ConditionExpression="attribute_exists(pk)",
+            ExpressionAttributeValues={":expires": _n(expires_at)},
+        )
+
+    def delete_job_lock(self, repo_id: str, job_id: str) -> None:
+        self.client.delete_item(TableName=self.table, Key=_key(f"JOB#{repo_id}#{job_id}", "META"))
+
+    def _classify_reserve_cancel(
+        self,
+        exc: ClientError,
+        *,
+        token: str,
+        allowance: int,
+        month: str,
+        cap: int,
+        repo_id: str,
+        job_id: str,
+    ) -> str:
+        reasons = exc.response.get("CancellationReasons") or []
+        codes = [str(item.get("Code", "")) for item in reasons if isinstance(item, dict)]
+        if len(codes) >= 3:
+            if codes[0] == "ConditionalCheckFailed" or codes[1] == "ConditionalCheckFailed":
+                return "duplicate"
+            if codes[2] == "ConditionalCheckFailed":
+                return "cap"
+            return "duplicate"
+        if self._get(f"JOB#{repo_id}#{job_id}", "META") is not None:
+            return "duplicate"
+        if self._get(f"RES#{token}", "META") is not None:
+            return "duplicate"
+        if self.get_accrued(month) > cap - allowance:
+            return "cap"
+        return "duplicate"
 
     def release_all_open_reservations(self) -> None:
         for reservation in self.list_open_reservations():

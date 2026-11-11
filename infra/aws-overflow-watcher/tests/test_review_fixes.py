@@ -16,7 +16,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from fakes import FakeEc2, FakeGitHub
+from fakes import FakeEc2, FakeGitHub, FakeSsm
 from support import NOW, add_cents, cfg, fresh_store, sample_job, seed_instance, watcher_env
 
 from overflow_watcher.budget import AlertLog
@@ -140,7 +140,7 @@ class ReviewFixTests(unittest.TestCase):
         self.assertEqual([item.kind for item in second.alerts.items if item.kind in {"budget", "grace"}], [])
 
     def test_m1_run_instances_uses_launch_template_and_user_data(self) -> None:
-        params = ec2_params(cfg())
+        params = ec2_params(cfg(), parameter_name="/overflow-watcher/jit/" + ("ab" * 32))
         self.assertEqual(params["LaunchTemplate"]["LaunchTemplateId"], "lt-placeholder")
         self.assertNotIn("BlockDeviceMappings", params)
         # Botocore base64-encodes RunInstances UserData once. The value we pass
@@ -158,14 +158,16 @@ class ReviewFixTests(unittest.TestCase):
         store = fresh_store()
         ec2 = FakeEc2()
         ec2.ambiguous = True
+        github = FakeGitHub()
+        ssm = FakeSsm()
         config = cfg()
         month = month_key(NOW)
-        self.assertEqual(launch_one(store, ec2, config, sample_job(), NOW), "ambiguous")
+        self.assertEqual(launch_one(store, ec2, config, sample_job(), NOW, github=github, ssm=ssm), "ambiguous")
         held = store.get_accrued(month)
         self.assertEqual(len(store.list_open_reservations()), 1)
         ec2.ambiguous = False
         ec2.quota = True
-        resolve_reservations(store, ec2, AlertLog(), NOW)
+        resolve_reservations(store, ec2, AlertLog(), NOW, github=github, ssm=ssm)
         self.assertEqual(len(store.list_open_reservations()), 1)
         self.assertEqual(store.get_accrued(month), held)
 
@@ -606,7 +608,7 @@ class ReviewFixTests(unittest.TestCase):
         self.assertNotEqual(int(refreshed["deadline"]), first_deadline)
 
     def test_guest_bootstrap_imports_without_the_source_tree(self) -> None:
-        script = render_user_data()
+        script = render_user_data("/overflow-watcher/jit/" + ("cd" * 32))
         self.assertNotIn("../src", script)
         with tempfile.TemporaryDirectory() as tmp:
             guest = Path(tmp) / "opt" / "overflow-watcher"

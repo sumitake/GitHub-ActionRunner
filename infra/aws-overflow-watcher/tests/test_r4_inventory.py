@@ -46,6 +46,7 @@ def _routes(runners, jobs=None, *, runner_pages: list[HttpPage] | None = None) -
     job_body = {
         "jobs": [
             {
+                "id": 4242,
                 "status": "queued",
                 "name": "test",
                 "labels": list(jobs),
@@ -100,6 +101,7 @@ class InventoryTests(unittest.TestCase):
                 {
                     "jobs": [
                         {
+                            "id": 4242,
                             "status": "queued",
                             "name": "test",
                             "labels": ["self-hosted", "Linux"],
@@ -117,8 +119,12 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(denied_label.jobs, ())
         self.assertFalse(denied_label.uncertain)
 
-        online = _routes([{"status": "online", "labels": [{"name": "self-hosted"}, {"name": "Linux"}]}])
-        self.assertEqual(assess_repo(ScriptTransport(online), REPO, NOW).jobs, ())
+        online = _routes(
+            [{"status": "online", "busy": False, "labels": [{"name": "self-hosted"}, {"name": "Linux"}]}]
+        )
+        idle = assess_repo(ScriptTransport(online), REPO, NOW)
+        self.assertEqual(idle.jobs, ())
+        self.assertFalse(idle.uncertain)
 
         offline = _routes([{"status": "offline", "labels": [{"name": "self-hosted"}, {"name": "Linux"}]}])
         self.assertEqual(len(assess_repo(ScriptTransport(offline), REPO, NOW).jobs), 1)

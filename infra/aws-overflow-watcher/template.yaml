@@ -27,14 +27,17 @@ Parameters:
     Description: REQUIRED_INPUT object version id for that key. No default. Not proof the object was read.
   GithubAppIdentifier:
     Type: String
-    Description: REQUIRED_INPUT GitHub App identifier. No default.
+    Description: Existing release App ghar-release-settings, App ID 4644050. Config parameter, not a code pin. No default.
   GithubAppPem:
     Type: String
     NoEcho: true
-    Description: REQUIRED_INPUT GitHub App PEM. Do not commit a value.
+    Description: REQUIRED_INPUT PEM for ghar-release-settings. Fill from the BWS item id recorded in docs/operations/overflow-watcher-deploy-inputs.md. Id only; do not commit a value.
+  AlertEmail:
+    Type: String
+    Description: REQUIRED_INPUT email for the budget and grace alarms. No default.
   WatchedRepos:
     Type: String
-    Description: REQUIRED_INPUT JSON list of repo id, owner, name, and installation.
+    Description: REQUIRED_INPUT JSON list of repo id, owner, name, and installation. Use installation 154814987 for the existing ghar-release-settings installation. Config, not a code pin.
   AllInHourlyPrice:
     Type: String
     Description: REQUIRED_INPUT all-in hourly price in dollars, including instance, IPv4, and EBS.
@@ -144,6 +147,14 @@ Resources:
                   - Fn::GetAtt:
                       - ControllerLogGroup
                       - Arn
+                  - Fn::Sub: ${ControllerLogGroup.Arn}:*
+              - Sid: JitParameterWrite
+                Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                Resource:
+                  Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/overflow-watcher/jit/*
   RunnerRole:
     Type: AWS::IAM::Role
     Properties:
@@ -154,6 +165,18 @@ Resources:
             Principal:
               Service: ec2.amazonaws.com
             Action: sts:AssumeRole
+      Policies:
+        - PolicyName: jit-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: JitParameterReadOnce
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:DeleteParameter
+                Resource:
+                  Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/overflow-watcher/jit/*
   RunnerInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -269,6 +292,9 @@ Resources:
           TABLE_NAME:
             Ref: StateTable
           PYTHONPATH: /var/task/src
+      LoggingConfig:
+        LogGroup:
+          Ref: ControllerLogGroup
   MinuteRule:
     Type: AWS::Events::Rule
     Properties:
@@ -291,3 +317,123 @@ Resources:
         Fn::GetAtt:
           - MinuteRule
           - Arn
+  SoftCapMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName:
+        Ref: ControllerLogGroup
+      FilterPattern: '{ $.kind = "budget" }'
+      MetricTransformations:
+        - MetricNamespace: OverflowWatcher
+          MetricName: SoftCapCrossed
+          MetricValue: "1"
+          DefaultValue: 0
+          Unit: Count
+  GraceMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName:
+        Ref: ControllerLogGroup
+      FilterPattern: '{ $.kind = "grace" }'
+      MetricTransformations:
+        - MetricNamespace: OverflowWatcher
+          MetricName: GraceCrossed
+          MetricValue: "1"
+          DefaultValue: 0
+          Unit: Count
+  BudgetAlertKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypts the overflow watcher budget and grace SNS topic.
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountRoot
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::Sub: arn:aws:iam::${AWS::AccountId}:root
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: SnsAndCloudWatch
+            Effect: Allow
+            Principal:
+              Service:
+                - sns.amazonaws.com
+                - cloudwatch.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - "kms:GenerateDataKey*"
+            Resource: "*"
+            Condition:
+              StringEquals:
+                aws:SourceAccount:
+                  Ref: AWS::AccountId
+  BudgetAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      KmsMasterKeyId:
+        Fn::GetAtt:
+          - BudgetAlertKey
+          - Arn
+  BudgetAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint:
+        Ref: AlertEmail
+      TopicArn:
+        Ref: BudgetAlertTopic
+  SoftCapAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: OverflowWatcherSoftCap
+      Namespace: OverflowWatcher
+      MetricName: SoftCapCrossed
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Ref: BudgetAlertTopic
+  GraceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: OverflowWatcherGrace
+      Namespace: OverflowWatcher
+      MetricName: GraceCrossed
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Ref: BudgetAlertTopic
+  BudgetAlertTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - Ref: BudgetAlertTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudWatchAlarms
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource:
+              Ref: BudgetAlertTopic
+            Condition:
+              ArnEquals:
+                aws:SourceArn:
+                  - Fn::GetAtt:
+                      - SoftCapAlarm
+                      - Arn
+                  - Fn::GetAtt:
+                      - GraceAlarm
+                      - Arn

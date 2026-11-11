@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import unittest
 
-from fakes import FakeEc2, FakeGitHub
+from fakes import FakeEc2, FakeGitHub, FakeSsm
 from support import NOW, add_cents, cfg, fresh_store, sample_job, seed_instance
 
 from overflow_watcher.budget import AlertLog
@@ -78,12 +78,15 @@ class NegativeTests(unittest.TestCase):
         config = cfg()
         month = month_key(NOW)
         record = _record_for(sample_job(), config, "tok-crash", NOW, month)
+        record["jitReady"] = True
         self.assertTrue(
             store.reserve(token="tok-crash", allowance=config.allowance, month=month, cap=3000, record=record)
         )
         ec2.by_token["tok-crash"] = "i-existing"
         held = store.get_accrued(month)
-        resolve_reservations(store, ec2, AlertLog(), NOW)
+        github = FakeGitHub()
+        resolve_reservations(store, ec2, AlertLog(), NOW, github=github, ssm=FakeSsm())
+        self.assertEqual(github.mint_calls, [])
         self.assertEqual(ec2.calls, ["tok-crash"])
         self.assertEqual(ec2.by_token, {"tok-crash": "i-existing"})
         self.assertIsNone(store.get_reservation("tok-crash"))
