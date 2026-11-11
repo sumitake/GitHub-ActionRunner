@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import base64
 import secrets
 from dataclasses import dataclass, field
 from typing import Any
@@ -43,8 +42,8 @@ def admission_allows(accrued: int, allowance: int, cap: int) -> bool:
 
 
 def supervisor_user_data() -> str:
-    """Base64 of the self-contained guest bootstrap sent as RunInstances user data."""
-    return base64.b64encode(render_user_data().encode("utf-8")).decode("ascii")
+    """Raw guest script. Botocore base64-encodes RunInstances UserData once."""
+    return render_user_data()
 
 
 def ec2_params(cfg: Any) -> dict[str, Any]:

@@ -14,7 +14,7 @@ jobs:
       group: ${{ github.workflow }}-go-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.10
+      GOTOOLCHAIN: go1.26.11
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,7 +72,7 @@ jobs:
       group: ${{ github.workflow }}-shell-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.10
+      GOTOOLCHAIN: go1.26.11
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -100,7 +100,7 @@ jobs:
       group: ${{ github.workflow }}-repository-metadata-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.10
+      GOTOOLCHAIN: go1.26.11
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -137,7 +137,7 @@ jobs:
       - name: Python unit tests
         run: find tests -name 'test_*.py' -not -path '*/__pycache__/*' | sed 's/\.py$//; s#/#.#g' | xargs python3 -m unittest -v
       - name: Install Java for overflow watcher
-        run: openjdk_pin="21.0.12.""1+1-1~24.04.4" && sudo apt-get update && sudo apt-get install -y --no-install-recommends "openjdk-21-jre-headless=${openjdk_pin}"
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openjdk-21-jre-headless
       - name: Overflow watcher tests
         run: sh infra/aws-overflow-watcher/scripts/run-tests.sh
       - name: Sanitize public source
@@ -152,7 +152,7 @@ jobs:
       group: ${{ github.workflow }}-container-${{ github.ref }}
       cancel-in-progress: true
     env:
-      GOTOOLCHAIN: go1.26.10
+      GOTOOLCHAIN: go1.26.11
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
