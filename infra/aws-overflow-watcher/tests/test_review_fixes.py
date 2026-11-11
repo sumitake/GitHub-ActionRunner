@@ -543,10 +543,20 @@ class ReviewFixTests(unittest.TestCase):
     def test_readme_checksum_is_base64_of_raw_digest(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("base64 encoding of the raw 32-byte digest", readme)
-        self.assertIn(
-            "python3 -c 'import base64,sys;print(base64.b64encode(bytes.fromhex(sys.argv[1])).decode())' <artifact_sha256>",
-            readme,
+        line = next(
+            row for row in readme.splitlines() if row.startswith("python3 -c 'import base64,sys;") and "bytes.fromhex" in row
         )
+        self.assertTrue(line.endswith(' "$artifact_sha256"'), line)
+        empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        done = subprocess.run(
+            ["sh", "-c", line, "sh"],
+            env={**os.environ, "artifact_sha256": empty},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=")
         self.assertNotIn("the base64 encoding of the recorded `artifact_sha256`", readme)
 
     def test_readme_states_none_does_not_terminate(self) -> None:

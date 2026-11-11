@@ -216,7 +216,7 @@ aws s3api head-object \
 The binding stores `artifact_sha256` as hex. Compare with:
 
 ```sh
-python3 -c 'import base64,sys;print(base64.b64encode(bytes.fromhex(sys.argv[1])).decode())' <artifact_sha256>
+python3 -c 'import base64,sys;print(base64.b64encode(bytes.fromhex(sys.argv[1])).decode())' "$artifact_sha256"
 ```
 
 ## Tests
