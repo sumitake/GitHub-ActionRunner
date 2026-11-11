@@ -53,7 +53,7 @@ class NegativeTests(unittest.TestCase):
         self.assertIsNotNone(store.get_reservation("tok-hold"))
         self.assertEqual(store.get_accrued(month), config.allowance)
         ec2.index = 0
-        reconcile(store, ec2, index_count=0)
+        reconcile(store, ec2, index_count=0, now=NOW)
         self.assertIsNotNone(store.get_reservation("tok-hold"))
 
     def test_f7c_job_assigned_while_idle_keeps_running(self) -> None:
@@ -113,7 +113,7 @@ class NegativeTests(unittest.TestCase):
             has_tag=False,
             tagged_list=False,
         )
-        reconcile(store, ec2, index_count=0)
+        reconcile(store, ec2, index_count=0, now=NOW)
         saved = store.get_instance("i-hidden")
         self.assertIsNotNone(saved)
         assert saved is not None

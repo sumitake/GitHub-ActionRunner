@@ -66,13 +66,18 @@ wait out a 15-minute cooldown. The handler does not loop on that error (C5).
 R2 / F5. The month bucket is the America/Los_Angeles calendar month. The
 all-in hourly price is a decimal dollar string supplied by config (instance
 plus public IPv4 plus EBS). The initial debit is that rate times 6 hours,
-rounded up to integer cents. Six hours is an allowance, not a ceiling and
-not a refundable minimum. Later polls add only the positive delta of actual
-elapsed time past the per-instance watermark, split across LA months,
-including across the November DST change. Duplicate or stale invocations add
-zero. Open obligations stay on the books across the month boundary. Figures
-are estimated accrued cost, not AWS invoice charges. Admission debits are
-not refunded when a job finishes early.
+rounded up to integer cents. Six hours is a reservation while the instance
+is open, not a ceiling and not a permanent charge. Later polls add only the
+positive delta of actual elapsed time past the per-instance watermark, split
+across LA months, including across the November DST change. Duplicate or
+stale invocations add zero. Open obligations stay on the books across the
+month boundary. When a positive EC2 read shows the instance terminated, the
+close trues the debit up to actual runtime (launch to the closing poll, at
+least 60 seconds) times the all-in price, per LA month, in the same
+transaction that closes the record. A short job therefore releases the rest
+of its allowance; the only limits are the monthly budget and the grace stop.
+A refund that would take a month ledger below zero cancels the close and
+keeps the debit. Figures are estimated accrued cost, not AWS invoice charges.
 
 ## Budget
 
@@ -177,7 +182,18 @@ must include `--ephemeral` (one job). The controller writes the encoded
 JIT config to an SSM SecureString at `/overflow-watcher/jit/<client-token>`
 and puts only that name in user data. The guest reads the value, deletes
 the parameter, and sets `RUNNER_CONFIG` to the file and `RUNNER_COMMAND` to
-a wrapper that execs `Runner.Listener`. The encoded config is not written
+a wrapper that execs `Runner.Listener`. The image is stock Ubuntu 24.04
+(`AmiId` defaults to Canonical's public SSM parameter). Before it reads the
+secret, the guest downloads the runner version pinned in
+`release/manifest.json`, refuses it unless the sha256 matches, and installs
+it at `/opt/actions-runner`. If that install fails, the secret is not read
+and the supervisor takes the missing-config path below. The guest reads and
+deletes the secret with a stdlib SigV4 client (`guest_ssm.py`), because
+Ubuntu images have no aws CLI. It installs git with apt only if the image
+lacks it. When GitHub pushes a runner self-update, the listener exits 3 or 4.
+The supervisor relaunches it only after the updater writes
+`update.finished` (waiting up to 120 seconds), at most three times;
+otherwise that exit is reported like any other abnormal exit. The encoded config is not written
 to DynamoDB or user data. The supervisor shuts the guest down
 only when the listener and worker process tree have exited naturally, the
 supervisor did not restart them, a job was actually assigned, and no worker
@@ -216,17 +232,16 @@ agent-collab-workspace, and keicrew. Watched repos stay the configured
 three. Metadata: Read is mandatory on every GitHub App and is not
 sufficient for any call below. No organization permissions.
 
-Live B1 registration is blocked. GitHub's REST docs for
+GitHub's REST docs for
 `POST /repos/{owner}/{repo}/actions/runners/generate-jitconfig` require
-"Administration" repository permissions (write). This App has
-Administration read only. That grant is an open John decision. This
-change does not assume it will be given and does not add a workaround.
+"Administration" repository permissions (write). John granted Administration
+write on this App on 2026-11-11, which unblocks live B1 registration.
 
-| Permission     | Level                                          | Calls                                                                                                                                                                              |
-| -------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Actions        | Read and write                                 | Read lists queued runs and jobs. Write cancels a run during the budget stop. Write is the grant; read is included. If cancel fails, the controller terminates once after the wait. |
-| Administration | Read today; write required for B1, not granted | Read lists self-hosted runners. Write would call `generate-jitconfig`. Read alone is not enough for that POST, so live JIT minting stays blocked.                                  |
-| Metadata       | Read                                           | Platform mandatory. It cannot be turned off. It does not authorize the calls above.                                                                                                |
+| Permission     | Level                                     | Calls                                                                                                                                                                              |
+| -------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Actions        | Read and write                            | Read lists queued runs and jobs. Write cancels a run during the budget stop. Write is the grant; read is included. If cancel fails, the controller terminates once after the wait. |
+| Administration | Read and write (write granted 2026-11-11) | Read lists self-hosted runners. Write calls `generate-jitconfig` for the JIT runner.                                                                                               |
+| Metadata       | Read                                      | Platform mandatory. It cannot be turned off. It does not authorize the calls above.                                                                                                |
 
 Not requested, because this process does not call them: Contents, Workflows,
 Checks, Secrets, Variables, Environments, Pull requests, and organization

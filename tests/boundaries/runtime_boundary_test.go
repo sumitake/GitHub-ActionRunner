@@ -1537,9 +1537,9 @@ func checkPinsSizingUpgradeAndFence(
 	t.Helper()
 	pins := string(mustRead(t, filepath.Join(root, "internal/buildinfo/pins.go")))
 	for _, anchor := range []string{
-		`Version:               "v2.338.0"`,
-		`LinuxX64SHA256:        "af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32"`,
-		`SourceCommit:          "197ca027b90de199464dee3bb9ff198a1db60967"`,
+		`Version:               "v2.338.2"`,
+		`LinuxX64SHA256:        "baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40"`,
+		`SourceCommit:          "d1eb12d4b115c301201de27d667284e1a80f2ab5"`,
 		`RunnerBaseImage: "debian:bookworm-slim@sha256:`,
 		`AdapterImage:    "scratch"`,
 		`BrokerImage:     "scratch"`,

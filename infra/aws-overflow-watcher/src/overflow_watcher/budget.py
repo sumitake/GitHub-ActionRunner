@@ -234,7 +234,7 @@ def enforce_budget_stop(
         instance_id = inst["instanceId"]
         view = views.get(instance_id)
         if view and not view.uncertain and view.state == "terminated":
-            store.close_instance(instance_id)
+            store.close_instance(instance_id, now)
             continue
         future = remaining_future_cents(
             int(inst["launchEpoch"]),
@@ -420,7 +420,7 @@ def _advance_candidate(
         return "blocked"
     if gate != "stop":
         if view is not None and view.state == "terminated":
-            store.close_instance(candidate.instance_id)
+            store.close_instance(candidate.instance_id, now)
         return "spared"
     if phase == "cancel_wait":
         completed = github.workflow_completed(

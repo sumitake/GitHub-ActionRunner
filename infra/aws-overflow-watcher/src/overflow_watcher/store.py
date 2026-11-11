@@ -10,7 +10,7 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
-from overflow_watcher.money import AccrualPlan
+from overflow_watcher.money import AccrualPlan, actual_by_month
 
 _DIGITS = re.compile(r"[0-9]+\Z")
 
@@ -395,18 +395,67 @@ class Store:
     def has_instance(self, instance_id: str) -> bool:
         return self.get_instance(instance_id) is not None
 
-    def close_instance(self, instance_id: str) -> bool:
+    def close_instance(self, instance_id: str, now: int) -> bool:
+        """Close a terminated instance and true up its debit to actual runtime.
+
+        The admission allowance was a reservation. At close the per-month debit
+        becomes the actual runtime cost through max(now, watermark), and each
+        month ledger moves by the difference, in one transaction with the close.
+        A refund that would take a month ledger below zero cancels the whole
+        write, so the debit stays and the record stays open.
+        """
+        inst = self.get_instance(instance_id)
+        if inst is None or inst.get("state") != "OPEN":
+            return False
+        old = {str(k): int(v) for k, v in inst.get("debitByMonth", {}).items()}
+        watermark = int(inst["watermarkEpoch"])
+        actual = actual_by_month(
+            int(inst["launchEpoch"]),
+            max(now, watermark),
+            int(inst["priceNumer"]),
+            int(inst["priceDenom"]),
+        )
+        items: list[dict[str, Any]] = [
+            {
+                "Update": {
+                    "TableName": self.table,
+                    "Key": _key(f"INST#{instance_id}", "META"),
+                    "UpdateExpression": (
+                        "SET #state = :closed, cumulativeDebitCents = :cumulative, "
+                        "debitByMonth = :debits"
+                    ),
+                    "ConditionExpression": (
+                        "attribute_exists(pk) AND #state = :open AND watermarkEpoch = :watermark"
+                    ),
+                    "ExpressionAttributeNames": {"#state": "state"},
+                    "ExpressionAttributeValues": {
+                        ":closed": _s("CLOSED"),
+                        ":open": _s("OPEN"),
+                        ":watermark": _n(watermark),
+                        ":cumulative": _n(sum(actual.values())),
+                        ":debits": _s(json.dumps(actual, sort_keys=True)),
+                    },
+                }
+            }
+        ]
+        for month in sorted(set(old) | set(actual)):
+            delta = actual.get(month, 0) - old.get(month, 0)
+            if delta == 0:
+                continue
+            update: dict[str, Any] = {
+                "TableName": self.table,
+                "Key": _key(f"MONTH#{month}", "LEDGER"),
+                "UpdateExpression": "ADD accruedCents :delta",
+                "ExpressionAttributeValues": {":delta": _n(delta)},
+            }
+            if delta < 0:
+                update["ConditionExpression"] = "accruedCents >= :refund"
+                update["ExpressionAttributeValues"][":refund"] = _n(-delta)
+            items.append({"Update": update})
         try:
-            self.client.update_item(
-                TableName=self.table,
-                Key=_key(f"INST#{instance_id}", "META"),
-                UpdateExpression="SET #state = :closed",
-                ConditionExpression="attribute_exists(pk) AND #state = :open",
-                ExpressionAttributeNames={"#state": "state"},
-                ExpressionAttributeValues={":closed": _s("CLOSED"), ":open": _s("OPEN")},
-            )
+            self.client.transact_write_items(TransactItems=items)
         except ClientError as exc:
-            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            if exc.response["Error"]["Code"] == "TransactionCanceledException":
                 return False
             raise
         return True

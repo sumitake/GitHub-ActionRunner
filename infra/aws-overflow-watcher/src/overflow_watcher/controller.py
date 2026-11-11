@@ -104,8 +104,10 @@ def _drop_parameter(ssm: Any, name: str) -> None:
         return
 
 
-def reconcile(store: Store, ec2: Any, *, index_count: int | None, ssm: Any = None) -> None:
-    """Close records only on a positive terminated read. Never release reservations."""
+def reconcile(
+    store: Store, ec2: Any, *, index_count: int | None, now: int, ssm: Any = None
+) -> None:
+    """Close records only on a positive terminated read, trued up to actual runtime."""
     views = {}
     described_empty = True
     try:
@@ -126,7 +128,7 @@ def reconcile(store: Store, ec2: Any, *, index_count: int | None, ssm: Any = Non
             saved = store.get_instance(instance_id)
             if saved:
                 _drop_parameter(ssm, str(saved.get("jitParameter") or ""))
-        store.close_instance(instance_id)
+        store.close_instance(instance_id, now)
 
 
 def _record_for(
@@ -473,7 +475,7 @@ def run_poll(
     resolve_reservations(store, ec2, result.alerts, now, github=github, ssm=ssm)
     accrue(store, result.alerts, now)
     index = ec2.index_count() if hasattr(ec2, "index_count") else None
-    reconcile(store, ec2, index_count=index, ssm=ssm)
+    reconcile(store, ec2, index_count=index, now=now, ssm=ssm)
     result.budget = enforce_budget_stop(
         store=store,
         ec2=ec2,

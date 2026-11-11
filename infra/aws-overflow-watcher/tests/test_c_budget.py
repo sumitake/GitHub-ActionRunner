@@ -12,7 +12,7 @@ from support import NOW, add_cents, cfg, fresh_store, sample_job, seed_instance,
 
 from overflow_watcher.config import load_config
 from overflow_watcher.controller import launch_one, run_poll
-from overflow_watcher.money import month_key
+from overflow_watcher.money import cost_cents, month_key
 from overflow_watcher.types import Decision, InstanceView
 
 
@@ -178,7 +178,9 @@ class BudgetTests(unittest.TestCase):
         again = run_poll(store, ec2, ec2, github, config, NOW + 180)
         self.assertEqual(ec2.terminate_calls, [["i-wait"]])
         self.assertEqual(again.budget.terminated, ())
-        self.assertEqual(store.get_accrued(month), 3400)
+        # Closing the terminated instance replaces its 400-cent reservation with actual runtime.
+        self.assertEqual(store.get_instance("i-wait")["state"], "CLOSED")
+        self.assertEqual(store.get_accrued(month), 3400 - 400 + cost_cents(195, 1, 100))
 
     def test_c_budget_stop_minimum_set(self) -> None:
         store = fresh_store()

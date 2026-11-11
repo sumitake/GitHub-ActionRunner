@@ -23,6 +23,14 @@ class Proof:
     runner_config_present: bool
 
 
+# Runner.Listener exits 3 (RunnerUpdating) or 4 (RunOnceRunnerUpdating) after
+# a server-pushed self-update is staged; the updater writes update.finished
+# when the new files are in place. Relaunch only after that flag is seen, at
+# most three times. Otherwise the exit falls through to the report/park path.
+UPDATE_EXIT_CODES = (3, 4)
+UPDATE_WAIT_SECONDS = 120
+MAX_UPDATE_RELAUNCHES = 3
+
 KEEP = "keep"
 SHUTDOWN = "shutdown"
 REPORT_KEEP = "report-keep"
@@ -102,6 +110,17 @@ def _shutdown() -> None:
     subprocess.Popen(shlex.split(command))
 
 
+def _wait_for_update(runner_root: str, wait_seconds: int = UPDATE_WAIT_SECONDS) -> bool:
+    """True once the runner updater's flag file was seen and removed."""
+    flag = os.path.join(runner_root, "update.finished")
+    for _ in range(wait_seconds + 1):
+        if os.path.exists(flag):
+            os.remove(flag)
+            return True
+        time.sleep(1)
+    return False
+
+
 def _park(config_present: bool) -> None:
     """Never-assigned or unconfigured runners stay up and are reported once."""
     started = time.time()
@@ -136,12 +155,23 @@ def main() -> None:
     argv = shlex.split(command)
     if "--ephemeral" not in argv:
         argv.append("--ephemeral")
+    runner_root = os.environ.get("OVERFLOW_RUNNER_ROOT", "/opt/actions-runner")
     proc = subprocess.Popen(argv, start_new_session=True)
+    relaunches = 0
+    update_failed = False
     started = time.time()
     reported = False
     saw_worker = False
     while True:
         exit_code = proc.poll()
+        if exit_code in UPDATE_EXIT_CODES and not update_failed and relaunches < MAX_UPDATE_RELAUNCHES:
+            # A staged self-update happens before any job in run-once mode.
+            if _wait_for_update(runner_root):
+                relaunches += 1
+                saw_worker = False
+                proc = subprocess.Popen(argv, start_new_session=True)
+                continue
+            update_failed = True
         worker_alive = _workers_alive(proc.pid)
         if worker_alive is None:
             time.sleep(5)

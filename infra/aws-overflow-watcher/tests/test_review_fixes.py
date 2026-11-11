@@ -633,7 +633,7 @@ class ReviewFixTests(unittest.TestCase):
             self.assertEqual(loaded, guest / "overflow_watcher" / "supervisor.py")
             self.assertFalse(str(ROOT / "src") in str(loaded))
             names = sorted(path.name for path in (guest / "overflow_watcher").glob("*.py"))
-            self.assertEqual(names, ["__init__.py", "supervisor.py", "types.py"])
+            self.assertEqual(names, ["__init__.py", "guest_runner.py", "guest_ssm.py", "supervisor.py", "types.py"])
 
     def test_past_allowance_alert_is_not_claimed_when_emit_fails(self) -> None:
         store = fresh_store()

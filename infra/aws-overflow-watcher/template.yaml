@@ -2,8 +2,9 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Overflow watcher. One poll Lambda, one table, controller and runner roles.
 Parameters:
   AmiId:
-    Type: String
-    Description: REQUIRED_INPUT AMI id. No default.
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: Public SSM parameter for stock Ubuntu 24.04 amd64, resolved to one AMI id at stack create or update. The guest installs the pinned runner at boot. Ubuntu because actions/setup-python publishes Linux builds for Ubuntu only.
   SubnetId:
     Type: String
     Description: REQUIRED_INPUT subnet id. No default.
@@ -220,7 +221,7 @@ Resources:
           HttpEndpoint: enabled
           HttpPutResponseHopLimit: 1
         BlockDeviceMappings:
-          - DeviceName: /dev/xvda
+          - DeviceName: /dev/sda1
             Ebs:
               VolumeSize:
                 Ref: VolumeSizeGiB

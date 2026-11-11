@@ -127,9 +127,9 @@ func Pins() Manifest {
 			Version: "v0.3.0",
 		},
 		UpstreamRunner: UpstreamRunnerPin{
-			Version:               "v2.338.0",
-			LinuxX64SHA256:        "af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32",
-			SourceCommit:          "197ca027b90de199464dee3bb9ff198a1db60967",
+			Version:               "v2.338.2",
+			LinuxX64SHA256:        "baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40",
+			SourceCommit:          "d1eb12d4b115c301201de27d667284e1a80f2ab5",
 			CommandSettingsSHA256: "937f6552579f7d1eeb0a6d0201586781eb3e2e5ea2ab3878429076560e0cab08",
 		},
 		RunnerBaseImage: "debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",

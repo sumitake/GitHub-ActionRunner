@@ -321,7 +321,7 @@ old = {
     "command_settings_sha256": "3" * 64,
 }
 new = {
-    "version_bare": "2.338.0",
+    "version_bare": "2.338.2",
     "linux_x64_sha256": "4" * 64,
     "source_commit": "5" * 40,
     "command_settings_sha256": "6" * 64,

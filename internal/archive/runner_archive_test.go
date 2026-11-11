@@ -897,7 +897,7 @@ func TestPinnedRunnerArchiveConformance(t *testing.T) {
 	defer makeRunnerTreeRemovable(output)
 	verified, err := ExtractRunnerArchive(RunnerExtractOptions{
 		ArchivePath:        archivePath,
-		ExpectedSHA256:     "af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32",
+		ExpectedSHA256:     "baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40",
 		EvidenceGeneration: 1,
 		OutputDirectory:    output,
 	})
