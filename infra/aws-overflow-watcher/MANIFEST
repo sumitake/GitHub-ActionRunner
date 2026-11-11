@@ -2,10 +2,10 @@ packet: overflow-watcher clean closeout above 7ae0727d7fbfb260425da8f494814d306b
 hash: sha256 of file bytes. This manifest does not name its own hash.
 offline: generated zip sha256 is bound to CodeS3Bucket, CodeS3Key, and CodeS3ObjectVersion names.
 hold: live S3 object bytes and version id are UNPROVEN. No upload and no object attestation.
-53d4425a2deb5f32ebbf06101f767dc2b2ab1e244d2397d1894be2aaaa016cd0  infra/aws-overflow-watcher/CHECKLIST.md
-d98f8b85c221b057a4e7821c9c4879ecd184db5c60f97135f7ce4d2c4b4d91c9  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
+be8a9afacff0fcf573c2eab6b0a781e7c4aa5bd4c1119870adcf821f6291db60  infra/aws-overflow-watcher/CHECKLIST.md
+dee41dcf7f76aeef9255e8f288e2cd6ced912e7906f0c13ff6202947b6afde01  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
 b891c6037d19e19b7cc1cd575f5f82d7f80f2296c2781edf8d5df050e17b7e74  infra/aws-overflow-watcher/README.md
-dd3cbd3cc48ad5fb386d8bf26cd0d28440694ec8be3f751ceef71cd02f55a9fc  infra/aws-overflow-watcher/template.yaml
+c898f9678a1cb42cc7aca9550bb033b4fed1b3e51fa89aee337d81d587e9aca2  infra/aws-overflow-watcher/template.yaml
 4d460c8449813c1bd29b8574511ae85732bc5e2d368200401dcd6350b53b2758  infra/aws-overflow-watcher/boot/supervisor.sh
 2a0c3848481e8685e46563fd734410076a035298ab1361b8500ce4694d5c5c53  infra/aws-overflow-watcher/scripts/package-lambda.sh
 5abbb359bfaa472745d5a69423761ba30ced37d8401ea26c4e475729b82f4fe3  infra/aws-overflow-watcher/src/overflow_watcher/guest_bootstrap.py
@@ -35,3 +35,4 @@ b744dbb61c8b4300def723e80f39e4bcba9e6b2fbfc0ad24373f73427ff28fcf  infra/aws-over
 1d35564486a63c3b23f963cfd2654bf634c724c2bc050da70724ebe93da4941f  infra/aws-overflow-watcher/tests/support.py
 f898ad29c0f9a03d1f072d9297ed0caa33b16aabee5154d7699908dfcb08e003  infra/aws-overflow-watcher/tests/test_poll_lease.py
 0bf7cac4376dc366075bd6f39ad50d406d58773c48570112d49925d8a427072b  infra/aws-overflow-watcher/tests/test_template_concurrency.py
+46ea1e781e544bf8c87800a27110fe2811eac658142a103c4652f45aaf4a2578  infra/aws-overflow-watcher/tests/test_iam_coverage.py
