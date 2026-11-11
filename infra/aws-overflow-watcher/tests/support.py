@@ -153,3 +153,9 @@ def clear_poll_lease(store: Store) -> None:
         TableName=store.table,
         Key={"pk": {"S": "LEASE#poll"}, "sk": {"S": "META"}},
     )
+
+
+def assert_poll_ran(case, result) -> None:
+    """Fail when a run_poll call stopped at the poll lease instead of doing its work."""
+    case.assertNotEqual(result.blocked_reason, "poll-lease-held")
+    case.assertIsNotNone(result.budget)

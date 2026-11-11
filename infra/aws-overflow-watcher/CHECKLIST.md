@@ -156,16 +156,20 @@ deploy. A design check found that overlapping polls could release a reservation
 while a peer launched, leaving a tagged instance outside the $33 stop. One
 DynamoDB poll lease now serializes polls; reserved concurrency is optional.
 Each row is one mutation run on 2026-11-11 PT, then restored. Every mutation
-killed its test.
+killed its test. Tests that poll twice inside one lease window clear the lease
+first and assert the second poll ran (`assert_poll_ran`). Without that, the
+last row's mutation survived.
 
-| Finding                                   | Negative test                                        | Mutation                                  | Result |
-| ----------------------------------------- | ---------------------------------------------------- | ----------------------------------------- | ------ |
-| Overlapping poll runs                     | `test_poll_lease`                                    | `run_poll` skips the lease check          | Killed |
-| Lease never expires                       | `test_lease_is_reacquired_after_expiry`              | condition `attribute_not_exists(pk)` only | Killed |
-| Lease shorter than the timeout            | `test_overlapping_poll_writes_nothing`               | `POLL_LEASE_SECONDS = 25`                 | Killed |
-| Lease taken at its expiry second          | `test_lease_is_reacquired_after_expiry`              | `expiresAt <= :now`                       | Killed |
-| Held lease raises (queues an async retry) | `test_poll_lease`                                    | raise instead of returning                | Killed |
-| Empty parameter keeps a reservation       | `test_empty_parameter_omits_reserved_concurrency`    | `Fn::If` else branch `"1"`                | Killed |
-| Literal reservation restored              | `test_template_concurrency`                          | `ReservedConcurrentExecutions: 1`         | Killed |
-| Condition inverted                        | `test_empty_parameter_omits_reserved_concurrency`    | `Fn::Not` replaced                        | Killed |
-| Table output dropped                      | `test_stack_outputs_name_controller_topic_and_table` | rename `StateTableName`                   | Killed |
+| Finding                                   | Negative test                                                            | Mutation                                  | Result |
+| ----------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------- | ------ |
+| Overlapping poll runs                     | `test_poll_lease`                                                        | `run_poll` skips the lease check          | Killed |
+| Lease never expires                       | `test_lease_is_reacquired_after_expiry`                                  | condition `attribute_not_exists(pk)` only | Killed |
+| Lease shorter than the timeout            | `test_overlapping_poll_writes_nothing`                                   | `POLL_LEASE_SECONDS = 40` (poll at +45 s) | Killed |
+| Lease taken at its expiry second          | `test_lease_is_reacquired_after_expiry`                                  | `expiresAt <= :now`                       | Killed |
+| Held lease raises (queues an async retry) | `test_poll_lease`                                                        | raise instead of returning                | Killed |
+| Empty parameter keeps a reservation       | `test_empty_parameter_omits_reserved_concurrency`                        | `Fn::If` else branch `"1"`                | Killed |
+| Literal reservation restored              | `test_template_concurrency`                                              | `ReservedConcurrentExecutions: 1`         | Killed |
+| Condition inverted                        | `test_empty_parameter_omits_reserved_concurrency`                        | `Fn::Not` replaced                        | Killed |
+| Table output dropped                      | `test_stack_outputs_name_controller_topic_and_table`                     | rename `StateTableName`                   | Killed |
+| Lease not between timeout and schedule    | `test_poll_lease_outlives_the_timeout_and_ends_before_the_next_schedule` | `POLL_LEASE_SECONDS = 40`, then `60`      | Killed |
+| Second poll stops at the lease            | `test_b2_open_instance_blocks_a_second_debit_even_if_job_key_is_gone`    | `_open_instance_for_job` check removed    | Killed |

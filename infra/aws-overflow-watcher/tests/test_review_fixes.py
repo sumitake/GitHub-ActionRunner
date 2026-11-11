@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fakes import FakeEc2, FakeGitHub, FakeSsm
-from support import NOW, add_cents, cfg, fresh_store, sample_job, seed_instance, watcher_env, clear_poll_lease
+from support import NOW, add_cents, assert_poll_ran, cfg, clear_poll_lease, fresh_store, sample_job, seed_instance, watcher_env
 
 from overflow_watcher.budget import AlertLog
 from overflow_watcher.config import load_config
@@ -62,7 +62,9 @@ class ReviewFixTests(unittest.TestCase):
         run_poll(store, ec2, ec2, github, config, NOW)
         self.assertEqual({call[2] for call in github.cancel_calls}, {"1", "2", "3"})
         self.assertEqual(store.get_accrued(month), before)
-        run_poll(store, ec2, ec2, github, config, NOW)
+        clear_poll_lease(store)
+        second = run_poll(store, ec2, ec2, github, config, NOW)
+        assert_poll_ran(self, second)
         self.assertEqual(len(github.cancel_calls), 3)
 
     def test_h1_estimate_change_stops_instance_spared_by_earlier_poll(self) -> None:
@@ -129,7 +131,9 @@ class ReviewFixTests(unittest.TestCase):
         buffer = StringIO()
         with patch("sys.stdout", buffer):
             first = run_poll(store, ec2, ec2, github, config, NOW)
+        clear_poll_lease(store)
         second = run_poll(store, ec2, ec2, github, config, NOW)
+        assert_poll_ran(self, second)
         payload = response_from_poll(first)
         lines = [json.loads(line) for line in buffer.getvalue().splitlines() if line.strip()]
         kinds = [line["kind"] for line in lines]

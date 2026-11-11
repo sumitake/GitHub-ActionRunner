@@ -14,6 +14,8 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import check_workflow_policy  # noqa: E402  (repo's fail-closed YAML subset parser)
 
+from overflow_watcher.types import POLL_LEASE_SECONDS  # noqa: E402
+
 NO_VALUE = object()
 
 
@@ -101,6 +103,17 @@ class ReservedConcurrencyParamTests(unittest.TestCase):
         self.assertEqual(outputs["StateTableName"], {"Ref": "StateTable"})
         for resource in ("ControllerFunction", "BudgetAlertTopic", "StateTable"):
             self.assertIn(resource, template["Resources"])
+
+
+    def test_poll_lease_outlives_the_timeout_and_ends_before_the_next_schedule(self) -> None:
+        template = load_template()
+        timeout = int(controller_properties("")["Timeout"])
+        rule = template["Resources"]["MinuteRule"]["Properties"]["ScheduleExpression"]
+        match = re.fullmatch(r"rate\((\d+) minutes?\)", rule)
+        self.assertIsNotNone(match, rule)
+        interval = int(match.group(1)) * 60
+        self.assertGreater(POLL_LEASE_SECONDS, timeout)
+        self.assertLess(POLL_LEASE_SECONDS, interval)
 
 
 if __name__ == "__main__":

@@ -66,8 +66,8 @@ class PollLeaseTests(unittest.TestCase):
         before = _table(store)
         calls = list(ec2.calls)
         mints = len(github.mint_calls)
-        # A second invocation inside the lease window (async retry or duplicate delivery).
-        second = run_poll(store, ec2, ec2, github, config, NOW + 30, ssm=ssm)
+        # A second invocation as the first one hits its 45 s timeout (async retry or duplicate delivery).
+        second = run_poll(store, ec2, ec2, github, config, NOW + 45, ssm=ssm)
         self.assertEqual(second.blocked_reason, "poll-lease-held")
         self.assertEqual(second.launched, 0)
         self.assertIsNone(second.budget)

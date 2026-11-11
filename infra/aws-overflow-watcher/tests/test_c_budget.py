@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from fakes import FakeEc2, FakeGitHub, FakeSsm
-from support import NOW, add_cents, cfg, fresh_store, sample_job, seed_instance, watcher_env, clear_poll_lease
+from support import NOW, add_cents, assert_poll_ran, cfg, clear_poll_lease, fresh_store, sample_job, seed_instance, watcher_env
 
 from overflow_watcher.config import load_config
 from overflow_watcher.controller import launch_one, run_poll
@@ -60,7 +60,9 @@ class BudgetTests(unittest.TestCase):
         add_cents(store, month, 3001)
         config = cfg()
         first = run_poll(store, ec2, ec2, github, config, NOW)
+        clear_poll_lease(store)
         second = run_poll(store, ec2, ec2, github, config, NOW)
+        assert_poll_ran(self, second)
         alerts = [item for item in first.alerts.items if item.kind == "budget"]
         self.assertEqual(len(alerts), 1)
         self.assertEqual(alerts[0].audience, "john")
@@ -306,7 +308,9 @@ class BudgetTests(unittest.TestCase):
         first = run_poll(store, ec2, ec2, github, config, NOW, ssm=ssm)
         self.assertEqual(len(ec2.calls), 1)
         token = ec2.calls[0]
+        clear_poll_lease(store)
         second = run_poll(store, ec2, ec2, github, config, NOW + 1, ssm=ssm)
+        assert_poll_ran(self, second)
         self.assertEqual(ec2.calls, [token])
         self.assertEqual(first.quota_failures, 1)
         self.assertEqual(second.quota_failures, 0)
