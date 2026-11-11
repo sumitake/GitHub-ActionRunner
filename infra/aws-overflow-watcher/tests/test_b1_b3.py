@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO = RepoSpec("101", "example", "keicrew", "201")
 BASE = "https://api.github.com/repos/example/keicrew"
 _KIND_PATTERN = re.compile(r'^\{ \$\.kind = "([A-Za-z]+)" \}$')
-SECRET = "ZZ-JIT-SECRET-b1-9f3c7a-ZZ"
+JIT_FIXTURE = "zz-jit-fixture-b1-9f3c7a-zz"
 
 
 def _stamp(epoch: int) -> str:
@@ -90,7 +90,7 @@ def _admitted(job=None) -> FakeGitHub:
     github = FakeGitHub()
     chosen = sample_job() if job is None else job
     github.decision = Decision(False, "assessed", (chosen,), (chosen.job_id,))
-    github.mint_secret = SECRET
+    github.mint_secret = JIT_FIXTURE
     return github
 
 
@@ -228,13 +228,13 @@ class JitAndLockTests(unittest.TestCase):
         with patch("sys.stdout", buffer):
             result = run_poll(store, ec2, ec2, github, cfg(), NOW, ssm=ssm)
         self.assertEqual(result.launched, 1)
-        self.assertEqual(list(ssm.values.values()), [SECRET])
+        self.assertEqual(list(ssm.values.values()), [JIT_FIXTURE])
         saved = store.list_open_instances()[0]
         raw = saved["params"]["UserData"]
-        self.assertNotIn(SECRET, raw)
-        self.assertNotIn(SECRET, json.dumps(saved))
-        self.assertNotIn(SECRET, _table_text(store))
-        self.assertNotIn(SECRET, buffer.getvalue())
+        self.assertNotIn(JIT_FIXTURE, raw)
+        self.assertNotIn(JIT_FIXTURE, json.dumps(saved))
+        self.assertNotIn(JIT_FIXTURE, _table_text(store))
+        self.assertNotIn(JIT_FIXTURE, buffer.getvalue())
         name = parameter_name(saved["clientToken"])
         self.assertIn(name, raw)
         self.assertLessEqual(len(raw.encode("utf-8")), 16384)

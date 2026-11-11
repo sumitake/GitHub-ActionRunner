@@ -6,3 +6,4 @@ cafa5cbaf5123c8e46028b535997f32e45db972e:tests/sanitization/test_sanitize_public
 cafa5cbaf5123c8e46028b535997f32e45db972e:tests/sanitization/test_sanitize_public.py:generic-api-key:788
 e2d3059198a160ecfb0a65b06cf607678692e625:internal/state/sqlite_test.go:generic-api-key:1042
 e2d3059198a160ecfb0a65b06cf607678692e625:internal/state/sqlite_test.go:generic-api-key:1070
+e1eace0488766bff9526db37b95d6a3a25a27b27:infra/aws-overflow-watcher/tests/test_b1_b3.py:generic-api-key:28
