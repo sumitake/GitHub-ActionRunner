@@ -3155,5 +3155,12 @@
     "rule": "IP001",
     "sha256": "dde9cea80c516ae2ddffff5a1345442d072a265860bdc954067d7f63fbabfb7d",
     "reason": "EC2 instance metadata service (IMDSv2) endpoint. The overflow runner guest reads its role credentials and region there to call SSM without the aws CLI. Load-bearing runtime address, not a leak; allowlisted by exact content hash."
+  },
+  {
+    "path": "infra/aws-overflow-watcher/src/overflow_watcher/guest_ssm.py@ecfd440efc2863c6dda8e9144c68d745199408bb",
+    "line": 18,
+    "rule": "IP001",
+    "sha256": "dde9cea80c516ae2ddffff5a1345442d072a265860bdc954067d7f63fbabfb7d",
+    "reason": "Immutable public-history instance of an inspected synthetic or closed-runtime fixture; the original path, complete blob OID, exact line, rule, and canonical content hash bind this exception and do not authorize any future blob."
   }
 ]
