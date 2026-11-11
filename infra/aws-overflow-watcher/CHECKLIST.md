@@ -2,6 +2,8 @@
 
 Each row names the fail-closed test and the mutation that was applied, run, and restored. Every mutation killed its test (non-zero exit).
 
+Clean re-run on `7ae0727d7fbfb260425da8f494814d306b2bb2f5` (main, base of this closeout), 2026-11-10 PT. Every section below was applied on that clean tree and restored with `git checkout`. `git status` was clean after every row.
+
 ## #150
 
 | Finding                                              | Negative test                                                          | Mutation                                      | Result                                        |
@@ -33,7 +35,7 @@ Each row names the fail-closed test and the mutation that was applied, run, and 
 
 ## #151 continued
 
-These rows were executed on the dirty tree above `744365ded61f765c0c882a00fbf08100f98068d7` and then restored. The nineteen rows above were not re-run.
+Same clean tree `7ae0727d7fbfb260425da8f494814d306b2bb2f5`. On that tree the small id is not terminated when this poll's minimum set is only the larger runner. Reintroducing the unselected `cancel_wait` union makes `test_unselected_cancel_wait_does_not_terminate_and_reselection_is_fresh` fail with `terminate_calls` `[['i-a']] != []`.
 
 | Finding                                                                     | Negative test                                                             | Mutation                                          | Result                                                              |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
@@ -48,13 +50,28 @@ These rows were executed on the dirty tree above `744365ded61f765c0c882a00fbf081
 
 ## #151 offline zip binding
 
-Executed on `a0c3b681cd939817e282a0ab4117cb75610bd940` and restored. Earlier rows were not re-run.
+Same clean tree `7ae0727d7fbfb260425da8f494814d306b2bb2f5`.
 
 | Finding                                                  | Negative test                                                   | Mutation                         | Result                                                  |
 | -------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------- |
 | Generated zip sha256 must match the binding              | `test_package_binding_rejects_missing_mismatch_and_stale_input` | skip the digest and size compare | Killed: checker returned 0 (`0 == 0`)                   |
 | Template must still pass bucket, key, and object version | `test_package_binding_matches_zip_and_template_parameters`      | remove `S3ObjectVersion`         | Killed: `1 != 0`, `substituted or stale template input` |
 
+## v2 UserData, checksum, and Java
+
+Each row was a negative test on the unfixed tree, 2026-11-10 PT. The same test passed after the fix. Detail is in `_build/fix-mutations.log`.
+
+| Finding                                                                      | Negative test                                                                                                      | Mutation                                             | Result                                                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| HIGH user data exceeds 16384 raw bytes and is base64-encoded before botocore | `test_m1_run_instances_uses_launch_template_and_user_data`; `test_guest_bootstrap_imports_without_the_source_tree` | pack every module and base64-encode `UserData`       | Killed: raw length `40312 > 16384`; round trip `b'IyEvYmluL3No'` does not start with `#!`; archive included `budget.py`. After the fix, raw `UserData` is 3920 bytes, starts with `#!`, and the archive is `__init__.py`, `supervisor.py`, `types.py`. |
+| LOW `ChecksumSHA256` compared with base64 of the hex string                  | `test_readme_checksum_is_base64_of_raw_digest`                                                                     | README said base64 of the recorded `artifact_sha256` | Killed: `base64 encoding of the raw 32-byte digest` was absent. After the fix, README compares `ChecksumSHA256` with base64 of `bytes.fromhex` of `artifact_sha256`.                                                                                   |
+| CI OpenJDK exact distro build is no longer in Ubuntu                         | `test_l4_dynamodb_local_and_java_are_pinned`                                                                       | pin `openjdk-21-jre-headless` to that exact build    | Killed: package-name install was absent; the step still pinned the dropped exact build. After the fix, CI installs `openjdk-21-jre-headless` by name. Fixture records that package and major `21`. DynamoDB Local jar pin unchanged.                   |
+| LOW README checksum command used `<artifact_sha256>` (shell redirection)     | `test_readme_checksum_is_base64_of_raw_digest`                                                                     | restore `<artifact_sha256>` in the README command    | Killed: line does not end with `"$artifact_sha256"`. After the fix the README command run with the empty-input digest prints `47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=`.                                                                           |
+
 ## UNPROVEN/HOLD
 
-Offline, `package-lambda.sh` binds the generated zip sha256 to the parameter names `CodeS3Bucket`, `CodeS3Key`, and `CodeS3ObjectVersion`. Those parameters have no defaults. This is not an S3 object attestation: no bucket, key, or version id was read or written. The live object linkage remains UNPROVEN/HOLD. This packet is not READY.
+Offline, `package-lambda.sh` binds the generated zip sha256 to the parameter names `CodeS3Bucket`, `CodeS3Key`, and `CodeS3ObjectVersion`. Those parameters have no defaults. This is not an S3 object attestation: no bucket, key, or version id was read or written. The live object linkage remains UNPROVEN/HOLD. README documents a read-only `aws s3api head-object` pre-deploy check that Nova approves and Ops runs (bucket, key, version, then compare `ContentLength` to `artifact_bytes` and `ChecksumSHA256` to the base64 of the raw 32-byte digest). That command was not run. This packet is not READY.
+
+## Spend rulings
+
+No runner-count cap of any kind (C5): `test_c_no_runner_count_limit` launches 25 runners and asserts no `MAX_RUNNERS` in `src/`. Budget `MonthlySoftCapCents` 3000 ($30), 10% grace, `ContinueActiveUntilCents` 3300 ($33). `TerminateInstances` takes one id per call and IAM allows it only with `aws:ResourceTag/overflow-watcher` = `owned` (`test_static_terminate_instances_only_on_budget_stop_with_tag_condition`). `ReservedConcurrentExecutions: 1` limits the controller Lambda, not runners.
