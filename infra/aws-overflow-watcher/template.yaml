@@ -27,17 +27,17 @@ Parameters:
     Description: REQUIRED_INPUT object version id for that key. No default. Not proof the object was read.
   GithubAppIdentifier:
     Type: String
-    Description: REQUIRED_INPUT GitHub App identifier. No default.
+    Description: Existing release App ghar-release-settings, App ID 4644050. Config parameter, not a code pin. No default.
   GithubAppPem:
     Type: String
     NoEcho: true
-    Description: REQUIRED_INPUT GitHub App PEM. Do not commit a value.
+    Description: REQUIRED_INPUT PEM for ghar-release-settings. Fill from BWS secret id 6fd60b4e-5511-402b-842c-b4ff0071e77e (Trusted Automation d6b52362). Id only; do not commit a value.
   AlertEmail:
     Type: String
     Description: REQUIRED_INPUT email for the budget and grace alarms. No default.
   WatchedRepos:
     Type: String
-    Description: REQUIRED_INPUT JSON list of repo id, owner, name, and installation.
+    Description: REQUIRED_INPUT JSON list of repo id, owner, name, and installation. Use installation 154814987 for the existing ghar-release-settings installation. Config, not a code pin.
   AllInHourlyPrice:
     Type: String
     Description: REQUIRED_INPUT all-in hourly price in dollars, including instance, IPv4, and EBS.

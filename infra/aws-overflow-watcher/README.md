@@ -192,31 +192,41 @@ Unset or invalid spend knobs and required inputs do not launch. An empty
 `BUDGET_STOP_EXCLUSIONS` does not launch. The shipped default excludes
 deploy and migration workflow and job names.
 
-| Variable                                                    | Meaning                                                                                                                                                         |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ALL_IN_HOURLY_PRICE`                                       | Fetched all-in hourly price in dollars (instance + IPv4 + EBS).                                                                                                 |
-| `AMI_ID`, `SUBNET_ID`, `SECURITY_GROUP_ID`, `INSTANCE_TYPE` | Launch placement. The template also requires a VPC id and an EBS size.                                                                                          |
-| `INSTANCE_PROFILE_NAME`                                     | Runner instance profile. The template names it `overflow-runner`.                                                                                               |
-| `GITHUB_APP_IDENTIFIER`, `GITHUB_APP_PEM`                   | GitHub App id and private key. Deploy from `<BWS:overflow-watcher/github-app-id>` and `<BWS:overflow-watcher/github-app-private-key>`. Not stored in this repo. |
-| `WATCHED_REPOS`                                             | JSON list of `{id, owner, name, installation}` for the three repos, plus optional `runnerGroupId` (default 1).                                                  |
-| `AlertEmail`                                                | `<ALERT_EMAIL>`. SNS subscription for the budget and grace alarms. Confirmation is a live step.                                                                 |
-| `MONTHLY_SOFT_CAP_CENTS`                                    | `3000`. Stop-new threshold.                                                                                                                                     |
-| `GRACE_PCT` or `GRACE_CENTS`                                | `10` or `300`. Must agree with the grace below.                                                                                                                 |
-| `CONTINUE_ACTIVE_UNTIL_CENTS`                               | `3300`. Enforced estimate, not an invoice cap.                                                                                                                  |
-| `BUDGET_CANCEL_WAIT_SECONDS`                                | Wait after cancel before a terminate. No default.                                                                                                               |
-| `BUDGET_STOP_EXCLUSIONS`                                    | JSON list of `{kind, pattern}`. Empty fails closed. Default excludes `deploy-*` and `migrate*` / `*migration*`.                                                 |
-| `TABLE_NAME`                                                | DynamoDB table.                                                                                                                                                 |
-| `CodeS3Bucket`, `CodeS3Key`, `CodeS3ObjectVersion`          | Template inputs for the Lambda zip. No defaults. Not an S3 object check.                                                                                        |
+| Variable                                                    | Meaning                                                                                                                                                                                                       |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ALL_IN_HOURLY_PRICE`                                       | Fetched all-in hourly price in dollars (instance + IPv4 + EBS).                                                                                                                                               |
+| `AMI_ID`, `SUBNET_ID`, `SECURITY_GROUP_ID`, `INSTANCE_TYPE` | Launch placement. The template also requires a VPC id and an EBS size.                                                                                                                                        |
+| `INSTANCE_PROFILE_NAME`                                     | Runner instance profile. The template names it `overflow-runner`.                                                                                                                                             |
+| `GITHUB_APP_IDENTIFIER`, `GITHUB_APP_PEM`                   | Existing release App `ghar-release-settings`. Config App ID `4644050`. PEM from BWS secret id `6fd60b4e-5511-402b-842c-b4ff0071e77e` (Trusted Automation `d6b52362`). Id only; the value is not in this repo. |
+| `WATCHED_REPOS`                                             | JSON list of `{id, owner, name, installation}` for the three repos, plus optional `runnerGroupId` (default 1). Use installation `154814987`. Config, not a code pin.                                          |
+| `AlertEmail`                                                | `<ALERT_EMAIL>`. SNS subscription for the budget and grace alarms. Confirmation is a live step.                                                                                                               |
+| `MONTHLY_SOFT_CAP_CENTS`                                    | `3000`. Stop-new threshold.                                                                                                                                                                                   |
+| `GRACE_PCT` or `GRACE_CENTS`                                | `10` or `300`. Must agree with the grace below.                                                                                                                                                               |
+| `CONTINUE_ACTIVE_UNTIL_CENTS`                               | `3300`. Enforced estimate, not an invoice cap.                                                                                                                                                                |
+| `BUDGET_CANCEL_WAIT_SECONDS`                                | Wait after cancel before a terminate. No default.                                                                                                                                                             |
+| `BUDGET_STOP_EXCLUSIONS`                                    | JSON list of `{kind, pattern}`. Empty fails closed. Default excludes `deploy-*` and `migrate*` / `*migration*`.                                                                                               |
+| `TABLE_NAME`                                                | DynamoDB table.                                                                                                                                                                                               |
+| `CodeS3Bucket`, `CodeS3Key`, `CodeS3ObjectVersion`          | Template inputs for the Lambda zip. No defaults. Not an S3 object check.                                                                                                                                      |
 
-GitHub App permissions, repository only, on the three watched repos. No
-organization permissions. Metadata: Read is mandatory on every GitHub App
-and is not sufficient for any call below.
+The watcher reuses the existing release App `ghar-release-settings` (App ID
+`4644050`, installation `154814987`). It does not create a new GitHub App.
+Those ids are deploy config, not pins in application code. The App is
+installed on GitHub-ActionRunner, Contextual-Conversation-Gateway,
+agent-collab-workspace, and keicrew. Watched repos stay the configured
+three. Metadata: Read is mandatory on every GitHub App and is not
+sufficient for any call below. No organization permissions.
 
-| Permission     | Level          | Calls                                                                                                                                                                              |
-| -------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Actions        | Read and write | Read lists queued runs and jobs. Write cancels a run during the budget stop. Write is the grant; read is included. If cancel fails, the controller terminates once after the wait. |
-| Administration | Read and write | Read lists self-hosted runners. Write calls `generate-jitconfig`. Read alone is not enough for that POST.                                                                          |
-| Metadata       | Read           | Platform mandatory. It cannot be turned off. It does not authorize the calls above.                                                                                                |
+Live B1 registration is blocked. GitHub's REST docs for
+`POST /repos/{owner}/{repo}/actions/runners/generate-jitconfig` require
+"Administration" repository permissions (write). This App has
+Administration read only. That grant is an open John decision. This
+change does not assume it will be given and does not add a workaround.
+
+| Permission     | Level                                          | Calls                                                                                                                                                                              |
+| -------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Actions        | Read and write                                 | Read lists queued runs and jobs. Write cancels a run during the budget stop. Write is the grant; read is included. If cancel fails, the controller terminates once after the wait. |
+| Administration | Read today; write required for B1, not granted | Read lists self-hosted runners. Write would call `generate-jitconfig`. Read alone is not enough for that POST, so live JIT minting stays blocked.                                  |
+| Metadata       | Read                                           | Platform mandatory. It cannot be turned off. It does not authorize the calls above.                                                                                                |
 
 Not requested, because this process does not call them: Contents, Workflows,
 Checks, Secrets, Variables, Environments, Pull requests, and organization

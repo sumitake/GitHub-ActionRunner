@@ -589,6 +589,26 @@ class JitAndLockTests(unittest.TestCase):
         self.assertIn("kms:Decrypt", key)
         self.assertIn("kms:GenerateDataKey*", key)
 
+    def test_existing_release_app_is_config_not_a_code_pin(self) -> None:
+        template = (ROOT / "template.yaml").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        app_id = "4644050"
+        installation = "154814987"
+        secret_id = "6fd60b4e-5511-402b-842c-b4ff0071e77e"
+        for document, label in ((template, "template.yaml"), (readme, "README.md")):
+            self.assertIn("ghar-release-settings", document, label)
+            self.assertIn(app_id, document, label)
+            self.assertIn(installation, document, label)
+            self.assertIn(secret_id, document, label)
+        self.assertIn("blocked", readme.lower())
+        self.assertIn('"Administration" repository permissions (write)', readme)
+        src = ROOT / "src" / "overflow_watcher"
+        for path in sorted(src.glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn(app_id, text, path.name)
+            self.assertNotIn(installation, text, path.name)
+            self.assertNotIn(secret_id, text, path.name)
+
     def test_static_jit_parameter_iam_is_path_scoped(self) -> None:
 
 
