@@ -173,3 +173,22 @@ last row's mutation survived.
 | Table output dropped                      | `test_stack_outputs_name_controller_topic_and_table`                     | rename `StateTableName`                   | Killed |
 | Lease not between timeout and schedule    | `test_poll_lease_outlives_the_timeout_and_ends_before_the_next_schedule` | `POLL_LEASE_SECONDS = 40`, then `60`      | Killed |
 | Second poll stops at the lease            | `test_b2_open_instance_blocks_a_second_debit_even_if_job_key_is_gone`    | `_open_instance_for_job` check removed    | Killed |
+
+## Controller IAM coverage (2026-11-11)
+
+The deployed controller failed closed on every poll: `Store.connect` calls
+`DescribeTable`, which ControllerRole did not grant. `DescribeTable` is now
+granted on the state table ARN only. `test_iam_coverage` scans every boto3
+client method the Lambda modules call, and every SSM target `guest_ssm` signs.
+It fails when one maps to an action the role does not grant. `CreateTable` is
+the one call left ungranted on purpose: it only runs against DynamoDB Local.
+Each row is one mutation run on 2026-11-11 PT, then restored. Every mutation
+killed its test.
+
+| Finding                                | Negative test                                      | Mutation                                 | Result |
+| -------------------------------------- | -------------------------------------------------- | ---------------------------------------- | ------ |
+| Startup check not granted              | `test_controller_calls_are_granted`                | drop `dynamodb:DescribeTable`            | Killed |
+| Guest secret read not granted          | `test_guest_calls_are_granted`                     | drop RunnerRole `ssm:GetParameter`       | Killed |
+| New controller call without a grant    | `test_controller_calls_are_granted`                | `terminate_instances` → `stop_instances` | Killed |
+| DescribeTable granted beyond the table | `test_describe_table_is_scoped_to_the_state_table` | extra `DescribeTable` on `Resource: "*"` | Killed |
+| JIT parameter write not granted        | `test_controller_calls_are_granted`                | drop ControllerRole `ssm:PutParameter`   | Killed |
