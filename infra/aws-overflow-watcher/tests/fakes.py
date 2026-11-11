@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
-"""In-process EC2 and GitHub stand-ins. No network."""
+"""In-process EC2, GitHub, and SSM stand-ins. No network."""
 
 from __future__ import annotations
+
+from botocore.exceptions import ClientError
 
 from overflow_watcher.types import (
     AmbiguousLaunch,
@@ -73,6 +75,11 @@ class FakeGitHub:
         self.cancel_error: str | None = None
         self.completed: set[str] = set()
         self.ambiguous_completion = False
+        self.mint_calls: list[dict] = []
+        self.mint_error: str | None = None
+        self.mint_secret = "jit-secret-test"
+        self.mint_runner_id: int | None = 4242
+        self.runner_deletes: list[tuple] = []
 
     def assess(self, repo, now: int) -> Decision:
         del repo, now
@@ -84,8 +91,71 @@ class FakeGitHub:
             raise CancelUnavailable(self.cancel_error)
         return "requested"
 
+    def mint_jitconfig(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        installation: str,
+        runner_name: str,
+        labels: tuple[str, ...] | list[str],
+        runner_group_id: int,
+        now: int,
+    ) -> dict | None:
+        self.mint_calls.append(
+            {
+                "owner": owner,
+                "repo": repo,
+                "installation": installation,
+                "runner_name": runner_name,
+                "labels": tuple(labels),
+                "runner_group_id": runner_group_id,
+                "now": now,
+            }
+        )
+        if self.mint_error:
+            return None
+        minted: dict = {"encoded_jit_config": self.mint_secret}
+        if self.mint_runner_id is not None:
+            minted["github_runner_id"] = self.mint_runner_id
+        return minted
+
+    def delete_runner(self, owner: str, repo: str, runner_id: int) -> None:
+        self.runner_deletes.append((owner, repo, runner_id))
+
     def workflow_completed(self, owner: str, repo: str, run_id: str) -> bool | None:
         del owner, repo
         if self.ambiguous_completion:
             return None
         return run_id in self.completed
+
+
+def _client_error(code: str, operation: str) -> ClientError:
+    return ClientError({"Error": {"Code": code, "Message": code}}, operation)
+
+
+class FakeSsm:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+        self.puts: list[str] = []
+        self.deletes: list[str] = []
+        self.fail_put = False
+        self.fail_code = "ServiceUnavailable"
+
+    def put_parameter(self, **kwargs) -> dict:
+        name = kwargs["Name"]
+        self.puts.append(name)
+        if self.fail_put:
+            raise _client_error(self.fail_code, "PutParameter")
+        if name in self.values and not kwargs.get("Overwrite", False):
+            raise _client_error("ParameterAlreadyExists", "PutParameter")
+        self.values[name] = kwargs["Value"]
+        return {}
+
+    def delete_parameter(self, **kwargs) -> dict:
+        name = kwargs["Name"]
+        self.deletes.append(name)
+        if name not in self.values:
+            raise _client_error("ParameterNotFound", "DeleteParameter")
+        del self.values[name]
+        return {}

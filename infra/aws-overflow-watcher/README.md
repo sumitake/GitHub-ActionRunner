@@ -24,9 +24,13 @@ Admission (C1, F1, F2, R4, V5-04):
   `runs-on` is denied. Labels `rhonas`, `macOS`, `intel-labmac`, `ubuntu-*`,
   `macos-*`, or any label containing `dispatch` are denied.
 - The job must have been queued for at least five minutes.
-- Per repo, a fully paginated HTTP 200 runner list with no matching online
-  runner is overflow-eligible (F2, R4). Offline runners count as no capacity.
-  The watcher does not require a registration the repo does not have.
+- Per repo, a fully paginated HTTP 200 runner list with no available match
+  is overflow-eligible (F2, R4, B3). A runner is available only when it is
+  online, its labels contain the job's labels, and `busy` is false.
+  `busy: true` counts as no capacity, the same as offline. A missing or
+  non-boolean `busy` on an online label match fails closed and does not
+  launch. Offline runners count as no capacity. The watcher does not
+  require a registration the repo does not have.
 - Any API error, partial page, malformed body, unauthorized response, or
   missing or exhausted rate-limit header blocks launch for that repo.
 
@@ -43,7 +47,17 @@ reservation in place. A later poll retries that same ClientToken with the
 parameters stored on the reservation. EC2 describe results and any index
 count cannot release a reservation. After the retry window (15 minutes) the
 reservation still counts and Ops is alerted once. TTL is enabled only for
-terminal audit cleanup and is not set on open reservations.
+terminal audit cleanup and is not set on open reservations. A per-job lock
+refreshes a seven-day `expiresAt` while its reservation or instance is open.
+That timestamp is garbage collection for a lock that is already idle. It is
+not a capacity release.
+
+One admitted job holds one lock, so a second poll does not debit it again.
+An ephemeral runner minted for the admitted label tuple can still take a
+narrower queued job, because GitHub assigns any queued job whose labels are
+a subset of the runner's. The $33 stop keeps cancelling the stored
+`workflowRunId`. The watcher does not make another GitHub call to find out
+which job the runner took.
 
 A definitive capacity or parameter refusal (including vCPU quota) is stored
 as a failure, the uncreated reservation is reversed, and further launches
@@ -133,6 +147,20 @@ the guest down only after a proven normal completion, which makes EC2
 terminate the instance because
 `InstanceInitiatedShutdownBehavior` is `terminate`.
 
+## Budget alarm
+
+The controller log group has two metric filters on the JSON lines this
+process already prints. `{ $.kind = "budget" }` increments
+`OverflowWatcher / SoftCapCrossed`. `{ $.kind = "grace" }` increments
+`OverflowWatcher / GraceCrossed`. Each metric has an alarm at a sum of at
+least 1 over 60 seconds. Both alarms publish to one SNS topic
+encrypted with a customer-managed KMS key that `sns.amazonaws.com` and
+`cloudwatch.amazonaws.com` may use. `AlertEmail` subscribes to that
+topic. The Lambda does not read the address, and launch
+admission does not depend on it. Confirming the subscription is a live Ops
+step. The template has no AWS Budget. `past-allowance` and the other
+non-budget kinds stay log-only.
+
 R5. `ec2:TerminateInstances` appears on the controller role only, and only
 with `aws:ResourceTag/overflow-watcher` = `owned`. The runner role does not
 have that action. The only call site is the budget-stop function
@@ -145,7 +173,12 @@ RunInstances user data is a self-contained bootstrap. It installs
 that directory. It does not look for a source checkout. The launch template
 user data only starts the supervisor when that install is already present.
 `boot/supervisor.sh` is the same launcher. The runner command
-must include `--ephemeral` (one job). The supervisor shuts the guest down
+must include `--ephemeral` (one job). The controller writes the encoded
+JIT config to an SSM SecureString at `/overflow-watcher/jit/<client-token>`
+and puts only that name in user data. The guest reads the value, deletes
+the parameter, and sets `RUNNER_CONFIG` to the file and `RUNNER_COMMAND` to
+a wrapper that execs `Runner.Listener`. The encoded config is not written
+to DynamoDB or user data. The supervisor shuts the guest down
 only when the listener and worker process tree have exited naturally, the
 supervisor did not restart them, a job was actually assigned, and no worker
 is still alive. Exit code 0 by itself is not proof. A missing runner config,
@@ -159,28 +192,45 @@ Unset or invalid spend knobs and required inputs do not launch. An empty
 `BUDGET_STOP_EXCLUSIONS` does not launch. The shipped default excludes
 deploy and migration workflow and job names.
 
-| Variable                                                    | Meaning                                                                                                         |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `ALL_IN_HOURLY_PRICE`                                       | Fetched all-in hourly price in dollars (instance + IPv4 + EBS).                                                 |
-| `AMI_ID`, `SUBNET_ID`, `SECURITY_GROUP_ID`, `INSTANCE_TYPE` | Launch placement. The template also requires a VPC id and an EBS size.                                          |
-| `INSTANCE_PROFILE_NAME`                                     | Runner instance profile. The template names it `overflow-runner`.                                               |
-| `GITHUB_APP_IDENTIFIER`, `GITHUB_APP_PEM`                   | GitHub App identity and private key. Not stored in this repo.                                                   |
-| `WATCHED_REPOS`                                             | JSON list of `{id, owner, name, installation}` for the three repos.                                             |
-| `MONTHLY_SOFT_CAP_CENTS`                                    | `3000`. Stop-new threshold.                                                                                     |
-| `GRACE_PCT` or `GRACE_CENTS`                                | `10` or `300`. Must agree with the grace below.                                                                 |
-| `CONTINUE_ACTIVE_UNTIL_CENTS`                               | `3300`. Enforced estimate, not an invoice cap.                                                                  |
-| `BUDGET_CANCEL_WAIT_SECONDS`                                | Wait after cancel before a terminate. No default.                                                               |
-| `BUDGET_STOP_EXCLUSIONS`                                    | JSON list of `{kind, pattern}`. Empty fails closed. Default excludes `deploy-*` and `migrate*` / `*migration*`. |
-| `TABLE_NAME`                                                | DynamoDB table.                                                                                                 |
-| `CodeS3Bucket`, `CodeS3Key`, `CodeS3ObjectVersion`          | Template inputs for the Lambda zip. No defaults. Not an S3 object check.                                        |
+| Variable                                                    | Meaning                                                                                                                                                                                                |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ALL_IN_HOURLY_PRICE`                                       | Fetched all-in hourly price in dollars (instance + IPv4 + EBS).                                                                                                                                        |
+| `AMI_ID`, `SUBNET_ID`, `SECURITY_GROUP_ID`, `INSTANCE_TYPE` | Launch placement. The template also requires a VPC id and an EBS size.                                                                                                                                 |
+| `INSTANCE_PROFILE_NAME`                                     | Runner instance profile. The template names it `overflow-runner`.                                                                                                                                      |
+| `GITHUB_APP_IDENTIFIER`, `GITHUB_APP_PEM`                   | Existing release App `ghar-release-settings`. Config App ID `4644050`. PEM from the BWS item id recorded in `docs/operations/overflow-watcher-deploy-inputs.md`. Id only; the PEM is not in this repo. |
+| `WATCHED_REPOS`                                             | JSON list of `{id, owner, name, installation}` for the three repos, plus optional `runnerGroupId` (default 1). Use installation `154814987`. Config, not a code pin.                                   |
+| `AlertEmail`                                                | `<ALERT_EMAIL>`. SNS subscription for the budget and grace alarms. Confirmation is a live step.                                                                                                        |
+| `MONTHLY_SOFT_CAP_CENTS`                                    | `3000`. Stop-new threshold.                                                                                                                                                                            |
+| `GRACE_PCT` or `GRACE_CENTS`                                | `10` or `300`. Must agree with the grace below.                                                                                                                                                        |
+| `CONTINUE_ACTIVE_UNTIL_CENTS`                               | `3300`. Enforced estimate, not an invoice cap.                                                                                                                                                         |
+| `BUDGET_CANCEL_WAIT_SECONDS`                                | Wait after cancel before a terminate. No default.                                                                                                                                                      |
+| `BUDGET_STOP_EXCLUSIONS`                                    | JSON list of `{kind, pattern}`. Empty fails closed. Default excludes `deploy-*` and `migrate*` / `*migration*`.                                                                                        |
+| `TABLE_NAME`                                                | DynamoDB table.                                                                                                                                                                                        |
+| `CodeS3Bucket`, `CodeS3Key`, `CodeS3ObjectVersion`          | Template inputs for the Lambda zip. No defaults. Not an S3 object check.                                                                                                                               |
 
-GitHub App permissions this poll needs, which the operator must grant:
+The watcher reuses the existing release App `ghar-release-settings` (App ID
+`4644050`, installation `154814987`). It does not create a new GitHub App.
+Those ids are deploy config, not pins in application code. The BWS item id for the PEM is recorded in `docs/operations/overflow-watcher-deploy-inputs.md`. The App is
+installed on GitHub-ActionRunner, Contextual-Conversation-Gateway,
+agent-collab-workspace, and keicrew. Watched repos stay the configured
+three. Metadata: Read is mandatory on every GitHub App and is not
+sufficient for any call below. No organization permissions.
 
-- Actions: Read, to list queued workflow runs and jobs.
-- Actions: Write, to cancel a workflow run during the budget stop. Read is
-  not enough for that call. If write is missing, cancel fails and the
-  controller terminates after the wait bound, once.
-- Administration: Read, to list the repo's self-hosted runners.
+Live B1 registration is blocked. GitHub's REST docs for
+`POST /repos/{owner}/{repo}/actions/runners/generate-jitconfig` require
+"Administration" repository permissions (write). This App has
+Administration read only. That grant is an open John decision. This
+change does not assume it will be given and does not add a workaround.
+
+| Permission     | Level                                          | Calls                                                                                                                                                                              |
+| -------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Actions        | Read and write                                 | Read lists queued runs and jobs. Write cancels a run during the budget stop. Write is the grant; read is included. If cancel fails, the controller terminates once after the wait. |
+| Administration | Read today; write required for B1, not granted | Read lists self-hosted runners. Write would call `generate-jitconfig`. Read alone is not enough for that POST, so live JIT minting stays blocked.                                  |
+| Metadata       | Read                                           | Platform mandatory. It cannot be turned off. It does not authorize the calls above.                                                                                                |
+
+Not requested, because this process does not call them: Contents, Workflows,
+Checks, Secrets, Variables, Environments, Pull requests, and organization
+runners.
 
 Placeholder text `REQUIRED_INPUT` is treated as unset.
 
