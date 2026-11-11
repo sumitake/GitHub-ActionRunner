@@ -197,10 +197,11 @@ whose sha256 is that zip. The checker accepts the binding only when
 `template.yaml` still passes `CodeS3Bucket`, `CodeS3Key`, and
 `CodeS3ObjectVersion` into the function `Code` property, with no defaults.
 That is an offline identity check. It does not read or attest an S3 object,
-so the live object linkage stays unproven. Before deploy, Ops can compare
-the recorded zip to the object those parameters name. The command is
-read-only. It was not run for this packet, so the live object linkage stays
-UNPROVEN/HOLD:
+so the live object linkage stays unproven. Before deploy, Nova approves and
+Ops runs a read-only comparison of the recorded zip with the object those
+parameters name. Upload the zip with `--checksum-algorithm SHA256` so the
+object carries `ChecksumSHA256`. The command was not run for this packet, so
+the live object linkage stays UNPROVEN/HOLD:
 
 ```sh
 aws s3api head-object \

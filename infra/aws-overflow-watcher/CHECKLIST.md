@@ -59,4 +59,8 @@ Same clean tree `7ae0727d7fbfb260425da8f494814d306b2bb2f5`.
 
 ## UNPROVEN/HOLD
 
-Offline, `package-lambda.sh` binds the generated zip sha256 to the parameter names `CodeS3Bucket`, `CodeS3Key`, and `CodeS3ObjectVersion`. Those parameters have no defaults. This is not an S3 object attestation: no bucket, key, or version id was read or written. The live object linkage remains UNPROVEN/HOLD. README documents a read-only `aws s3api head-object` check for Ops (bucket, key, version, then compare `ContentLength` and `ChecksumSHA256` to the recorded size and sha256). That command was not run. This packet is not READY.
+Offline, `package-lambda.sh` binds the generated zip sha256 to the parameter names `CodeS3Bucket`, `CodeS3Key`, and `CodeS3ObjectVersion`. Those parameters have no defaults. This is not an S3 object attestation: no bucket, key, or version id was read or written. The live object linkage remains UNPROVEN/HOLD. README documents a read-only `aws s3api head-object` pre-deploy check that Nova approves and Ops runs (bucket, key, version, then compare `ContentLength` and `ChecksumSHA256` to the recorded size and sha256). That command was not run. This packet is not READY.
+
+## Spend rulings
+
+No runner-count cap of any kind (C5): `test_c_no_runner_count_limit` launches 25 runners and asserts no `MAX_RUNNERS` in `src/`. Budget `MonthlySoftCapCents` 3000 ($30), 10% grace, `ContinueActiveUntilCents` 3300 ($33). `TerminateInstances` takes one id per call and IAM allows it only with `aws:ResourceTag/overflow-watcher` = `owned` (`test_static_terminate_instances_only_on_budget_stop_with_tag_condition`). `ReservedConcurrentExecutions: 1` limits the controller Lambda, not runners.
