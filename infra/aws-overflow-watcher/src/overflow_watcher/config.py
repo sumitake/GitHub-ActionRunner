@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 from overflow_watcher.labels import ALLOW
@@ -162,12 +163,31 @@ def _parse_repos(raw: str | None, errors: list[str]) -> tuple[RepoSpec, ...]:
         if name not in ALLOWED_REPO_NAMES:
             errors.append("WATCHED_REPOS invalid")
             return ()
-        if name in seen or is_placeholder(repo_id) or is_placeholder(owner) or is_placeholder(installation):
+        if (
+            name in seen
+            or is_placeholder(repo_id)
+            or is_placeholder(owner)
+            or is_placeholder(installation)
+            or re.fullmatch(r"[0-9]+", repo_id) is None
+        ):
             errors.append("WATCHED_REPOS invalid")
             return ()
+        if "runnerGroupId" in entry:
+            group = entry.get("runnerGroupId")
+            if type(group) is not int or group <= 0:
+                errors.append("WATCHED_REPOS invalid")
+                return ()
+        else:
+            group = 1
         seen.add(str(name))
         repos.append(
-            RepoSpec(repo_id=repo_id, owner=owner, name=str(name), installation=installation)
+            RepoSpec(
+                repo_id=repo_id,
+                owner=owner,
+                name=str(name),
+                installation=installation,
+                runner_group_id=group,
+            )
         )
     return tuple(repos)
 

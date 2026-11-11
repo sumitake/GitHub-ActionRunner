@@ -7,7 +7,7 @@ import json
 import unittest
 from pathlib import Path
 
-from fakes import FakeEc2, FakeGitHub
+from fakes import FakeEc2, FakeGitHub, FakeSsm
 from support import NOW, add_cents, cfg, fresh_store, sample_job, seed_instance, watcher_env
 
 from overflow_watcher.config import load_config
@@ -29,9 +29,14 @@ class BudgetTests(unittest.TestCase):
         config = cfg()
         month = month_key(NOW)
         add_cents(store, month, 2994)
-        self.assertEqual(launch_one(store, ec2, config, sample_job(), NOW), "launched")
+        github = FakeGitHub()
+        ssm = FakeSsm()
+        self.assertEqual(launch_one(store, ec2, config, sample_job(), NOW, github=github, ssm=ssm), "launched")
         self.assertEqual(store.get_accrued(month), 3000)
-        self.assertEqual(launch_one(store, ec2, config, sample_job(workflow_run_id="78"), NOW), "cap")
+        self.assertEqual(
+            launch_one(store, ec2, config, sample_job(workflow_run_id="78"), NOW, github=github, ssm=ssm),
+            "cap",
+        )
         self.assertEqual(len(store.list_open_instances()), 1)
 
     def test_c_active_between_cap_and_grace_is_not_terminated(self) -> None:
@@ -273,8 +278,11 @@ class BudgetTests(unittest.TestCase):
         store = fresh_store()
         ec2 = FakeEc2()
         config = cfg()
+        github = FakeGitHub()
+        ssm = FakeSsm()
         for index in range(25):
-            outcome = launch_one(store, ec2, config, sample_job(workflow_run_id=str(100 + index)), NOW)
+            job = sample_job(workflow_run_id=str(100 + index), job_id=str(1000 + index))
+            outcome = launch_one(store, ec2, config, job, NOW, github=github, ssm=ssm)
             self.assertEqual(outcome, "launched", index)
         self.assertEqual(len(store.list_open_instances()), 25)
         root = Path(__file__).resolve().parents[1]
@@ -288,10 +296,11 @@ class BudgetTests(unittest.TestCase):
         github = FakeGitHub()
         github.decision = Decision(False, "no-matching-capacity", (sample_job(),))
         config = cfg()
-        first = run_poll(store, ec2, ec2, github, config, NOW)
+        ssm = FakeSsm()
+        first = run_poll(store, ec2, ec2, github, config, NOW, ssm=ssm)
         self.assertEqual(len(ec2.calls), 1)
         token = ec2.calls[0]
-        second = run_poll(store, ec2, ec2, github, config, NOW + 1)
+        second = run_poll(store, ec2, ec2, github, config, NOW + 1, ssm=ssm)
         self.assertEqual(ec2.calls, [token])
         self.assertEqual(first.quota_failures, 1)
         self.assertEqual(second.quota_failures, 0)
