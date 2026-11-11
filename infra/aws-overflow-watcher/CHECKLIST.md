@@ -131,3 +131,19 @@ Each row is one mutation of this branch, run on 2026-11-11 PT with
 | Update relaunch waits for the updater flag   | `test_update_exit_without_flag_does_not_relaunch_or_shut_down`            | relaunch even when `update.finished` never appears | Killed: launch count `4 != 1`            |
 | git present before checkout                  | `test_user_data_has_no_aws_cli_and_installs_runner_before_reading_secret` | drop the git guard                                 | Killed: guard not found                  |
 | Runner may run as root                       | `test_user_data_has_no_aws_cli_and_installs_runner_before_reading_secret` | drop `RUNNER_ALLOW_RUNASROOT=1`                    | Killed: export not found                 |
+
+## Allowance true-up at close (2026-11-11)
+
+HAL ruling: the 6-hour admission floor must not be a permanent debit. Each
+row is one mutation run on 2026-11-11 PT, then restored. Every mutation
+killed its test.
+
+| Finding                            | Negative test                                                      | Mutation                                      | Result                      |
+| ---------------------------------- | ------------------------------------------------------------------ | --------------------------------------------- | --------------------------- |
+| True-up skipped at close           | `test_true_up` (all)                                               | close writes no month-ledger update           | Killed: `135 != 68`         |
+| Close keeps the 6 h floor          | `test_short_run_releases_the_reservation_and_charges_actual_hours` | `actual_by_month` uses `owed_cents`           | Killed: `6 != 1`            |
+| Refund can drive a ledger negative | `test_refund_below_zero_cancels_and_keeps_the_debit`               | drop the `accruedCents >= :refund` condition  | Killed: `-399 != 100`       |
+| Close races a concurrent accrual   | `test_stale_watermark_does_not_close`                              | drop the watermark condition                  | Killed: `True is not false` |
+| Close ends at the stale watermark  | `test_long_run_across_a_month_boundary_charges_actual_per_month`   | end at `watermark`, not `max(now, watermark)` | Killed: `89 != 112`         |
+| Month split collapsed              | `test_long_run_across_a_month_boundary_charges_actual_per_month`   | book all actual cost in the launch month      | Killed: month set differs   |
+| EC2 60 s minimum dropped           | `test_b2_job_key_held_until_closed_and_not_queued`                 | end without the 60 s minimum                  | Killed: `0 != 1`            |

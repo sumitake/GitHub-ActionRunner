@@ -52,7 +52,8 @@ def allowance_cents(numer: int, denom: int) -> int:
 
 
 def owed_cents(elapsed_seconds: int, numer: int, denom: int) -> int:
-    """Admission allowance is a floor. Shorter runs are not refunded."""
+    """Debit while an instance is open: the admission allowance is a reservation
+    floor. It is trued up to actual runtime when the instance is closed."""
     return max(allowance_cents(numer, denom), cost_cents(elapsed_seconds, numer, denom))
 
 
@@ -152,6 +153,25 @@ def plan_accrual(
         debit_by_month=updated,
         crossed_allowance=cumulative <= allowance < cumulative + delta,
     )
+
+
+EC2_MINIMUM_SECONDS = 60
+
+
+def actual_by_month(launch_epoch: int, end_epoch: int, numer: int, denom: int) -> dict[str, int]:
+    """Actual runtime cost per LA month, without the allowance floor.
+
+    Runtime has the EC2 per-second minimum of 60 seconds. Each month gets the
+    ceiling of the cumulative cost at its end minus the previous month's.
+    """
+    end = max(end_epoch, launch_epoch + EC2_MINIMUM_SECONDS)
+    result: dict[str, int] = {}
+    previous = 0
+    for month, _start, slice_end in month_slices(launch_epoch, end):
+        at_end = cost_cents(slice_end - launch_epoch, numer, denom)
+        result[month] = result.get(month, 0) + at_end - previous
+        previous = at_end
+    return result
 
 
 def remaining_future_cents(launch_epoch: int, now: int, numer: int, denom: int) -> int:

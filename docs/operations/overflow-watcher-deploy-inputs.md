@@ -63,6 +63,12 @@ Price (on-demand, us-west-2, AWS public Price List files published
 | gp3 storage, 30 GiB           | $0.08/GB-month × 30 ÷ 730 | 0.0032877 |
 | Total, rounded up to 5 places |                           | 0.22383   |
 
+Admission reserves 6 hours at this price (135 cents) per launch. That is a
+reservation, not a permanent charge: when the watcher sees the instance
+terminated, it trues the month ledger to actual runtime times
+`AllInHourlyPrice` (at least 60 seconds). The binding limits stay the $30
+month budget and the $33 grace stop; no runner-count cap.
+
 `SubnetId` must be a default-VPC public subnet (`MapPublicIpOnLaunch` true).
 The template does not request a public address itself; the subnet assigns
 one, and the runner needs it for GitHub egress because there is no NAT.

@@ -21,7 +21,7 @@ from overflow_watcher.budget import Alert, AlertLog, write_alert_line
 from overflow_watcher.controller import client_token, launch_one, resolve_reservations, run_poll
 from overflow_watcher.inventory import HttpPage, assess_repo
 from overflow_watcher.jit_handoff import parameter_name
-from overflow_watcher.money import month_key
+from overflow_watcher.money import EC2_MINIMUM_SECONDS, cost_cents, month_key
 from overflow_watcher.types import CAPACITY_COOLDOWN_SECONDS, Decision, RepoSpec
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -382,7 +382,10 @@ class JitAndLockTests(unittest.TestCase):
         self.assertEqual(closed.launched, 0)
         self.assertEqual(store.list_job_locks("101"), [])
         self.assertEqual(store.get_instance(instance_id)["state"], "CLOSED")
-        self.assertEqual(store.get_accrued(month), held)
+        # The allowance was a reservation: close trues it up to actual runtime.
+        actual = cost_cents(EC2_MINIMUM_SECONDS, config.price_numer, config.price_denom)
+        self.assertLess(actual, held)
+        self.assertEqual(store.get_accrued(month), actual)
 
     def test_b2_relaunch_after_close_uses_a_new_client_token(self) -> None:
         store = fresh_store()
@@ -408,7 +411,9 @@ class JitAndLockTests(unittest.TestCase):
         second_id = store.list_open_instances()[0]["instanceId"]
         self.assertNotEqual(second_id, first_id)
         self.assertIsNotNone(store.get_instance(second_id))
-        self.assertEqual(store.get_accrued(month), before + config.allowance)
+        first_actual = cost_cents(EC2_MINIMUM_SECONDS, config.price_numer, config.price_denom)
+        self.assertLess(first_actual, before)
+        self.assertEqual(store.get_accrued(month), first_actual + config.allowance)
         self.assertEqual(store.instances_returned("101", "9001"), 2)
 
     def test_b3_all_busy_launches_once(self) -> None:

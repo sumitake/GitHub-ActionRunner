@@ -42,7 +42,7 @@ class ReservationHoldTests(unittest.TestCase):
         self.assertEqual(store.list_open_instances(), [])
         ec2.index = 0
         ec2.views.clear()
-        reconcile(store, ec2, index_count=0)
+        reconcile(store, ec2, index_count=0, now=NOW)
         self.assertEqual(len(store.list_open_reservations()), 1)
         self.assertEqual(store.get_accrued(month), held)
         token = ec2.calls[0]
