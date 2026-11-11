@@ -141,3 +141,15 @@ def seed_instance(
     ec2.views[instance_id] = InstanceView(instance_id, state, has_tag, uncertain)
     if tagged_list and has_tag and instance_id not in ec2.tagged:
         ec2.tagged.append(instance_id)
+
+
+def clear_poll_lease(store: Store) -> None:
+    """Drop the poll lease so a test can model polls without the lease layer.
+
+    Tests that call run_poll several times inside one lease window use this to
+    keep checking the idempotence of the write paths underneath the lease.
+    """
+    store.client.delete_item(
+        TableName=store.table,
+        Key={"pk": {"S": "LEASE#poll"}, "sk": {"S": "META"}},
+    )

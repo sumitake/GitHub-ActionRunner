@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from fakes import FakeEc2, FakeGitHub, FakeSsm
-from support import NOW, add_cents, cfg, fresh_store, sample_job, seed_instance, watcher_env
+from support import NOW, add_cents, cfg, fresh_store, sample_job, seed_instance, watcher_env, clear_poll_lease
 
 from overflow_watcher.config import load_config
 from overflow_watcher.controller import launch_one, run_poll
@@ -168,13 +168,16 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(len(github.cancel_calls), 1)
         self.assertEqual(ec2.terminate_calls, [])
         self.assertEqual(first.budget.cancelled, ("i-wait",))
+        clear_poll_lease(store)
         early = run_poll(store, ec2, ec2, github, config, NOW + 119)
         self.assertEqual(len(github.cancel_calls), 1)
         self.assertEqual(ec2.terminate_calls, [])
         self.assertEqual(early.budget.cancelled, ())
+        clear_poll_lease(store)
         due = run_poll(store, ec2, ec2, github, config, NOW + 120)
         self.assertEqual(ec2.terminate_calls, [["i-wait"]])
         self.assertEqual(due.budget.terminated, ("i-wait",))
+        clear_poll_lease(store)
         again = run_poll(store, ec2, ec2, github, config, NOW + 180)
         self.assertEqual(ec2.terminate_calls, [["i-wait"]])
         self.assertEqual(again.budget.terminated, ())
@@ -270,6 +273,7 @@ class BudgetTests(unittest.TestCase):
         _over(store, month, 3400)
         config = cfg()
         run_poll(store, ec2, ec2, github, config, NOW)
+        clear_poll_lease(store)
         second = run_poll(store, ec2, ec2, github, config, NOW)
         self.assertEqual(len(github.cancel_calls), 1)
         self.assertEqual(ec2.terminate_calls, [])

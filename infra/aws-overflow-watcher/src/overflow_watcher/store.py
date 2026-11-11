@@ -11,6 +11,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from overflow_watcher.money import AccrualPlan, actual_by_month
+from overflow_watcher.types import POLL_LEASE_SECONDS
 
 _DIGITS = re.compile(r"[0-9]+\Z")
 
@@ -556,6 +557,31 @@ class Store:
                 TableName=self.table,
                 Item=item,
                 ConditionExpression="attribute_not_exists(pk)",
+            )
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise
+        return True
+
+    def acquire_poll_lease(self, now: int) -> bool:
+        """Take the single poll lease, or report that another poll holds it.
+
+        The lease lasts POLL_LEASE_SECONDS, longer than the Lambda timeout and
+        shorter than the one-minute schedule. It is never deleted: a holder that
+        deleted it could remove a successor's lease.
+        """
+        try:
+            self.client.put_item(
+                TableName=self.table,
+                Item={
+                    "pk": _s("LEASE#poll"),
+                    "sk": _s("META"),
+                    "acquiredEpoch": _n(now),
+                    "expiresAt": _n(now + POLL_LEASE_SECONDS),
+                },
+                ConditionExpression="attribute_not_exists(pk) OR expiresAt < :now",
+                ExpressionAttributeValues={":now": _n(now)},
             )
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":

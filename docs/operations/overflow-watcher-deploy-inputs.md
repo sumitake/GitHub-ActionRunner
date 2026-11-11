@@ -34,15 +34,16 @@ These are deploy config for `infra/aws-overflow-watcher/template.yaml`.
 silently disagree with the type. Change the price whenever the type, size,
 or region changes.
 
-| Input                     | Value                                                                                                  |
-| ------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `AmiId`                   | Template default: `/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id` |
-| `InstanceType`            | `c8a.xlarge` (4 vCPU, 8 GiB, x86_64)                                                                   |
-| `VolumeSizeGiB`           | `30` (gp3 root, `/dev/sda1`)                                                                           |
-| `AllInHourlyPrice`        | `0.22383`                                                                                              |
-| `BudgetCancelWaitSeconds` | `300`                                                                                                  |
-| `AlertEmail`              | `hal@osumi.co` (the subscription must be confirmed from that mailbox)                                  |
-| `VpcId` / `SubnetId`      | Default VPC; a public subnet whose AZ offers `c8a.xlarge`                                              |
+| Input                           | Value                                                                                                                               |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `AmiId`                         | Template default: `/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id`                              |
+| `InstanceType`                  | `c8a.xlarge` (4 vCPU, 8 GiB, x86_64)                                                                                                |
+| `VolumeSizeGiB`                 | `30` (gp3 root, `/dev/sda1`)                                                                                                        |
+| `AllInHourlyPrice`              | `0.22383`                                                                                                                           |
+| `BudgetCancelWaitSeconds`       | `300`                                                                                                                               |
+| `ControllerReservedConcurrency` | Empty (no reservation; account 922176437318 has a concurrency limit of 10, all unreserved). The poll lease runs one poll at a time. |
+| `AlertEmail`                    | `hal@osumi.co` (the subscription must be confirmed from that mailbox)                                                               |
+| `VpcId` / `SubnetId`            | Default VPC; a public subnet whose AZ offers `c8a.xlarge`                                                                           |
 
 Runner image: stock Ubuntu 24.04 from Canonical's public SSM parameter,
 resolved to one AMI id at each stack create or update. No custom AMI.

@@ -472,6 +472,10 @@ def run_poll(
     if not cfg.launch_allowed:
         result.blocked_reason = cfg.reason or "config"
         return result
+    if not store.acquire_poll_lease(now):
+        # Another poll is running. Return success: raising would queue an async retry.
+        result.blocked_reason = "poll-lease-held"
+        return result
     resolve_reservations(store, ec2, result.alerts, now, github=github, ssm=ssm)
     accrue(store, result.alerts, now)
     index = ec2.index_count() if hasattr(ec2, "index_count") else None

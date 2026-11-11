@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fakes import FakeEc2, FakeGitHub, FakeSsm
-from support import NOW, add_cents, cfg, fresh_store, sample_job
+from support import NOW, add_cents, cfg, fresh_store, sample_job, clear_poll_lease
 
 from overflow_watcher.github_api import LiveGitHub
 
@@ -373,11 +373,13 @@ class JitAndLockTests(unittest.TestCase):
         held = store.get_accrued(month)
         instance_id = store.list_open_instances()[0]["instanceId"]
         github.decision = Decision(False, "assessed", (), ())
+        clear_poll_lease(store)
         dropped = run_poll(store, ec2, ec2, github, config, NOW, ssm=ssm)
         self.assertEqual(dropped.launched, 0)
         self.assertEqual(len(store.list_job_locks("101")), 1)
         self.assertEqual(store.get_instance(instance_id)["state"], "OPEN")
         ec2.terminate_instances([instance_id])
+        clear_poll_lease(store)
         closed = run_poll(store, ec2, ec2, github, config, NOW, ssm=ssm)
         self.assertEqual(closed.launched, 0)
         self.assertEqual(store.list_job_locks("101"), [])
@@ -401,6 +403,7 @@ class JitAndLockTests(unittest.TestCase):
         first_token = ec2.calls[0]
         self.assertEqual(first_token, client_token("101", "9001", 0))
         ec2.terminate_instances([first_id])
+        clear_poll_lease(store)
         second = run_poll(store, ec2, ec2, github, config, NOW + 1, ssm=ssm)
         self.assertEqual(second.launched, 1)
         self.assertEqual(len(ec2.calls), 2)
