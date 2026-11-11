@@ -110,7 +110,7 @@ const (
 func Pins() Manifest {
 	return Manifest{
 		GoLanguageVersion: "1.26.0",
-		GoToolchain:       "go1.26.10",
+		GoToolchain:       "go1.26.11",
 		Scaleset: ModulePin{
 			Path:    "github.com/actions/scaleset",
 			Version: "v0.4.0",
