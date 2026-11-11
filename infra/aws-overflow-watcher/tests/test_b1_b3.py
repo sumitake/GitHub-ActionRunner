@@ -615,7 +615,7 @@ class JitAndLockTests(unittest.TestCase):
             self.assertIn(installation, document, label)
             self.assertIn(doc_ref, document, label)
             self.assertNotIn(bws_item_id, document, label)
-        self.assertIn("blocked", readme.lower())
+        self.assertIn("john granted administration", readme.lower())
         self.assertIn('"Administration" repository permissions (write)', readme)
         src = ROOT / "src" / "overflow_watcher"
         for path in sorted(src.glob("*.py")):

@@ -3148,5 +3148,12 @@
     "rule": "PATH001",
     "sha256": "ced1c3532d3aa4c23845d107ed210826ac1d51700a2433142a0250987d083120",
     "reason": "Container-internal /usr/share package-evidence path required by the runner image contract; it is not an operator, NAS, or workstation path."
+  },
+  {
+    "path": "infra/aws-overflow-watcher/src/overflow_watcher/guest_ssm.py",
+    "line": 18,
+    "rule": "IP001",
+    "sha256": "dde9cea80c516ae2ddffff5a1345442d072a265860bdc954067d7f63fbabfb7d",
+    "reason": "EC2 instance metadata service (IMDSv2) endpoint. The overflow runner guest reads its role credentials and region there to call SSM without the aws CLI. Load-bearing runtime address, not a leak; allowlisted by exact content hash."
   }
 ]

@@ -109,3 +109,25 @@ Each row is one mutation of the fix on this branch, run on 2026-11-10 PT, then r
 | No deregister and no runner DELETE               | `test_static_no_deregister_or_runner_delete`                                           | add the string `config.sh` to `controller.py`       | Killed: `'config.sh' unexpectedly found`                            |
 | No runner-count cap                              | `test_c_no_runner_count_limit`                                                         | add `MAX_RUNNERS = 1` to `controller.py`            | Killed: `'MAX_RUNNERS' unexpectedly found`                          |
 | Crash retry reuses the token and does not remint | `test_f7e_crash_before_transaction_retries_same_client_token_once`                     | ignore `jitReady`                                   | Killed: `ec2.calls` `[] != ['tok-crash']`                           |
+
+## Stock image and stack inputs (2026-11-11)
+
+Each row is one mutation of this branch, run on 2026-11-11 PT with
+`PYTHONDONTWRITEBYTECODE=1`, then restored. Every mutation killed its test.
+
+| Finding                                      | Negative test                                                             | Mutation                                           | Result                                   |
+| -------------------------------------------- | ------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------- |
+| Runner tarball sha256 mismatch fails boot    | `test_tarball_sha_mismatch_fails_boot_and_installs_nothing`               | skip the sha256 comparison                         | Killed: exit `0 != 1`                    |
+| Missing runner listener fails boot           | `test_tarball_without_listener_fails_and_installs_nothing`                | skip the listener check                            | Killed: `InstallError not raised`        |
+| Guest runner pin follows release manifest    | `test_guest_runner_pin_matches_release_manifest`                          | guest version `2.338.2`                            | Killed: `'v2.338.2' != 'v2.338.0'`       |
+| Install failure never reads the JIT secret   | `test_runner_install_failure_parks_without_reading_secret`                | continue past a failed install                     | Killed: user data exit `1 != 0`, no park |
+| Guest does not depend on the aws CLI         | `test_user_data_has_no_aws_cli_and_installs_runner_before_reading_secret` | `aws ssm delete-parameter` back in the script      | Killed: `'aws ssm' unexpectedly found`   |
+| Guest SigV4 matches botocore                 | `test_sigv4_signature_matches_botocore`                                   | drop the signed security-token header              | Killed: signature mismatch               |
+| SSM failure prints nothing sensitive         | `test_get_failure_fails_closed_and_prints_nothing`                        | print the exception text                           | Killed: error text found on stderr       |
+| Self-update exit relaunches the listener     | `test_update_exit_relaunches_then_completes_normally`                     | no relaunch on exit 3/4                            | Killed: no shutdown after the update     |
+| Update relaunch is bounded, never shuts down | `test_endless_update_exits_are_bounded_and_never_shut_down`               | unbounded relaunch                                 | Killed: launch count above `4`           |
+| Ubuntu root device is `/dev/sda1`            | `test_ami_resolves_from_public_ubuntu_parameter_and_root_is_sda1`         | `/dev/xvda`                                        | Killed: `/dev/sda1` not found            |
+| AMI resolves from the public SSM parameter   | `test_ami_resolves_from_public_ubuntu_parameter_and_root_is_sda1`         | `AmiId` type `String`                              | Killed: SSM parameter type not found     |
+| Update relaunch waits for the updater flag   | `test_update_exit_without_flag_does_not_relaunch_or_shut_down`            | relaunch even when `update.finished` never appears | Killed: launch count `4 != 1`            |
+| git present before checkout                  | `test_user_data_has_no_aws_cli_and_installs_runner_before_reading_secret` | drop the git guard                                 | Killed: guard not found                  |
+| Runner may run as root                       | `test_user_data_has_no_aws_cli_and_installs_runner_before_reading_secret` | drop `RUNNER_ALLOW_RUNASROOT=1`                    | Killed: export not found                 |
