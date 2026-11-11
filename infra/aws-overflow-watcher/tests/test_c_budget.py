@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from fakes import FakeEc2, FakeGitHub, FakeSsm
-from support import NOW, add_cents, cfg, fresh_store, sample_job, seed_instance, watcher_env
+from support import NOW, add_cents, assert_poll_ran, cfg, clear_poll_lease, fresh_store, sample_job, seed_instance, watcher_env
 
 from overflow_watcher.config import load_config
 from overflow_watcher.controller import launch_one, run_poll
@@ -60,7 +60,9 @@ class BudgetTests(unittest.TestCase):
         add_cents(store, month, 3001)
         config = cfg()
         first = run_poll(store, ec2, ec2, github, config, NOW)
+        clear_poll_lease(store)
         second = run_poll(store, ec2, ec2, github, config, NOW)
+        assert_poll_ran(self, second)
         alerts = [item for item in first.alerts.items if item.kind == "budget"]
         self.assertEqual(len(alerts), 1)
         self.assertEqual(alerts[0].audience, "john")
@@ -168,13 +170,16 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(len(github.cancel_calls), 1)
         self.assertEqual(ec2.terminate_calls, [])
         self.assertEqual(first.budget.cancelled, ("i-wait",))
+        clear_poll_lease(store)
         early = run_poll(store, ec2, ec2, github, config, NOW + 119)
         self.assertEqual(len(github.cancel_calls), 1)
         self.assertEqual(ec2.terminate_calls, [])
         self.assertEqual(early.budget.cancelled, ())
+        clear_poll_lease(store)
         due = run_poll(store, ec2, ec2, github, config, NOW + 120)
         self.assertEqual(ec2.terminate_calls, [["i-wait"]])
         self.assertEqual(due.budget.terminated, ("i-wait",))
+        clear_poll_lease(store)
         again = run_poll(store, ec2, ec2, github, config, NOW + 180)
         self.assertEqual(ec2.terminate_calls, [["i-wait"]])
         self.assertEqual(again.budget.terminated, ())
@@ -270,6 +275,7 @@ class BudgetTests(unittest.TestCase):
         _over(store, month, 3400)
         config = cfg()
         run_poll(store, ec2, ec2, github, config, NOW)
+        clear_poll_lease(store)
         second = run_poll(store, ec2, ec2, github, config, NOW)
         self.assertEqual(len(github.cancel_calls), 1)
         self.assertEqual(ec2.terminate_calls, [])
@@ -302,7 +308,9 @@ class BudgetTests(unittest.TestCase):
         first = run_poll(store, ec2, ec2, github, config, NOW, ssm=ssm)
         self.assertEqual(len(ec2.calls), 1)
         token = ec2.calls[0]
+        clear_poll_lease(store)
         second = run_poll(store, ec2, ec2, github, config, NOW + 1, ssm=ssm)
+        assert_poll_ran(self, second)
         self.assertEqual(ec2.calls, [token])
         self.assertEqual(first.quota_failures, 1)
         self.assertEqual(second.quota_failures, 0)

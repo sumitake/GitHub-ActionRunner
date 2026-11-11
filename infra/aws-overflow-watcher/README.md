@@ -9,9 +9,18 @@ win where they disagree with earlier F/R lines (F0, F0b).
 
 ## What it does
 
-Every minute, EventBridge invokes the controller (reserved concurrency 1,
-timeout 45 seconds). The Lambda resource policy allows only that rule. The
-controller polls GitHub. It does not accept a webhook.
+Every minute, EventBridge invokes the controller (timeout 45 seconds). The
+Lambda resource policy allows only that rule. The controller polls GitHub. It
+does not accept a webhook.
+
+One poll runs at a time. Each poll first takes a DynamoDB lease
+(`LEASE#poll`, expiring 55 seconds after it is taken: longer than the timeout,
+shorter than the schedule) with a conditional write. A poll that finds the
+lease held, such as an async retry or a duplicate delivery, returns success
+without reading or writing anything else. The lease is never deleted, so a
+poll cannot remove a successor's lease. Lambda reserved concurrency is
+optional (`ControllerReservedConcurrency`, empty by default for accounts whose
+unreserved concurrency floor leaves no room).
 
 Admission (C1, F1, F2, R4, V5-04):
 

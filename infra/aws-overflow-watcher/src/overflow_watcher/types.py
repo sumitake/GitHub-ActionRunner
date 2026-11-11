@@ -13,6 +13,9 @@ RETRY_WINDOW_SECONDS = 900
 CAPACITY_COOLDOWN_SECONDS = 900
 REPORT_AFTER_SECONDS = 1800
 JOB_HOLD_TTL_SECONDS = 7 * 24 * 3600
+# Poll lease: longer than the controller Timeout (45 s) and shorter than the
+# one-minute schedule, so one poll runs at a time without reserved concurrency.
+POLL_LEASE_SECONDS = 55
 
 
 class CapacityRefused(Exception):

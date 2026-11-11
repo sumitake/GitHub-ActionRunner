@@ -62,6 +62,17 @@ Parameters:
     Type: String
     Default: '[{"kind":"workflow","pattern":"deploy-*"},{"kind":"workflow","pattern":"*migration*"},{"kind":"job","pattern":"deploy-*"},{"kind":"job","pattern":"migrate*"}]'
     Description: Deploy and migration exclusion patterns. An empty value fails closed.
+  ControllerReservedConcurrency:
+    Type: String
+    Default: ""
+    AllowedPattern: "^([1-9][0-9]*)?$"
+    Description: Optional Lambda reserved concurrency for the controller. Empty sets none; the poll lease keeps one poll running at a time either way.
+Conditions:
+  HasControllerReservedConcurrency:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: ControllerReservedConcurrency
+          - ""
 Resources:
   StateTable:
     Type: AWS::DynamoDB::Table
@@ -243,7 +254,11 @@ Resources:
       Handler: overflow_watcher.handler.handler
       Timeout: 45
       MemorySize: 256
-      ReservedConcurrentExecutions: 1
+      ReservedConcurrentExecutions:
+        Fn::If:
+          - HasControllerReservedConcurrency
+          - Ref: ControllerReservedConcurrency
+          - Ref: AWS::NoValue
       Role:
         Fn::GetAtt:
           - ControllerRole
@@ -438,3 +453,18 @@ Resources:
                   - Fn::GetAtt:
                       - GraceAlarm
                       - Arn
+Outputs:
+  ControllerFunctionName:
+    Value:
+      Ref: ControllerFunction
+  ControllerFunctionArn:
+    Value:
+      Fn::GetAtt:
+        - ControllerFunction
+        - Arn
+  BudgetAlertTopicArn:
+    Value:
+      Ref: BudgetAlertTopic
+  StateTableName:
+    Value:
+      Ref: StateTable
