@@ -4,7 +4,26 @@ Each row names the fail-closed test and the mutation that was applied, run, and 
 
 Clean re-run on `7ae0727d7fbfb260425da8f494814d306b2bb2f5` (main, base of this closeout), 2026-11-10 PT. Every section below was applied on that clean tree and restored with `git checkout`. `git status` was clean after every row.
 
-## DynamoDB listing Query (this change)
+## Controller Errors alarm, backfill negatives, and account-ID redaction (this change)
+
+Applied on this tree (base `51cf61f63d74b88f532f6645b12701c96d33247a`), 2026-11-17 PT. Each mutation was applied to `template.yaml`, `store.py`, `CHECKLIST.md`, or `docs/operations/overflow-watcher-deploy-inputs.md`, run, and restored from a saved copy. Files were clean of stray mutation edits after every row. 134 tests passed on the unmutated tree (`scripts/run-tests.sh`).
+
+| Finding                                                                           | Negative test                                                      | Mutation                                                    | Result                                                                     |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Controller Errors alarm watches `AWS/Lambda` `Errors` for `ControllerFunction`    | `test_controller_errors_alarm_watches_lambda_errors`               | `ComparisonOperator: GreaterThanThreshold`                  | Killed: `'GreaterThanThreshold' != 'GreaterThanOrEqualToThreshold'`        |
+| One error in a 60-second period must page                                         | `test_controller_errors_alarm_watches_lambda_errors`               | `EvaluationPeriods: 5`                                      | Killed: `'5' != '1'`                                                       |
+| Metric is Lambda Errors, not a log filter                                         | `test_controller_errors_alarm_watches_lambda_errors`               | `MetricName: SoftCapCrossed`                                | Killed: `'SoftCapCrossed' != 'Errors'`                                     |
+| The alarm resource is present                                                     | `test_controller_errors_alarm_watches_lambda_errors`               | drop `ControllerErrorsAlarm`                                | Killed: `'ControllerErrorsAlarm' not found in` the resources map           |
+| Topic policy `aws:SourceArn` is exactly the three alarm ARNs                      | `test_alert_topic_policy_allows_the_errors_alarm`                  | drop `Fn::GetAtt` of `ControllerErrorsAlarm`                | Killed: `2 != 3`                                                           |
+| Topic policy is not widened to `alarm:*`                                          | `test_alert_topic_policy_allows_the_errors_alarm`                  | append `alarm:*` to `aws:SourceArn`                         | Killed: `4 != 3`                                                           |
+| Backfill follows Scan pagination                                                  | `test_backfill_follows_scan_pagination`                            | leave `LastEvaluatedKey` unread (stop after the first page) | Killed: scan count `1 != 2`                                                |
+| The second Scan uses the first page's `ExclusiveStartKey`                         | `test_backfill_follows_scan_pagination`                            | keep looping without assigning `ExclusiveStartKey`          | Killed: `ExclusiveStartKey` `None !=` the first page's `LastEvaluatedKey`  |
+| Backfill keys OPEN rows from the top-level `state` attribute, not the record JSON | `test_backfill_keys_open_rows_from_the_attribute`                  | set INST `gsiSk` from `json.loads(record)["state"]`         | Killed: open ids `[] != ['i-open-legacy']`                                 |
+| Mid-backfill failure leaves the marker unset                                      | `test_backfill_failure_midway_leaves_the_marker_unset_and_resumes` | write the `BACKFILL#gsi-v1` marker before the loop          | Killed: marker is not None                                                 |
+| Source does not embed the AWS account id                                          | `test_source_does_not_embed_the_aws_account_id`                    | restore the id in `CHECKLIST.md`                            | Killed: hits `['infra/aws-overflow-watcher/CHECKLIST.md'] != []`           |
+| Source does not embed the AWS account id in deploy-inputs                         | `test_source_does_not_embed_the_aws_account_id`                    | restore the id only in `overflow-watcher-deploy-inputs.md`  | Killed: hits `['docs/operations/overflow-watcher-deploy-inputs.md'] != []` |
+
+## DynamoDB listing Query
 
 Applied on this tree (base `373ea9e29377c3b294087e2b4b1e0bbcfdf1ae4a`), 2026-11-17 PT. Each mutation was applied to `store.py`, run, and restored from a saved copy. `git status` was clean of stray `store.py` edits after every row. 128 tests passed on the unmutated tree (`scripts/run-tests.sh`).
 
@@ -160,7 +179,7 @@ killed its test.
 
 ## Poll lease and optional reserved concurrency (2026-11-11)
 
-Account 922176437318 (us-west-2) has a Lambda concurrency limit of 10, all of
+The target AWS account (us-west-2) has a Lambda concurrency limit of 10, all of
 which must stay unreserved, so `ReservedConcurrentExecutions: 1` could not
 deploy. A design check found that overlapping polls could release a reservation
 while a peer launched, leaving a tagged instance outside the $33 stop. One

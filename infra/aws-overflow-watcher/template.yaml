@@ -444,6 +444,24 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions:
         - Ref: BudgetAlertTopic
+  ControllerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: OverflowWatcherControllerErrors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value:
+            Ref: ControllerFunction
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Ref: BudgetAlertTopic
   BudgetAlertTopicPolicy:
     Type: AWS::SNS::TopicPolicy
     Properties:
@@ -467,6 +485,9 @@ Resources:
                       - Arn
                   - Fn::GetAtt:
                       - GraceAlarm
+                      - Arn
+                  - Fn::GetAtt:
+                      - ControllerErrorsAlarm
                       - Arn
 Outputs:
   ControllerFunctionName:
