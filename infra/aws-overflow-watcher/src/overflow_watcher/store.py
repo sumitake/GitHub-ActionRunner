@@ -61,10 +61,22 @@ class Store:
             AttributeDefinitions=[
                 {"AttributeName": "pk", "AttributeType": "S"},
                 {"AttributeName": "sk", "AttributeType": "S"},
+                {"AttributeName": "gsiPk", "AttributeType": "S"},
+                {"AttributeName": "gsiSk", "AttributeType": "S"},
             ],
             KeySchema=[
                 {"AttributeName": "pk", "KeyType": "HASH"},
                 {"AttributeName": "sk", "KeyType": "RANGE"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "gsiPk-index",
+                    "KeySchema": [
+                        {"AttributeName": "gsiPk", "KeyType": "HASH"},
+                        {"AttributeName": "gsiSk", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
             ],
             BillingMode="PAY_PER_REQUEST",
         )
@@ -95,6 +107,8 @@ class Store:
         item = {
             "pk": _s(f"RES#{token}"),
             "sk": _s("META"),
+            "gsiPk": _s("RES"),
+            "gsiSk": _s(f"OPEN#{token}"),
             "state": _s("OPEN"),
             "clientToken": _s(token),
             "allowanceCents": _n(allowance),
@@ -135,6 +149,8 @@ class Store:
                         "Item": {
                             "pk": _s(f"JOB#{repo_id}#{job_id}"),
                             "sk": _s("META"),
+                            "gsiPk": _s(f"JOB#{repo_id}"),
+                            "gsiSk": _s(job_id),
                             "state": _s("HELD"),
                             "clientToken": _s(token),
                             "month": _s(month),
@@ -180,7 +196,7 @@ class Store:
     def list_open_reservations(self) -> list[dict[str, Any]]:
         return [
             self._reservation_from_item(item)
-            for item in self._scan_prefix("RES#", "META")
+            for item in self._query_gsi("RES", sk_prefix="OPEN#")
             if item.get("state", {}).get("S") == "OPEN"
         ]
 
@@ -325,7 +341,7 @@ class Store:
     def instances_returned(self, repo_id: str, job_id: str) -> int:
         """How many instance ids have been stored for this job, open or closed."""
         count = 0
-        for item in self._scan_prefix("INST#", "META"):
+        for item in self._query_gsi("INST"):
             raw = item.get("record", {}).get("S")
             if not raw:
                 continue
@@ -335,7 +351,7 @@ class Store:
         return count
 
     def list_job_locks(self, repo_id: str) -> list[dict[str, Any]]:
-        return [_plain(item) for item in self._scan_prefix(f"JOB#{repo_id}#", "META")]
+        return [_plain(item) for item in self._query_gsi(f"JOB#{repo_id}")]
 
     def touch_job_lock(self, repo_id: str, job_id: str, expires_at: int) -> None:
         self.client.update_item(
@@ -389,7 +405,7 @@ class Store:
     def list_open_instances(self) -> list[dict[str, Any]]:
         return [
             self._instance_from_item(item)
-            for item in self._scan_prefix("INST#", "META")
+            for item in self._query_gsi("INST", sk_prefix="OPEN#")
             if item.get("state", {}).get("S") == "OPEN"
         ]
 
@@ -423,7 +439,7 @@ class Store:
                     "Key": _key(f"INST#{instance_id}", "META"),
                     "UpdateExpression": (
                         "SET #state = :closed, cumulativeDebitCents = :cumulative, "
-                        "debitByMonth = :debits"
+                        "debitByMonth = :debits, gsiSk = :closedKey"
                     ),
                     "ConditionExpression": (
                         "attribute_exists(pk) AND #state = :open AND watermarkEpoch = :watermark"
@@ -435,6 +451,7 @@ class Store:
                         ":watermark": _n(watermark),
                         ":cumulative": _n(sum(actual.values())),
                         ":debits": _s(json.dumps(actual, sort_keys=True)),
+                        ":closedKey": _s(f"CLOSED#{instance_id}"),
                     },
                 }
             }
@@ -623,13 +640,15 @@ class Store:
             Item={
                 "pk": _s(f"FAIL#{token}"),
                 "sk": _s("META"),
+                "gsiPk": _s("FAIL"),
+                "gsiSk": _s(token),
                 "code": _s(code),
                 "epoch": _n(now),
             },
         )
 
     def failure_count(self) -> int:
-        return len(self._scan_prefix("FAIL#", "META"))
+        return len(self._query_gsi("FAIL"))
 
     def cooldown_until(self) -> int:
         item = self._get("COOLDOWN", "CAPACITY")
@@ -647,16 +666,92 @@ class Store:
         response = self.client.get_item(TableName=self.table, Key=_key(pk, sk), ConsistentRead=True)
         return response.get("Item")
 
-    def _scan_prefix(self, prefix: str, sk: str) -> list[dict[str, Any]]:
-        items: list[dict[str, Any]] = []
-        kwargs: dict[str, Any] = {
-            "TableName": self.table,
-            "FilterExpression": "begins_with(pk, :prefix) AND sk = :sk",
-            "ExpressionAttributeValues": {":prefix": _s(prefix), ":sk": _s(sk)},
-            "ConsistentRead": True,
-        }
+    def maybe_backfill_gsi(self) -> None:
+        """Write gsiPk/gsiSk on existing META rows once, after the poll lease.
+
+        Live CLOSED instance rows keep "state": "OPEN" inside the stored record
+        JSON. The top-level state attribute is authoritative. Only sk=META
+        INST/RES/JOB/FAIL items are keyed; alert siblings are left alone.
+        """
+        if self.get_marker("BACKFILL#gsi-v1", "META") is not None:
+            return
+        kwargs: dict[str, Any] = {"TableName": self.table, "ConsistentRead": True}
         while True:
             response = self.client.scan(**kwargs)
+            for item in response.get("Items", []):
+                self._backfill_item(item)
+            last = response.get("LastEvaluatedKey")
+            if not last:
+                break
+            kwargs["ExclusiveStartKey"] = last
+        self.client.put_item(
+            TableName=self.table,
+            Item={"pk": _s("BACKFILL#gsi-v1"), "sk": _s("META")},
+        )
+
+    def _backfill_item(self, item: dict[str, Any]) -> None:
+        if item.get("gsiPk") is not None:
+            return
+        pk = item.get("pk", {}).get("S") or ""
+        sk = item.get("sk", {}).get("S") or ""
+        if sk != "META":
+            return
+        keys: dict[str, dict[str, str]] | None = None
+        if pk.startswith("INST#"):
+            state = item.get("state", {}).get("S") or ""
+            instance_id = pk[len("INST#"):]
+            if not instance_id:
+                return
+            if state == "OPEN":
+                keys = {"gsiPk": _s("INST"), "gsiSk": _s(f"OPEN#{instance_id}")}
+            elif state == "CLOSED":
+                keys = {"gsiPk": _s("INST"), "gsiSk": _s(f"CLOSED#{instance_id}")}
+        elif pk.startswith("RES#"):
+            if (item.get("state", {}).get("S") or "") != "OPEN":
+                return
+            token = pk[len("RES#"):]
+            if not token:
+                return
+            keys = {"gsiPk": _s("RES"), "gsiSk": _s(f"OPEN#{token}")}
+        elif pk.startswith("JOB#"):
+            parts = pk.split("#")
+            if len(parts) != 3 or not _DIGITS.fullmatch(parts[1]) or not _DIGITS.fullmatch(parts[2]):
+                return
+            keys = {"gsiPk": _s(f"JOB#{parts[1]}"), "gsiSk": _s(parts[2])}
+        elif pk.startswith("FAIL#"):
+            token = pk[len("FAIL#"):]
+            if not token:
+                return
+            keys = {"gsiPk": _s("FAIL"), "gsiSk": _s(token)}
+        if keys is None:
+            return
+        try:
+            self.client.update_item(
+                TableName=self.table,
+                Key=_key(pk, sk),
+                UpdateExpression="SET gsiPk = :gp, gsiSk = :gs",
+                ConditionExpression="attribute_not_exists(gsiPk)",
+                ExpressionAttributeValues={":gp": keys["gsiPk"], ":gs": keys["gsiSk"]},
+            )
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+
+    def _query_gsi(self, gsi_pk: str, *, sk_prefix: str | None = None) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        values: dict[str, dict[str, str]] = {":pk": _s(gsi_pk)}
+        condition = "gsiPk = :pk"
+        if sk_prefix is not None:
+            condition += " AND begins_with(gsiSk, :sk)"
+            values[":sk"] = _s(sk_prefix)
+        kwargs: dict[str, Any] = {
+            "TableName": self.table,
+            "IndexName": "gsiPk-index",
+            "KeyConditionExpression": condition,
+            "ExpressionAttributeValues": values,
+        }
+        while True:
+            response = self.client.query(**kwargs)
             items.extend(response.get("Items", []))
             last = response.get("LastEvaluatedKey")
             if not last:
@@ -664,14 +759,28 @@ class Store:
             kwargs["ExclusiveStartKey"] = last
 
     def _instance_item(self, record: dict[str, Any]) -> dict[str, Any]:
+        stored = dict(record)
+        params = stored.get("params")
+        if isinstance(params, dict) and "UserData" in params:
+            params = dict(params)
+            params.pop("UserData", None)
+            stored["params"] = params
+        instance_id = str(record["instanceId"])
+        state = str(record["state"])
+        if state == "OPEN":
+            gsi_sk = f"OPEN#{instance_id}"
+        else:
+            gsi_sk = f"CLOSED#{instance_id}"
         return {
-            "pk": _s(f"INST#{record['instanceId']}"),
+            "pk": _s(f"INST#{instance_id}"),
             "sk": _s("META"),
-            "state": _s(record["state"]),
+            "gsiPk": _s("INST"),
+            "gsiSk": _s(gsi_sk),
+            "state": _s(state),
             "watermarkEpoch": _n(int(record["watermarkEpoch"])),
             "cumulativeDebitCents": _n(int(record["cumulativeDebitCents"])),
             "debitByMonth": _s(json.dumps(record["debitByMonth"], sort_keys=True)),
-            "record": _s(json.dumps(record, sort_keys=True)),
+            "record": _s(json.dumps(stored, sort_keys=True)),
         }
 
     def _reservation_from_item(self, item: dict[str, Any]) -> dict[str, Any]:

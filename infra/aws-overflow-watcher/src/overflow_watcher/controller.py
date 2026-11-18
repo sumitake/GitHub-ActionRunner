@@ -476,6 +476,7 @@ def run_poll(
         # Another poll is running. Return success: raising would queue an async retry.
         result.blocked_reason = "poll-lease-held"
         return result
+    store.maybe_backfill_gsi()
     resolve_reservations(store, ec2, result.alerts, now, github=github, ssm=ssm)
     accrue(store, result.alerts, now)
     index = ec2.index_count() if hasattr(ec2, "index_count") else None

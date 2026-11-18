@@ -20,7 +20,10 @@ lease held, such as an async retry or a duplicate delivery, returns success
 without reading or writing anything else. The lease is never deleted, so a
 poll cannot remove a successor's lease. Lambda reserved concurrency is
 optional (`ControllerReservedConcurrency`, empty by default for accounts whose
-unreserved concurrency floor leaves no room).
+unreserved concurrency floor leaves no room). Listings (`list_open_instances`,
+`list_open_reservations`, `list_job_locks`, `instances_returned`) Query the
+`gsiPk-index` index, with open instance and reservation reads limited to the
+`OPEN#` range, so a poll does not Scan CLOSED history.
 
 Admission (C1, F1, F2, R4, V5-04):
 
