@@ -4,7 +4,17 @@ Each row names the fail-closed test and the mutation that was applied, run, and 
 
 Clean re-run on `7ae0727d7fbfb260425da8f494814d306b2bb2f5` (main, base of this closeout), 2026-11-10 PT. Every section below was applied on that clean tree and restored with `git checkout`. `git status` was clean after every row.
 
-## Controller Errors alarm, backfill negatives, and account-ID redaction (this change)
+## Account-id test stores only the sha256 (this change)
+
+Applied on this tree (base `d26ef84587eac616856b9687b2e7f8aec2c7205f`), 2026-11-18 PT. The account-id regression test no longer stores the id or excludes its own file. It walks every tracked text file, hashes each 12-digit run, and fails when a hash matches the stored sha256. Each mutation was applied, run, and restored. Files were clean of stray mutation edits after every row.
+
+| Finding                                                   | Negative test                                   | Mutation                                                   | Result                                                                                 |
+| --------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Source does not embed the AWS account id                  | `test_source_does_not_embed_the_aws_account_id` | restore the id in `CHECKLIST.md`                           | Killed: hits `['infra/aws-overflow-watcher/CHECKLIST.md'] != []`                       |
+| Source does not embed the AWS account id in deploy-inputs | `test_source_does_not_embed_the_aws_account_id` | restore the id only in `overflow-watcher-deploy-inputs.md` | Killed: hits `['docs/operations/overflow-watcher-deploy-inputs.md'] != []`             |
+| The test file itself is not excluded                      | `test_source_does_not_embed_the_aws_account_id` | write the id into `test_account_id_redaction.py`           | Killed: hits `['infra/aws-overflow-watcher/tests/test_account_id_redaction.py'] != []` |
+
+## Controller Errors alarm, backfill negatives, and account-ID redaction
 
 Applied on this tree (base `51cf61f63d74b88f532f6645b12701c96d33247a`), 2026-11-17 PT. Each mutation was applied to `template.yaml`, `store.py`, `CHECKLIST.md`, or `docs/operations/overflow-watcher-deploy-inputs.md`, run, and restored from a saved copy. Files were clean of stray mutation edits after every row. 134 tests passed on the unmutated tree (`scripts/run-tests.sh`).
 

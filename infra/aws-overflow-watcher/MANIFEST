@@ -2,7 +2,7 @@ packet: overflow-watcher clean closeout above 7ae0727d7fbfb260425da8f494814d306b
 hash: sha256 of file bytes. This manifest does not name its own hash.
 offline: generated zip sha256 is bound to CodeS3Bucket, CodeS3Key, and CodeS3ObjectVersion names.
 hold: live S3 object bytes and version id are UNPROVEN. No upload and no object attestation.
-6fa12b68c230fa0399a3162e4b78d6a9e36da0cc4c85f734c8133988f1bf7311  infra/aws-overflow-watcher/CHECKLIST.md
+9052d26c87cb14771401760fe22128818b2e5125840119ecbfa685f8a9566236  infra/aws-overflow-watcher/CHECKLIST.md
 dee41dcf7f76aeef9255e8f288e2cd6ced912e7906f0c13ff6202947b6afde01  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
 57922a4931a51b538e412cb56e6e099f2db573e21d6314353e60053fcdda6806  infra/aws-overflow-watcher/README.md
 2f8f6eb3dc08c531471646fdd78fae5eb9d4d8cba40a2349fdd42f95350250ad  infra/aws-overflow-watcher/template.yaml
