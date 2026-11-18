@@ -173,7 +173,11 @@ process already prints. `{ $.kind = "budget" }` increments
 least 1 over 60 seconds. Both alarms publish to one SNS topic
 encrypted with a customer-managed KMS key that `sns.amazonaws.com` and
 `cloudwatch.amazonaws.com` may use. `AlertEmail` subscribes to that
-topic. The Lambda does not read the address, and launch
+topic. A third alarm watches the controller Lambda's AWS/Lambda Errors
+metric (a sum of at least 1 over 60 seconds) and publishes to the same
+topic, so a poll that fails before the $33 budget stop is visible. The
+alarm notifies; it does not terminate instances. The Lambda does not
+read the address, and launch
 admission does not depend on it. Confirming the subscription is a live Ops
 step. The template has no AWS Budget. `past-allowance` and the other
 non-budget kinds stay log-only.

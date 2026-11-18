@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import unittest
 
+from botocore.exceptions import ClientError
 from fakes import FakeEc2, FakeGitHub, FakeSsm
 from support import NOW, cfg, clear_poll_lease, fresh_store, seed_instance
 from test_poll_lease import RecordingClient
@@ -66,6 +67,85 @@ def _closed_record(instance_id: str, repo_id: str = "101", job_id: str = "7") ->
         "repoId": repo_id,
         "jobId": job_id,
     }
+
+
+
+
+class _PagedScan:
+    """Return scripted Scan pages and record each call's kwargs."""
+
+    def __init__(self, inner, pages: list[dict]) -> None:
+        self._inner = inner
+        self._pages = list(pages)
+        self.scan_kwargs: list[dict] = []
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def scan(self, **kwargs):
+        self.scan_kwargs.append(dict(kwargs))
+        if len(self.scan_kwargs) > len(self._pages):
+            raise AssertionError("unexpected extra scan")
+        return self._pages[len(self.scan_kwargs) - 1]
+
+
+class _FailSecondUpdate:
+    """Pass the first update_item through, then raise InternalServerError."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.update_keys: list[dict] = []
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def update_item(self, **kwargs):
+        key = kwargs["Key"]
+        self.update_keys.append(key)
+        if len(self.update_keys) >= 2:
+            raise ClientError(
+                {"Error": {"Code": "InternalServerError", "Message": "InternalServerError"}},
+                "UpdateItem",
+            )
+        return self._inner.update_item(**kwargs)
+
+
+def _unkeyed_instance_item(store, instance_id: str, *, top_state: str, json_state: str) -> dict:
+    month = month_key(NOW)
+    record = {
+        "instanceId": instance_id,
+        "clientToken": f"tok-{instance_id}",
+        "allowanceCents": 1,
+        "month": month,
+        "createdEpoch": NOW,
+        "launchEpoch": NOW,
+        "watermarkEpoch": NOW,
+        "cumulativeDebitCents": 1,
+        "debitByMonth": {month: 1},
+        "state": json_state,
+        "params": {"ImageId": "ami-placeholder"},
+        "repoId": "101",
+        "jobId": "55",
+        "priceNumer": 1,
+        "priceDenom": 100,
+    }
+    return {
+        "pk": {"S": f"INST#{instance_id}"},
+        "sk": {"S": "META"},
+        "state": {"S": top_state},
+        "watermarkEpoch": {"N": str(NOW)},
+        "cumulativeDebitCents": {"N": "1"},
+        "debitByMonth": {"S": json.dumps({month: 1}, sort_keys=True)},
+        "record": {"S": json.dumps(record, sort_keys=True)},
+    }
+
+
+def _get(store, pk: str, sk: str) -> dict:
+    return store.client.get_item(
+        TableName=store.table,
+        Key={"pk": {"S": pk}, "sk": {"S": sk}},
+        ConsistentRead=True,
+    )["Item"]
 
 
 class GsiListingTests(unittest.TestCase):
@@ -231,6 +311,93 @@ class GsiListingTests(unittest.TestCase):
         second = run_poll(store, FakeEc2(), FakeEc2(), _idle_github(), _three_repo_cfg(), NOW + 60, ssm=FakeSsm())
         self.assertNotEqual(second.blocked_reason, "poll-lease-held")
         self.assertNotIn("scan", recorder.calls)
+
+
+    def test_backfill_follows_scan_pagination(self) -> None:
+        store = fresh_store()
+        first = _unkeyed_instance_item(store, "i-page1", top_state="CLOSED", json_state="OPEN")
+        second = _unkeyed_instance_item(store, "i-page2", top_state="CLOSED", json_state="OPEN")
+        store.client.put_item(TableName=store.table, Item=first)
+        store.client.put_item(TableName=store.table, Item=second)
+        start_key = {"pk": {"S": "INST#i-page1"}, "sk": {"S": "META"}}
+        pager = _PagedScan(
+            store.client,
+            [
+                {"Items": [first], "LastEvaluatedKey": start_key},
+                {"Items": [second]},
+            ],
+        )
+        store.client = pager
+        store.maybe_backfill_gsi()
+        self.assertEqual(len(pager.scan_kwargs), 2)
+        self.assertEqual(pager.scan_kwargs[1].get("ExclusiveStartKey"), start_key)
+        one = _get(store, "INST#i-page1", "META")
+        two = _get(store, "INST#i-page2", "META")
+        self.assertEqual(one["gsiPk"]["S"], "INST")
+        self.assertEqual(one["gsiSk"]["S"], "CLOSED#i-page1")
+        self.assertEqual(two["gsiPk"]["S"], "INST")
+        self.assertEqual(two["gsiSk"]["S"], "CLOSED#i-page2")
+        self.assertIsNotNone(store.get_marker("BACKFILL#gsi-v1", "META"))
+
+    def test_backfill_keys_open_rows_from_the_attribute(self) -> None:
+        store = fresh_store()
+        store.client.put_item(
+            TableName=store.table,
+            Item=_unkeyed_instance_item(store, "i-open-legacy", top_state="OPEN", json_state="CLOSED"),
+        )
+        store.client.put_item(
+            TableName=store.table,
+            Item={
+                "pk": {"S": "INST#i-open-legacy"},
+                "sk": {"S": "ALERT#ALLOWANCE"},
+                "kind": {"S": "past-allowance"},
+            },
+        )
+        store.maybe_backfill_gsi()
+        opened = store.list_open_instances()
+        self.assertEqual([item["instanceId"] for item in opened], ["i-open-legacy"])
+        item = _get(store, "INST#i-open-legacy", "META")
+        self.assertEqual(item["gsiPk"]["S"], "INST")
+        self.assertEqual(item["gsiSk"]["S"], "OPEN#i-open-legacy")
+        alert = _get(store, "INST#i-open-legacy", "ALERT#ALLOWANCE")
+        self.assertNotIn("gsiPk", alert)
+        self.assertIsNotNone(store.get_marker("BACKFILL#gsi-v1", "META"))
+
+    def test_backfill_failure_midway_leaves_the_marker_unset_and_resumes(self) -> None:
+        store = fresh_store()
+        store.client.put_item(
+            TableName=store.table,
+            Item=_unkeyed_instance_item(store, "i-first", top_state="CLOSED", json_state="OPEN"),
+        )
+        store.client.put_item(
+            TableName=store.table,
+            Item=_unkeyed_instance_item(store, "i-second", top_state="CLOSED", json_state="OPEN"),
+        )
+        inner = store.client
+        wrapper = _FailSecondUpdate(inner)
+        store.client = wrapper
+        with self.assertRaises(ClientError) as raised:
+            store.maybe_backfill_gsi()
+        self.assertEqual(raised.exception.response["Error"]["Code"], "InternalServerError")
+        self.assertEqual(len(wrapper.update_keys), 2)
+        written = wrapper.update_keys[0]
+        failed = wrapper.update_keys[1]
+        store.client = inner
+        written_item = store.client.get_item(
+            TableName=store.table, Key=written, ConsistentRead=True
+        )["Item"]
+        failed_item = store.client.get_item(
+            TableName=store.table, Key=failed, ConsistentRead=True
+        )["Item"]
+        self.assertEqual(written_item["gsiPk"]["S"], "INST")
+        self.assertNotIn("gsiPk", failed_item)
+        self.assertIsNone(store.get_marker("BACKFILL#gsi-v1", "META"))
+        store.maybe_backfill_gsi()
+        resumed = store.client.get_item(
+            TableName=store.table, Key=failed, ConsistentRead=True
+        )["Item"]
+        self.assertEqual(resumed["gsiPk"]["S"], "INST")
+        self.assertIsNotNone(store.get_marker("BACKFILL#gsi-v1", "META"))
 
 
 if __name__ == "__main__":

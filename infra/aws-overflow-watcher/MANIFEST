@@ -2,10 +2,10 @@ packet: overflow-watcher clean closeout above 7ae0727d7fbfb260425da8f494814d306b
 hash: sha256 of file bytes. This manifest does not name its own hash.
 offline: generated zip sha256 is bound to CodeS3Bucket, CodeS3Key, and CodeS3ObjectVersion names.
 hold: live S3 object bytes and version id are UNPROVEN. No upload and no object attestation.
-df22c29f54fff37b041763d8d13eae99f3cbdd65e146b9061c5ca00b0f38e103  infra/aws-overflow-watcher/CHECKLIST.md
+9052d26c87cb14771401760fe22128818b2e5125840119ecbfa685f8a9566236  infra/aws-overflow-watcher/CHECKLIST.md
 dee41dcf7f76aeef9255e8f288e2cd6ced912e7906f0c13ff6202947b6afde01  infra/aws-overflow-watcher/TEST-EVIDENCE.txt
-9bb7ca39d7efcce8b94fe1d2301f9d41dd48eb7a88d9f393503416cb2106be19  infra/aws-overflow-watcher/README.md
-03d2201e3630d69e43b7978cae8ad94d49d4727369a689f4b746a67eb122bd8d  infra/aws-overflow-watcher/template.yaml
+57922a4931a51b538e412cb56e6e099f2db573e21d6314353e60053fcdda6806  infra/aws-overflow-watcher/README.md
+2f8f6eb3dc08c531471646fdd78fae5eb9d4d8cba40a2349fdd42f95350250ad  infra/aws-overflow-watcher/template.yaml
 4d460c8449813c1bd29b8574511ae85732bc5e2d368200401dcd6350b53b2758  infra/aws-overflow-watcher/boot/supervisor.sh
 2a0c3848481e8685e46563fd734410076a035298ab1361b8500ce4694d5c5c53  infra/aws-overflow-watcher/scripts/package-lambda.sh
 5abbb359bfaa472745d5a69423761ba30ced37d8401ea26c4e475729b82f4fe3  infra/aws-overflow-watcher/src/overflow_watcher/guest_bootstrap.py
@@ -25,7 +25,7 @@ c647010c87707b8e532bc6218f6f42734d6fcde291d68f962097ff07f1bff008  infra/aws-over
 d91c665d90a90fd04df8526ed0895b6db913c649a9dd792f9c04f028cc948edd  infra/aws-overflow-watcher/src/overflow_watcher/guest_ssm.py
 4e640e5e1b8703f18a1b074c780bbe2724bbe36f5d635f9e527389fdc085f2fe  infra/aws-overflow-watcher/src/overflow_watcher/supervisor.py
 b744dbb61c8b4300def723e80f39e4bcba9e6b2fbfc0ad24373f73427ff28fcf  infra/aws-overflow-watcher/tests/test_stack_inputs.py
-4f0fc691ad90e5790fc3639ca4bb2e3496a44b7db594e87f601c25b159875ace  docs/operations/overflow-watcher-deploy-inputs.md
+aa4da7229a8c74687d55ca7ecd379f83efcf54d2bfecaf117dead4444dadd4e5  docs/operations/overflow-watcher-deploy-inputs.md
 36e3a8dee48aa39f6d0bf59b79ce778381adc15481414406ff0dad59e92558da  infra/aws-overflow-watcher/tests/test_b1_b3.py
 55ae301216056a39d258790aa69509ead561b2456ab8b4abadb787872f134934  infra/aws-overflow-watcher/src/overflow_watcher/money.py
 93d04a4e4780a74338f51bcee5667c6e6a30d8417dec5399c5f3ac48fa847b7e  infra/aws-overflow-watcher/tests/test_true_up.py
@@ -37,4 +37,4 @@ f898ad29c0f9a03d1f072d9297ed0caa33b16aabee5154d7699908dfcb08e003  infra/aws-over
 0bf7cac4376dc366075bd6f39ad50d406d58773c48570112d49925d8a427072b  infra/aws-overflow-watcher/tests/test_template_concurrency.py
 ba7153e1771d6877888fbf5d1d9a2924fc286cc4b5d402915ffba4ad30578efd  infra/aws-overflow-watcher/tests/test_iam_coverage.py
 aa92871483e13a18af900075d52596acee5c930654ddd096c6c46285820f4d62  infra/aws-overflow-watcher/tests/fakes.py
-4bf25c2dddd78bd245ab7bed8cca41b233ad55fd87f0020885a9447fa0dfb357  infra/aws-overflow-watcher/tests/test_gsi_listings.py
+7588783eb71e4cf07376283918a095b0375b714dc835a65f9049885cf9773790  infra/aws-overflow-watcher/tests/test_gsi_listings.py
