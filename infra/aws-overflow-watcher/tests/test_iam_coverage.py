@@ -102,7 +102,13 @@ class IamCoverageTests(unittest.TestCase):
         ]
         scoped = [s for s in statements if "dynamodb:DescribeTable" in s["Action"]]
         self.assertEqual(len(scoped), 1)
-        self.assertEqual(scoped[0]["Resource"], [{"Fn::GetAtt": ["StateTable", "Arn"]}])
+        self.assertEqual(
+            scoped[0]["Resource"],
+            [
+                {"Fn::GetAtt": ["StateTable", "Arn"]},
+                {"Fn::Sub": "${StateTable.Arn}/index/gsiPk-index"},
+            ],
+        )
 
 
 if __name__ == "__main__":

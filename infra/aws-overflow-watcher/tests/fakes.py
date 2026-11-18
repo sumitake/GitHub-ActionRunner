@@ -26,9 +26,10 @@ class FakeEc2:
         self.terminate_calls: list[list[str]] = []
         self.index = 0
         self._seq = 0
+        self.last_params: dict | None = None
 
     def run_instances(self, token: str, params: dict) -> str:
-        del params
+        self.last_params = params
         self.calls.append(token)
         if self.ambiguous:
             raise AmbiguousLaunch("timeout")

@@ -83,11 +83,24 @@ Resources:
           AttributeType: S
         - AttributeName: sk
           AttributeType: S
+        - AttributeName: gsiPk
+          AttributeType: S
+        - AttributeName: gsiSk
+          AttributeType: S
       KeySchema:
         - AttributeName: pk
           KeyType: HASH
         - AttributeName: sk
           KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: gsiPk-index
+          KeySchema:
+            - AttributeName: gsiPk
+              KeyType: HASH
+            - AttributeName: gsiSk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
       TimeToLiveSpecification:
         AttributeName: expiresAt
         Enabled: true
@@ -123,6 +136,7 @@ Resources:
                   - Fn::GetAtt:
                       - StateTable
                       - Arn
+                  - Fn::Sub: ${StateTable.Arn}/index/gsiPk-index
               - Effect: Allow
                 Action:
                   - ec2:RunInstances

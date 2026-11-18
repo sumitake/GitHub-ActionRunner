@@ -232,12 +232,13 @@ class JitAndLockTests(unittest.TestCase):
         self.assertEqual(result.launched, 1)
         self.assertEqual(list(ssm.values.values()), [JIT_FIXTURE])
         saved = store.list_open_instances()[0]
-        raw = saved["params"]["UserData"]
-        self.assertNotIn(JIT_FIXTURE, raw)
+        self.assertNotIn("UserData", saved.get("params") or {})
         self.assertNotIn(JIT_FIXTURE, json.dumps(saved))
         self.assertNotIn(JIT_FIXTURE, _table_text(store))
         self.assertNotIn(JIT_FIXTURE, buffer.getvalue())
+        raw = (ec2.last_params or {})["UserData"]
         name = parameter_name(saved["clientToken"])
+        self.assertNotIn(JIT_FIXTURE, raw)
         self.assertIn(name, raw)
         self.assertLessEqual(len(raw.encode("utf-8")), 16384)
         self.assertEqual(github.runner_deletes, [])

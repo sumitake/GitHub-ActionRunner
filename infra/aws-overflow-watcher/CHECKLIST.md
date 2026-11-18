@@ -4,6 +4,16 @@ Each row names the fail-closed test and the mutation that was applied, run, and 
 
 Clean re-run on `7ae0727d7fbfb260425da8f494814d306b2bb2f5` (main, base of this closeout), 2026-11-10 PT. Every section below was applied on that clean tree and restored with `git checkout`. `git status` was clean after every row.
 
+## DynamoDB listing Query (this change)
+
+Applied on this tree (base `373ea9e29377c3b294087e2b4b1e0bbcfdf1ae4a`), 2026-11-17 PT. Each mutation was applied to `store.py`, run, and restored from a saved copy. `git status` was clean of stray `store.py` edits after every row. 128 tests passed on the unmutated tree (`scripts/run-tests.sh`).
+
+| Finding                                                                             | Negative test                                       | Mutation                                                       | Result                                                    |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------- |
+| Listings must not Scan the table on an idle poll                                    | `test_idle_poll_and_listings_do_not_scan`           | insert `client.scan(TableName=…)` at the start of `_query_gsi` | Killed: `'scan' unexpectedly found in` the recorded calls |
+| Backfill keys CLOSED rows from the top-level `state` attribute, not the record JSON | `test_backfill_keys_closed_rows_from_the_attribute` | set INST `gsiSk` from `json.loads(record)["state"]`            | Killed: `gsiSk` `'OPEN#i-legacy' != 'CLOSED#i-legacy'`    |
+| Backfill must not index alert siblings (`INST#…` / `ALERT#ALLOWANCE`)               | `test_backfill_keys_closed_rows_from_the_attribute` | drop the `sk == META` guard and key INST items with no `state` | Killed: `'gsiPk' unexpectedly found in` the alert item    |
+
 ## #150
 
 | Finding                                              | Negative test                                                          | Mutation                                      | Result                                        |
