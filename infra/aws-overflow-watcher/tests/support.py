@@ -113,6 +113,7 @@ def seed_instance(
     price_numer: int = 1,
     price_denom: int = 100,
     tagged_list: bool = True,
+    github_runner_id: int | None = None,
 ) -> None:
     record = {
         "instanceId": instance_id,
@@ -136,6 +137,8 @@ def seed_instance(
         "priceNumer": price_numer,
         "priceDenom": price_denom,
     }
+    if github_runner_id is not None:
+        record["githubRunnerId"] = github_runner_id
     store.client.put_item(TableName=store.table, Item=store._instance_item(record))
     add_cents(store, month, debit)
     ec2.views[instance_id] = InstanceView(instance_id, state, has_tag, uncertain)

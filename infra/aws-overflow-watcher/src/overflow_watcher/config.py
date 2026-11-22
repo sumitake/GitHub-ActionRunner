@@ -55,6 +55,7 @@ class Config:
     grace_cents: int
     continue_until: int
     cancel_wait: int
+    idle_reap_grace: int
     exclusions: tuple[Exclusion, ...]
     repos: tuple[RepoSpec, ...]
     ami_id: str
@@ -84,6 +85,22 @@ def _positive_int(env: dict[str, str], name: str, errors: list[str]) -> int:
         return 0
     if value <= 0:
         errors.append(f"{name} invalid")
+        return 0
+    return value
+
+
+def _idle_reap_grace(env: dict[str, str], errors: list[str]) -> int:
+    """Unset means 600 seconds. Zero disables the pass. Invalid or negative fails config."""
+    raw = env.get("IDLE_REAP_GRACE_SECONDS")
+    if raw is None or raw.strip() == "":
+        return 600
+    try:
+        value = int(raw, 10)
+    except ValueError:
+        errors.append("IDLE_REAP_GRACE_SECONDS invalid")
+        return 0
+    if value < 0:
+        errors.append("IDLE_REAP_GRACE_SECONDS invalid")
         return 0
     return value
 
@@ -245,6 +262,7 @@ def load_config(env: dict[str, str]) -> Config:
     if soft_cap and continue_until and continue_until <= soft_cap:
         errors.append("CONTINUE_ACTIVE_UNTIL_CENTS invalid")
     cancel_wait = _non_negative_int(env, "BUDGET_CANCEL_WAIT_SECONDS", errors)
+    idle_reap_grace = _idle_reap_grace(env, errors)
     if "BUDGET_STOP_EXCLUSIONS" not in env:
         errors.append("BUDGET_STOP_EXCLUSIONS unset")
         exclusions: tuple[Exclusion, ...] = ()
@@ -273,6 +291,7 @@ def load_config(env: dict[str, str]) -> Config:
         grace_cents=grace_cents,
         continue_until=continue_until,
         cancel_wait=cancel_wait,
+        idle_reap_grace=idle_reap_grace,
         exclusions=exclusions,
         repos=repos,
         ami_id=ami,

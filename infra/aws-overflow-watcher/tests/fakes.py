@@ -80,7 +80,14 @@ class FakeGitHub:
         self.mint_error: str | None = None
         self.mint_secret = "jit-secret-test"
         self.mint_runner_id: int | None = 4242
+        self.runner_gets: list[tuple] = []
         self.runner_deletes: list[tuple] = []
+        # Default busy so an unexpected reap does not terminate a runner under test.
+        self.runner_get: tuple[int | None, bool | None] = (200, True)
+        self.runner_by_id: dict[int, tuple[int | None, bool | None]] = {}
+        self.delete_status: int | None = 204
+        self.delete_by_id: dict[int, int | None] = {}
+        self.fail_get = False
 
     def assess(self, repo, now: int) -> Decision:
         del repo, now
@@ -121,8 +128,19 @@ class FakeGitHub:
             minted["github_runner_id"] = self.mint_runner_id
         return minted
 
-    def delete_runner(self, owner: str, repo: str, runner_id: int) -> None:
+    def get_runner(self, owner: str, repo: str, runner_id: int) -> tuple[int | None, bool | None]:
+        self.runner_gets.append((owner, repo, runner_id))
+        if self.fail_get:
+            raise RuntimeError("github read failed")
+        if runner_id in self.runner_by_id:
+            return self.runner_by_id[runner_id]
+        return self.runner_get
+
+    def delete_runner(self, owner: str, repo: str, runner_id: int) -> int | None:
         self.runner_deletes.append((owner, repo, runner_id))
+        if runner_id in self.delete_by_id:
+            return self.delete_by_id[runner_id]
+        return self.delete_status
 
     def workflow_completed(self, owner: str, repo: str, run_id: str) -> bool | None:
         del owner, repo
