@@ -169,13 +169,15 @@ After reconcile and before the budget stop, the poll reaps an owned running
 instance that has been up for `IDLE_REAP_GRACE_SECONDS` (default 600;
 template parameter `IdleReapGraceSeconds`; 0 disables the pass). It reads
 the stored GitHub runner. `busy` true stays up. Offline with `busy` false
-is reaped. A read other than HTTP 200 or 404, a missing or non-boolean
-`busy`, a network error, or a missing token skips that runner until the
-next poll. HTTP 404 means the registration is already gone, so the instance
-is terminated without calling DELETE. Otherwise the controller deletes the
-registration and terminates only when that DELETE returns 204 or 404. Any
-other DELETE result leaves the instance up. Termination calls
-`advance_owned_stop`. An in-flight budget `cancel_wait` marker is skipped.
+is reaped. A read other than HTTP 200 or 404, or a missing or non-boolean
+`busy`, skips that runner until the next poll. A network error or a missing
+token (no HTTP status from GET or DELETE) stops the reaper pass for this
+poll and leaves that instance up. HTTP 404 means the registration is already
+gone, so the instance is terminated without calling DELETE. Otherwise the
+controller deletes the registration and terminates only when that DELETE
+returns 204 or 404. Any other DELETE result leaves the instance up.
+Termination calls `advance_owned_stop`. An in-flight budget `cancel_wait`
+marker is skipped.
 The pass checks at most five runners per poll, oldest launch first. Each
 reap logs one JSON line with `kind` `idle-reap` and does not alarm. An
 error aborts the reaper for that poll; the budget stop and launches still

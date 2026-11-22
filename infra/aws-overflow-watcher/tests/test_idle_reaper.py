@@ -174,7 +174,7 @@ class IdleReaperTests(unittest.TestCase):
         self.assertEqual(ec2.terminate_calls, [["i-gone"]])
 
     def test_unknown_read_skips_and_a_later_poll_reaps(self) -> None:
-        cases: dict[str, tuple[int | None, bool | None] | str] = {
+        cases: dict[str, tuple | str] = {
             "error": "raise",
             "network": (None, None),
             "token": (None, None),
@@ -182,29 +182,58 @@ class IdleReaperTests(unittest.TestCase):
             "http-401": (401, None),
             "http-403": (403, False),
             "busy-missing": (200, None),
-            "busy-non-bool": (200, None),
+            # 0 is falsy and "false" is not a bool. Both must skip, not reap.
+            "busy-non-bool": ((200, 0), (200, "false")),
         }
-        for name, read in cases.items():
+        for name, raw in cases.items():
+            reads = raw if name == "busy-non-bool" else (raw,)
+            for read in reads:
+                with self.subTest(name=name, read=read):
+                    store = fresh_store()
+                    ec2 = FakeEc2()
+                    github = _idle_github()
+                    _seed(store, ec2, "i-later")
+                    if read == "raise":
+                        github.fail_get = True
+                    else:
+                        github.runner_get = read  # type: ignore[assignment]
+                    run_poll(store, ec2, ec2, github, cfg(), NOW)
+                    self.assertEqual(github.runner_deletes, [])
+                    self.assertEqual(ec2.terminate_calls, [])
+                    self.assertEqual(store.get_instance("i-later")["state"], "OPEN")
+                    github.fail_get = False
+                    github.runner_get = (200, False)
+                    github.delete_status = 204
+                    clear_poll_lease(store)
+                    run_poll(store, ec2, ec2, github, cfg(), NOW)
+                    self.assertEqual(github.runner_deletes, [("example", "keicrew", RUNNER)])
+                    self.assertEqual(ec2.terminate_calls, [["i-later"]])
+
+    def test_no_http_status_stops_the_pass(self) -> None:
+        """Two past-grace runners. No HTTP status on the older one stops the poll."""
+        for name in ("get", "delete"):
             with self.subTest(name=name):
                 store = fresh_store()
                 ec2 = FakeEc2()
                 github = _idle_github()
-                _seed(store, ec2, "i-later")
-                if read == "raise":
-                    github.fail_get = True
+                _seed(store, ec2, "i-old", runner_id=1, launch_epoch=NOW - 5000)
+                _seed(store, ec2, "i-new", runner_id=2, launch_epoch=NOW - 2000)
+                github.runner_by_id[2] = (200, False)
+                if name == "get":
+                    github.runner_by_id[1] = (None, None)
                 else:
-                    github.runner_get = read  # type: ignore[assignment]
+                    github.runner_by_id[1] = (200, False)
+                    github.delete_by_id[1] = None
                 run_poll(store, ec2, ec2, github, cfg(), NOW)
-                self.assertEqual(github.runner_deletes, [])
+                self.assertEqual(github.runner_gets, [("example", "keicrew", 1)])
+                if name == "get":
+                    self.assertEqual(github.runner_deletes, [])
+                else:
+                    # DELETE was called and returned no status. The newer runner is untouched.
+                    self.assertEqual(github.runner_deletes, [("example", "keicrew", 1)])
                 self.assertEqual(ec2.terminate_calls, [])
-                self.assertEqual(store.get_instance("i-later")["state"], "OPEN")
-                github.fail_get = False
-                github.runner_get = (200, False)
-                github.delete_status = 204
-                clear_poll_lease(store)
-                run_poll(store, ec2, ec2, github, cfg(), NOW)
-                self.assertEqual(github.runner_deletes, [("example", "keicrew", RUNNER)])
-                self.assertEqual(ec2.terminate_calls, [["i-later"]])
+                self.assertEqual(store.get_instance("i-old")["state"], "OPEN")
+                self.assertEqual(store.get_instance("i-new")["state"], "OPEN")
 
     def test_get_404_terminates_without_delete(self) -> None:
         store = fresh_store()

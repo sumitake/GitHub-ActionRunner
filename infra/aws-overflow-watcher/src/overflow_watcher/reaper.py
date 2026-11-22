@@ -45,7 +45,10 @@ def reap_idle_runners(
         if not _running_owned(ec2, instance_id):
             continue
         checked += 1
-        _reap_one(ec2_api, github, inst, now)
+        # No HTTP status can be a 10s connect timeout. Stop this pass so five
+        # of them cannot outlast the Lambda and skip the budget stop.
+        if not _reap_one(ec2_api, github, inst, now):
+            return
 
 
 def note_reaper_abort(exc: BaseException | None = None) -> None:
@@ -86,25 +89,33 @@ def _running_owned(ec2: Any, instance_id: str) -> bool:
     return view.state == "running"
 
 
-def _reap_one(ec2_api: Any, github: Any, inst: dict[str, Any], now: int) -> None:
+def _reap_one(ec2_api: Any, github: Any, inst: dict[str, Any], now: int) -> bool:
     """Terminate only after DELETE 204 or 404, or when GET says the runner is gone.
 
-    `busy` false is enough. Offline is reaped. Do not require status online.
+    Return False when GET or DELETE has no HTTP status so this poll stops.
+    A real HTTP status, or a non-bool `busy`, returns True and skips only
+    this runner. `busy` false is enough. Offline is reaped. Do not require
+    status online.
     """
     instance_id = str(inst["instanceId"])
     runner_id = inst["githubRunnerId"]
     owner = str(inst["owner"])
     repo = str(inst["repoName"])
     status, busy = github.get_runner(owner, repo, runner_id)
+    if status is None:
+        return False
     if status == 404:
         _terminate(ec2_api, instance_id, runner_id, now - int(inst["launchEpoch"]))
-        return
+        return True
     if status != 200 or type(busy) is not bool or busy:
-        return
+        return True
     deleted = github.delete_runner(owner, repo, runner_id)
+    if deleted is None:
+        return False
     if deleted not in (204, 404):
-        return
+        return True
     _terminate(ec2_api, instance_id, runner_id, now - int(inst["launchEpoch"]))
+    return True
 
 
 def _terminate(ec2_api: Any, instance_id: str, runner_id: int, idle_s: int) -> None:
