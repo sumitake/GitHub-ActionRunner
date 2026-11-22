@@ -101,6 +101,48 @@ class LiveGitHub:
             return False
         return None
 
+    def get_runner(self, owner: str, repo: str, runner_id: int) -> tuple[int | None, bool | None]:
+        """GET one repository runner. Returns (http_status, busy).
+
+        None status means no HTTP response (missing token or network). A 404 is
+        the real status and is not folded into failure. busy is set only when a
+        200 body carries a boolean busy; offline with busy false stays false.
+        """
+        token = self._token_for(self._installation(owner, repo), now=0)
+        if not token:
+            return None, None
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/runners/{runner_id}"
+        page = _UrllibTransport(token).get(url)
+        if page.status == 599:
+            # The transport uses 599 when the socket fails. That is not an HTTP status.
+            return None, None
+        busy: bool | None = None
+        if page.status == 200 and isinstance(page.body, dict):
+            raw = page.body.get("busy")
+            if type(raw) is bool:
+                busy = raw
+        return page.status, busy
+
+    def delete_runner(self, owner: str, repo: str, runner_id: int) -> int | None:
+        """DELETE one repository runner. None means no HTTP response.
+
+        The returned code is the real HTTP status, including 404.
+        """
+        token = self._token_for(self._installation(owner, repo), now=0)
+        if not token:
+            return None
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/runners/{runner_id}"
+        request = urllib.request.Request(url, method="DELETE")
+        request.add_header("Authorization", f"Bearer {token}")
+        request.add_header("Accept", "application/vnd.github+json")
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return int(response.status)
+        except urllib.error.HTTPError as exc:
+            return int(exc.code)
+        except urllib.error.URLError:
+            return None
+
     def _installation(self, owner: str, repo: str) -> str:
         for spec in self._cfg.repos:
             if spec.owner == owner and spec.name == repo:
