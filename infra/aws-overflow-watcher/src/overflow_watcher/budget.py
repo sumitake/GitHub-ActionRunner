@@ -156,7 +156,7 @@ def _unknown_alert(
 
 
 def advance_owned_stop(ec2_api: Any, instance_id: str) -> None:
-    """Terminate one verified instance. This is the only such call in the package."""
+    """The only TerminateInstances call. The budget stop and the idle reaper both use it."""
     ec2_api.terminate_instances(InstanceIds=[instance_id])
 
 

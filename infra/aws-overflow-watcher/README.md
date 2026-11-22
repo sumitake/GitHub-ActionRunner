@@ -158,11 +158,28 @@ cannot be avoided raises the grace alert and does not terminate anything.
    uses the same rule.
 
 This stop can fail an in-progress overflow job. It does not touch untagged
-instances, local runners, or unrelated jobs. There is no idle sweep and no
-timed kill (F6, R3). The instance supervisor is a separate path: it shuts
-the guest down only after a proven normal completion, which makes EC2
-terminate the instance because
+instances, local runners, or unrelated jobs. The instance supervisor is a
+separate path: it shuts the guest down only after a proven normal
+completion, which makes EC2 terminate the instance because
 `InstanceInitiatedShutdownBehavior` is `terminate`.
+
+## Idle reaper
+
+After reconcile and before the budget stop, the poll reaps an owned running
+instance that has been up for `IDLE_REAP_GRACE_SECONDS` (default 600;
+template parameter `IdleReapGraceSeconds`; 0 disables the pass). It reads
+the stored GitHub runner. `busy` true stays up. Offline with `busy` false
+is reaped. A read other than HTTP 200 or 404, a missing or non-boolean
+`busy`, a network error, or a missing token skips that runner until the
+next poll. HTTP 404 means the registration is already gone, so the instance
+is terminated without calling DELETE. Otherwise the controller deletes the
+registration and terminates only when that DELETE returns 204 or 404. Any
+other DELETE result leaves the instance up. Termination calls
+`advance_owned_stop`. An in-flight budget `cancel_wait` marker is skipped.
+The pass checks at most five runners per poll, oldest launch first. Each
+reap logs one JSON line with `kind` `idle-reap` and does not alarm. An
+error aborts the reaper for that poll; the budget stop and launches still
+run.
 
 ## Budget alarm
 
@@ -184,8 +201,8 @@ non-budget kinds stay log-only.
 
 R5. `ec2:TerminateInstances` appears on the controller role only, and only
 with `aws:ResourceTag/overflow-watcher` = `owned`. The runner role does not
-have that action. The only call site is the budget-stop function
-`advance_owned_stop`.
+have that action. `advance_owned_stop` is the only call site. The budget
+stop and the idle reaper both call it.
 
 ## Supervisor (F6, R3)
 
@@ -215,8 +232,8 @@ only when the listener and worker process tree have exited naturally, the
 supervisor did not restart them, a job was actually assigned, and no worker
 is still alive. Exit code 0 by itself is not proof. A missing runner config,
 a never-assigned runner, or an abnormal exit keeps the instance up and emits
-one report at 30 minutes. `config.sh remove` and the runner DELETE endpoint
-are not called.
+one report at 30 minutes. The guest does not call `config.sh remove` or the
+runner DELETE endpoint.
 
 ## Required inputs
 
@@ -236,6 +253,7 @@ deploy and migration workflow and job names.
 | `GRACE_PCT` or `GRACE_CENTS`                                | `10` or `300`. Must agree with the grace below.                                                                                                                                                        |
 | `CONTINUE_ACTIVE_UNTIL_CENTS`                               | `3300`. Enforced estimate, not an invoice cap.                                                                                                                                                         |
 | `BUDGET_CANCEL_WAIT_SECONDS`                                | Wait after cancel before a terminate. No default.                                                                                                                                                      |
+| `IDLE_REAP_GRACE_SECONDS`                                   | Idle reaper grace in seconds. Unset means 600. 0 disables the pass. Invalid or negative fails config.                                                                                                  |
 | `BUDGET_STOP_EXCLUSIONS`                                    | JSON list of `{kind, pattern}`. Empty fails closed. Default excludes `deploy-*` and `migrate*` / `*migration*`.                                                                                        |
 | `TABLE_NAME`                                                | DynamoDB table.                                                                                                                                                                                        |
 | `CodeS3Bucket`, `CodeS3Key`, `CodeS3ObjectVersion`          | Template inputs for the Lambda zip. No defaults. Not an S3 object check.                                                                                                                               |
@@ -256,7 +274,7 @@ write on this App on 2026-11-11, which unblocks live B1 registration.
 | Permission     | Level                                     | Calls                                                                                                                                                                              |
 | -------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Actions        | Read and write                            | Read lists queued runs and jobs. Write cancels a run during the budget stop. Write is the grant; read is included. If cancel fails, the controller terminates once after the wait. |
-| Administration | Read and write (write granted 2026-11-11) | Read lists self-hosted runners. Write calls `generate-jitconfig` for the JIT runner.                                                                                               |
+| Administration | Read and write (write granted 2026-11-11) | Read lists self-hosted runners and reads `busy` on one runner. Write calls `generate-jitconfig` and deletes a repository runner in the idle reaper.                                |
 | Metadata       | Read                                      | Platform mandatory. It cannot be turned off. It does not authorize the calls above.                                                                                                |
 
 Not requested, because this process does not call them: Contents, Workflows,

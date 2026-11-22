@@ -58,6 +58,10 @@ Parameters:
   BudgetCancelWaitSeconds:
     Type: String
     Description: REQUIRED_INPUT seconds to wait after workflow cancellation before terminate.
+  IdleReapGraceSeconds:
+    Type: String
+    Default: "600"
+    Description: Seconds an owned overflow runner may stay idle before deregister and terminate. 0 disables the pass.
   BudgetStopExclusions:
     Type: String
     Default: '[{"kind":"workflow","pattern":"deploy-*"},{"kind":"workflow","pattern":"*migration*"},{"kind":"job","pattern":"deploy-*"},{"kind":"job","pattern":"migrate*"}]'
@@ -299,6 +303,8 @@ Resources:
             Ref: ContinueActiveUntilCents
           BUDGET_CANCEL_WAIT_SECONDS:
             Ref: BudgetCancelWaitSeconds
+          IDLE_REAP_GRACE_SECONDS:
+            Ref: IdleReapGraceSeconds
           BUDGET_STOP_EXCLUSIONS:
             Ref: BudgetStopExclusions
           WATCHED_REPOS:

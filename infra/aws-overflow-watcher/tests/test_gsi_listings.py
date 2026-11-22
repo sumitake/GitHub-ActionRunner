@@ -227,7 +227,8 @@ class GsiListingTests(unittest.TestCase):
         result = run_poll(store, ec2, ec2, _idle_github(), _three_repo_cfg(), NOW, ssm=FakeSsm())
         self.assertNotEqual(result.blocked_reason, "poll-lease-held")
         self.assertNotIn("scan", recorder.calls)
-        self.assertEqual(recorder.calls.count("query"), 8)
+        # Eight queries from the rest of the poll, plus the idle reaper's open-instance list.
+        self.assertEqual(recorder.calls.count("query"), 9)
         self.assertEqual([item["instanceId"] for item in store.list_open_instances()], ["i-open"])
 
     def test_backfill_keys_closed_rows_from_the_attribute(self) -> None:

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""One-minute poll: admit, accrue, reconcile, and maybe budget-stop."""
+"""One-minute poll: admit, accrue, reconcile, reap idle runners, and maybe budget-stop."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from overflow_watcher.guest_bootstrap import render_user_data
 from overflow_watcher.inventory import reservations_released_by_ec2
 from overflow_watcher.jit_handoff import JitParams, parameter_name
 from overflow_watcher.money import month_key, plan_accrual
+from overflow_watcher.reaper import note_reaper_abort, reap_idle_runners
 from overflow_watcher.store import Store
 from overflow_watcher.types import (
     CAPACITY_COOLDOWN_SECONDS,
@@ -481,6 +482,18 @@ def run_poll(
     accrue(store, result.alerts, now)
     index = ec2.index_count() if hasattr(ec2, "index_count") else None
     reconcile(store, ec2, index_count=index, now=now, ssm=ssm)
+    try:
+        reap_idle_runners(
+            store,
+            ec2,
+            ec2_api,
+            github,
+            result.alerts,
+            now,
+            cfg.idle_reap_grace,
+        )
+    except Exception as exc:
+        note_reaper_abort(exc)
     result.budget = enforce_budget_stop(
         store=store,
         ec2=ec2,
